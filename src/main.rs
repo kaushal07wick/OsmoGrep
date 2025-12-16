@@ -1,29 +1,34 @@
 use std::{error::Error, io, time::Duration};
 
 use crossterm::{
-    event::{self, Event, KeyCode},
+    event::{self, Event, KeyCode, MouseEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
     Terminal,
 };
 
-#[derive(Clone)]
+/* ===================== STATE ===================== */
+
+#[derive(Clone, Debug)]
 enum Phase {
     Init,
-    GitSanity,
-    DecideBranch,
-    CreateAgentBranch,
     DetectBase,
+    Idle,
+    ExecuteAgent,
+    CreateNewAgent,
+    Rollback,
     Done,
 }
 
+#[derive(Clone)]
 enum LogLevel {
     Info,
     Success,
@@ -41,10 +46,12 @@ struct AgentState {
     base_branch: Option<String>,
     original_branch: Option<String>,
     agent_branch: Option<String>,
+    input: String,
+    input_focused: bool,
     logs: Vec<LogLine>,
 }
 
-/* ---------------- Logging ---------------- */
+/* ===================== LOGGING ===================== */
 
 fn log(state: &mut AgentState, level: LogLevel, msg: impl Into<String>) {
     state.logs.push(LogLine {
@@ -53,36 +60,24 @@ fn log(state: &mut AgentState, level: LogLevel, msg: impl Into<String>) {
     });
 }
 
-/* ---------------- Git helpers ---------------- */
+/* ===================== GIT ===================== */
 
 fn is_git_repo() -> bool {
     std::path::Path::new(".git").exists()
 }
 
-fn is_working_tree_clean() -> bool {
-    let out = std::process::Command::new("sh")
-        .arg("-c")
-        .arg("git status --porcelain")
-        .output()
-        .expect("git status failed");
-
-    out.stdout.is_empty()
-}
-
 fn current_branch() -> String {
-    let out = std::process::Command::new("sh")
-        .arg("-c")
-        .arg("git branch --show-current")
+    let out = std::process::Command::new("git")
+        .args(["branch", "--show-current"])
         .output()
-        .expect("failed to get current branch");
+        .expect("git failed");
 
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
 fn detect_base_branch() -> String {
-    let out = std::process::Command::new("sh")
-        .arg("-c")
-        .arg("git symbolic-ref refs/remotes/origin/HEAD")
+    let out = std::process::Command::new("git")
+        .args(["symbolic-ref", "refs/remotes/origin/HEAD"])
         .output();
 
     if let Ok(o) = out {
@@ -91,43 +86,118 @@ fn detect_base_branch() -> String {
             return b.to_string();
         }
     }
+    "master".into()
+}
 
-    "master".to_string()
+fn working_tree_dirty() -> bool {
+    let out = std::process::Command::new("git")
+        .args(["status", "--porcelain"])
+        .output()
+        .expect("git status failed");
+
+    !out.stdout.is_empty()
+}
+
+fn find_existing_agent() -> Option<String> {
+    let out = std::process::Command::new("git")
+        .args(["branch"])
+        .output()
+        .ok()?;
+
+    let s = String::from_utf8_lossy(&out.stdout);
+    for l in s.lines() {
+        let name = l.trim().trim_start_matches('*').trim();
+        if name.starts_with("osmogrep/") {
+            return Some(name.to_string());
+        }
+    }
+    None
 }
 
 fn create_agent_branch() -> String {
-    let branch = format!(
+    let name = format!(
         "osmogrep/{}",
         chrono::Utc::now().format("%Y%m%d%H%M%S")
     );
 
-    let status = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(format!("git checkout -q -b {}", branch))
+    std::process::Command::new("git")
+        .args(["branch", &name])
         .status()
-        .expect("failed to create agent branch");
+        .expect("branch create failed");
 
-    if !status.success() {
-        panic!("Failed to create agent branch");
-    }
-
-    branch
+    name
 }
 
-/* ---------------- UI ---------------- */
+fn checkout(branch: &str) {
+    std::process::Command::new("git")
+        .args(["checkout", "-q", branch])
+        .status()
+        .expect("checkout failed");
+}
+
+fn apply_working_tree(state: &mut AgentState) {
+    // Check if there is anything to apply
+    let diff = std::process::Command::new("git")
+        .args(["diff"])
+        .output()
+        .expect("git diff failed");
+
+    if diff.stdout.is_empty() {
+        log(
+            state,
+            LogLevel::Info,
+            "No working tree changes to apply.",
+        );
+        return;
+    }
+
+    // Apply diff safely
+    let status = std::process::Command::new("git")
+        .args(["apply", "-"])
+        .stdin(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            child.stdin.as_mut().unwrap().write_all(&diff.stdout)?;
+            child.wait_with_output()
+        })
+        .expect("git apply failed");
+
+    if status.status.success() {
+        log(
+            state,
+            LogLevel::Success,
+            "Working tree applied.",
+        );
+    } else {
+        let err = String::from_utf8_lossy(&status.stderr);
+        log(
+            state,
+            LogLevel::Error,
+            format!("Failed to apply diff: {}", err.trim()),
+        );
+    }
+}
+
+
+/* ===================== UI ===================== */
 
 fn draw_ui<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     state: &AgentState,
-) -> io::Result<()> {
+) -> io::Result<Rect> {
+    let mut input_rect = Rect::default();
+
     terminal.draw(|f| {
-        let main = Layout::default()
+        let layout = Layout::default()
             .direction(Direction::Vertical)
-            .margin(2)
+            .margin(1)
             .constraints([
-                Constraint::Length(3), // header
-                Constraint::Length(3), // status
-                Constraint::Min(1),    // logs + footer
+                Constraint::Length(3),  // header
+                Constraint::Length(3),  // status
+                Constraint::Min(8),     // logs (FIXED)
+                Constraint::Length(3),  // command
             ])
             .split(f.size());
 
@@ -135,35 +205,18 @@ fn draw_ui<B: ratatui::backend::Backend>(
             .style(Style::default().add_modifier(Modifier::BOLD))
             .block(Block::default().borders(Borders::ALL));
 
-        let phase_text = match state.phase {
-            Phase::Init => "Initializing",
-            Phase::GitSanity => "Checking git state",
-            Phase::DecideBranch => "Deciding execution branch",
-            Phase::CreateAgentBranch => "Creating agent branch",
-            Phase::DetectBase => "Detecting base branch",
-            Phase::Done => "Done",
-        };
-
         let status = Paragraph::new(format!(
-            "Phase: {}\nBase branch: {}",
-            phase_text,
+            "Phase: {:?}\nBase: {}",
+            state.phase,
             state.base_branch.clone().unwrap_or_else(|| "unknown".into())
         ))
         .block(Block::default().borders(Borders::ALL).title("Status"));
 
-        let bottom = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(1),    // logs
-                Constraint::Length(1), // footer
-            ])
-            .split(main[2]);
-
-        let log_lines: Vec<Line> = state
+        let logs: Vec<Line> = state
             .logs
             .iter()
             .rev()
-            .take(12)
+            .take(30)
             .rev()
             .map(|l| {
                 let color = match l.level {
@@ -172,34 +225,127 @@ fn draw_ui<B: ratatui::backend::Backend>(
                     LogLevel::Warn => Color::Yellow,
                     LogLevel::Error => Color::Red,
                 };
-
                 Line::from(Span::styled(&l.text, Style::default().fg(color)))
             })
             .collect();
 
-        let log_view = Paragraph::new(log_lines)
-            .block(Block::default().borders(Borders::ALL).title("Execution Log"));
+        let log_view =
+            Paragraph::new(logs).block(Block::default().borders(Borders::ALL).title("Execution"));
 
-        let footer = Paragraph::new("q = quit")
-            .style(Style::default().fg(Color::DarkGray))
-            .alignment(Alignment::Right);
+        let input_style = if state.input_focused {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
 
-        f.render_widget(header, main[0]);
-        f.render_widget(status, main[1]);
-        f.render_widget(log_view, bottom[0]);
-        f.render_widget(footer, bottom[1]);
-    })
-    .map(|_| ())
+        let input = Paragraph::new(format!("> {}", state.input))
+            .style(input_style)
+            .block(Block::default().borders(Borders::ALL).title("Command"));
+
+        input_rect = layout[3];
+
+        f.render_widget(header, layout[0]);
+        f.render_widget(status, layout[1]);
+        f.render_widget(log_view, layout[2]);
+        f.render_widget(input, layout[3]);
+
+        if state.input_focused {
+            let x = input_rect.x + 2 + state.input.len() as u16;
+            let y = input_rect.y + 1;
+            f.set_cursor(x, y);
+        }
+    })?;
+
+    Ok(input_rect)
 }
 
-/* ---------------- Main ---------------- */
+/* ===================== COMMANDS ===================== */
+
+fn handle_command(state: &mut AgentState, cmd: &str) {
+    match cmd {
+        "help" => log(
+            state,
+            LogLevel::Info,
+            "Commands: exec | new | rollback | quit | help",
+        ),
+        "exec" => state.phase = Phase::ExecuteAgent,
+        "new" => state.phase = Phase::CreateNewAgent,
+        "rollback" => state.phase = Phase::Rollback,
+        "quit" => state.phase = Phase::Done,
+        _ => log(state, LogLevel::Warn, "Unknown command"),
+    }
+}
+
+/* ===================== STATE MACHINE ===================== */
+
+fn step(state: &mut AgentState) {
+    match state.phase {
+        Phase::Init => {
+            if !is_git_repo() {
+                log(state, LogLevel::Error, "Not a git repository.");
+                state.phase = Phase::Done;
+                return;
+            }
+            state.original_branch = Some(current_branch());
+            state.phase = Phase::DetectBase;
+        }
+
+        Phase::DetectBase => {
+            let base = detect_base_branch();
+            state.base_branch = Some(base.clone());
+            log(state, LogLevel::Success, format!("Base branch: {}", base));
+
+            if let Some(agent) = find_existing_agent() {
+                state.agent_branch = Some(agent.clone());
+                log(state, LogLevel::Info, format!("Reusing {}", agent));
+            }
+
+            if working_tree_dirty() {
+                log(state, LogLevel::Warn, "Uncommitted changes detected.");
+            }
+
+            state.phase = Phase::Idle;
+        }
+
+        Phase::Idle => {}
+
+        Phase::CreateNewAgent => {
+            let branch = create_agent_branch();
+            state.agent_branch = Some(branch.clone());
+            log(state, LogLevel::Success, format!("Created {}", branch));
+            state.phase = Phase::Idle;
+        }
+
+        Phase::ExecuteAgent => {
+            if let Some(branch) = state.agent_branch.clone() {
+                checkout(&branch);
+                apply_working_tree(state);
+                log(state, LogLevel::Info, "Ready for tests.");
+                log(state, LogLevel::Success, format!("Checked out {}", branch));
+                log(state, LogLevel::Info, "Working tree applied. Ready for tests.");
+            }
+            state.phase = Phase::Idle;
+        }
+
+        Phase::Rollback => {
+            if let Some(orig) = state.original_branch.clone() {
+                checkout(&orig);
+                log(state, LogLevel::Success, "Returned to original branch.");
+            }
+            state.phase = Phase::Idle;
+        }
+
+        Phase::Done => {}
+    }
+}
+
+/* ===================== MAIN ===================== */
 
 fn main() -> Result<(), Box<dyn Error>> {
     enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(io::stdout(), EnterAlternateScreen)?;
 
-    let backend = CrosstermBackend::new(stdout);
+    let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
     let mut state = AgentState {
@@ -207,100 +353,44 @@ fn main() -> Result<(), Box<dyn Error>> {
         base_branch: None,
         original_branch: None,
         agent_branch: None,
-        logs: vec![LogLine {
-            level: LogLevel::Info,
-            text: "Starting OsmoGrep agent…".into(),
-        }],
+        input: String::new(),
+        input_focused: true,
+        logs: vec![],
     };
 
     loop {
-        draw_ui(&mut terminal, &state)?;
+        let input_rect = draw_ui(&mut terminal, &state)?;
 
-        if event::poll(Duration::from_millis(400))? {
-            if let Event::Key(key) = event::read()? {
-                if key.code == KeyCode::Char('q') {
-                    break;
+        if event::poll(Duration::from_millis(200))? {
+            match event::read()? {
+                Event::Key(k) if state.input_focused => match k.code {
+                    KeyCode::Char(c) => state.input.push(c),
+                    KeyCode::Backspace => {
+                        state.input.pop();
+                    }
+                    KeyCode::Enter => {
+                        let cmd = state.input.trim().to_string();
+                        state.input.clear();
+                        handle_command(&mut state, &cmd);
+                    }
+                    _ => {}
+                },
+
+                Event::Mouse(m) => {
+                    if let MouseEventKind::Down(_) = m.kind {
+                        state.input_focused =
+                            input_rect.contains((m.column, m.row).into());
+                    }
                 }
+
+                _ => {}
             }
         }
 
-        match state.phase {
-            Phase::Init => {
-                log(&mut state, LogLevel::Info, "Checking git repository…");
-                state.phase = Phase::GitSanity;
-            }
+        step(&mut state);
 
-            Phase::GitSanity => {
-                if !is_git_repo() {
-                    log(&mut state, LogLevel::Error, "Not inside a git repository.");
-                    state.phase = Phase::Done;
-                } else if !is_working_tree_clean() {
-                    log(
-                        &mut state,
-                        LogLevel::Error,
-                        "Working tree is dirty. Commit or stash changes.",
-                    );
-                    state.phase = Phase::Done;
-                } else {
-                    let cur = current_branch();
-                    state.original_branch = Some(cur.clone());
-                    log(
-                        &mut state,
-                        LogLevel::Success,
-                        format!("Git clean. Current branch: {}", cur),
-                    );
-                    state.phase = Phase::DecideBranch;
-                }
-            }
-
-            Phase::DecideBranch => {
-                let cur = state.original_branch.clone().unwrap_or_default();
-                if cur.starts_with("osmogrep/") {
-                    log(
-                        &mut state,
-                        LogLevel::Warn,
-                        "Already on agent branch. Reusing existing state.",
-                    );
-                    state.agent_branch = Some(cur);
-                    state.phase = Phase::DetectBase;
-                } else {
-                    log(
-                        &mut state,
-                        LogLevel::Info,
-                        "Creating isolated agent branch…",
-                    );
-                    log(
-                        &mut state,
-                        LogLevel::Info,
-                        "↳ running: git checkout -b <agent-branch>",
-                    );
-                    state.phase = Phase::CreateAgentBranch;
-                }
-            }
-
-            Phase::CreateAgentBranch => {
-                let agent = create_agent_branch();
-                state.agent_branch = Some(agent.clone());
-                log(
-                    &mut state,
-                    LogLevel::Success,
-                    format!("✔ Switched to agent branch {}", agent),
-                );
-                state.phase = Phase::DetectBase;
-            }
-
-            Phase::DetectBase => {
-                let base = detect_base_branch();
-                state.base_branch = Some(base.clone());
-                log(
-                    &mut state,
-                    LogLevel::Success,
-                    format!("Base branch detected: {}", base),
-                );
-                state.phase = Phase::Done;
-            }
-
-            Phase::Done => {}
+        if let Phase::Done = state.phase {
+            break;
         }
     }
 
