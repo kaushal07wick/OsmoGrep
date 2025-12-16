@@ -1,4 +1,5 @@
 // src/state.rs
+use crate::detectors::{language::Language, framework::TestFramework};
 
 #[derive(Clone, Debug)]
 pub enum Phase {
@@ -43,6 +44,10 @@ pub struct AgentState {
 
     /* -------- logs -------- */
     pub logs: Vec<LogLine>,
+
+    /*----------detection-------- */
+    pub language: Option<Language>,
+    pub framework: Option<TestFramework>,
 }
 
 impl AgentState {

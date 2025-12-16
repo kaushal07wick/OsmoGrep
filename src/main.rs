@@ -5,6 +5,8 @@ mod git;
 mod ui;
 mod commands;
 mod machine;
+mod detectors;
+
 
 use std::{error::Error, io, time::Duration};
 
@@ -51,6 +53,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         autocomplete: None,
 
         logs: Vec::new(),
+        language: None,
+        framework: None,
+
     };
 
     /* ---------- event loop ---------- */
