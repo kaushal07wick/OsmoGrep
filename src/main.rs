@@ -8,7 +8,8 @@ use crossterm::{
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
     Terminal,
 };
@@ -23,12 +24,33 @@ enum Phase {
     Done,
 }
 
+enum LogLevel {
+    Info,
+    Success,
+    Warn,
+    Error,
+}
+
+struct LogLine {
+    level: LogLevel,
+    text: String,
+}
+
 struct AgentState {
     phase: Phase,
     base_branch: Option<String>,
     original_branch: Option<String>,
     agent_branch: Option<String>,
-    message: String,
+    logs: Vec<LogLine>,
+}
+
+/* ---------------- Logging ---------------- */
+
+fn log(state: &mut AgentState, level: LogLevel, msg: impl Into<String>) {
+    state.logs.push(LogLine {
+        level,
+        text: msg.into(),
+    });
 }
 
 /* ---------------- Git helpers ---------------- */
@@ -65,7 +87,9 @@ fn detect_base_branch() -> String {
 
     if let Ok(o) = out {
         let s = String::from_utf8_lossy(&o.stdout);
-        return s.trim().split('/').last().unwrap_or("master").to_string();
+        if let Some(b) = s.trim().split('/').last() {
+            return b.to_string();
+        }
     }
 
     "master".to_string()
@@ -84,7 +108,7 @@ fn create_agent_branch() -> String {
         .expect("failed to create agent branch");
 
     if !status.success() {
-        panic!("❌ Failed to create agent branch");
+        panic!("Failed to create agent branch");
     }
 
     branch
@@ -103,7 +127,7 @@ fn draw_ui<B: ratatui::backend::Backend>(
                 .margin(2)
                 .constraints([
                     Constraint::Length(3),
-                    Constraint::Length(7),
+                    Constraint::Length(3),
                     Constraint::Min(3),
                 ])
                 .split(f.size());
@@ -112,7 +136,7 @@ fn draw_ui<B: ratatui::backend::Backend>(
                 .style(Style::default().add_modifier(Modifier::BOLD))
                 .block(Block::default().borders(Borders::ALL));
 
-            let phase = match state.phase {
+            let phase_text = match state.phase {
                 Phase::Init => "Initializing",
                 Phase::GitSanity => "Checking git state",
                 Phase::DecideBranch => "Deciding execution branch",
@@ -121,23 +145,37 @@ fn draw_ui<B: ratatui::backend::Backend>(
                 Phase::Done => "Done",
             };
 
-            let body = Paragraph::new(format!(
-                "Phase: {}\nBase branch: {}\n\n{}",
-                phase,
-                state
-                    .base_branch
-                    .clone()
-                    .unwrap_or_else(|| "unknown".into()),
-                state.message
+            let status = Paragraph::new(format!(
+                "Phase: {}\nBase branch: {}",
+                phase_text,
+                state.base_branch.clone().unwrap_or_else(|| "unknown".into())
             ))
-            .block(Block::default().borders(Borders::ALL).title("Agent State"));
+            .block(Block::default().borders(Borders::ALL).title("Status"));
 
-            let footer = Paragraph::new("Press q to quit")
-                .block(Block::default().borders(Borders::ALL));
+            let log_lines: Vec<Line> = state
+                .logs
+                .iter()
+                .rev()
+                .take(12)
+                .rev()
+                .map(|l| {
+                    let color = match l.level {
+                        LogLevel::Info => Color::White,
+                        LogLevel::Success => Color::Green,
+                        LogLevel::Warn => Color::Yellow,
+                        LogLevel::Error => Color::Red,
+                    };
+
+                    Line::from(Span::styled(&l.text, Style::default().fg(color)))
+                })
+                .collect();
+
+            let log_view = Paragraph::new(log_lines)
+                .block(Block::default().borders(Borders::ALL).title("Execution Log"));
 
             f.render_widget(header, chunks[0]);
-            f.render_widget(body, chunks[1]);
-            f.render_widget(footer, chunks[2]);
+            f.render_widget(status, chunks[1]);
+            f.render_widget(log_view, chunks[2]);
         })
         .map(|_| ())
 }
@@ -157,13 +195,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         base_branch: None,
         original_branch: None,
         agent_branch: None,
-        message: "Starting OsmoGrep agent…".into(),
+        logs: vec![LogLine {
+            level: LogLevel::Info,
+            text: "Starting OsmoGrep agent…".into(),
+        }],
     };
 
     loop {
         draw_ui(&mut terminal, &state)?;
 
-        if event::poll(Duration::from_millis(500))? {
+        if event::poll(Duration::from_millis(400))? {
             if let Event::Key(key) = event::read()? {
                 if key.code == KeyCode::Char('q') {
                     break;
@@ -173,37 +214,49 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         match state.phase {
             Phase::Init => {
+                log(&mut state, LogLevel::Info, "Checking git repository…");
                 state.phase = Phase::GitSanity;
-                state.message = "Checking git repository state…".into();
             }
 
             Phase::GitSanity => {
                 if !is_git_repo() {
-                    state.message = "❌ Not inside a git repository.".into();
+                    log(&mut state, LogLevel::Error, "Not inside a git repository.");
                     state.phase = Phase::Done;
                 } else if !is_working_tree_clean() {
-                    state.message =
-                        "❌ Working tree is dirty. Commit or stash changes.".into();
+                    log(
+                        &mut state,
+                        LogLevel::Error,
+                        "Working tree is dirty. Commit or stash changes.",
+                    );
                     state.phase = Phase::Done;
                 } else {
-                    let current = current_branch();
-                    state.original_branch = Some(current.clone());
-                    state.message = format!("Git state verified. Current branch: {}", current);
+                    let cur = current_branch();
+                    state.original_branch = Some(cur.clone());
+                    log(
+                        &mut state,
+                        LogLevel::Success,
+                        format!("Git clean. Current branch: {}", cur),
+                    );
                     state.phase = Phase::DecideBranch;
                 }
             }
 
             Phase::DecideBranch => {
-                let current = state.original_branch.clone().unwrap_or_default();
-
-                if current.starts_with("osmogrep/") {
-                    state.agent_branch = Some(current.clone());
-                    state.message =
-                        "Already on an OsmoGrep agent branch. Reusing it.".into();
+                let cur = state.original_branch.clone().unwrap_or_default();
+                if cur.starts_with("osmogrep/") {
+                    log(
+                        &mut state,
+                        LogLevel::Warn,
+                        "Already on agent branch. Reusing existing state.",
+                    );
+                    state.agent_branch = Some(cur);
                     state.phase = Phase::DetectBase;
                 } else {
-                    state.message =
-                        "No agent branch detected. Creating a new one.".into();
+                    log(
+                        &mut state,
+                        LogLevel::Info,
+                        "Creating isolated agent branch…",
+                    );
                     state.phase = Phase::CreateAgentBranch;
                 }
             }
@@ -211,14 +264,22 @@ fn main() -> Result<(), Box<dyn Error>> {
             Phase::CreateAgentBranch => {
                 let agent = create_agent_branch();
                 state.agent_branch = Some(agent.clone());
-                state.message = format!("Agent branch created: {}", agent);
+                log(
+                    &mut state,
+                    LogLevel::Success,
+                    format!("Switched to {}", agent),
+                );
                 state.phase = Phase::DetectBase;
             }
 
             Phase::DetectBase => {
                 let base = detect_base_branch();
-                state.base_branch = Some(base);
-                state.message = "Base branch detected successfully.".into();
+                state.base_branch = Some(base.clone());
+                log(
+                    &mut state,
+                    LogLevel::Success,
+                    format!("Base branch detected: {}", base),
+                );
                 state.phase = Phase::Done;
             }
 
@@ -229,6 +290,5 @@ fn main() -> Result<(), Box<dyn Error>> {
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
-
     Ok(())
 }
