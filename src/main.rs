@@ -7,7 +7,7 @@ use crossterm::{
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
@@ -120,64 +120,76 @@ fn draw_ui<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     state: &AgentState,
 ) -> io::Result<()> {
-    terminal
-        .draw(|f| {
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .margin(2)
-                .constraints([
-                    Constraint::Length(3),
-                    Constraint::Length(3),
-                    Constraint::Min(3),
-                ])
-                .split(f.size());
+    terminal.draw(|f| {
+        let main = Layout::default()
+            .direction(Direction::Vertical)
+            .margin(2)
+            .constraints([
+                Constraint::Length(3), // header
+                Constraint::Length(3), // status
+                Constraint::Min(1),    // logs + footer
+            ])
+            .split(f.size());
 
-            let header = Paragraph::new("OSMOGREP — AI E2E Testing Agent")
-                .style(Style::default().add_modifier(Modifier::BOLD))
-                .block(Block::default().borders(Borders::ALL));
+        let header = Paragraph::new("OSMOGREP — AI E2E Testing Agent")
+            .style(Style::default().add_modifier(Modifier::BOLD))
+            .block(Block::default().borders(Borders::ALL));
 
-            let phase_text = match state.phase {
-                Phase::Init => "Initializing",
-                Phase::GitSanity => "Checking git state",
-                Phase::DecideBranch => "Deciding execution branch",
-                Phase::CreateAgentBranch => "Creating agent branch",
-                Phase::DetectBase => "Detecting base branch",
-                Phase::Done => "Done",
-            };
+        let phase_text = match state.phase {
+            Phase::Init => "Initializing",
+            Phase::GitSanity => "Checking git state",
+            Phase::DecideBranch => "Deciding execution branch",
+            Phase::CreateAgentBranch => "Creating agent branch",
+            Phase::DetectBase => "Detecting base branch",
+            Phase::Done => "Done",
+        };
 
-            let status = Paragraph::new(format!(
-                "Phase: {}\nBase branch: {}",
-                phase_text,
-                state.base_branch.clone().unwrap_or_else(|| "unknown".into())
-            ))
-            .block(Block::default().borders(Borders::ALL).title("Status"));
+        let status = Paragraph::new(format!(
+            "Phase: {}\nBase branch: {}",
+            phase_text,
+            state.base_branch.clone().unwrap_or_else(|| "unknown".into())
+        ))
+        .block(Block::default().borders(Borders::ALL).title("Status"));
 
-            let log_lines: Vec<Line> = state
-                .logs
-                .iter()
-                .rev()
-                .take(12)
-                .rev()
-                .map(|l| {
-                    let color = match l.level {
-                        LogLevel::Info => Color::White,
-                        LogLevel::Success => Color::Green,
-                        LogLevel::Warn => Color::Yellow,
-                        LogLevel::Error => Color::Red,
-                    };
+        let bottom = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(1),    // logs
+                Constraint::Length(1), // footer
+            ])
+            .split(main[2]);
 
-                    Line::from(Span::styled(&l.text, Style::default().fg(color)))
-                })
-                .collect();
+        let log_lines: Vec<Line> = state
+            .logs
+            .iter()
+            .rev()
+            .take(12)
+            .rev()
+            .map(|l| {
+                let color = match l.level {
+                    LogLevel::Info => Color::White,
+                    LogLevel::Success => Color::Green,
+                    LogLevel::Warn => Color::Yellow,
+                    LogLevel::Error => Color::Red,
+                };
 
-            let log_view = Paragraph::new(log_lines)
-                .block(Block::default().borders(Borders::ALL).title("Execution Log"));
+                Line::from(Span::styled(&l.text, Style::default().fg(color)))
+            })
+            .collect();
 
-            f.render_widget(header, chunks[0]);
-            f.render_widget(status, chunks[1]);
-            f.render_widget(log_view, chunks[2]);
-        })
-        .map(|_| ())
+        let log_view = Paragraph::new(log_lines)
+            .block(Block::default().borders(Borders::ALL).title("Execution Log"));
+
+        let footer = Paragraph::new("q = quit")
+            .style(Style::default().fg(Color::DarkGray))
+            .alignment(Alignment::Right);
+
+        f.render_widget(header, main[0]);
+        f.render_widget(status, main[1]);
+        f.render_widget(log_view, bottom[0]);
+        f.render_widget(footer, bottom[1]);
+    })
+    .map(|_| ())
 }
 
 /* ---------------- Main ---------------- */
@@ -257,6 +269,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                         LogLevel::Info,
                         "Creating isolated agent branch…",
                     );
+                    log(
+                        &mut state,
+                        LogLevel::Info,
+                        "↳ running: git checkout -b <agent-branch>",
+                    );
                     state.phase = Phase::CreateAgentBranch;
                 }
             }
@@ -267,7 +284,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 log(
                     &mut state,
                     LogLevel::Success,
-                    format!("Switched to {}", agent),
+                    format!("✔ Switched to agent branch {}", agent),
                 );
                 state.phase = Phase::DetectBase;
             }
