@@ -1,4 +1,12 @@
-# **OsmoGrep**
+
+````md
+ ██████╗  ██████╗ ███╗   ███╗  ██████╗  ██████╗ ██████╗ ███████╗██████╗ 
+██╔═══██╗██╔════╝ ████╗ ████║ ██╔═══██╗██╔════╝ ██╔══██╗██╔════╝██╔══██╗
+██║   ██║███████╗ ██╔████╔██║ ██║   ██║██║  ███╗██████╔╝█████╗  ██████╔╝
+██║   ██║╚════██║ ██║╚██╔╝██║ ██║   ██║██║   ██║██╔══██╗██╔══╝  ██╔═══╝ 
+╚██████╔╝███████║ ██║ ╚═╝ ██║ ╚██████╔╝╚██████╔╝██║  ██║███████╗██║     
+ ╚═════╝ ╚══════╝ ╚═╝     ╚═╝  ╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝     
+````
 
 <p align="left">
   <img src="https://img.shields.io/badge/status-active-success?style=flat-square" />
@@ -13,7 +21,9 @@
 
 **OsmoGrep** is an interactive, terminal-native **AI E2E execution agent** designed to safely run tests, experiments, and analysis **on uncommitted working trees** without polluting your main branches.
 
+
 It gives you a **controlled execution sandbox** inside your own Git repository, with explicit user intent for every destructive action.
+
 
 ---
 
@@ -34,12 +44,141 @@ OsmoGrep is built for that reality.
 
 > **“First, do no damage.”**
 
+## 🧠 How OsmoGrep Thinks
+
+OsmoGrep does **not** behave like a CI bot.
+It behaves like a **careful engineer sitting beside you**.
+
+Its mental model is deliberate, staged, and conservative by design.
+
 ---
 
+## 🧩 1. Context Before Action
+
+OsmoGrep **never executes first**.
+
+It begins by answering simple, mechanical questions:
+
+* *What language is this repository actually written in?*
+* *Is there a test framework, or none at all?*
+* *What branch am I on?*
+* *Is the working tree dirty?*
+
+These answers are **derived, not inferred**.
+No LLM. No guessing. No “best effort”.
+
+> **If the context is wrong, everything downstream is wrong.**
+
+That is why OsmoGrep surfaces this information **visibly in the UI** before you do anything.
+
+---
+
+### 🧠 2. Static Facts > AI Assumptions
+
+OsmoGrep treats AI as a **tool**, not an authority.
+
+Before any LLM is even considered, OsmoGrep establishes **hard constraints**:
+
+* Language is detected via file extensions
+* Test frameworks are detected via repo structure
+* Execution capability is validated mechanically
+
+If no test framework exists, OsmoGrep will say:
+
+> ⚪ *No tests detected*
+
+It will **not** hallucinate one.
+
+---
+
+### ✂️ 3. Diffs Are the Unit of Thought
+
+OsmoGrep does not reason about “the repo”.
+
+It reasons about **what changed**.
+
+Everything downstream — tests, execution, validation — is anchored to:
+
+* The **exact diff**
+* The **surrounding code**
+* The **type of change** (logic, interface, state)
+
+> **A pure function change is not an E2E test candidate.**
+
+OsmoGrep refuses to do meaningless work.
+
+---
+
+### 🧭 4. Intent Is Explicit
+
+OsmoGrep assumes **you are in control**.
+
+Nothing happens unless you say so:
+
+* `/exec` means *you want execution*
+* `/new` means *you want isolation*
+* `/rollback` means *you want safety*
+
+There are **no background actions**.
+There are **no silent checkouts**.
+There are **no surprise mutations**.
+
+> *Automation without consent is a bug.*
+
+---
+
+### 🧑‍⚖️ 5. Human-in-the-Loop Is Not Optional
+
+When OsmoGrep eventually generates tests or runs them, it does not “fix” failures automatically.
+
+Instead, it asks:
+
+* ❌ Is the test wrong?
+* ❌ Is the code wrong?
+* ❌ Is the assumption wrong?
+* ❌ Is setup missing?
+
+And then it presents **choices**, not decisions.
+
+> **OsmoGrep assists judgment — it does not replace it.**
+
+---
+
+### 🧪 6. Execution Is a Sandbox, Not a Gamble
+
+Execution happens in a **dedicated agent branch**.
+
+Your workflow remains intact:
+
+* Original branch is preserved
+* Agent branches are reused by default
+* Working tree is applied *only on command*
+* Rollback is always available
+
+If something breaks, it breaks **somewhere safe**.
+
+---
+
+### 🛑 7. Conservative by Default, Powerful by Design
+
+OsmoGrep is intentionally **slow to act** and **hard to misuse**.
+
+That is not a limitation.
+
+That is the feature.
+
+> **“First, do no damage.”** — Engineering principle
+
+---
+
+### 🧠 In One Sentence
+
+**OsmoGrep thinks like a senior engineer:
+verify context, constrain scope, act deliberately, and never assume intent.**
+
+
+
 ## Core Principles
-
-
-
 * **No implicit mutations**
   Nothing is checked out, applied, or deleted unless *you* command it.
 
@@ -73,36 +212,18 @@ All from a **single terminal UI**.
 ---
 
 ## Terminal UI
-
-```
-┌──────────────────────────────────────────┐
-│ OSMOGREP — AI E2E Testing Agent          │
-└──────────────────────────────────────────┘
-┌ Status ─────────────────────────────────┐
-│ Phase: Idle                              │
-│ Base: master                             │
-└──────────────────────────────────────────┘
-┌ Execution ──────────────────────────────┐
-│ Base branch detected: master             │
-│ Reusing osmogrep/20251216162555          │
-│ Uncommitted changes detected             │
-└──────────────────────────────────────────┘
-┌ Command ────────────────────────────────┐
-│ /exec                                   │
-└──────────────────────────────────────────┘
-```
+![osmogrep-tui](osmogrep.png)
 
 * Cursor-aware command input
 * Mouse-focusable command box
-* Command history & autocomplete
 * Explicit execution logs
+* Command History
+* Autocomplete
+* Dynamic Status
 
 ---
 
 ## Commands
-
-
-
 All commands are prefixed with `/`.
 
 | Command     | Action                                       |
@@ -114,13 +235,11 @@ All commands are prefixed with `/`.
 | `/quit`     | Exit OsmoGrep                                |
 
 ### Input UX
-
 * `Tab` → autocomplete
 * `↑ / ↓` → history navigation
 * `Enter` → execute command
 * Mouse click → focus input
 
----
 
 ## Execution Model
 
@@ -140,46 +259,13 @@ All commands are prefixed with `/`.
 
 This guarantees **zero accidental data loss**.
 
----
-
-## Project Structure
 
 
-
-```
-src/
-├── main.rs        # Event loop, input handling
-├── state.rs       # State machine & command UX
-├── ui.rs          # Ratatui rendering
-├── commands.rs    # Commands, hints, autocomplete
-├── machine.rs    # Execution lifecycle
-├── git.rs        # Git operations
-└── logger.rs     # Structured logging
-```
-
-Each module does **one thing well**.
-
----
 
 ## Build & Run
-
-
-
 ```bash
 cargo build
 cargo run
 ```
 
 Run **inside any Git repository**.
-
----
-
-## What OsmoGrep Is NOT
-
-
-* Not a CI system
-* Not a background runner
-* Not a blind automation tool
-* Not a Git wrapper
-
-It is a **deliberate execution agent**.
