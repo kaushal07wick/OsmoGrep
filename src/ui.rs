@@ -30,13 +30,13 @@ pub fn draw_ui<B: Backend>(
             ])
             .split(f.size());
 
-        /* ---------- Header ---------- */
+        /* ================= Header ================= */
 
         let header = Paragraph::new("OSMOGREP — AI E2E Testing Agent")
             .style(Style::default().add_modifier(Modifier::BOLD))
             .block(Block::default().borders(Borders::ALL));
 
-        /* ---------- Status ---------- */
+        /* ================= Status ================= */
 
         let status = Paragraph::new(format!(
             "Phase: {:?}\nBase: {}",
@@ -48,7 +48,7 @@ pub fn draw_ui<B: Backend>(
         ))
         .block(Block::default().borders(Borders::ALL).title("Status"));
 
-        /* ---------- Logs ---------- */
+        /* ================= Logs ================= */
 
         let logs: Vec<Line> = state
             .logs
@@ -71,10 +71,11 @@ pub fn draw_ui<B: Backend>(
         let log_view = Paragraph::new(logs)
             .block(Block::default().borders(Borders::ALL).title("Execution"));
 
-        /* ---------- Command Box ---------- */
+        /* ================= Command Box ================= */
 
         let focused_style = Style::default().fg(Color::Cyan);
         let unfocused_style = Style::default().fg(Color::DarkGray);
+        let ghost_style = Style::default().fg(Color::DarkGray);
 
         let input_style = if state.input_focused {
             focused_style
@@ -82,11 +83,26 @@ pub fn draw_ui<B: Backend>(
             unfocused_style
         };
 
-        // Always show `/` to signal command mode
-        let input_text = format!("/{}", state.input);
+        // Build command line spans
+        let mut spans: Vec<Span> = Vec::new();
 
-        let input = Paragraph::new(input_text)
-            .style(input_style)
+        // Leading slash (command mode)
+        spans.push(Span::styled("/", input_style));
+
+        // Actual input
+        spans.push(Span::styled(&state.input, input_style));
+
+        // Ghost autocomplete (fish/zsh style)
+        if let Some(ac) = &state.autocomplete {
+            if ac.starts_with(&state.input) {
+                let ghost = &ac[state.input.len()..];
+                if !ghost.is_empty() {
+                    spans.push(Span::styled(ghost, ghost_style));
+                }
+            }
+        }
+
+        let input = Paragraph::new(Line::from(spans))
             .block(
                 Block::default()
                     .borders(Borders::ALL)
@@ -95,17 +111,17 @@ pub fn draw_ui<B: Backend>(
 
         input_rect = layout[3];
 
-        /* ---------- Render ---------- */
+        /* ================= Render ================= */
 
         f.render_widget(header, layout[0]);
         f.render_widget(status, layout[1]);
         f.render_widget(log_view, layout[2]);
         f.render_widget(input, layout[3]);
 
-        /* ---------- Cursor ---------- */
+        /* ================= Cursor ================= */
 
         if state.input_focused {
-            // Cursor after `/` + input text
+            // Cursor after: border + "/" + input text
             let x = input_rect.x + 2 + 1 + state.input.len() as u16;
             let y = input_rect.y + 1;
             f.set_cursor(x, y);

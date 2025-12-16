@@ -12,8 +12,10 @@ use crossterm::{
     event::{self, Event, KeyCode, MouseEventKind},
     execute,
     terminal::{
-        enable_raw_mode, disable_raw_mode,
-        EnterAlternateScreen, LeaveAlternateScreen,
+        enable_raw_mode,
+        disable_raw_mode,
+        EnterAlternateScreen,
+        LeaveAlternateScreen,
     },
 };
 
@@ -56,9 +58,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     loop {
         let input_rect = ui::draw_ui(&mut terminal, &state)?;
 
-        if event::poll(Duration::from_millis(200))? {
+        if event::poll(Duration::from_millis(120))? {
             match event::read()? {
-                /* -------- keyboard input -------- */
+                /* ================= Keyboard ================= */
 
                 Event::Key(k) if state.input_focused => match k.code {
                     KeyCode::Char(c) => {
@@ -74,6 +76,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     KeyCode::Enter => {
                         let cmd = state.commit_input();
                         handle_command(&mut state, &cmd);
+                        update_command_hints(&mut state);
                     }
 
                     KeyCode::Up => {
@@ -93,11 +96,16 @@ fn main() -> Result<(), Box<dyn Error>> {
                         }
                     }
 
+                    KeyCode::Esc => {
+                        state.input.clear();
+                        state.clear_hint();
+                        state.clear_autocomplete();
+                    }
+
                     _ => {}
-                }
+                },
 
-
-                /* -------- mouse focus -------- */
+                /* ================= Mouse ================= */
 
                 Event::Mouse(m) if matches!(m.kind, MouseEventKind::Down(_)) => {
                     state.input_focused =
@@ -108,7 +116,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
 
-        /* -------- state machine -------- */
+        /* ---------- state machine ---------- */
 
         step(&mut state);
 
