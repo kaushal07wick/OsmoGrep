@@ -103,7 +103,7 @@ fn create_agent_branch() -> String {
 
     let status = std::process::Command::new("sh")
         .arg("-c")
-        .arg(format!("git checkout -b {}", branch))
+        .arg(format!("git checkout -q -b {}", branch))
         .status()
         .expect("failed to create agent branch");
 
