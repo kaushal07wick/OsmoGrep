@@ -48,6 +48,9 @@ pub struct AgentState {
     /*----------detection-------- */
     pub language: Option<Language>,
     pub framework: Option<TestFramework>,
+
+    /* -------- ui -------- */
+    pub spinner_tick: usize,
 }
 
 impl AgentState {

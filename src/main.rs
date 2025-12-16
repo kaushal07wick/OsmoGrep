@@ -56,11 +56,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         language: None,
         framework: None,
 
+        spinner_tick: 0,
+
     };
 
     /* ---------- event loop ---------- */
 
     loop {
+        state.spinner_tick = state.spinner_tick.wrapping_add(1);
+
         let input_rect = ui::draw_ui(&mut terminal, &state)?;
 
         if event::poll(Duration::from_millis(120))? {
