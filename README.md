@@ -1,12 +1,5 @@
 
-````md
- ██████╗  ██████╗ ███╗   ███╗  ██████╗  ██████╗ ██████╗ ███████╗██████╗ 
-██╔═══██╗██╔════╝ ████╗ ████║ ██╔═══██╗██╔════╝ ██╔══██╗██╔════╝██╔══██╗
-██║   ██║███████╗ ██╔████╔██║ ██║   ██║██║  ███╗██████╔╝█████╗  ██████╔╝
-██║   ██║╚════██║ ██║╚██╔╝██║ ██║   ██║██║   ██║██╔══██╗██╔══╝  ██╔═══╝ 
-╚██████╔╝███████║ ██║ ╚═╝ ██║ ╚██████╔╝╚██████╔╝██║  ██║███████╗██║     
- ╚═════╝ ╚══════╝ ╚═╝     ╚═╝  ╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝     
-````
+![osmogrep](osmogrep.svg)
 
 <p align="left">
   <img src="https://img.shields.io/badge/status-active-success?style=flat-square" />
@@ -25,191 +18,29 @@
 It gives you a **controlled execution sandbox** inside your own Git repository, with explicit user intent for every destructive action.
 
 
----
+## Fundamentals
 
-## Why OsmoGrep Exists
+OsmoGrep is a **context-first automation tool** for local repositories.
 
+It operates under these rules:
 
-Most tools assume:
+* **Context before execution**
+  Language, test framework, branch, and working tree state are detected mechanically before any action.
 
-* Code is committed
-* Branches are disposable
-* Automation should “just run”
-
-That is wrong.
-
-Real engineering happens in **dirty working trees**, half-written code, and local experiments.
-
-OsmoGrep is built for that reality.
-
-> **“First, do no damage.”**
-
-## 🧠 How OsmoGrep Thinks
-
-OsmoGrep does **not** behave like a CI bot.
-It behaves like a **careful engineer sitting beside you**.
-
-Its mental model is deliberate, staged, and conservative by design.
-
----
-
-## 🧩 1. Context Before Action
-
-OsmoGrep **never executes first**.
-
-It begins by answering simple, mechanical questions:
-
-* *What language is this repository actually written in?*
-* *Is there a test framework, or none at all?*
-* *What branch am I on?*
-* *Is the working tree dirty?*
-
-These answers are **derived, not inferred**.
-No LLM. No guessing. No “best effort”.
-
-> **If the context is wrong, everything downstream is wrong.**
-
-That is why OsmoGrep surfaces this information **visibly in the UI** before you do anything.
-
----
-
-### 🧠 2. Static Facts > AI Assumptions
-
-OsmoGrep treats AI as a **tool**, not an authority.
-
-Before any LLM is even considered, OsmoGrep establishes **hard constraints**:
-
-* Language is detected via file extensions
-* Test frameworks are detected via repo structure
-* Execution capability is validated mechanically
-
-If no test framework exists, OsmoGrep will say:
-
-> ⚪ *No tests detected*
-
-It will **not** hallucinate one.
-
----
-
-### ✂️ 3. Diffs Are the Unit of Thought
-
-OsmoGrep does not reason about “the repo”.
-
-It reasons about **what changed**.
-
-Everything downstream — tests, execution, validation — is anchored to:
-
-* The **exact diff**
-* The **surrounding code**
-* The **type of change** (logic, interface, state)
-
-> **A pure function change is not an E2E test candidate.**
-
-OsmoGrep refuses to do meaningless work.
-
----
-
-### 🧭 4. Intent Is Explicit
-
-OsmoGrep assumes **you are in control**.
-
-Nothing happens unless you say so:
-
-* `/exec` means *you want execution*
-* `/new` means *you want isolation*
-* `/rollback` means *you want safety*
-
-There are **no background actions**.
-There are **no silent checkouts**.
-There are **no surprise mutations**.
-
-> *Automation without consent is a bug.*
-
----
-
-### 🧑‍⚖️ 5. Human-in-the-Loop Is Not Optional
-
-When OsmoGrep eventually generates tests or runs them, it does not “fix” failures automatically.
-
-Instead, it asks:
-
-* ❌ Is the test wrong?
-* ❌ Is the code wrong?
-* ❌ Is the assumption wrong?
-* ❌ Is setup missing?
-
-And then it presents **choices**, not decisions.
-
-> **OsmoGrep assists judgment — it does not replace it.**
-
----
-
-### 🧪 6. Execution Is a Sandbox, Not a Gamble
-
-Execution happens in a **dedicated agent branch**.
-
-Your workflow remains intact:
-
-* Original branch is preserved
-* Agent branches are reused by default
-* Working tree is applied *only on command*
-* Rollback is always available
-
-If something breaks, it breaks **somewhere safe**.
-
----
-
-### 🛑 7. Conservative by Default, Powerful by Design
-
-OsmoGrep is intentionally **slow to act** and **hard to misuse**.
-
-That is not a limitation.
-
-That is the feature.
-
-> **“First, do no damage.”** — Engineering principle
-
----
-
-### 🧠 In One Sentence
-
-**OsmoGrep thinks like a senior engineer:
-verify context, constrain scope, act deliberately, and never assume intent.**
-
-
-
-## Core Principles
 * **No implicit mutations**
-  Nothing is checked out, applied, or deleted unless *you* command it.
+  Nothing is checked out, applied, or executed without an explicit command.
 
-* **Works on uncommitted code**
-  Your working tree stays intact until execution is explicitly triggered.
+* **Diff-scoped reasoning**
+  Actions are based on the current diff, not the entire repository.
 
-* **Branch safety by default**
-  Existing agent branches are reused. New ones are created only on request.
+* **Isolated execution**
+  Automation runs in agent branches; the original branch remains untouched.
 
-* **Human-in-the-loop execution**
-  Every action is visible, logged, and reversible.
+* **Human-controlled flow**
+  OsmoGrep surfaces state and options but does not make irreversible decisions.
 
----
+It is designed to work safely on **uncommitted code** in active development environments.
 
-## What OsmoGrep Does
-
-
-1. Detects repository context
-2. Detects base branch
-3. Detects existing `osmogrep/*` agent branches
-4. Allows you to:
-
-   * Reuse an agent branch
-   * Create a new agent branch
-   * Apply current working tree on demand
-   * Execute tests or automation
-   * Roll back cleanly
-
-All from a **single terminal UI**.
-
----
 
 ## Terminal UI
 ![osmogrep-tui](osmogrep.png)
