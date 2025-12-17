@@ -11,6 +11,16 @@ pub enum Phase {
     Done,
 }
 
+/*---------- symbol delta----------- */
+#[derive(Debug, Clone)]
+pub struct SymbolDelta {
+    pub file: String,
+    pub symbol: String,
+    pub old_source: String,
+    pub new_source: String,
+}
+
+
 /* ---------- logging ---------- */
 
 #[derive(Clone, Debug)]
@@ -63,6 +73,8 @@ pub struct DiffAnalysis {
     pub test_required: TestDecision,
     pub risk: RiskLevel,
     pub reason: String,
+    pub delta: Option<SymbolDelta>,
+    pub pretty: Option<String>,
 }
 
 /* ---------- agent state ---------- */

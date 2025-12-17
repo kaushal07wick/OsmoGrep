@@ -1,14 +1,22 @@
 use crate::git;
 use crate::state::{ChangeSurface, DiffAnalysis, RiskLevel, TestDecision};
 use crate::detectors::ast::ast::detect_symbol;
+use crate::detectors::ast::symboldelta::compute_symbol_delta;
+use crate::detectors::ast::pretty::pretty_diff;
+
+/* ============================================================
+   Public entry
+   ============================================================ */
 
 pub fn analyze_diff() -> Vec<DiffAnalysis> {
     let raw = git::diff_cached();
     let diff = String::from_utf8_lossy(&raw);
 
+    let base_branch = git::detect_base_branch();
+
     split_diff_by_file(&diff)
         .into_iter()
-        .map(|(file, hunks)| analyze_file(&file, &hunks))
+        .map(|(file, hunks)| analyze_file(&base_branch, &file, &hunks))
         .collect()
 }
 
@@ -16,16 +24,33 @@ pub fn analyze_diff() -> Vec<DiffAnalysis> {
    Core analysis
    ============================================================ */
 
-fn analyze_file(file: &str, hunks: &str) -> DiffAnalysis {
+fn analyze_file(
+    base_branch: &str,
+    file: &str,
+    hunks: &str,
+) -> DiffAnalysis {
     let surface = detect_surface(file, hunks);
     let (decision, risk, reason) = decide_test(file, &surface);
 
-    // AST symbol detection for Rust + Python only
+    // AST symbol detection only for supported code files
     let symbol = if is_supported_code_file(file) {
         detect_symbol(file, hunks)
     } else {
         None
     };
+
+    let mut delta = None;
+    let mut pretty = None;
+
+    if let Some(sym) = &symbol {
+        if let Some(d) = compute_symbol_delta(base_branch, file, sym) {
+            pretty = Some(pretty_diff(
+                Some(&d.old_source),
+                Some(&d.new_source),
+            ));
+            delta = Some(d);
+        }
+    }
 
     DiffAnalysis {
         file: file.to_string(),
@@ -34,6 +59,8 @@ fn analyze_file(file: &str, hunks: &str) -> DiffAnalysis {
         test_required: decision,
         risk,
         reason,
+        delta,
+        pretty,
     }
 }
 
@@ -42,22 +69,15 @@ fn analyze_file(file: &str, hunks: &str) -> DiffAnalysis {
    ============================================================ */
 
 fn detect_surface(file: &str, hunks: &str) -> ChangeSurface {
-    // Config files → never require tests
-    if is_config_file(file) {
+    // Config or non-code files → cosmetic only
+    if is_config_file(file) || !is_supported_code_file(file) {
         return ChangeSurface::Cosmetic;
     }
 
-    // Non-code files → no importance
-    if !is_supported_code_file(file) {
-        return ChangeSurface::Cosmetic;
-    }
-
-    // Orchestration files
     if is_orchestration_file(file) {
         return ChangeSurface::Integration;
     }
 
-    // Content-based signals
     if is_observability(hunks) {
         ChangeSurface::Observability
     } else if is_branching(hunks) {
@@ -81,7 +101,6 @@ fn decide_test(
     file: &str,
     surface: &ChangeSurface,
 ) -> (TestDecision, RiskLevel, String) {
-    // Config & non-code files
     if is_config_file(file) || !is_supported_code_file(file) {
         return (
             TestDecision::No,
@@ -96,25 +115,21 @@ fn decide_test(
             RiskLevel::Low,
             "Cosmetic or formatting-only change".into(),
         ),
-
         ChangeSurface::Observability => (
             TestDecision::No,
             RiskLevel::Low,
             "Logging or metrics change only".into(),
         ),
-
         ChangeSurface::PureLogic => (
             TestDecision::Conditional,
             RiskLevel::Medium,
             "Logic modified; test if uncovered".into(),
         ),
-
         ChangeSurface::Integration => (
             TestDecision::Conditional,
             RiskLevel::Medium,
-            "Orchestration or wiring logic changed".into(),
+            "Orchestration logic changed".into(),
         ),
-
         ChangeSurface::Branching
         | ChangeSurface::Contract
         | ChangeSurface::ErrorPath

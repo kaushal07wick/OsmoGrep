@@ -3,21 +3,47 @@ use std::collections::HashSet;
 use tree_sitter::{Node, Parser};
 
 /* ============================================================
+   Public helpers
+   ============================================================ */
+
+/// Extract full source of a symbol (function / class / impl)
+pub fn extract_symbol_source(
+    source: &str,
+    file: &str,
+    symbol: &str,
+) -> Option<String> {
+    let mut parser = Parser::new();
+
+    if file.ends_with(".py") {
+        parser.set_language(&tree_sitter_python::language()).ok()?;
+    } else if file.ends_with(".rs") {
+        parser.set_language(&tree_sitter_rust::language()).ok()?;
+    } else {
+        return None;
+    }
+
+    let tree = parser.parse(source, None)?;
+    let root = tree.root_node();
+
+    find_symbol_node(root, source, symbol)
+        .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+        .map(|s| s.to_string())
+}
+
+/* ============================================================
    Public API
    ============================================================ */
 
-/// Detects the enclosing symbol affected by a diff hunk.
-/// Works on **STAGED CODE**, not working tree.
+/// Detect enclosing symbol affected by diff hunks
+/// Uses STAGED content if available, otherwise HEAD
 pub fn detect_symbol(file: &str, hunks: &str) -> Option<String> {
-    // Only analyze source files
     if !(file.ends_with(".py") || file.ends_with(".rs")) {
         return None;
     }
 
-    // 🔥 IMPORTANT:
-    // Read from INDEX first (staged), fallback to HEAD
     let source = git::show_index(file)
-        .or_else(|| git::show_head(file))?;
+        .or_else(|| git::show_head(file))
+        .or_else(|| std::fs::read_to_string(file).ok())?;
 
     let line_offsets = compute_line_offsets(&source);
     let ranges = changed_byte_ranges(hunks, &line_offsets);
@@ -27,15 +53,10 @@ pub fn detect_symbol(file: &str, hunks: &str) -> Option<String> {
     }
 
     let mut parser = Parser::new();
-
     if file.ends_with(".py") {
-        parser
-            .set_language(&tree_sitter_python::language())
-            .ok()?;
-    } else if file.ends_with(".rs") {
-        parser
-            .set_language(&tree_sitter_rust::language())
-            .ok()?;
+        parser.set_language(&tree_sitter_python::language()).ok()?;
+    } else {
+        parser.set_language(&tree_sitter_rust::language()).ok()?;
     }
 
     let tree = parser.parse(&source, None)?;
@@ -92,7 +113,6 @@ fn changed_byte_ranges(
 }
 
 fn parse_hunk_header(line: &str) -> Option<(usize, usize)> {
-    // @@ -x,y +a,b @@
     if !line.starts_with("@@") {
         return None;
     }
@@ -144,6 +164,37 @@ fn find_enclosing_symbol(
 
     None
 }
+
+/// Used by extract_symbol_source
+fn find_symbol_node<'a>(
+    node: Node<'a>,
+    source: &str,
+    symbol: &str,
+) -> Option<Node<'a>> {
+    if let Ok(text) = node.utf8_text(source.as_bytes()) {
+        if text.contains(symbol) {
+            match node.kind() {
+                "function_definition"
+                | "class_definition"
+                | "function_item"
+                | "struct_item"
+                | "enum_item"
+                | "impl_item" => return Some(node),
+                _ => {}
+            }
+        }
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if let Some(n) = find_symbol_node(child, source, symbol) {
+            return Some(n);
+        }
+    }
+
+    None
+}
+
 
 /* ============================================================
    Python extraction

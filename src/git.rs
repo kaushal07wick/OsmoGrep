@@ -165,3 +165,28 @@ pub fn show_index(path: &str) -> Option<String> {
         None
     }
 }
+
+pub fn base_commit(base_branch: &str) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .args(["merge-base", base_branch, "HEAD"])
+        .output()
+        .ok()?;
+
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if s.is_empty() { None } else { Some(s) }
+}
+
+pub fn show_file_at(commit: &str, path: &str) -> Option<String> {
+    let spec = format!("{}:{}", commit, path);
+
+    let out = std::process::Command::new("git")
+        .args(["show", &spec])
+        .output()
+        .ok()?;
+
+    if out.status.success() {
+        Some(String::from_utf8_lossy(&out.stdout).to_string())
+    } else {
+        None
+    }
+}
