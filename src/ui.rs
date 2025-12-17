@@ -9,9 +9,7 @@ use ratatui::{
     Terminal,
 };
 
-use crate::state::{
-    AgentState, LogLevel, Phase, TestDecision, RiskLevel,
-};
+use crate::state::{AgentState, LogLevel, Phase, TestDecision, RiskLevel};
 
 /* ================= Helpers ================= */
 
@@ -42,6 +40,30 @@ fn phase_symbol(phase: &Phase) -> &'static str {
     }
 }
 
+fn language_badge(lang: &str) -> (&'static str, Color) {
+    match lang {
+        "Rust" => ("🦀 Rust", Color::Cyan),
+        "Python" => ("🐍 Python", Color::Yellow),
+        "Go" => ("🐹 Go", Color::Blue),
+        "TypeScript" => ("📘 TypeScript", Color::Blue),
+        "JavaScript" => ("📗 JavaScript", Color::Yellow),
+        "Java" => ("☕ Java", Color::Red),
+        "Ruby" => ("💎 Ruby", Color::Magenta),
+        _ => ("❓ Unknown", Color::DarkGray),
+    }
+}
+
+fn framework_badge(fw: &str) -> (&'static str, Color) {
+    match fw {
+        "CargoTest" => ("🦀🧪 Cargo", Color::Cyan),
+        "Pytest" => ("🐍🧪 Pytest", Color::Yellow),
+        "GoTest" => ("🐹🧪 Go test", Color::Blue),
+        "JUnit" => ("☕🧪 JUnit", Color::Red),
+        "None" => ("⚪ No tests", Color::DarkGray),
+        _ => ("❓ Unknown", Color::DarkGray),
+    }
+}
+
 fn decision_color(d: &TestDecision) -> Color {
     match d {
         TestDecision::Yes => Color::Red,
@@ -58,16 +80,6 @@ fn risk_color(r: &RiskLevel) -> Color {
     }
 }
 
-fn file_icon(file: &str) -> &'static str {
-    if file.ends_with(".rs") {
-        "🦀"
-    } else if file.ends_with(".py") {
-        "🐍"
-    } else {
-        "📄"
-    }
-}
-
 /* ================= UI ================= */
 
 pub fn draw_ui<B: Backend>(
@@ -81,32 +93,36 @@ pub fn draw_ui<B: Backend>(
             .direction(Direction::Vertical)
             .margin(1)
             .constraints([
-                Constraint::Length(8),
-                Constraint::Length(9),
-                Constraint::Min(8),
-                Constraint::Length(3),
+                Constraint::Length(8), // header
+                Constraint::Length(8), // status
+                Constraint::Min(6),    // execution
+                Constraint::Length(3), // command
             ])
             .split(f.size());
 
         /* ================= HEADER ================= */
 
+        let header_lines = [
+            "░█████╗░░██████╗███╗░░░███╗░█████╗░░██████╗░██████╗░███████╗██████╗░",
+            "██╔══██╗██╔════╝████╗░████║██╔══██╗██╔════╝░██╔══██╗██╔════╝██╔══██╗",
+            "██║░░██║╚█████╗░██╔████╔██║██║░░██║██║░░██╗░██████╔╝█████╗░░██████╔╝",
+            "██║░░██║░╚═══██╗██║╚██╔╝██║██║░░██║██║░░╚██╗██╔══██╗██╔══╝░░██╔═══╝░",
+            "╚█████╔╝██████╔╝██║░╚═╝░██║╚█████╔╝╚██████╔╝██║░░██║███████╗██║░░░░░",
+            "░╚════╝░╚═════╝░╚═╝░░░░░╚═╝░╚════╝░░╚═════╝░╚═╝░░╚═╝╚══════╝╚═╝░░░░░",
+        ];
+
         let header = Paragraph::new(
-            [
-                "░█████╗░░██████╗███╗░░░███╗░█████╗░░██████╗░██████╗░███████╗██████╗░",
-                "██╔══██╗██╔════╝████╗░████║██╔══██╗██╔════╝░██╔══██╗██╔════╝██╔══██╗",
-                "██║░░██║╚█████╗░██╔████╔██║██║░░██║██║░░██╗░██████╔╝█████╗░░██████╔╝",
-                "██║░░██║░╚═══██╗██║╚██╔╝██║██║░░██║██║░░╚██╗██╔══██╗██╔══╝░░██╔═══╝░",
-                "╚█████╔╝██████╔╝██║░╚═╝░██║╚█████╔╝╚██████╔╝██║░░██║███████╗██║░░░░░",
-                "░╚════╝░╚═════╝░╚═╝░░░░░╚═╝░╚════╝░░╚═════╝░╚═╝░░╚═╝╚══════╝╚═╝░░░░░",
-            ]
-            .iter()
-            .map(|l| {
-                Line::from(Span::styled(
-                    *l,
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-                ))
-            })
-            .collect::<Vec<_>>(),
+            header_lines
+                .iter()
+                .map(|l| {
+                    Line::from(Span::styled(
+                        *l,
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ))
+                })
+                .collect::<Vec<_>>(),
         )
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::BOTTOM));
@@ -116,78 +132,127 @@ pub fn draw_ui<B: Backend>(
         /* ================= STATUS ================= */
 
         let (phase_color, phase_label) = phase_style(&state.phase);
-        let phase_icon = phase_symbol(&state.phase);
+        let mut status_lines = Vec::new();
 
-        let status = Paragraph::new(vec![
-            Line::from(vec![
-                Span::styled("Phase: ", Style::default().fg(Color::Gray)),
-                Span::styled(
-                    format!("{} {}", phase_icon, phase_label),
-                    Style::default().fg(phase_color).add_modifier(Modifier::BOLD),
-                ),
-            ]),
-            Line::from(vec![
-                Span::styled("Current Branch: ", Style::default().fg(Color::Gray)),
-                Span::styled(
-                    state.current_branch.clone().unwrap_or_else(|| "unknown".into()),
-                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
-                ),
-            ]),
-            Line::from(vec![
-                Span::styled("Base Branch: ", Style::default().fg(Color::Gray)),
-                Span::styled(
-                    state.base_branch.clone().unwrap_or_else(|| "unknown".into()),
-                    Style::default().fg(Color::DarkGray),
-                ),
-            ]),
-            Line::from(vec![
-                Span::styled("Agent Branch: ", Style::default().fg(Color::Gray)),
-                Span::styled(
-                    state.agent_branch.clone().unwrap_or_else(|| "none".into()),
-                    Style::default().fg(Color::Yellow),
-                ),
-            ]),
-        ])
-        .block(Block::default().borders(Borders::ALL).title("STATUS"));
+        /* -------- Phase + spinner -------- */
+
+        let mut phase_spans = vec![
+            Span::styled("Phase: ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                format!("{} {}", phase_symbol(&state.phase), phase_label),
+                Style::default()
+                    .fg(phase_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ];
+
+        if !matches!(state.phase, Phase::Idle) {
+            phase_spans.push(Span::raw(" "));
+            phase_spans.push(Span::styled(
+                spinner(state.spinner_tick),
+                Style::default().fg(Color::Yellow),
+            ));
+        }
+
+        status_lines.push(Line::from(phase_spans));
+
+        /* -------- Branches -------- */
+
+        status_lines.push(Line::from(vec![
+            Span::styled("Current Branch: ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                state.current_branch
+                    .clone()
+                    .unwrap_or_else(|| "unknown".into()),
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
+
+        status_lines.push(Line::from(vec![
+            Span::styled("Base Branch: ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                state.base_branch.clone().unwrap_or_else(|| "unknown".into()),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]));
+
+        status_lines.push(Line::from(vec![
+            Span::styled("Agent Branch: ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                state.agent_branch.clone().unwrap_or_else(|| "none".into()),
+                Style::default().fg(Color::Yellow),
+            ),
+        ]));
+
+        /* -------- Language / framework -------- */
+
+        if let Some(lang) = &state.language {
+            let (badge, color) = language_badge(&format!("{:?}", lang));
+            status_lines.push(Line::from(vec![
+                Span::styled("Language: ", Style::default().fg(Color::Gray)),
+                Span::styled(badge, Style::default().fg(color)),
+            ]));
+        }
+
+        if let Some(fw) = &state.framework {
+            let (badge, color) = framework_badge(&format!("{:?}", fw));
+            status_lines.push(Line::from(vec![
+                Span::styled("Framework: ", Style::default().fg(Color::Gray)),
+                Span::styled(badge, Style::default().fg(color)),
+            ]));
+        }
+
+        let status = Paragraph::new(status_lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("STATUS")
+                .title_alignment(Alignment::Center),
+        );
 
         f.render_widget(status, layout[1]);
 
+
         /* ================= EXECUTION ================= */
 
-        let mut exec = Vec::new();
+        let mut exec_lines = Vec::new();
+
+        exec_lines.push(Line::from(""));
 
         if !state.logs.is_empty() {
-            for l in state.logs.iter().rev().take(20).rev() {
-                let color = match l.level {
-                    LogLevel::Info => Color::White,
-                    LogLevel::Success => Color::Green,
-                    LogLevel::Warn => Color::Yellow,
-                    LogLevel::Error => Color::Red,
-                };
-                exec.push(Line::from(Span::styled(&l.text, Style::default().fg(color))));
-            }
+            exec_lines.extend(
+                state.logs.iter().rev().take(25).rev().map(|l| {
+                    let color = match l.level {
+                        LogLevel::Info => Color::White,
+                        LogLevel::Success => Color::Green,
+                        LogLevel::Warn => Color::Yellow,
+                        LogLevel::Error => Color::Red,
+                    };
+                    Line::from(Span::styled(&l.text, Style::default().fg(color)))
+                }),
+            );
         }
 
+        // ✅ ALWAYS SHOW PER-FILE DIFF ANALYSIS (AFTER LOGS)
         if !state.diff_analysis.is_empty() {
-            exec.push(Line::from(""));
-            exec.push(Line::from(Span::styled(
+            exec_lines.push(Line::from(""));
+            exec_lines.push(Line::from(Span::styled(
                 "Diff Analysis",
                 Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
             )));
+            exec_lines.push(Line::from(""));
 
             for d in &state.diff_analysis {
-                let icon = file_icon(&d.file);
-
-                exec.push(Line::from(vec![
-                    Span::raw(format!("{} ", icon)),
+                exec_lines.push(Line::from(vec![
                     Span::styled(
                         match &d.symbol {
-                            Some(s) => format!("{} :: {}", d.file, s),
+                            Some(sym) => format!("{} :: {}", d.file, sym),
                             None => d.file.clone(),
                         },
                         Style::default().fg(Color::White),
                     ),
-                    Span::raw("  Δ  "),
+                    Span::raw(" | "),
                     Span::styled(
                         format!("{:?}", d.test_required),
                         Style::default().fg(decision_color(&d.test_required)),
@@ -199,34 +264,36 @@ pub fn draw_ui<B: Backend>(
                     ),
                 ]));
 
-                exec.push(Line::from(Span::styled(
+                exec_lines.push(Line::from(Span::styled(
                     format!("  ↳ {}", d.reason),
                     Style::default().fg(Color::DarkGray),
                 )));
-
-                if let Some(pretty) = &d.pretty {
-                    exec.push(Line::from(""));
-                    for line in pretty.lines() {
-                        exec.push(Line::from(Span::styled(
-                            format!("    {}", line),
-                            Style::default().fg(Color::DarkGray),
-                        )));
-                    }
-                }
             }
         }
 
-        let execution = Paragraph::new(exec)
-            .block(Block::default().borders(Borders::ALL).title("EXECUTION"));
+        // idle fallback
+        if state.logs.is_empty() && state.diff_analysis.is_empty() {
+            exec_lines.push(Line::from(Span::styled(
+                "Agent idle. Awaiting command.",
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+
+
+        let execution = Paragraph::new(exec_lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("EXECUTION")
+                .title_alignment(Alignment::Center),
+        );
 
         f.render_widget(execution, layout[2]);
 
         /* ================= COMMAND ================= */
 
-        let mut spans = vec![
-            Span::styled("$_ ", Style::default().fg(Color::Cyan)),
-            Span::styled(&state.input, Style::default().fg(Color::White)),
-        ];
+        let mut spans = Vec::new();
+        spans.push(Span::styled("$_ ", Style::default().fg(Color::Cyan)));
+        spans.push(Span::styled(&state.input, Style::default().fg(Color::White)));
 
         if let Some(ac) = &state.autocomplete {
             if ac.starts_with(&state.input) {
@@ -240,16 +307,12 @@ pub fn draw_ui<B: Backend>(
             }
         }
 
-        if !matches!(state.phase, Phase::Idle) {
-            spans.push(Span::raw(" "));
-            spans.push(Span::styled(
-                spinner(state.spinner_tick),
-                Style::default().fg(Color::Yellow),
-            ));
-        }
-
-        let input = Paragraph::new(Line::from(spans))
-            .block(Block::default().borders(Borders::ALL).title("COMMAND"));
+        let input = Paragraph::new(Line::from(spans)).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("COMMAND")
+                .title_alignment(Alignment::Center),
+        );
 
         input_rect = layout[3];
         f.render_widget(input, input_rect);
@@ -258,6 +321,7 @@ pub fn draw_ui<B: Backend>(
             input_rect.x + 4 + state.input.len() as u16,
             input_rect.y + 1,
         );
+
     })?;
 
     Ok(input_rect)

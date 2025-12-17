@@ -1,6 +1,7 @@
 use crate::state::{AgentState, Phase, LogLevel};
 use crate::logger::log;
 use crate::detectors::diff_analyzer::analyze_diff;
+use crate::git;
 
 pub fn handle_command(state: &mut AgentState, cmd: &str) {
     state.clear_hint();
@@ -47,8 +48,19 @@ pub fn handle_command(state: &mut AgentState, cmd: &str) {
         }
 
         "rollback" => {
-            log(state, LogLevel::Warn, "Rolling back to original branch…");
+            log(
+                state,
+                LogLevel::Warn,
+                "Deleting agent branch and rolling back to base branch…",
+            );
             state.phase = Phase::Rollback;
+        }
+
+        "bls" => {
+            let branches = git::list_branches();
+            for b in branches {
+                log(state, LogLevel::Info, b);
+            }
         }
 
         "quit" => {
@@ -86,6 +98,9 @@ pub fn update_command_hints(state: &mut AgentState) {
     } else if "rollback".starts_with(&input) {
         state.set_autocomplete("rollback");
         state.set_hint("rollback — return to original branch");
+    }else if "bls".starts_with(&input) {
+        state.set_autocomplete("bls");
+        state.set_hint("bls — list local git branches");
     } else if "quit".starts_with(&input) {
         state.set_autocomplete("quit");
         state.set_hint("quit — exit OsmoGrep");

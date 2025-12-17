@@ -42,7 +42,9 @@ fn analyze_file(
     let mut delta = None;
     let mut pretty = None;
 
-    if let Some(sym) = &symbol {
+    if let (Some(sym), TestDecision::Yes | TestDecision::Conditional) =
+        (&symbol, &decision)
+    {
         if let Some(d) = compute_symbol_delta(base_branch, file, sym) {
             pretty = Some(pretty_diff(
                 Some(&d.old_source),
@@ -51,6 +53,7 @@ fn analyze_file(
             delta = Some(d);
         }
     }
+
 
     DiffAnalysis {
         file: file.to_string(),

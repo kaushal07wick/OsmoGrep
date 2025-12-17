@@ -77,12 +77,29 @@ pub fn step(state: &mut AgentState) {
 
         /* ---------- ROLLBACK ---------- */
         Phase::Rollback => {
-            if let Some(orig) = &state.original_branch {
-                git::checkout(orig);
-                state.current_branch = Some(orig.clone());
-
-                log(state, LogLevel::Success, "Returned to original branch.");
+            // Step 1: checkout base/original branch
+            if let Some(base) = &state.base_branch {
+                git::checkout(base);
+                log(
+                    state,
+                    LogLevel::Success,
+                    format!("Checked out base branch {}", base),
+                );
             }
+
+            // Step 2: delete agent branch
+            if let Some(agent) = &state.agent_branch {
+                git::delete_branch(agent);
+                log(
+                    state,
+                    LogLevel::Success,
+                    format!("Deleted agent branch {}", agent),
+                );
+            }
+
+            // Step 3: clear agent branch state
+            state.agent_branch = None;
+
             state.phase = Phase::Idle;
         }
 

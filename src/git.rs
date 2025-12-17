@@ -37,10 +37,16 @@ pub fn find_existing_agent() -> Option<String> {
 }
 
 pub fn create_agent_branch() -> String {
-    let name = format!(
-        "osmogrep/{}",
-        chrono::Utc::now().format("%Y%m%d%H%M%S")
-    );
+    let short_hash = Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .expect("git rev-parse failed");
+
+    let hash = String::from_utf8_lossy(&short_hash.stdout)
+        .trim()
+        .to_string();
+
+    let name = format!("osmogrep/test/manual/{}", hash);
 
     Command::new("git")
         .args(["branch", &name])
@@ -49,6 +55,7 @@ pub fn create_agent_branch() -> String {
 
     name
 }
+
 
 pub fn checkout(branch: &str) {
     Command::new("git")
@@ -124,7 +131,6 @@ pub fn detect_base_branch() -> String {
    Diff (CRITICAL PART)
    ============================================================ */
 
-/// 🔥 **STAGED DIFF ONLY**
 /// This is what analyze / AST should use
 pub fn diff_cached() -> Vec<u8> {
     Command::new("git")
@@ -189,4 +195,22 @@ pub fn show_file_at(commit: &str, path: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+pub fn delete_branch(branch: &str) {
+    let _ = std::process::Command::new("git")
+        .args(["branch", "-D", branch])
+        .output();
+}
+
+pub fn list_branches() -> Vec<String> {
+    let out = std::process::Command::new("git")
+        .args(["branch"])
+        .output()
+        .expect("git branch failed");
+
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| l.to_string())
+        .collect()
 }
