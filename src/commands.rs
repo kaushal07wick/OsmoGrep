@@ -12,14 +12,19 @@ pub fn handle_command(state: &mut AgentState, cmd: &str) {
             log(
                 state,
                 LogLevel::Info,
-                "Commands: analyze | exec | new | rollback | quit | help",
+                "Commands: analyze | diff | diff <n> | exec | new | rollback | bls | quit | help",
             );
         }
+
+        /* ---------- ANALYZE ---------- */
 
         "analyze" => {
             log(state, LogLevel::Info, "Analyzing git diff for test relevance…");
 
             state.diff_analysis = analyze_diff();
+            state.selected_diff = None;
+            state.in_diff_view = false;
+            state.diff_scroll = 0;
 
             if state.diff_analysis.is_empty() {
                 log(state, LogLevel::Success, "No relevant changes detected.");
@@ -36,6 +41,81 @@ pub fn handle_command(state: &mut AgentState, cmd: &str) {
 
             state.phase = Phase::Idle;
         }
+
+        /* ---------- DIFF LIST ---------- */
+
+        "diff" => {
+            if state.diff_analysis.is_empty() {
+                log(state, LogLevel::Warn, "No diff analysis available. Run `analyze` first.");
+                return;
+            }
+
+            let messages: Vec<String> = state
+                .diff_analysis
+                .iter()
+                .enumerate()
+                .map(|(i, d)| {
+                    format!(
+                        "[{}] {}{}",
+                        i,
+                        d.file,
+                        d.symbol
+                            .as_ref()
+                            .map(|s| format!(" :: {}", s))
+                            .unwrap_or_default()
+                    )
+                })
+                .collect();
+
+            for msg in messages {
+                log(state, LogLevel::Info, msg);
+            }
+        }
+
+
+        /* ---------- DIFF VIEW ---------- */
+
+        cmd if cmd.starts_with("diff ") => {
+            if state.diff_analysis.is_empty() {
+                log(state, LogLevel::Warn, "No diff analysis available.");
+                return;
+            }
+
+            match cmd[5..].trim().parse::<usize>() {
+                Ok(idx) if idx < state.diff_analysis.len() => {
+                    if state.diff_analysis[idx].delta.is_some() {
+                        state.selected_diff = Some(idx);
+                        state.in_diff_view = true;
+                        state.diff_scroll = 0;
+
+                        log(
+                            state,
+                            LogLevel::Info,
+                            format!("Opened diff view for [{}]", idx),
+                        );
+                    } else {
+                        log(
+                            state,
+                            LogLevel::Warn,
+                            "Selected file has no symbol-level diff.",
+                        );
+                    }
+                }
+                _ => {
+                    log(state, LogLevel::Warn, "Invalid diff index.");
+                }
+            }
+        }
+
+        "close" => {
+            state.in_diff_view = false;
+            state.selected_diff = None;
+            state.diff_scroll = 0;
+
+            log(state, LogLevel::Info, "Closed diff view.");
+        }
+
+        /* ---------- BRANCH OPS ---------- */
 
         "new" => {
             log(state, LogLevel::Info, "Creating new agent branch…");
@@ -63,6 +143,8 @@ pub fn handle_command(state: &mut AgentState, cmd: &str) {
             }
         }
 
+        /* ---------- EXIT ---------- */
+
         "quit" => {
             log(state, LogLevel::Info, "Exiting OsmoGrep.");
             state.phase = Phase::Done;
@@ -75,6 +157,10 @@ pub fn handle_command(state: &mut AgentState, cmd: &str) {
         }
     }
 }
+
+/* ============================================================
+   Autocomplete + hints
+   ============================================================ */
 
 pub fn update_command_hints(state: &mut AgentState) {
     let input = state.input.clone();
@@ -89,6 +175,9 @@ pub fn update_command_hints(state: &mut AgentState) {
     if "analyze".starts_with(&input) {
         state.set_autocomplete("analyze");
         state.set_hint("analyze — inspect git diff and assess test need");
+    } else if "diff".starts_with(&input) {
+        state.set_autocomplete("diff");
+        state.set_hint("diff — list diffs, or `diff <n>` to view");
     } else if "exec".starts_with(&input) {
         state.set_autocomplete("exec");
         state.set_hint("exec — switch to agent branch");
@@ -97,10 +186,13 @@ pub fn update_command_hints(state: &mut AgentState) {
         state.set_hint("new — create a fresh agent branch");
     } else if "rollback".starts_with(&input) {
         state.set_autocomplete("rollback");
-        state.set_hint("rollback — return to original branch");
-    }else if "bls".starts_with(&input) {
+        state.set_hint("rollback — delete agent branch and return");
+    } else if "bls".starts_with(&input) {
         state.set_autocomplete("bls");
         state.set_hint("bls — list local git branches");
+    } else if "close".starts_with(&input) {
+        state.set_autocomplete("close");
+        state.set_hint("close — exit diff viewer");
     } else if "quit".starts_with(&input) {
         state.set_autocomplete("quit");
         state.set_hint("quit — exit OsmoGrep");

@@ -1,4 +1,5 @@
 use std::io;
+use ratatui::text::Text;
 
 use ratatui::{
     backend::Backend,
@@ -79,6 +80,60 @@ fn risk_color(r: &RiskLevel) -> Color {
         RiskLevel::Low => Color::Green,
     }
 }
+
+fn render_side_by_side(
+    f: &mut ratatui::Frame,
+    area: Rect,
+    old_src: &str,
+    new_src: &str,
+    scroll: usize,
+) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(50),
+            Constraint::Percentage(50),
+        ])
+        .split(area);
+
+    let height = area.height as usize;
+
+    let old_lines: Vec<&str> = old_src.lines().collect();
+    let new_lines: Vec<&str> = new_src.lines().collect();
+    let max = old_lines.len().max(new_lines.len());
+
+    let mut old_text = Text::default();
+    let mut new_text = Text::default();
+
+    for i in scroll..(scroll + height).min(max) {
+        old_text.lines.push(Line::from(Span::styled(
+            *old_lines.get(i).unwrap_or(&""),
+            Style::default().fg(Color::Green),
+        )));
+
+        new_text.lines.push(Line::from(Span::styled(
+            *new_lines.get(i).unwrap_or(&""),
+            Style::default().fg(Color::Red),
+        )));
+
+    }
+
+    let old_block = Paragraph::new(old_text).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("OLD (base)"),
+    );
+
+    let new_block = Paragraph::new(new_text).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("NEW (current)"),
+    );
+
+    f.render_widget(old_block, chunks[0]);
+    f.render_widget(new_block, chunks[1]);
+}
+
 
 /* ================= UI ================= */
 
@@ -217,77 +272,93 @@ pub fn draw_ui<B: Backend>(
         /* ================= EXECUTION ================= */
 
         let mut exec_lines = Vec::new();
-
         exec_lines.push(Line::from(""));
 
-        if !state.logs.is_empty() {
-            exec_lines.extend(
-                state.logs.iter().rev().take(25).rev().map(|l| {
-                    let color = match l.level {
-                        LogLevel::Info => Color::White,
-                        LogLevel::Success => Color::Green,
-                        LogLevel::Warn => Color::Yellow,
-                        LogLevel::Error => Color::Red,
-                    };
-                    Line::from(Span::styled(&l.text, Style::default().fg(color)))
-                }),
-            );
-        }
+        let mut rendered_custom = false;
 
-        // ✅ ALWAYS SHOW PER-FILE DIFF ANALYSIS (AFTER LOGS)
-        if !state.diff_analysis.is_empty() {
-            exec_lines.push(Line::from(""));
-            exec_lines.push(Line::from(Span::styled(
-                "Diff Analysis",
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-            )));
-            exec_lines.push(Line::from(""));
-
-            for d in &state.diff_analysis {
-                exec_lines.push(Line::from(vec![
-                    Span::styled(
-                        match &d.symbol {
-                            Some(sym) => format!("{} :: {}", d.file, sym),
-                            None => d.file.clone(),
-                        },
-                        Style::default().fg(Color::White),
-                    ),
-                    Span::raw(" | "),
-                    Span::styled(
-                        format!("{:?}", d.test_required),
-                        Style::default().fg(decision_color(&d.test_required)),
-                    ),
-                    Span::raw(" | "),
-                    Span::styled(
-                        format!("{:?}", d.risk),
-                        Style::default().fg(risk_color(&d.risk)),
-                    ),
-                ]));
-
-                exec_lines.push(Line::from(Span::styled(
-                    format!("  ↳ {}", d.reason),
-                    Style::default().fg(Color::DarkGray),
-                )));
+        /* ---------- SIDE-BY-SIDE DIFF VIEW ---------- */
+        if let Some(idx) = state.selected_diff {
+            if let Some(delta) = &state.diff_analysis[idx].delta {
+                render_side_by_side(
+                    f,
+                    layout[2],
+                    &delta.old_source,
+                    &delta.new_source,
+                    state.diff_scroll,
+                );
+                rendered_custom = true;
             }
         }
 
-        // idle fallback
-        if state.logs.is_empty() && state.diff_analysis.is_empty() {
-            exec_lines.push(Line::from(Span::styled(
-                "Agent idle. Awaiting command.",
-                Style::default().fg(Color::DarkGray),
-            )));
+        /* ---------- NORMAL EXECUTION VIEW ---------- */
+        if !rendered_custom {
+            if !state.logs.is_empty() {
+                exec_lines.extend(
+                    state.logs.iter().rev().take(25).rev().map(|l| {
+                        let color = match l.level {
+                            LogLevel::Info => Color::White,
+                            LogLevel::Success => Color::Green,
+                            LogLevel::Warn => Color::Yellow,
+                            LogLevel::Error => Color::Red,
+                        };
+                        Line::from(Span::styled(&l.text, Style::default().fg(color)))
+                    }),
+                );
+            }
+
+            if !state.diff_analysis.is_empty() {
+                exec_lines.push(Line::from(""));
+                exec_lines.push(Line::from(Span::styled(
+                    "Diff Analysis",
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                )));
+                exec_lines.push(Line::from(""));
+
+                for d in &state.diff_analysis {
+                    exec_lines.push(Line::from(vec![
+                        Span::styled(
+                            match &d.symbol {
+                                Some(sym) => format!("{} :: {}", d.file, sym),
+                                None => d.file.clone(),
+                            },
+                            Style::default().fg(Color::White),
+                        ),
+                        Span::raw(" | "),
+                        Span::styled(
+                            format!("{:?}", d.test_required),
+                            Style::default().fg(decision_color(&d.test_required)),
+                        ),
+                        Span::raw(" | "),
+                        Span::styled(
+                            format!("{:?}", d.risk),
+                            Style::default().fg(risk_color(&d.risk)),
+                        ),
+                    ]));
+
+                    exec_lines.push(Line::from(Span::styled(
+                        format!("  ↳ {}", d.reason),
+                        Style::default().fg(Color::DarkGray),
+                    )));
+                }
+            }
+
+            if state.logs.is_empty() && state.diff_analysis.is_empty() {
+                exec_lines.push(Line::from(Span::styled(
+                    "Agent idle. Awaiting command.",
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+
+            let execution = Paragraph::new(exec_lines).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("EXECUTION")
+                    .title_alignment(Alignment::Center),
+            );
+
+            f.render_widget(execution, layout[2]);
         }
 
-
-        let execution = Paragraph::new(exec_lines).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("EXECUTION")
-                .title_alignment(Alignment::Center),
-        );
-
-        f.render_widget(execution, layout[2]);
 
         /* ================= COMMAND ================= */
 

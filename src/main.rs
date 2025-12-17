@@ -60,6 +60,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         spinner_tick: 0,
         diff_analysis: Vec::new(),
 
+        selected_diff: None,
+        diff_scroll: 0,
+        in_diff_view: false,
 
     };
 
@@ -99,6 +102,26 @@ fn main() -> Result<(), Box<dyn Error>> {
                     KeyCode::Down => {
                         state.history_next();
                         update_command_hints(&mut state);
+                    }
+                    KeyCode::PageUp => {
+                        if !state.diff_analysis.is_empty() {
+                            let next = state.selected_diff.unwrap_or(0).saturating_sub(1);
+                            state.selected_diff = Some(next);
+                        }
+                    }
+
+                    KeyCode::PageDown => {
+                        if !state.diff_analysis.is_empty() {
+                            let next = state.selected_diff.unwrap_or(0) + 1;
+                            if next < state.diff_analysis.len() {
+                                state.selected_diff = Some(next);
+                            }
+                        }
+                    }
+
+                    KeyCode::Enter if state.selected_diff.is_some() => {
+                        state.in_diff_view = true;
+                        state.diff_scroll = 0;
                     }
 
                     KeyCode::Tab => {

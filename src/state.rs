@@ -119,6 +119,11 @@ pub struct AgentState {
 
     /* ui */
     pub spinner_tick: usize,
+
+    /* diff viewer */
+    pub selected_diff: Option<usize>, // which DiffAnalysis index
+    pub diff_scroll: usize,           // vertical scroll
+    pub in_diff_view: bool,           // are we viewing side-by-side?
 }
 
 /* ---------- helpers ---------- */
