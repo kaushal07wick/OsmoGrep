@@ -1,6 +1,8 @@
 use std::io;
-use ratatui::text::Text;
-
+use similar::ChangeTag;
+use crate::Focus;
+use crate::state::{DiffLine, DiffKind};
+use crate::state::SymbolDelta;
 use ratatui::{
     backend::Backend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -18,6 +20,27 @@ fn spinner(frame: usize) -> &'static str {
     const FRAMES: [&str; 4] = ["⠋", "⠙", "⠹", "⠸"];
     FRAMES[frame % FRAMES.len()]
 }
+
+fn ln(n: usize, color: Color) -> Span<'static> {
+    Span::styled(format!("{:>4} ", n), Style::default().fg(color))
+}
+
+fn inline_diff(old: &str, new: &str, color: Color) -> Vec<Span<'static>> {
+    use similar::TextDiff;
+
+    let diff = TextDiff::from_chars(old, new);
+
+    diff.iter_all_changes().map(|c| {
+        let style = match c.tag() {
+            ChangeTag::Insert | ChangeTag::Delete => {
+                Style::default().fg(color).add_modifier(Modifier::UNDERLINED)
+            }
+            _ => Style::default().fg(color),
+        };
+        Span::styled(c.to_string(), style)
+    }).collect()
+}
+
 
 fn phase_style(phase: &Phase) -> (Color, &'static str) {
     match phase {
@@ -81,57 +104,197 @@ fn risk_color(r: &RiskLevel) -> Color {
     }
 }
 
+fn hclip(s: &str, x: usize, width: usize) -> String {
+    s.chars()
+        .skip(x)
+        .take(width)
+        .collect()
+}
+
+
 fn render_side_by_side(
     f: &mut ratatui::Frame,
     area: Rect,
-    old_src: &str,
-    new_src: &str,
+    delta: &SymbolDelta,
     scroll: usize,
+    state: &AgentState,
 ) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(50),
-            Constraint::Percentage(50),
-        ])
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(area);
 
     let height = area.height as usize;
+    let gutter = 5; // line number width
+    let content_width = chunks[0].width.saturating_sub(gutter + 1) as usize;
 
-    let old_lines: Vec<&str> = old_src.lines().collect();
-    let new_lines: Vec<&str> = new_src.lines().collect();
-    let max = old_lines.len().max(new_lines.len());
+    let mut old_iter = delta.old_source.lines();
+    let mut new_iter = delta.new_source.lines();
 
-    let mut old_text = Text::default();
-    let mut new_text = Text::default();
+    // (text, color, is_hunk, line_no)
+    let mut old_buf: Vec<(String, Color, bool, Option<usize>)> = Vec::new();
+    let mut new_buf: Vec<(String, Color, bool, Option<usize>)> = Vec::new();
 
-    for i in scroll..(scroll + height).min(max) {
-        old_text.lines.push(Line::from(Span::styled(
-            *old_lines.get(i).unwrap_or(&""),
-            Style::default().fg(Color::Green),
-        )));
+    let mut old_ln = 1usize;
+    let mut new_ln = 1usize;
 
-        new_text.lines.push(Line::from(Span::styled(
-            *new_lines.get(i).unwrap_or(&""),
-            Style::default().fg(Color::Red),
-        )));
+    for line in &delta.lines {
+        match &line.kind {
+            DiffKind::Hunk(h) => {
+                old_buf.push((h.to_string(), Color::Cyan, true, None));
+                new_buf.push((h.to_string(), Color::Cyan, true, None));
+            }
 
+            DiffKind::Line(ChangeTag::Equal) => {
+                let o = old_iter.next().unwrap_or("");
+                let n = new_iter.next().unwrap_or("");
+                old_buf.push((o.to_string(), Color::DarkGray, false, Some(old_ln)));
+                new_buf.push((n.to_string(), Color::DarkGray, false, Some(new_ln)));
+                old_ln += 1;
+                new_ln += 1;
+            }
+
+            DiffKind::Line(ChangeTag::Delete) => {
+                let o = old_iter.next().unwrap_or("");
+                old_buf.push((o.to_string(), Color::Red, false, Some(old_ln)));
+                new_buf.push(("".into(), Color::DarkGray, false, None));
+                old_ln += 1;
+            }
+
+            DiffKind::Line(ChangeTag::Insert) => {
+                let n = new_iter.next().unwrap_or("");
+                old_buf.push(("".into(), Color::DarkGray, false, None));
+                new_buf.push((n.to_string(), Color::Green, false, Some(new_ln)));
+                new_ln += 1;
+            }
+        }
     }
 
-    let old_block = Paragraph::new(old_text).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title("OLD (base)"),
+    let total = old_buf.len();
+    let start = scroll.min(total);
+    let end = (start + height).min(total);
+
+    let mut left = Vec::new();
+    let mut right = Vec::new();
+
+    for i in start..end {
+        let (ot, oc, oh, oln) = &old_buf[i];
+        let (nt, nc, nh, nln) = &new_buf[i];
+
+        let ln_span = match (oln, nln) {
+            (Some(n), _) => ln(*n, Color::DarkGray),
+            _ => Span::raw("     "),
+        };
+
+        // clip AFTER line numbers, BEFORE rendering
+        let ot_clip = hclip(ot, state.diff_scroll_x, content_width);
+        let nt_clip = hclip(nt, state.diff_scroll_x, content_width);
+
+        let old_spans = if !oh && !nh && ot != nt && !ot.is_empty() && !nt.is_empty() {
+            inline_diff(&ot_clip, &nt_clip, *oc)
+        } else {
+            vec![Span::styled(ot_clip.clone(), Style::default().fg(*oc))]
+        };
+
+        let new_spans = if !oh && !nh && ot != nt && !ot.is_empty() && !nt.is_empty() {
+            inline_diff(&ot_clip, &nt_clip, *nc)
+        } else {
+            vec![Span::styled(nt_clip.clone(), Style::default().fg(*nc))]
+        };
+
+
+        left.push(Line::from(
+            std::iter::once(ln_span.clone())
+                .chain(old_spans)
+                .collect::<Vec<_>>(),
+        ));
+
+        right.push(Line::from(
+            std::iter::once(ln_span)
+                .chain(new_spans)
+                .collect::<Vec<_>>(),
+        ));
+    }
+
+    let title_style = if state.focus == Focus::Diff {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+    };
+
+    f.render_widget(
+        Paragraph::new(left).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled("OLD", title_style))
+                .title_alignment(Alignment::Center),
+        ),
+        chunks[0],
     );
 
-    let new_block = Paragraph::new(new_text).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title("NEW (current)"),
+    f.render_widget(
+        Paragraph::new(right).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled("NEW", title_style))
+                .title_alignment(Alignment::Center),
+        ),
+        chunks[1],
     );
+}
 
-    f.render_widget(old_block, chunks[0]);
-    f.render_widget(new_block, chunks[1]);
+
+fn render_unified_diff(
+    f: &mut ratatui::Frame,
+    area: Rect,
+    lines: &[DiffLine],
+    scroll: usize,
+    state: &AgentState,
+) {
+    let height = area.height as usize;
+
+    let visible: Vec<Line> = lines
+        .iter()
+        .skip(scroll)
+        .take(height)
+        .map(|l| match &l.kind {
+            DiffKind::Hunk(h) => Line::from(Span::styled(
+                h,
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )),
+
+            DiffKind::Line(tag) => {
+                let (prefix, color) = match tag {
+                    ChangeTag::Delete => ("- ", Color::Red),
+                    ChangeTag::Insert => ("+ ", Color::Green),
+                    ChangeTag::Equal => ("  ", Color::DarkGray),
+                };
+
+                Line::from(vec![
+                    Span::styled(prefix, Style::default().fg(color)),
+                    Span::styled(
+                        l.text.trim_end_matches('\n'),
+                        Style::default().fg(color),
+                    ),
+                ])
+            }
+        })
+        .collect();
+
+    let diff_title = if state.focus == Focus::Diff {
+            Span::styled("DIFF", Style::default().fg(Color::Yellow))
+        } else {
+            Span::raw("DIFF")
+        };
+
+        f.render_widget(
+            Paragraph::new(visible)
+                .block(Block::default().borders(Borders::ALL).title(diff_title)),
+            area,
+        );
+
 }
 
 
@@ -140,8 +303,11 @@ fn render_side_by_side(
 pub fn draw_ui<B: Backend>(
     terminal: &mut Terminal<B>,
     state: &AgentState,
-) -> io::Result<Rect> {
+) -> io::Result<(Rect, Rect, Rect)>
+{
     let mut input_rect = Rect::default();
+    let mut diff_rect = Rect::default();
+    let mut exec_rect = Rect::default();
 
     terminal.draw(|f| {
         let layout = Layout::default()
@@ -282,74 +448,103 @@ pub fn draw_ui<B: Backend>(
                 render_side_by_side(
                     f,
                     layout[2],
-                    &delta.old_source,
-                    &delta.new_source,
+                    delta,
                     state.diff_scroll,
+                    state,
                 );
+
                 rendered_custom = true;
             }
         }
 
         /* ---------- NORMAL EXECUTION VIEW ---------- */
         if !rendered_custom {
-            if !state.logs.is_empty() {
-                exec_lines.extend(
-                    state.logs.iter().rev().take(25).rev().map(|l| {
-                        let color = match l.level {
-                            LogLevel::Info => Color::White,
-                            LogLevel::Success => Color::Green,
-                            LogLevel::Warn => Color::Yellow,
-                            LogLevel::Error => Color::Red,
-                        };
-                        Line::from(Span::styled(&l.text, Style::default().fg(color)))
-                    }),
-                );
-            }
+            use std::time::{Duration, Instant};
 
-            if !state.diff_analysis.is_empty() {
-                exec_lines.push(Line::from(""));
-                exec_lines.push(Line::from(Span::styled(
-                    "Diff Analysis",
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-                )));
-                exec_lines.push(Line::from(""));
+            let height = layout[2].height.saturating_sub(2) as usize; // borders
+            let mut all_lines: Vec<Line> = Vec::new();
+            let mut diff_idx = 0;
 
-                for d in &state.diff_analysis {
-                    exec_lines.push(Line::from(vec![
-                        Span::styled(
-                            match &d.symbol {
-                                Some(sym) => format!("{} :: {}", d.file, sym),
-                                None => d.file.clone(),
-                            },
-                            Style::default().fg(Color::White),
-                        ),
-                        Span::raw(" | "),
-                        Span::styled(
-                            format!("{:?}", d.test_required),
-                            Style::default().fg(decision_color(&d.test_required)),
-                        ),
-                        Span::raw(" | "),
-                        Span::styled(
-                            format!("{:?}", d.risk),
-                            Style::default().fg(risk_color(&d.risk)),
-                        ),
-                    ]));
+            let now = Instant::now();
+            let fade_after = Duration::from_secs(3);
 
-                    exec_lines.push(Line::from(Span::styled(
-                        format!("  ↳ {}", d.reason),
-                        Style::default().fg(Color::DarkGray),
+            /* -------- BUILD FULL CHRONOLOGICAL STREAM -------- */
+
+            for l in &state.logs {
+                let expired = matches!(l.level, LogLevel::Warn | LogLevel::Error)
+                    && now.duration_since(l.at) > fade_after;
+
+                if expired {
+                    continue; // 🔥 fade away
+                }
+
+                if l.text == "__DIFF_ANALYSIS__" {
+                    all_lines.push(Line::from(""));
+                    all_lines.push(Line::from(Span::styled(
+                        "Diff Analysis",
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
                     )));
+                    all_lines.push(Line::from(""));
+
+                    while diff_idx < state.diff_analysis.len() {
+                        let d = &state.diff_analysis[diff_idx];
+                        diff_idx += 1;
+
+                        all_lines.push(Line::from(vec![
+                            Span::styled(
+                                match &d.symbol {
+                                    Some(sym) => format!("{} :: {}", d.file, sym),
+                                    None => d.file.clone(),
+                                },
+                                Style::default().fg(Color::White),
+                            ),
+                            Span::raw(" | "),
+                            Span::styled(
+                                format!("{:?}", d.test_required),
+                                Style::default().fg(decision_color(&d.test_required)),
+                            ),
+                            Span::raw(" | "),
+                            Span::styled(
+                                format!("{:?}", d.risk),
+                                Style::default().fg(risk_color(&d.risk)),
+                            ),
+                        ]));
+
+                        all_lines.push(Line::from(Span::styled(
+                            format!("  ↳ {}", d.reason),
+                            Style::default().fg(Color::DarkGray),
+                        )));
+                    }
+                } else {
+                    let color = match l.level {
+                        LogLevel::Info => Color::White,
+                        LogLevel::Success => Color::Green,
+                        LogLevel::Warn => Color::Yellow,
+                        LogLevel::Error => Color::Red,
+                    };
+
+                    let style = if matches!(l.level, LogLevel::Warn | LogLevel::Error)
+                        && now.duration_since(l.at).as_secs_f32() > 2.0
+                    {
+                        Style::default().fg(color).add_modifier(Modifier::DIM)
+                    } else {
+                        Style::default().fg(color)
+                    };
+
+                    all_lines.push(Line::from(Span::styled(&l.text, style)));
                 }
             }
 
-            if state.logs.is_empty() && state.diff_analysis.is_empty() {
-                exec_lines.push(Line::from(Span::styled(
-                    "Agent idle. Awaiting command.",
-                    Style::default().fg(Color::DarkGray),
-                )));
-            }
+            /* -------- APPLY SCROLL -------- */
 
-            let execution = Paragraph::new(exec_lines).block(
+            let total = all_lines.len();
+            let start = state.exec_scroll.min(total);
+            let end = (start + height).min(total);
+            let visible = all_lines[start..end].to_vec();
+
+            let execution = Paragraph::new(visible).block(
                 Block::default()
                     .borders(Borders::ALL)
                     .title("EXECUTION")
@@ -357,8 +552,15 @@ pub fn draw_ui<B: Backend>(
             );
 
             f.render_widget(execution, layout[2]);
+            exec_rect = layout[2];
         }
 
+
+        /* -------- DIFF RECT -------- */
+
+        if state.selected_diff.is_some() {
+            diff_rect = layout[2];
+        }
 
         /* ================= COMMAND ================= */
 
@@ -388,12 +590,14 @@ pub fn draw_ui<B: Backend>(
         input_rect = layout[3];
         f.render_widget(input, input_rect);
 
-        f.set_cursor(
-            input_rect.x + 4 + state.input.len() as u16,
-            input_rect.y + 1,
-        );
+        if state.focus == Focus::Input {
+            f.set_cursor(
+                input_rect.x + 4 + state.input.len() as u16,
+                input_rect.y + 1,
+            );
+        }
 
     })?;
 
-    Ok(input_rect)
+    Ok((input_rect, diff_rect, exec_rect))
 }

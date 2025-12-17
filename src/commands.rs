@@ -2,6 +2,8 @@ use crate::state::{AgentState, Phase, LogLevel};
 use crate::logger::log;
 use crate::detectors::diff_analyzer::analyze_diff;
 use crate::git;
+use crate::logger::log_diff_analysis;
+
 
 pub fn handle_command(state: &mut AgentState, cmd: &str) {
     state.clear_hint();
@@ -19,28 +21,30 @@ pub fn handle_command(state: &mut AgentState, cmd: &str) {
         /* ---------- ANALYZE ---------- */
 
         "analyze" => {
-            log(state, LogLevel::Info, "Analyzing git diff for test relevance…");
+        log(state, LogLevel::Info, "Analyzing git diff for test relevance…");
 
-            state.diff_analysis = analyze_diff();
-            state.selected_diff = None;
-            state.in_diff_view = false;
-            state.diff_scroll = 0;
+        state.diff_analysis = analyze_diff();
+        log_diff_analysis(state); // 🔥 THIS LINE
 
-            if state.diff_analysis.is_empty() {
-                log(state, LogLevel::Success, "No relevant changes detected.");
-            } else {
-                log(
-                    state,
-                    LogLevel::Success,
-                    format!(
-                        "Diff analysis complete: {} file(s) analyzed.",
-                        state.diff_analysis.len()
-                    ),
-                );
-            }
+        state.selected_diff = None;
+        state.in_diff_view = false;
+        state.diff_scroll = 0;
 
-            state.phase = Phase::Idle;
+        if state.diff_analysis.is_empty() {
+            log(state, LogLevel::Success, "No relevant changes detected.");
+        } else {
+            log(
+                state,
+                LogLevel::Success,
+                format!(
+                    "Diff analysis complete: {} file(s) analyzed.",
+                    state.diff_analysis.len()
+                ),
+            );
         }
+
+        state.phase = Phase::Idle;
+    }
 
         /* ---------- DIFF LIST ---------- */
 

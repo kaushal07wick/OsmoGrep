@@ -1,4 +1,7 @@
+use std::time::Instant;
+
 use crate::detectors::{framework::TestFramework, language::Language};
+use similar::{ChangeTag, TextDiff};
 
 /* ---------- lifecycle ---------- */
 
@@ -21,7 +24,9 @@ pub struct SymbolDelta {
     pub symbol: String,
     pub old_source: String,
     pub new_source: String,
+    pub lines: Vec<DiffLine>,
 }
+
 
 /* ---------- logging ---------- */
 
@@ -37,6 +42,7 @@ pub enum LogLevel {
 pub struct LogLine {
     pub level: LogLevel,
     pub text: String,
+    pub at: Instant,
 }
 
 /* ---------- diff analysis ---------- */
@@ -52,6 +58,26 @@ pub enum ChangeSurface {
     Observability,
     Cosmetic,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Focus {
+    Input,
+    Diff,
+    Execution, // ✅ ADD THIS
+}
+
+#[derive(Clone, Debug)]
+pub enum DiffKind {
+    Hunk(String),      // @@ -a,b +c,d @@
+    Line(ChangeTag),   // + - or context
+}
+
+#[derive(Clone, Debug)]
+pub struct DiffLine {
+    pub kind: DiffKind,
+    pub text: String,
+}
+
 
 #[derive(Debug, Clone)]
 pub enum TestDecision {
@@ -124,6 +150,13 @@ pub struct AgentState {
     pub selected_diff: Option<usize>, // which DiffAnalysis index
     pub diff_scroll: usize,           // vertical scroll
     pub in_diff_view: bool,           // are we viewing side-by-side?
+    pub diff_side_by_side: bool,
+    pub focus: Focus,
+    pub exec_scroll: usize,
+    pub diff_rendered_at: Option<usize>,
+    pub diff_scroll_y: usize,
+    pub diff_scroll_x: usize,
+
 }
 
 /* ---------- helpers ---------- */
@@ -196,4 +229,25 @@ impl AgentState {
     pub fn clear_autocomplete(&mut self) {
         self.autocomplete = None;
     }
+
+    pub fn compute_diff(old: &str, new: &str) -> Vec<DiffLine> {
+        let diff = TextDiff::from_lines(old, new);
+        let mut out = Vec::new();
+
+        // single synthetic hunk header
+        out.push(DiffLine {
+            kind: DiffKind::Hunk("@@ @@".to_string()),
+            text: String::new(),
+        });
+
+        for change in diff.iter_all_changes() {
+            out.push(DiffLine {
+                kind: DiffKind::Line(change.tag()),
+                text: change.to_string(),
+            });
+        }
+
+        out
+    }
+
 }

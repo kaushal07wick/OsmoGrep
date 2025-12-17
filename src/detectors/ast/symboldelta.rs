@@ -1,6 +1,7 @@
+/* src/detectors/ast/symboldelta.rs */
 use crate::git;
 use crate::detectors::ast::ast::extract_symbol_source;
-use crate::state::SymbolDelta;
+use crate::state::{AgentState, SymbolDelta};
 
 pub fn compute_symbol_delta(
     base_branch: &str,
@@ -23,7 +24,8 @@ pub fn compute_symbol_delta(
     Some(SymbolDelta {
         file: file.to_string(),
         symbol: symbol.to_string(),
-        old_source: old_src,
-        new_source: new_src,
+        old_source: old_src.clone(),
+        new_source: new_src.clone(),
+        lines: AgentState::compute_diff(&old_src, &new_src),
     })
 }
