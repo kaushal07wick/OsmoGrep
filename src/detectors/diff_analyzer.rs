@@ -1,8 +1,9 @@
 use crate::git;
 use crate::state::{ChangeSurface, DiffAnalysis, RiskLevel, TestDecision};
+use crate::detectors::ast::ast::detect_symbol;
 
 pub fn analyze_diff() -> Vec<DiffAnalysis> {
-    let raw = git::diff();
+    let raw = git::diff_cached();
     let diff = String::from_utf8_lossy(&raw);
 
     split_diff_by_file(&diff)
@@ -11,15 +12,24 @@ pub fn analyze_diff() -> Vec<DiffAnalysis> {
         .collect()
 }
 
-/* ---------- core analysis ---------- */
+/* ============================================================
+   Core analysis
+   ============================================================ */
 
 fn analyze_file(file: &str, hunks: &str) -> DiffAnalysis {
     let surface = detect_surface(file, hunks);
-    let (decision, risk, reason) = decide_test(&surface);
+    let (decision, risk, reason) = decide_test(file, &surface);
+
+    // AST symbol detection for Rust + Python only
+    let symbol = if is_supported_code_file(file) {
+        detect_symbol(file, hunks)
+    } else {
+        None
+    };
 
     DiffAnalysis {
         file: file.to_string(),
-        symbol: None,
+        symbol,
         surface,
         test_required: decision,
         risk,
@@ -27,14 +37,22 @@ fn analyze_file(file: &str, hunks: &str) -> DiffAnalysis {
     }
 }
 
-/* ---------- surface detection ---------- */
+/* ============================================================
+   Surface detection
+   ============================================================ */
 
 fn detect_surface(file: &str, hunks: &str) -> ChangeSurface {
-    // File intent bias (NOT exclusion)
-    if is_ui_file(file) && !has_behavior(hunks) {
+    // Config files → never require tests
+    if is_config_file(file) {
         return ChangeSurface::Cosmetic;
     }
 
+    // Non-code files → no importance
+    if !is_supported_code_file(file) {
+        return ChangeSurface::Cosmetic;
+    }
+
+    // Orchestration files
     if is_orchestration_file(file) {
         return ChangeSurface::Integration;
     }
@@ -55,31 +73,48 @@ fn detect_surface(file: &str, hunks: &str) -> ChangeSurface {
     }
 }
 
-/* ---------- decision table ---------- */
+/* ============================================================
+   Decision table
+   ============================================================ */
 
-fn decide_test(surface: &ChangeSurface) -> (TestDecision, RiskLevel, String)
- {
+fn decide_test(
+    file: &str,
+    surface: &ChangeSurface,
+) -> (TestDecision, RiskLevel, String) {
+    // Config & non-code files
+    if is_config_file(file) || !is_supported_code_file(file) {
+        return (
+            TestDecision::No,
+            RiskLevel::Low,
+            "Non-runtime or configuration change".into(),
+        );
+    }
+
     match surface {
         ChangeSurface::Cosmetic => (
             TestDecision::No,
             RiskLevel::Low,
-            "UI or cosmetic-only change".into(),
+            "Cosmetic or formatting-only change".into(),
         ),
+
         ChangeSurface::Observability => (
             TestDecision::No,
             RiskLevel::Low,
-            "Logging/metrics change only".into(),
+            "Logging or metrics change only".into(),
         ),
+
         ChangeSurface::PureLogic => (
             TestDecision::Conditional,
             RiskLevel::Medium,
             "Logic modified; test if uncovered".into(),
         ),
+
         ChangeSurface::Integration => (
             TestDecision::Conditional,
             RiskLevel::Medium,
-            "Orchestration logic changed".into(),
+            "Orchestration or wiring logic changed".into(),
         ),
+
         ChangeSurface::Branching
         | ChangeSurface::Contract
         | ChangeSurface::ErrorPath
@@ -91,21 +126,38 @@ fn decide_test(surface: &ChangeSurface) -> (TestDecision, RiskLevel, String)
     }
 }
 
-/* ---------- file classification ---------- */
+/* ============================================================
+   File classification
+   ============================================================ */
 
-fn is_ui_file(file: &str) -> bool {
-    file.ends_with("/ui.rs") || file == "ui.rs"
+fn is_supported_code_file(file: &str) -> bool {
+    file.ends_with(".rs") || file.ends_with(".py")
+}
+
+fn is_config_file(file: &str) -> bool {
+    matches!(
+        file,
+        "Cargo.toml"
+            | "Cargo.lock"
+            | "pyproject.toml"
+            | "requirements.txt"
+    ) || file.ends_with(".json")
+        || file.ends_with(".yaml")
+        || file.ends_with(".yml")
 }
 
 fn is_orchestration_file(file: &str) -> bool {
-    matches!(file, "src/main.rs" | "src/commands.rs" | "src/machine.rs")
+    matches!(
+        file,
+        "src/main.rs"
+            | "src/commands.rs"
+            | "src/machine.rs"
+    )
 }
 
-/* ---------- content heuristics ---------- */
-
-fn has_behavior(text: &str) -> bool {
-    is_branching(text) || is_contract(text) || is_stateful(text)
-}
+/* ============================================================
+   Content heuristics
+   ============================================================ */
 
 fn is_observability(text: &str) -> bool {
     text.contains("println!")
@@ -138,7 +190,9 @@ fn is_stateful(text: &str) -> bool {
         || text.contains("DELETE")
 }
 
-/* ---------- diff parsing (FIXED) ---------- */
+/* ============================================================
+   Diff parsing
+   ============================================================ */
 
 fn split_diff_by_file(diff: &str) -> Vec<(String, String)> {
     let mut results = Vec::new();

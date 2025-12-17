@@ -219,7 +219,13 @@ pub fn draw_ui<B: Backend>(
 
             for d in &state.diff_analysis {
                 exec_lines.push(Line::from(vec![
-                    Span::styled(&d.file, Style::default().fg(Color::White)),
+                    Span::styled(
+                        match &d.symbol {
+                            Some(sym) => format!("{} :: {}", d.file, sym),
+                            None => d.file.clone(),
+                        },
+                        Style::default().fg(Color::White),
+                    ),
                     Span::raw(" | "),
                     Span::styled(
                         format!("{:?}", d.test_required),
