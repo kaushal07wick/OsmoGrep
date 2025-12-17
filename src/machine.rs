@@ -17,7 +17,9 @@ pub fn step(state: &mut AgentState) {
                 return;
             }
 
-            state.original_branch = Some(git::current_branch());
+            let current = git::current_branch();
+            state.current_branch = Some(current.clone());
+            state.original_branch = Some(current);
 
             let root = Path::new(".");
             state.language = Some(detect_language(root));
@@ -63,7 +65,9 @@ pub fn step(state: &mut AgentState) {
         Phase::ExecuteAgent => {
             if let Some(branch) = &state.agent_branch {
                 git::checkout(branch);
-                log(state, LogLevel::Success, format!("Moved to agent branch {}", branch));
+                state.current_branch = Some(branch.clone());
+
+                log(state, LogLevel::Success, format!("Moved to branch {}", branch));
             } else {
                 log(state, LogLevel::Warn, "No agent branch to execute on.");
             }
@@ -75,6 +79,8 @@ pub fn step(state: &mut AgentState) {
         Phase::Rollback => {
             if let Some(orig) = &state.original_branch {
                 git::checkout(orig);
+                state.current_branch = Some(orig.clone());
+
                 log(state, LogLevel::Success, "Returned to original branch.");
             }
             state.phase = Phase::Idle;

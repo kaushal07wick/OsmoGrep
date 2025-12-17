@@ -43,6 +43,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         base_branch: None,
         original_branch: None,
         agent_branch: None,
+        current_branch: None,
 
         input: String::new(),
         input_focused: true,

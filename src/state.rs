@@ -1,5 +1,7 @@
 use crate::detectors::{framework::TestFramework, language::Language};
 
+/* ---------- lifecycle ---------- */
+
 #[derive(Clone, Debug)]
 pub enum Phase {
     Init,
@@ -11,7 +13,8 @@ pub enum Phase {
     Done,
 }
 
-/*---------- symbol delta----------- */
+/* ---------- symbol delta ---------- */
+
 #[derive(Debug, Clone)]
 pub struct SymbolDelta {
     pub file: String,
@@ -19,7 +22,6 @@ pub struct SymbolDelta {
     pub old_source: String,
     pub new_source: String,
 }
-
 
 /* ---------- logging ---------- */
 
@@ -82,8 +84,17 @@ pub struct DiffAnalysis {
 pub struct AgentState {
     /* lifecycle */
     pub phase: Phase,
+
+    /// Base comparison branch (e.g. `master`, `main`)
     pub base_branch: Option<String>,
+
+    /// Branch user started on
     pub original_branch: Option<String>,
+
+    /// Currently checked-out branch (source of truth)
+    pub current_branch: Option<String>,
+
+    /// Agent working branch (usually osmogrep/…)
     pub agent_branch: Option<String>,
 
     /* input */

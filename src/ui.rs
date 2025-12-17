@@ -143,12 +143,24 @@ pub fn draw_ui<B: Backend>(
         ]));
 
         status_lines.push(Line::from(vec![
+            Span::styled("Current Branch: ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                state.current_branch
+                    .clone()
+                    .unwrap_or_else(|| "unknown".into()),
+                Style::default().fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
+
+        status_lines.push(Line::from(vec![
             Span::styled("Base Branch: ", Style::default().fg(Color::Gray)),
             Span::styled(
                 state.base_branch.clone().unwrap_or_else(|| "unknown".into()),
-                Style::default().fg(Color::White),
+                Style::default().fg(Color::DarkGray),
             ),
         ]));
+
 
         status_lines.push(Line::from(vec![
             Span::styled("Agent Branch: ", Style::default().fg(Color::Gray)),
