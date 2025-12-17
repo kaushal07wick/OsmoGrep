@@ -15,6 +15,7 @@ pub fn current_branch() -> String {
 }
 
 pub fn detect_base_branch() -> String {
+    // Try origin/HEAD first
     let out = Command::new("git")
         .args(["symbolic-ref", "refs/remotes/origin/HEAD"])
         .output();
@@ -22,9 +23,24 @@ pub fn detect_base_branch() -> String {
     if let Ok(o) = out {
         let s = String::from_utf8_lossy(&o.stdout);
         if let Some(b) = s.trim().split('/').last() {
-            return b.to_string();
+            if !b.is_empty() {
+                return b.to_string();
+            }
         }
     }
+
+    // Fallback: prefer main if it exists
+    let out = Command::new("git")
+        .args(["show-ref", "--verify", "--quiet", "refs/heads/main"])
+        .status();
+
+    if let Ok(status) = out {
+        if status.success() {
+            return "main".into();
+        }
+    }
+
+    // Final hard fallback
     "master".into()
 }
 
