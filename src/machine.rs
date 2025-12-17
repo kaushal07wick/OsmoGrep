@@ -1,13 +1,9 @@
-// src/machine.rs
 use std::path::Path;
 
 use crate::{
     git,
     logger::log,
-    detectors::{
-        language::detect_language,
-        framework::detect_framework,
-    },
+    detectors::{language::detect_language, framework::detect_framework},
 };
 use crate::state::{AgentState, LogLevel, Phase};
 
@@ -21,23 +17,11 @@ pub fn step(state: &mut AgentState) {
                 return;
             }
 
-            // capture original branch
             state.original_branch = Some(git::current_branch());
 
-            // === STEP 1: STATIC DETECTION ===
             let root = Path::new(".");
-
-            let lang = detect_language(root);
-            let fw = detect_framework(root);
-
-            state.language = Some(lang.clone());
-            state.framework = Some(fw.clone());
-
-            log(
-                state,
-                LogLevel::Info,
-                format!("Detected language: {:?}, framework: {:?}", lang, fw),
-            );
+            state.language = Some(detect_language(root));
+            state.framework = Some(detect_framework(root));
 
             state.phase = Phase::DetectBase;
         }
@@ -48,10 +32,9 @@ pub fn step(state: &mut AgentState) {
             state.base_branch = Some(base.clone());
             log(state, LogLevel::Success, format!("Base branch: {}", base));
 
-            // reuse existing agent branch if present
             if let Some(agent) = git::find_existing_agent() {
                 state.agent_branch = Some(agent.clone());
-                log(state, LogLevel::Info, format!("Reusing {}", agent));
+                log(state, LogLevel::Info, format!("Found agent branch {}", agent));
             }
 
             if git::working_tree_dirty() {
@@ -65,27 +48,24 @@ pub fn step(state: &mut AgentState) {
         Phase::CreateNewAgent => {
             let branch = git::create_agent_branch();
             state.agent_branch = Some(branch.clone());
-            log(state, LogLevel::Success, format!("Created {}", branch));
+
+            log(state, LogLevel::Success, format!("Created agent branch {}", branch));
+            log(
+                state,
+                LogLevel::Info,
+                "Branch created but not checked out. Use `exec` to switch.",
+            );
+
             state.phase = Phase::Idle;
         }
 
-        /* ---------- EXECUTE (NO TESTS YET) ---------- */
+        /* ---------- EXECUTE ---------- */
         Phase::ExecuteAgent => {
-            if let Some(branch) = state.agent_branch.clone() {
-                git::checkout(&branch);
-                log(state, LogLevel::Info, format!("Checked out {}", branch));
-
-                // NOTE:
-                // Diff application stays here for now,
-                // but STEP 1 does NOT depend on this.
-                let diff = git::diff();
-                if diff.is_empty() {
-                    log(state, LogLevel::Info, "No working tree changes to apply.");
-                } else if let Err(e) = git::apply_diff(&diff) {
-                    log(state, LogLevel::Error, e);
-                } else {
-                    log(state, LogLevel::Success, "Working tree applied.");
-                }
+            if let Some(branch) = &state.agent_branch {
+                git::checkout(branch);
+                log(state, LogLevel::Success, format!("Moved to agent branch {}", branch));
+            } else {
+                log(state, LogLevel::Warn, "No agent branch to execute on.");
             }
 
             state.phase = Phase::Idle;
@@ -93,8 +73,8 @@ pub fn step(state: &mut AgentState) {
 
         /* ---------- ROLLBACK ---------- */
         Phase::Rollback => {
-            if let Some(orig) = state.original_branch.clone() {
-                git::checkout(&orig);
+            if let Some(orig) = &state.original_branch {
+                git::checkout(orig);
                 log(state, LogLevel::Success, "Returned to original branch.");
             }
             state.phase = Phase::Idle;

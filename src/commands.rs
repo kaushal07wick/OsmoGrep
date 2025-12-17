@@ -1,11 +1,6 @@
-// src/commands.rs
-
 use crate::state::{AgentState, Phase, LogLevel};
 use crate::logger::log;
-
-/* ============================================================
-   Execute committed command (ENTER)
-   ============================================================ */
+use crate::detectors::diff_analyzer::analyze_diff;
 
 pub fn handle_command(state: &mut AgentState, cmd: &str) {
     state.clear_hint();
@@ -16,18 +11,39 @@ pub fn handle_command(state: &mut AgentState, cmd: &str) {
             log(
                 state,
                 LogLevel::Info,
-                "Commands: exec | new | rollback | quit | help",
+                "Commands: analyze | exec | new | rollback | quit | help",
             );
         }
 
-        "exec" => {
-            log(state, LogLevel::Info, "Executing agent on working tree…");
-            state.phase = Phase::ExecuteAgent;
+        "analyze" => {
+            log(state, LogLevel::Info, "Analyzing git diff for test relevance…");
+
+            state.diff_analysis = analyze_diff();
+
+            if state.diff_analysis.is_empty() {
+                log(state, LogLevel::Success, "No relevant changes detected.");
+            } else {
+                log(
+                    state,
+                    LogLevel::Success,
+                    format!(
+                        "Diff analysis complete: {} file(s) analyzed.",
+                        state.diff_analysis.len()
+                    ),
+                );
+            }
+
+            state.phase = Phase::Idle;
         }
 
         "new" => {
             log(state, LogLevel::Info, "Creating new agent branch…");
             state.phase = Phase::CreateNewAgent;
+        }
+
+        "exec" => {
+            log(state, LogLevel::Info, "Executing agent…");
+            state.phase = Phase::ExecuteAgent;
         }
 
         "rollback" => {
@@ -40,9 +56,7 @@ pub fn handle_command(state: &mut AgentState, cmd: &str) {
             state.phase = Phase::Done;
         }
 
-        "" => {
-            // ignore empty
-        }
+        "" => {}
 
         _ => {
             log(state, LogLevel::Warn, "Unknown command. Type `help`.");
@@ -50,14 +64,8 @@ pub fn handle_command(state: &mut AgentState, cmd: &str) {
     }
 }
 
-/* ============================================================
-   Live hints + autocomplete (ON EVERY KEYSTROKE)
-   ============================================================ */
-
 pub fn update_command_hints(state: &mut AgentState) {
-    // ⬅️ clone FIRST, then mutate state
     let input = state.input.clone();
-
     state.clear_hint();
     state.clear_autocomplete();
 
@@ -66,9 +74,12 @@ pub fn update_command_hints(state: &mut AgentState) {
         return;
     }
 
-    if "exec".starts_with(&input) {
+    if "analyze".starts_with(&input) {
+        state.set_autocomplete("analyze");
+        state.set_hint("analyze — inspect git diff and assess test need");
+    } else if "exec".starts_with(&input) {
         state.set_autocomplete("exec");
-        state.set_hint("exec — apply working tree and run tests");
+        state.set_hint("exec — switch to agent branch");
     } else if "new".starts_with(&input) {
         state.set_autocomplete("new");
         state.set_hint("new — create a fresh agent branch");
@@ -80,7 +91,7 @@ pub fn update_command_hints(state: &mut AgentState) {
         state.set_hint("quit — exit OsmoGrep");
     } else if "help".starts_with(&input) {
         state.set_autocomplete("help");
-        state.set_hint("help — list available commands");
+        state.set_hint("help — list commands");
     } else {
         state.set_hint("Unknown command");
     }

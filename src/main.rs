@@ -57,6 +57,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         framework: None,
 
         spinner_tick: 0,
+        diff_analysis: Vec::new(),
+
 
     };
 

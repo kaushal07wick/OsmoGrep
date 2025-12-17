@@ -1,5 +1,4 @@
-// src/state.rs
-use crate::detectors::{language::Language, framework::TestFramework};
+use crate::detectors::{framework::TestFramework, language::Language};
 
 #[derive(Clone, Debug)]
 pub enum Phase {
@@ -12,7 +11,9 @@ pub enum Phase {
     Done,
 }
 
-#[derive(Clone)]
+/* ---------- logging ---------- */
+
+#[derive(Clone, Debug)]
 pub enum LogLevel {
     Info,
     Success,
@@ -20,42 +21,86 @@ pub enum LogLevel {
     Error,
 }
 
+#[derive(Clone, Debug)]
 pub struct LogLine {
     pub level: LogLevel,
     pub text: String,
 }
 
+/* ---------- diff analysis ---------- */
+
+#[derive(Debug, Clone)]
+pub enum ChangeSurface {
+    PureLogic,
+    Branching,
+    Contract,
+    ErrorPath,
+    State,
+    Integration,
+    Observability,
+    Cosmetic,
+}
+
+#[derive(Debug, Clone)]
+pub enum TestDecision {
+    Yes,
+    No,
+    Conditional,
+}
+
+#[derive(Debug, Clone)]
+pub enum RiskLevel {
+    Low,
+    Medium,
+    High,
+}
+
+#[derive(Debug, Clone)]
+pub struct DiffAnalysis {
+    pub file: String,
+    pub symbol: Option<String>,
+    pub surface: ChangeSurface,
+    pub test_required: TestDecision,
+    pub risk: RiskLevel,
+    pub reason: String,
+}
+
+/* ---------- agent state ---------- */
+
 pub struct AgentState {
-    /* -------- lifecycle -------- */
+    /* lifecycle */
     pub phase: Phase,
     pub base_branch: Option<String>,
     pub original_branch: Option<String>,
     pub agent_branch: Option<String>,
 
-    /* -------- input -------- */
+    /* input */
     pub input: String,
     pub input_focused: bool,
 
-    /* -------- command UX -------- */
+    /* command UX */
     pub history: Vec<String>,
-    pub history_index: Option<usize>, // None = live input
+    pub history_index: Option<usize>,
     pub hint: Option<String>,
     pub autocomplete: Option<String>,
 
-    /* -------- logs -------- */
+    /* logs */
     pub logs: Vec<LogLine>,
 
-    /*----------detection-------- */
+    /* analysis */
+    pub diff_analysis: Vec<DiffAnalysis>,
+
+    /* detection (STATUS only) */
     pub language: Option<Language>,
     pub framework: Option<TestFramework>,
 
-    /* -------- ui -------- */
+    /* ui */
     pub spinner_tick: usize,
 }
 
-impl AgentState {
-    /* -------- input editing -------- */
+/* ---------- helpers ---------- */
 
+impl AgentState {
     pub fn push_char(&mut self, c: char) {
         self.input.push(c);
         self.history_index = None;
@@ -65,8 +110,6 @@ impl AgentState {
         self.input.pop();
     }
 
-    /* -------- history navigation -------- */
-
     pub fn history_prev(&mut self) {
         if self.history.is_empty() {
             return;
@@ -75,7 +118,7 @@ impl AgentState {
         let idx = match self.history_index {
             Some(i) if i > 0 => i - 1,
             Some(i) => i,
-            None => self.history.len().saturating_sub(1),
+            None => self.history.len() - 1,
         };
 
         self.history_index = Some(idx);
@@ -95,8 +138,6 @@ impl AgentState {
         }
     }
 
-    /* -------- commit -------- */
-
     pub fn commit_input(&mut self) -> String {
         let cmd = self.input.trim().to_string();
 
@@ -111,8 +152,6 @@ impl AgentState {
 
         cmd
     }
-
-    /* -------- helpers -------- */
 
     pub fn set_hint(&mut self, hint: impl Into<String>) {
         self.hint = Some(hint.into());

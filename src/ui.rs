@@ -9,7 +9,7 @@ use ratatui::{
     Terminal,
 };
 
-use crate::state::{AgentState, LogLevel, Phase};
+use crate::state::{AgentState, LogLevel, Phase, TestDecision, RiskLevel};
 
 /* ================= Helpers ================= */
 
@@ -61,6 +61,22 @@ fn framework_badge(fw: &str) -> (&'static str, Color) {
         "JUnit" => ("☕🧪 JUnit", Color::Red),
         "None" => ("⚪ No tests", Color::DarkGray),
         _ => ("❓ Unknown", Color::DarkGray),
+    }
+}
+
+fn decision_color(d: &TestDecision) -> Color {
+    match d {
+        TestDecision::Yes => Color::Red,
+        TestDecision::Conditional => Color::Yellow,
+        TestDecision::No => Color::Green,
+    }
+}
+
+fn risk_color(r: &RiskLevel) -> Color {
+    match r {
+        RiskLevel::High => Color::Red,
+        RiskLevel::Medium => Color::Yellow,
+        RiskLevel::Low => Color::Green,
     }
 }
 
@@ -116,21 +132,18 @@ pub fn draw_ui<B: Backend>(
         /* ================= STATUS ================= */
 
         let (phase_color, phase_label) = phase_style(&state.phase);
-
         let mut status_lines = Vec::new();
 
         status_lines.push(Line::from(vec![
             Span::styled("Phase: ", Style::default().fg(Color::Gray)),
             Span::styled(
                 phase_label,
-                Style::default()
-                    .fg(phase_color)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(phase_color).add_modifier(Modifier::BOLD),
             ),
         ]));
 
         status_lines.push(Line::from(vec![
-            Span::styled("Branch: ", Style::default().fg(Color::Gray)),
+            Span::styled("Base Branch: ", Style::default().fg(Color::Gray)),
             Span::styled(
                 state.base_branch.clone().unwrap_or_else(|| "unknown".into()),
                 Style::default().fg(Color::White),
@@ -138,20 +151,23 @@ pub fn draw_ui<B: Backend>(
         ]));
 
         status_lines.push(Line::from(vec![
-            Span::styled("Agent: ", Style::default().fg(Color::Gray)),
-            Span::styled(phase_label, Style::default().fg(phase_color)),
+            Span::styled("Agent Branch: ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                state.agent_branch.clone().unwrap_or_else(|| "none".into()),
+                Style::default().fg(Color::Yellow),
+            ),
         ]));
 
         status_lines.push(Line::from(vec![
-            Span::styled("Repo: ", Style::default().fg(Color::Gray)),
-            Span::styled("Uncommitted", Style::default().fg(Color::Yellow)),
+            Span::styled("Agent Status: ", Style::default().fg(Color::Gray)),
+            Span::styled(phase_label, Style::default().fg(phase_color)),
         ]));
 
         if let Some(lang) = &state.language {
             let (badge, color) = language_badge(&format!("{:?}", lang));
             status_lines.push(Line::from(vec![
                 Span::styled("Language: ", Style::default().fg(Color::Gray)),
-                Span::styled(badge, Style::default().fg(color).add_modifier(Modifier::BOLD)),
+                Span::styled(badge, Style::default().fg(color)),
             ]));
         }
 
@@ -166,8 +182,8 @@ pub fn draw_ui<B: Backend>(
         let status = Paragraph::new(status_lines).block(
             Block::default()
                 .borders(Borders::ALL)
-                .title_alignment(Alignment::Center)
-                .title("STATUS"),
+                .title("STATUS")
+                .title_alignment(Alignment::Center),
         );
 
         f.render_widget(status, layout[1]);
@@ -176,19 +192,9 @@ pub fn draw_ui<B: Backend>(
 
         let mut exec_lines = Vec::new();
 
-        exec_lines.push(Line::from(vec![
-            Span::styled("Timeline: ", Style::default().fg(Color::Gray)),
-            Span::styled(phase_symbol(&state.phase), Style::default().fg(phase_color)),
-        ]));
-
         exec_lines.push(Line::from(""));
 
-        if matches!(state.phase, Phase::Idle) {
-            exec_lines.push(Line::from(Span::styled(
-                "Agent idle. Awaiting command.",
-                Style::default().fg(Color::DarkGray),
-            )));
-        } else {
+        if !state.logs.is_empty() {
             exec_lines.extend(
                 state.logs.iter().rev().take(25).rev().map(|l| {
                     let color = match l.level {
@@ -202,29 +208,66 @@ pub fn draw_ui<B: Backend>(
             );
         }
 
+        // ✅ ALWAYS SHOW PER-FILE DIFF ANALYSIS (AFTER LOGS)
+        if !state.diff_analysis.is_empty() {
+            exec_lines.push(Line::from(""));
+            exec_lines.push(Line::from(Span::styled(
+                "Diff Analysis",
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            )));
+            exec_lines.push(Line::from(""));
+
+            for d in &state.diff_analysis {
+                exec_lines.push(Line::from(vec![
+                    Span::styled(&d.file, Style::default().fg(Color::White)),
+                    Span::raw(" | "),
+                    Span::styled(
+                        format!("{:?}", d.test_required),
+                        Style::default().fg(decision_color(&d.test_required)),
+                    ),
+                    Span::raw(" | "),
+                    Span::styled(
+                        format!("{:?}", d.risk),
+                        Style::default().fg(risk_color(&d.risk)),
+                    ),
+                ]));
+
+                exec_lines.push(Line::from(Span::styled(
+                    format!("  ↳ {}", d.reason),
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+        }
+
+        // idle fallback
+        if state.logs.is_empty() && state.diff_analysis.is_empty() {
+            exec_lines.push(Line::from(Span::styled(
+                "Agent idle. Awaiting command.",
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+
+
         let execution = Paragraph::new(exec_lines).block(
             Block::default()
                 .borders(Borders::ALL)
-                .title_alignment(Alignment::Center)
-                .title("EXECUTION"),
+                .title("EXECUTION")
+                .title_alignment(Alignment::Center),
         );
 
         f.render_widget(execution, layout[2]);
 
         /* ================= COMMAND ================= */
 
-        let input_style = Style::default().fg(Color::White);
-        let ghost_style = Style::default().fg(Color::DarkGray);
-
         let mut spans = Vec::new();
         spans.push(Span::styled("$_ ", Style::default().fg(Color::Cyan)));
-        spans.push(Span::styled(&state.input, input_style));
+        spans.push(Span::styled(&state.input, Style::default().fg(Color::White)));
 
         if let Some(ac) = &state.autocomplete {
             if ac.starts_with(&state.input) {
                 let suffix = &ac[state.input.len()..];
                 if !suffix.is_empty() {
-                    spans.push(Span::styled(suffix, ghost_style));
+                    spans.push(Span::styled(suffix, Style::default().fg(Color::DarkGray)));
                 }
             }
         }
@@ -240,8 +283,8 @@ pub fn draw_ui<B: Backend>(
         let input = Paragraph::new(Line::from(spans)).block(
             Block::default()
                 .borders(Borders::ALL)
-                .title_alignment(Alignment::Center)
-                .title("COMMAND"),
+                .title("COMMAND")
+                .title_alignment(Alignment::Center),
         );
 
         input_rect = layout[3];
