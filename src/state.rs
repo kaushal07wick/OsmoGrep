@@ -1,7 +1,10 @@
 use std::time::Instant;
+use std::collections::VecDeque;
 
 use crate::detectors::{framework::TestFramework, language::Language};
 use similar::{ChangeTag, TextDiff};
+
+pub const MAX_LOGS: usize = 1000;
 
 /* ---------- lifecycle ---------- */
 
@@ -26,7 +29,6 @@ pub struct SymbolDelta {
     pub new_source: String,
     pub lines: Vec<DiffLine>,
 }
-
 
 /* ---------- logging ---------- */
 
@@ -63,21 +65,20 @@ pub enum ChangeSurface {
 pub enum Focus {
     Input,
     Diff,
-    Execution, // ✅ ADD THIS
+    Execution,
 }
 
 #[derive(Clone, Debug)]
 pub enum DiffKind {
-    Hunk(String),      // @@ -a,b +c,d @@
-    Line(ChangeTag),   // + - or context
+    Hunk(String),
+    Line(ChangeTag),
 }
 
 #[derive(Clone, Debug)]
 pub struct DiffLine {
     pub kind: DiffKind,
-    pub text: String,
+    pub text: String, // kept for future pretty/unified diff
 }
-
 
 #[derive(Debug, Clone)]
 pub enum TestDecision {
@@ -97,12 +98,12 @@ pub enum RiskLevel {
 pub struct DiffAnalysis {
     pub file: String,
     pub symbol: Option<String>,
-    pub surface: ChangeSurface,
+    pub surface: ChangeSurface,     // used later for test synthesis
     pub test_required: TestDecision,
     pub risk: RiskLevel,
     pub reason: String,
     pub delta: Option<SymbolDelta>,
-    pub pretty: Option<String>,
+    pub pretty: Option<String>,     // used later for reports
 }
 
 /* ---------- agent state ---------- */
@@ -111,16 +112,9 @@ pub struct AgentState {
     /* lifecycle */
     pub phase: Phase,
 
-    /// Base comparison branch (e.g. `master`, `main`)
     pub base_branch: Option<String>,
-
-    /// Branch user started on
     pub original_branch: Option<String>,
-
-    /// Currently checked-out branch (source of truth)
     pub current_branch: Option<String>,
-
-    /// Agent working branch (usually osmogrep/…)
     pub agent_branch: Option<String>,
 
     /* input */
@@ -133,13 +127,13 @@ pub struct AgentState {
     pub hint: Option<String>,
     pub autocomplete: Option<String>,
 
-    /* logs */
-    pub logs: Vec<LogLine>,
+    /* logs (ring buffer) */
+    pub logs: VecDeque<LogLine>,
 
     /* analysis */
     pub diff_analysis: Vec<DiffAnalysis>,
 
-    /* detection (STATUS only) */
+    /* status */
     pub language: Option<Language>,
     pub framework: Option<TestFramework>,
 
@@ -147,16 +141,16 @@ pub struct AgentState {
     pub spinner_tick: usize,
 
     /* diff viewer */
-    pub selected_diff: Option<usize>, // which DiffAnalysis index
-    pub diff_scroll: usize,           // vertical scroll
-    pub in_diff_view: bool,           // are we viewing side-by-side?
+    pub selected_diff: Option<usize>,
+    pub diff_scroll: usize,
+    pub diff_scroll_x: usize,
+    pub in_diff_view: bool,
     pub diff_side_by_side: bool,
     pub focus: Focus,
-    pub exec_scroll: usize,
-    pub diff_rendered_at: Option<usize>,
-    pub diff_scroll_y: usize,
-    pub diff_scroll_x: usize,
 
+    /* execution panel */
+    pub exec_scroll: usize,
+    pub exec_paused: bool,
 }
 
 /* ---------- helpers ---------- */
@@ -214,6 +208,36 @@ impl AgentState {
         cmd
     }
 
+    pub fn push_log(&mut self, level: LogLevel, text: impl Into<String>) {
+        if self.logs.len() >= MAX_LOGS {
+            self.logs.pop_front();
+        }
+
+        self.logs.push_back(LogLine {
+            level,
+            text: text.into(),
+            at: Instant::now(),
+        });
+    }
+
+    pub fn compute_diff(old: &str, new: &str) -> Vec<DiffLine> {
+        let diff = TextDiff::from_lines(old, new);
+        let mut out = Vec::new();
+
+        out.push(DiffLine {
+            kind: DiffKind::Hunk("@@ @@".to_string()),
+            text: String::new(),
+        });
+
+        for change in diff.iter_all_changes() {
+            out.push(DiffLine {
+                kind: DiffKind::Line(change.tag()),
+                text: change.to_string(),
+            });
+        }
+
+        out
+    }
     pub fn set_hint(&mut self, hint: impl Into<String>) {
         self.hint = Some(hint.into());
     }
@@ -229,25 +253,4 @@ impl AgentState {
     pub fn clear_autocomplete(&mut self) {
         self.autocomplete = None;
     }
-
-    pub fn compute_diff(old: &str, new: &str) -> Vec<DiffLine> {
-        let diff = TextDiff::from_lines(old, new);
-        let mut out = Vec::new();
-
-        // single synthetic hunk header
-        out.push(DiffLine {
-            kind: DiffKind::Hunk("@@ @@".to_string()),
-            text: String::new(),
-        });
-
-        for change in diff.iter_all_changes() {
-            out.push(DiffLine {
-                kind: DiffKind::Line(change.tag()),
-                text: change.to_string(),
-            });
-        }
-
-        out
-    }
-
 }

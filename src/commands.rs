@@ -21,30 +21,33 @@ pub fn handle_command(state: &mut AgentState, cmd: &str) {
         /* ---------- ANALYZE ---------- */
 
         "analyze" => {
-        log(state, LogLevel::Info, "Analyzing git diff for test relevance…");
+            log(state, LogLevel::Info, "Analyzing git diff for test relevance…");
 
-        state.diff_analysis = analyze_diff();
-        log_diff_analysis(state); // 🔥 THIS LINE
+            state.diff_analysis = analyze_diff();
 
-        state.selected_diff = None;
-        state.in_diff_view = false;
-        state.diff_scroll = 0;
+            state.selected_diff = None;
+            state.in_diff_view = false;
+            state.diff_scroll = 0;
 
-        if state.diff_analysis.is_empty() {
-            log(state, LogLevel::Success, "No relevant changes detected.");
-        } else {
-            log(
-                state,
-                LogLevel::Success,
-                format!(
-                    "Diff analysis complete: {} file(s) analyzed.",
-                    state.diff_analysis.len()
-                ),
-            );
+            if state.diff_analysis.is_empty() {
+                log(state, LogLevel::Success, "No relevant changes detected.");
+            } else {
+                log(
+                    state,
+                    LogLevel::Success,
+                    format!(
+                        "Diff analysis complete: {} file(s) analyzed.",
+                        state.diff_analysis.len()
+                    ),
+                );
+
+                // ✅ emit marker ONLY when we actually have analysis
+                log_diff_analysis(state);
+            }
+
+            state.phase = Phase::Idle;
         }
 
-        state.phase = Phase::Idle;
-    }
 
         /* ---------- DIFF LIST ---------- */
 

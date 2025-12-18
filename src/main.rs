@@ -6,6 +6,7 @@ mod ui;
 mod commands;
 mod machine;
 mod detectors;
+use std::collections::VecDeque;
 
 use std::{error::Error, io, time::Duration};
 
@@ -39,39 +40,50 @@ fn main() -> Result<(), Box<dyn Error>> {
     /* ---------- state init ---------- */
 
     let mut state = AgentState {
+        /* lifecycle */
         phase: Phase::Init,
+
         base_branch: None,
         original_branch: None,
-        agent_branch: None,
         current_branch: None,
+        agent_branch: None,
 
+        /* input */
         input: String::new(),
         input_focused: true,
 
+        /* command UX */
         history: Vec::new(),
         history_index: None,
         hint: None,
         autocomplete: None,
 
-        logs: Vec::new(),
+        /* logs (ring buffer) */
+        logs: VecDeque::new(),
+
+        /* analysis */
+        diff_analysis: Vec::new(),
+
+        /* status */
         language: None,
         framework: None,
 
+        /* ui */
         spinner_tick: 0,
-        diff_analysis: Vec::new(),
 
+        /* diff viewer */
         selected_diff: None,
         diff_scroll: 0,
+        diff_scroll_x: 0,
         in_diff_view: false,
         diff_side_by_side: false,
         focus: Focus::Input,
+
+        /* execution panel */
         exec_scroll: 0,
-        diff_rendered_at: None,
-        diff_scroll_x: 0,
-        diff_scroll_y: 0,
-
-
+        exec_paused: false,
     };
+
 
     /* ---------- event loop ---------- */
 

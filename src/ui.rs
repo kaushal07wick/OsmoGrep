@@ -42,27 +42,17 @@ fn inline_diff(old: &str, new: &str, color: Color) -> Vec<Span<'static>> {
 }
 
 
-fn phase_style(phase: &Phase) -> (Color, &'static str) {
+fn phase_badge(phase: &Phase) -> (&'static str, &'static str, Color) {
     match phase {
-        Phase::Idle => (Color::Yellow, "Idle"),
-        Phase::ExecuteAgent => (Color::Cyan, "Running"),
-        Phase::CreateNewAgent => (Color::Blue, "Creating"),
-        Phase::Rollback => (Color::Magenta, "Rollback"),
-        Phase::Done => (Color::Green, "Done"),
-        _ => (Color::DarkGray, "Unknown"),
+        Phase::Idle => ("●", "Idle", Color::Yellow),
+        Phase::ExecuteAgent => ("▶", "Running", Color::Cyan),
+        Phase::CreateNewAgent => ("＋", "Creating", Color::Blue),
+        Phase::Rollback => ("↩", "Rollback", Color::Magenta),
+        Phase::Done => ("✔", "Done", Color::Green),
+        _ => ("○", "Unknown", Color::DarkGray),
     }
 }
 
-fn phase_symbol(phase: &Phase) -> &'static str {
-    match phase {
-        Phase::Idle => "●",
-        Phase::ExecuteAgent => "▶",
-        Phase::CreateNewAgent => "＋",
-        Phase::Rollback => "↩",
-        Phase::Done => "✔",
-        _ => "○",
-    }
-}
 
 fn language_badge(lang: &str) -> (&'static str, Color) {
     match lang {
@@ -104,12 +94,27 @@ fn risk_color(r: &RiskLevel) -> Color {
     }
 }
 
-fn hclip(s: &str, x: usize, width: usize) -> String {
-    s.chars()
-        .skip(x)
-        .take(width)
-        .collect()
+fn hclip(s: &str, x: usize, width: usize) -> &str {
+    let mut start_idx = None;
+    let mut end_idx = None;
+
+    for (i, (byte_idx, _)) in s.char_indices().enumerate() {
+        if i == x {
+            start_idx = Some(byte_idx);
+        }
+        if i == x + width {
+            end_idx = Some(byte_idx);
+            break;
+        }
+    }
+
+    match (start_idx, end_idx) {
+        (Some(start), Some(end)) if start < end => &s[start..end],
+        (Some(start), None) if start < s.len() => &s[start..],
+        _ => "",
+    }
 }
+
 
 
 fn render_side_by_side(
@@ -243,61 +248,6 @@ fn render_side_by_side(
     );
 }
 
-
-fn render_unified_diff(
-    f: &mut ratatui::Frame,
-    area: Rect,
-    lines: &[DiffLine],
-    scroll: usize,
-    state: &AgentState,
-) {
-    let height = area.height as usize;
-
-    let visible: Vec<Line> = lines
-        .iter()
-        .skip(scroll)
-        .take(height)
-        .map(|l| match &l.kind {
-            DiffKind::Hunk(h) => Line::from(Span::styled(
-                h,
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )),
-
-            DiffKind::Line(tag) => {
-                let (prefix, color) = match tag {
-                    ChangeTag::Delete => ("- ", Color::Red),
-                    ChangeTag::Insert => ("+ ", Color::Green),
-                    ChangeTag::Equal => ("  ", Color::DarkGray),
-                };
-
-                Line::from(vec![
-                    Span::styled(prefix, Style::default().fg(color)),
-                    Span::styled(
-                        l.text.trim_end_matches('\n'),
-                        Style::default().fg(color),
-                    ),
-                ])
-            }
-        })
-        .collect();
-
-    let diff_title = if state.focus == Focus::Diff {
-            Span::styled("DIFF", Style::default().fg(Color::Yellow))
-        } else {
-            Span::raw("DIFF")
-        };
-
-        f.render_widget(
-            Paragraph::new(visible)
-                .block(Block::default().borders(Borders::ALL).title(diff_title)),
-            area,
-        );
-
-}
-
-
 /* ================= UI ================= */
 
 pub fn draw_ui<B: Backend>(
@@ -352,7 +302,7 @@ pub fn draw_ui<B: Backend>(
 
         /* ================= STATUS ================= */
 
-        let (phase_color, phase_label) = phase_style(&state.phase);
+        let (phase_sym, phase_label, phase_color) = phase_badge(&state.phase);
         let mut status_lines = Vec::new();
 
         /* -------- Phase + spinner -------- */
@@ -360,7 +310,7 @@ pub fn draw_ui<B: Backend>(
         let mut phase_spans = vec![
             Span::styled("Phase: ", Style::default().fg(Color::Gray)),
             Span::styled(
-                format!("{} {}", phase_symbol(&state.phase), phase_label),
+                format!("{phase_sym} {phase_label}"),
                 Style::default()
                     .fg(phase_color)
                     .add_modifier(Modifier::BOLD),
@@ -540,7 +490,11 @@ pub fn draw_ui<B: Backend>(
             /* -------- APPLY SCROLL -------- */
 
             let total = all_lines.len();
-            let start = state.exec_scroll.min(total);
+            /* terminal-style scroll clamp */
+            let max_scroll = total.saturating_sub(height);
+            let scroll = state.exec_scroll.min(max_scroll);
+
+            let start = scroll;
             let end = (start + height).min(total);
             let visible = all_lines[start..end].to_vec();
 

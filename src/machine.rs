@@ -77,9 +77,10 @@ pub fn step(state: &mut AgentState) {
 
         /* ---------- ROLLBACK ---------- */
         Phase::Rollback => {
-            // Step 1: checkout base/original branch
-            if let Some(base) = &state.base_branch {
-                git::checkout(base);
+            // Step 1: checkout base branch
+            if let Some(base) = state.base_branch.clone() {
+                git::checkout(&base);
+                state.current_branch = Some(base.clone()); // 🔥 FIX
                 log(
                     state,
                     LogLevel::Success,
@@ -87,9 +88,9 @@ pub fn step(state: &mut AgentState) {
                 );
             }
 
-            // Step 2: delete agent branch
-            if let Some(agent) = &state.agent_branch {
-                git::delete_branch(agent);
+            // Step 2: delete agent branch (take ownership safely)
+            if let Some(agent) = state.agent_branch.take() {
+                git::delete_branch(&agent);
                 log(
                     state,
                     LogLevel::Success,
@@ -97,11 +98,14 @@ pub fn step(state: &mut AgentState) {
                 );
             }
 
-            // Step 3: clear agent branch state
-            state.agent_branch = None;
+            // Step 3: reset state
+            state.in_diff_view = false;
+            state.selected_diff = None;
+            state.diff_scroll = 0;
 
             state.phase = Phase::Idle;
         }
+
 
         Phase::Idle | Phase::Done => {}
     }
