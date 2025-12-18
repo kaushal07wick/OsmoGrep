@@ -3,6 +3,7 @@ use similar::ChangeTag;
 use crate::Focus;
 use crate::state::{DiffKind, SinglePanelView};
 use crate::state::SymbolDelta;
+use crate::testgen::resolve::TestResolution;
 use ratatui::{
     backend::Backend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -302,6 +303,64 @@ fn render_testgen_panel(
             Span::styled(badge, Style::default().fg(color)),
         ]));
     }
+    /* ---------- TEST PRESENCE ---------- */
+    let resolution = crate::testgen::resolve::resolve_test(state, candidate);
+
+    match &resolution {
+        TestResolution::Found { file, test_fn } => {
+            lines.push(Line::from(vec![
+                Span::styled("TEST: ", Style::default().fg(Color::Gray)),
+                Span::styled(
+                    "EXISTS",
+                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  "),
+                Span::styled(file, Style::default().fg(Color::DarkGray)),
+            ]));
+
+            if let Some(name) = test_fn {
+                lines.push(Line::from(vec![
+                    Span::styled("TEST FN: ", Style::default().fg(Color::Gray)),
+                    Span::styled(name, Style::default().fg(Color::White)),
+                ]));
+            }
+        }
+
+        TestResolution::Ambiguous(files) => {
+            lines.push(Line::from(vec![
+                Span::styled("TEST: ", Style::default().fg(Color::Gray)),
+                Span::styled(
+                    "AMBIGUOUS",
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                ),
+            ]));
+
+            for f in files {
+                lines.push(Line::from(Span::styled(
+                    format!("  • {}", f),
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+        }
+
+        TestResolution::NotFound => {
+            lines.push(Line::from(vec![
+                Span::styled("TEST: ", Style::default().fg(Color::Gray)),
+                Span::styled(
+                    "NOT FOUND",
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  "),
+                Span::styled(
+                    "New test will be generated",
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]));
+        }
+    }
+
+    lines.push(Line::from(""));
+
 
     lines.push(Line::from(vec![
         Span::styled("TEST TYPE: ", Style::default().fg(Color::Gray)),

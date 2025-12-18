@@ -1,7 +1,9 @@
-use crate::state::{ChangeSurface, DiffAnalysis, RiskLevel, TestDecision};
+use crate::state::{ChangeSurface, DiffAnalysis, RiskLevel, TestDecision, AgentState};
 use crate::testgen::candidate::{TestCandidate, TestType, TestTarget};
+use crate::testgen::resolve::{resolve_test, TestResolution};
 
 pub fn generate_test_candidates(
+    state: &AgentState,
     diffs: &[DiffAnalysis],
 ) -> Vec<TestCandidate> {
     let mut out = Vec::new();
@@ -15,10 +17,10 @@ pub fn generate_test_candidates(
             continue;
         }
 
-        // 🔑 Regression is the default intent
+        /* ---------- test intent ---------- */
         let test_type = match d.surface {
             ChangeSurface::Integration | ChangeSurface::State => TestType::Integration,
-            _ => TestType::Regression,
+            _ => TestType::Regression, // ✅ default
         };
 
         let target = match &d.symbol {
@@ -40,7 +42,7 @@ pub fn generate_test_candidates(
         let behavior = behavior_statement(d);
         let failure = failure_statement(d);
 
-        out.push(TestCandidate {
+        let mut candidate = TestCandidate {
             file: d.file.clone(),
             symbol: d.symbol.clone(),
             decision: d.test_required.clone(),
@@ -51,12 +53,40 @@ pub fn generate_test_candidates(
             failure_mode: failure,
             old_code,
             new_code,
-        });
+        };
+
+        /* ---------- 🔍 resolve existing tests ---------- */
+        match resolve_test(state, &candidate) {
+            TestResolution::Found { file, .. } => {
+                // existing test → modify
+                candidate.behavior =
+                    format!("Update existing test in `{}` to reflect new behavior", file);
+            }
+
+            TestResolution::Ambiguous(paths) => {
+                // ask user
+                candidate.behavior = format!(
+                    "Multiple existing tests found:\n{}\nUser input required",
+                    paths.join("\n")
+                );
+            }
+
+            TestResolution::NotFound => {
+                // create new test
+                candidate.behavior =
+                    "Create a new regression test validating the updated behavior".into();
+            }
+        }
+
+        out.push(candidate);
     }
 
     out
 }
 
+/* ============================================================
+   Behavior + failure
+   ============================================================ */
 
 fn behavior_statement(d: &DiffAnalysis) -> String {
     match d.surface {
@@ -85,7 +115,6 @@ fn behavior_statement(d: &DiffAnalysis) -> String {
             "Previously working behavior continues to work as expected".into(),
     }
 }
-
 
 fn failure_statement(d: &DiffAnalysis) -> String {
     match d.risk {

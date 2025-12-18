@@ -119,57 +119,55 @@ pub fn handle_command(state: &mut AgentState, cmd: &str) {
 
         /* ---------- TEST GENERATION ---------- */
 
-        cmd if cmd.starts_with("testgen ") => {
-            if state.diff_analysis.is_empty() {
-                log(state, LogLevel::Warn, "No diff analysis available. Run `analyze` first.");
-                return;
-            }
+            cmd if cmd.starts_with("testgen ") => {
+                state.last_activity = Instant::now();
 
-            match cmd[8..].trim().parse::<usize>() {
-                Ok(idx) if idx < state.diff_analysis.len() => {
-                    let diff = state.diff_analysis[idx].clone();
+                if state.diff_analysis.is_empty() {
+                    log(state, LogLevel::Warn, "No diff analysis available. Run `analyze` first.");
+                    return;
+                }
 
-                    let candidates =
-                        generate_test_candidates(std::slice::from_ref(&diff));
-
-                    if candidates.is_empty() {
-                        log(
-                            state,
-                            LogLevel::Warn,
-                            format!("No test candidates generated for diff [{}]", idx),
-                        );
+                let idx = match cmd[8..].trim().parse::<usize>() {
+                    Ok(i) if i < state.diff_analysis.len() => i,
+                    _ => {
+                        log(state, LogLevel::Warn, "Invalid diff index for testgen.");
                         return;
                     }
+                };
 
+                let diff = state.diff_analysis[idx].clone();
+
+                let candidates = generate_test_candidates(state, std::slice::from_ref(&diff));
+
+                if candidates.is_empty() {
                     log(
                         state,
-                        LogLevel::Success,
-                        format!(
-                            "Generated {} test candidate(s) for diff [{}]",
-                            candidates.len(),
-                            idx
-                        ),
+                        LogLevel::Warn,
+                        format!("No test candidates generated for diff [{}]", idx),
                     );
-
-                    // persist candidates
-                    state.test_candidates = candidates;
-
-                    // 🔑 show first candidate in single panel view
-                    state.panel_view = Some(
-                        SinglePanelView::TestGenPreview(
-                            state.test_candidates[0].clone()
-                        )
-                    );
-
-                    // move focus to execution panel
-                    state.focus = Focus::Execution;
+                    return;
                 }
-                _ => {
-                    log(state, LogLevel::Warn, "Invalid diff index for testgen.");
+
+                log(
+                    state,
+                    LogLevel::Success,
+                    format!(
+                        "Generated {} test candidate(s) for diff [{}]",
+                        candidates.len(),
+                        idx
+                    ),
+                );
+
+                /* ---------- persist ---------- */
+                state.test_candidates = candidates;
+
+                /* ---------- open single-panel preview ---------- */
+                if let Some(first) = state.test_candidates.first().cloned() {
+                    state.panel_view = Some(SinglePanelView::TestGenPreview(first));
+                    state.focus = Focus::Execution;
+                    state.exec_scroll = 0;
                 }
             }
-        }
-
 
         "close" => {
             state.in_diff_view = false;
