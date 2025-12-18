@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 
 use crate::detectors::{framework::TestFramework, language::Language};
 use similar::{ChangeTag, TextDiff};
+use crate::testgen::candidate::TestCandidate;
 
 pub const MAX_LOGS: usize = 1000;
 
@@ -29,6 +30,17 @@ pub struct SymbolDelta {
     pub new_source: String,
     pub lines: Vec<DiffLine>,
 }
+
+/* --------------view -------------- */
+#[derive(Clone, Debug)]
+pub enum SinglePanelView {
+    TestGenPreview(TestCandidate),
+    // future:
+    // LlmTest(String),
+    // TestResult { output: String, passed: bool },
+    // Suggestions(String),
+}
+
 
 /* ---------- logging ---------- */
 
@@ -150,6 +162,13 @@ pub struct AgentState {
 
     /* execution panel */
     pub exec_scroll: usize,
+    /* test generation */
+    pub test_candidates: Vec<TestCandidate>,
+    pub panel_view: Option<SinglePanelView>,
+    pub panel_scroll: usize,
+    pub panel_scroll_x: usize,
+    pub last_activity: Instant,
+
 }
 
 /* ---------- helpers ---------- */

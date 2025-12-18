@@ -1,11 +1,14 @@
-use crate::state::{AgentState, Phase, LogLevel};
+use std::time::Instant;
+use crate::state::{AgentState, Focus, LogLevel, Phase, SinglePanelView};
 use crate::logger::log;
 use crate::detectors::diff_analyzer::analyze_diff;
 use crate::git;
 use crate::logger::log_diff_analysis;
+use crate::testgen::generator::generate_test_candidates;
 
 
 pub fn handle_command(state: &mut AgentState, cmd: &str) {
+    state.last_activity = Instant::now();
     state.clear_hint();
     state.clear_autocomplete();
 
@@ -14,7 +17,7 @@ pub fn handle_command(state: &mut AgentState, cmd: &str) {
             log(
                 state,
                 LogLevel::Info,
-                "Commands: analyze | diff | diff <n> | exec | new | rollback | bls | quit | help",
+                "Commands: analyze | diff | diff <n> | testgen <n> | exec | new | rollback | bls | quit | help",
             );
         }
 
@@ -111,8 +114,62 @@ pub fn handle_command(state: &mut AgentState, cmd: &str) {
                 _ => {
                     log(state, LogLevel::Warn, "Invalid diff index.");
                 }
+            } 
+        }
+
+        /* ---------- TEST GENERATION ---------- */
+
+        cmd if cmd.starts_with("testgen ") => {
+            if state.diff_analysis.is_empty() {
+                log(state, LogLevel::Warn, "No diff analysis available. Run `analyze` first.");
+                return;
+            }
+
+            match cmd[8..].trim().parse::<usize>() {
+                Ok(idx) if idx < state.diff_analysis.len() => {
+                    let diff = state.diff_analysis[idx].clone();
+
+                    let candidates =
+                        generate_test_candidates(std::slice::from_ref(&diff));
+
+                    if candidates.is_empty() {
+                        log(
+                            state,
+                            LogLevel::Warn,
+                            format!("No test candidates generated for diff [{}]", idx),
+                        );
+                        return;
+                    }
+
+                    log(
+                        state,
+                        LogLevel::Success,
+                        format!(
+                            "Generated {} test candidate(s) for diff [{}]",
+                            candidates.len(),
+                            idx
+                        ),
+                    );
+
+                    // persist candidates
+                    state.test_candidates = candidates;
+
+                    // 🔑 show first candidate in single panel view
+                    state.panel_view = Some(
+                        SinglePanelView::TestGenPreview(
+                            state.test_candidates[0].clone()
+                        )
+                    );
+
+                    // move focus to execution panel
+                    state.focus = Focus::Execution;
+                }
+                _ => {
+                    log(state, LogLevel::Warn, "Invalid diff index for testgen.");
+                }
             }
         }
+
 
         "close" => {
             state.in_diff_view = false;
@@ -206,6 +263,9 @@ pub fn update_command_hints(state: &mut AgentState) {
     } else if "help".starts_with(&input) {
         state.set_autocomplete("help");
         state.set_hint("help — list commands");
+    } else if "testgen".starts_with(&input) {
+        state.set_autocomplete("testgen ");
+        state.set_hint("testgen <n> — generate tests for selected diff");
     } else {
         state.set_hint("Unknown command");
     }

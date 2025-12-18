@@ -1,7 +1,7 @@
 use std::io;
 use similar::ChangeTag;
 use crate::Focus;
-use crate::state::{DiffLine, DiffKind};
+use crate::state::{DiffKind, SinglePanelView};
 use crate::state::SymbolDelta;
 use ratatui::{
     backend::Backend,
@@ -11,7 +11,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
     Terminal,
 };
-
+use std::time::{Duration, Instant};
 use crate::state::{AgentState, LogLevel, Phase, TestDecision, RiskLevel};
 
 /* ================= Helpers ================= */
@@ -52,7 +52,6 @@ fn phase_badge(phase: &Phase) -> (&'static str, &'static str, Color) {
         _ => ("○", "Unknown", Color::DarkGray),
     }
 }
-
 
 fn language_badge(lang: &str) -> (&'static str, Color) {
     match lang {
@@ -114,8 +113,6 @@ fn hclip(s: &str, x: usize, width: usize) -> &str {
         _ => "",
     }
 }
-
-
 
 fn render_side_by_side(
     f: &mut ratatui::Frame,
@@ -198,13 +195,13 @@ fn render_side_by_side(
         let old_spans = if !oh && !nh && ot != nt && !ot.is_empty() && !nt.is_empty() {
             inline_diff(&ot_clip, &nt_clip, *oc)
         } else {
-            vec![Span::styled(ot_clip.clone(), Style::default().fg(*oc))]
+            vec![Span::styled(ot_clip, Style::default().fg(*oc))]
         };
 
         let new_spans = if !oh && !nh && ot != nt && !ot.is_empty() && !nt.is_empty() {
             inline_diff(&ot_clip, &nt_clip, *nc)
         } else {
-            vec![Span::styled(nt_clip.clone(), Style::default().fg(*nc))]
+            vec![Span::styled(nt_clip, Style::default().fg(*nc))]
         };
 
 
@@ -247,6 +244,156 @@ fn render_side_by_side(
         chunks[1],
     );
 }
+
+fn render_testgen_panel(
+    f: &mut ratatui::Frame,
+    area: Rect,
+    state: &AgentState,
+    candidate: &crate::testgen::candidate::TestCandidate,
+) {
+    let mut lines: Vec<Line> = Vec::new();
+
+    /* ---------- EXIT HINT ---------- */
+    lines.push(Line::from(Span::styled(
+        "ESC / q → return to execution view",
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::ITALIC),
+    )));
+    lines.push(Line::from(""));
+
+    /* ---------- HEADER ---------- */
+    lines.push(Line::from(Span::styled(
+        "TEST GENERATION PREVIEW",
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(""));
+
+    /* ---------- META ---------- */
+    lines.push(Line::from(vec![
+        Span::styled("FILE: ", Style::default().fg(Color::Gray)),
+        Span::styled(
+            &candidate.file,
+            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+        ),
+    ]));
+
+    if let Some(sym) = &candidate.symbol {
+        lines.push(Line::from(vec![
+            Span::styled("SYMBOL: ", Style::default().fg(Color::Gray)),
+            Span::styled(sym, Style::default().fg(Color::White)),
+        ]));
+    }
+
+    if let Some(lang) = &state.language {
+        let (badge, color) = language_badge(&format!("{:?}", lang));
+        lines.push(Line::from(vec![
+            Span::styled("LANG: ", Style::default().fg(Color::Gray)),
+            Span::styled(badge, Style::default().fg(color)),
+        ]));
+    }
+
+    if let Some(fw) = &state.framework {
+        let (badge, color) = framework_badge(&format!("{:?}", fw));
+        lines.push(Line::from(vec![
+            Span::styled("TEST FW: ", Style::default().fg(Color::Gray)),
+            Span::styled(badge, Style::default().fg(color)),
+        ]));
+    }
+
+    lines.push(Line::from(vec![
+        Span::styled("TEST TYPE: ", Style::default().fg(Color::Gray)),
+        Span::styled(
+            format!("{:?}", candidate.test_type),
+            Style::default().fg(Color::Yellow),
+        ),
+        Span::raw("   "),
+        Span::styled("RISK: ", Style::default().fg(Color::Gray)),
+        Span::styled(
+            format!("{:?}", candidate.risk),
+            Style::default().fg(risk_color(&candidate.risk)),
+        ),
+    ]));
+
+    lines.push(Line::from(""));
+
+    /* ---------- BEHAVIOR ---------- */
+    lines.push(Line::from(Span::styled(
+        "BEHAVIOR",
+        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(Span::raw(&candidate.behavior)));
+    lines.push(Line::from(""));
+
+    /* ---------- FAILURE MODE ---------- */
+    lines.push(Line::from(Span::styled(
+        "FAILURE MODE",
+        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(Span::raw(&candidate.failure_mode)));
+    lines.push(Line::from(""));
+
+    /* ---------- OLD CODE ---------- */
+    if let Some(old) = &candidate.old_code {
+        lines.push(Line::from(""));
+
+        lines.push(Line::from(Span::styled(
+            "──────── OLD CODE (before change) ────────",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )));
+
+        lines.push(Line::from(""));
+
+        for l in old.lines() {
+            lines.push(Line::from(Span::styled(
+                l,
+                Style::default().fg(Color::Red),
+            )));
+        }
+
+        lines.push(Line::from(""));
+        lines.push(Line::from(""));
+    }
+
+    if let Some(new) = &candidate.new_code {
+        lines.push(Line::from(""));
+
+        lines.push(Line::from(Span::styled(
+            "──────── NEW CODE (to be tested) ────────",
+            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+        )));
+
+        lines.push(Line::from(""));
+
+        for l in new.lines() {
+            lines.push(Line::from(Span::styled(
+                l,
+                Style::default().fg(Color::Green),
+            )));
+        }
+    }
+
+    /* ---------- SCROLL ---------- */
+    let height = area.height.saturating_sub(2) as usize;
+    let max_scroll = lines.len().saturating_sub(height);
+    let scroll = state.exec_scroll.min(max_scroll);
+
+    let visible = lines
+        .into_iter()
+        .skip(scroll)
+        .take(height)
+        .collect::<Vec<_>>();
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("TESTGEN")
+        .title_alignment(Alignment::Center);
+
+    f.render_widget(Paragraph::new(visible).block(block), area);
+}
+
 
 /* ================= UI ================= */
 
@@ -305,9 +452,9 @@ pub fn draw_ui<B: Backend>(
         let (phase_sym, phase_label, phase_color) = phase_badge(&state.phase);
         let mut status_lines = Vec::new();
 
-        /* -------- Phase + spinner -------- */
+        /* -------- Phase (what the system is doing) -------- */
 
-        let mut phase_spans = vec![
+        status_lines.push(Line::from(vec![
             Span::styled("Phase: ", Style::default().fg(Color::Gray)),
             Span::styled(
                 format!("{phase_sym} {phase_label}"),
@@ -315,17 +462,45 @@ pub fn draw_ui<B: Backend>(
                     .fg(phase_color)
                     .add_modifier(Modifier::BOLD),
             ),
+        ]));
+
+        /* -------- Activity (whether user/system is active) -------- */
+
+        let idle_timeout = Duration::from_secs(10);
+        let now = Instant::now();
+
+        let is_active =
+            state.selected_diff.is_some()
+            || state.panel_view.is_some()
+            || !matches!(state.phase, Phase::Idle)
+            || now.duration_since(state.last_activity) < idle_timeout;
+
+        let (status_label, status_color) = if is_active {
+            ("Active", Color::Green)
+        } else {
+            ("Idle", Color::Yellow)
+        };
+
+        let mut activity_spans = vec![
+            Span::styled("Status: ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                format!("● {}", status_label),
+                Style::default()
+                    .fg(status_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ];
 
-        if !matches!(state.phase, Phase::Idle) {
-            phase_spans.push(Span::raw(" "));
-            phase_spans.push(Span::styled(
+        if is_active {
+            activity_spans.push(Span::raw(" "));
+            activity_spans.push(Span::styled(
                 spinner(state.spinner_tick),
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(Color::Green),
             ));
         }
 
-        status_lines.push(Line::from(phase_spans));
+        status_lines.push(Line::from(activity_spans));
+
 
         /* -------- Branches -------- */
 
@@ -392,8 +567,18 @@ pub fn draw_ui<B: Backend>(
 
         let mut rendered_custom = false;
 
+        /* ---------- SINGLE PANEL VIEW (TESTGEN, LLM, RESULTS) ---------- */
+        if let Some(view) = &state.panel_view {
+            match view {
+                SinglePanelView::TestGenPreview(c) => {
+                    render_testgen_panel(f, layout[2], state, c);
+                    rendered_custom = true;
+                }
+            }
+        }
+
         /* ---------- SIDE-BY-SIDE DIFF VIEW ---------- */
-        if let Some(idx) = state.selected_diff {
+        else if let Some(idx) = state.selected_diff {
             if let Some(delta) = &state.diff_analysis[idx].delta {
                 render_side_by_side(
                     f,
@@ -402,7 +587,6 @@ pub fn draw_ui<B: Backend>(
                     state.diff_scroll,
                     state,
                 );
-
                 rendered_custom = true;
             }
         }
@@ -425,7 +609,7 @@ pub fn draw_ui<B: Backend>(
                     && now.duration_since(l.at) > fade_after;
 
                 if expired {
-                    continue; // 🔥 fade away
+                    continue; 
                 }
 
                 if l.text == "__DIFF_ANALYSIS__" {

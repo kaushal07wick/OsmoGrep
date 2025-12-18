@@ -6,8 +6,10 @@ mod ui;
 mod commands;
 mod machine;
 mod detectors;
+mod testgen;
 use std::collections::VecDeque;
 
+use std::time::Instant;
 use std::{error::Error, io, time::Duration};
 
 use crossterm::{
@@ -81,6 +83,14 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         /* execution panel */
         exec_scroll: 0,
+        /* test generation */
+        test_candidates: Vec::new(),
+        /* single render panel */
+        panel_scroll: 0,
+        panel_scroll_x: 0,
+        panel_view: None,
+        last_activity: Instant::now(),
+
     };
 
 
@@ -93,6 +103,33 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         if event::poll(Duration::from_millis(120))? {
             match event::read()? {
+
+                /* ================= SINGLE PANEL (TESTGEN / LLM / RESULTS) ================= */
+                Event::Key(k) if state.panel_view.is_some() => {
+                    match k.code {
+                        KeyCode::Esc | KeyCode::Char('q') => {
+                            state.panel_view = None;
+                            state.focus = Focus::Execution;
+                            state.exec_scroll = 0;
+                            state.last_activity = Instant::now();
+                        }
+
+                        KeyCode::Up => {
+                            state.exec_scroll = state.exec_scroll.saturating_sub(1);
+                        }
+                        KeyCode::Down => {
+                            state.exec_scroll = state.exec_scroll.saturating_add(1);
+                        }
+                        KeyCode::PageUp => {
+                            state.exec_scroll = state.exec_scroll.saturating_sub(10);
+                        }
+                        KeyCode::PageDown => {
+                            state.exec_scroll = state.exec_scroll.saturating_add(10);
+                        }
+
+                        _ => {}
+                    }
+                }
 
                 /* ================= DIFF (FOCUSED) ================= */
                 Event::Key(k) if state.in_diff_view && state.focus == Focus::Diff => {
