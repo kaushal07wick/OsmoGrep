@@ -1,8 +1,5 @@
-use crate::logger;
-use crate::state::{ChangeSurface, DiffAnalysis, LogLevel, RiskLevel, TestDecision};
+use crate::state::{ChangeSurface, DiffAnalysis, RiskLevel, TestDecision};
 use crate::testgen::candidate::{TestCandidate, TestType, TestTarget};
-use crate::logger::log;
-use crate::state::AgentState;
 
 pub fn generate_test_candidates(
     diffs: &[DiffAnalysis],
@@ -13,24 +10,30 @@ pub fn generate_test_candidates(
         if matches!(d.test_required, TestDecision::No) {
             continue;
         }
+
         if matches!(d.test_required, TestDecision::Conditional) && d.delta.is_none() {
             continue;
         }
 
+        // 🔑 Regression is the default intent
         let test_type = match d.surface {
             ChangeSurface::Integration | ChangeSurface::State => TestType::Integration,
-            _ => TestType::Unit,
+            _ => TestType::Regression,
         };
 
         let target = match &d.symbol {
             Some(sym) => TestTarget::Symbol(sym.clone()),
             None => TestTarget::File(d.file.clone()),
         };
+
         let (old_code, new_code) = d
             .delta
             .as_ref()
             .map(|delta| {
-                (Some(delta.old_source.clone()), Some(delta.new_source.clone()))
+                (
+                    Some(delta.old_source.clone()),
+                    Some(delta.new_source.clone()),
+                )
             })
             .unwrap_or((None, None));
 
@@ -58,32 +61,41 @@ pub fn generate_test_candidates(
 fn behavior_statement(d: &DiffAnalysis) -> String {
     match d.surface {
         ChangeSurface::Branching =>
-            "All logical branches produce correct outcomes".into(),
+            "Existing behavior remains correct across all logical branches".into(),
 
         ChangeSurface::Contract =>
-            "Public API contract remains valid for valid inputs".into(),
+            "Public API continues to behave as before for valid inputs".into(),
 
         ChangeSurface::ErrorPath =>
-            "Errors are handled without panics or silent failures".into(),
+            "Error handling behavior remains stable and predictable".into(),
 
         ChangeSurface::State =>
-            "State transitions remain consistent and correct".into(),
+            "State changes do not break previously valid flows".into(),
 
         ChangeSurface::Integration =>
-            "Components interact correctly under real conditions".into(),
+            "End-to-end behavior remains correct when components interact".into(),
+
+        ChangeSurface::Observability =>
+            "Logging and metrics changes do not affect functional behavior".into(),
+
+        ChangeSurface::Cosmetic =>
+            "Non-functional changes do not affect runtime behavior".into(),
 
         _ =>
-            "Modified behavior remains correct".into(),
+            "Previously working behavior continues to work as expected".into(),
     }
 }
+
 
 fn failure_statement(d: &DiffAnalysis) -> String {
     match d.risk {
         RiskLevel::High =>
-            "Critical behavior regression or runtime failure".into(),
+            "Existing functionality breaks or causes runtime failures".into(),
+
         RiskLevel::Medium =>
-            "Incorrect logic under specific conditions".into(),
+            "Behavior changes unexpectedly under certain conditions".into(),
+
         RiskLevel::Low =>
-            "Minor or cosmetic regression".into(),
+            "Minor regression or unintended side effect".into(),
     }
 }

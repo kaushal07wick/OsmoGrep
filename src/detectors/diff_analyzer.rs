@@ -100,6 +100,8 @@ fn decide_test(
     hunks: &str,
     surface: &ChangeSurface,
 ) -> (TestDecision, RiskLevel, String) {
+
+    // 🔒 Always-low files (already correct)
     if is_always_low(file) {
         return (
             TestDecision::No,
@@ -108,38 +110,41 @@ fn decide_test(
         );
     }
 
-    // Python is primary
-    if is_python_file(file) {
-        if python_behavior_change(hunks) {
-            return (
-                TestDecision::Yes,
-                RiskLevel::High,
-                "Python behavioral change affecting execution paths".into(),
-            );
-        }
-
+    // 🔥 ANY function change = HIGH risk
+    if is_function_change(hunks) {
         return (
-            TestDecision::Conditional,
-            RiskLevel::Medium,
-            "Python logic change".into(),
+            TestDecision::Yes,
+            RiskLevel::High,
+            "Function or method definition changed".into(),
         );
     }
 
-    // Rust default
+    // 🐍 Python logic (non-function)
+    if is_python_file(file) {
+        return (
+            TestDecision::Conditional,
+            RiskLevel::Medium,
+            "Python logic change (non-function)".into(),
+        );
+    }
+
+    // 🦀 Rust logic (non-function)
     if is_rust_file(file) {
         return (
             TestDecision::Conditional,
             RiskLevel::Medium,
-            "Rust code change (default medium)".into(),
+            "Rust logic change (non-function)".into(),
         );
     }
 
+    // 📄 Everything else
     (
         TestDecision::No,
         RiskLevel::Low,
         "Non-code change".into(),
     )
 }
+
 
 /* ============================================================
    File classification
@@ -218,6 +223,13 @@ fn is_stateful(text: &str) -> bool {
             || text.contains("UPDATE")
             || text.contains("DELETE"))
 }
+fn is_function_change(text: &str) -> bool {
+    text.contains("def ")
+        || text.contains("async def ")
+        || text.contains("pub fn")
+        || text.contains("fn ")
+}
+
 
 /* ============================================================
    Diff parsing
