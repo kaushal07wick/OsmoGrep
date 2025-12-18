@@ -81,7 +81,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         /* execution panel */
         exec_scroll: 0,
-        exec_paused: false,
     };
 
 

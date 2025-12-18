@@ -80,7 +80,7 @@ pub fn step(state: &mut AgentState) {
             // Step 1: checkout base branch
             if let Some(base) = state.base_branch.clone() {
                 git::checkout(&base);
-                state.current_branch = Some(base.clone()); // 🔥 FIX
+                state.current_branch = Some(base.clone()); 
                 log(
                     state,
                     LogLevel::Success,

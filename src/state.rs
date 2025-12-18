@@ -150,7 +150,6 @@ pub struct AgentState {
 
     /* execution panel */
     pub exec_scroll: usize,
-    pub exec_paused: bool,
 }
 
 /* ---------- helpers ---------- */
