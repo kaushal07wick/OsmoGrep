@@ -35,8 +35,7 @@ pub struct SymbolDelta {
 #[derive(Clone, Debug)]
 pub enum SinglePanelView {
     TestGenPreview(TestCandidate),
-    // future:
-    // LlmTest(String),
+   // LlmTest(String),
     // TestResult { output: String, passed: bool },
     // Suggestions(String),
 }
