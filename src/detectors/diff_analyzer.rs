@@ -57,7 +57,7 @@ fn analyze_file(
         None
     };
 
-    // 🔥 ALWAYS attempt delta extraction for code files
+    // ALWAYS attempt delta extraction for supported code files
     let delta = if is_supported_code_file(file) {
         match &symbol {
             Some(sym) => compute_symbol_delta(base_branch, file, sym),
@@ -72,7 +72,7 @@ fn analyze_file(
         symbol,
         surface,
         delta,
-        semantic: None, // populated later (LLM stage)
+        summary: None, // ✅ semantic interpretation happens later
     }
 }
 

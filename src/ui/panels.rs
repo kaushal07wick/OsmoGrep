@@ -1,11 +1,6 @@
 //! ui/panels.rs
 //!
 //! Single-panel renderers (LLM output, test results).
-//!
-//! Guarantees:
-//! - Pure rendering only
-//! - No state mutation
-//! - Panels fully own the execution area when active
 
 use ratatui::{
     layout::{Alignment, Rect},
@@ -15,16 +10,12 @@ use ratatui::{
 };
 
 use crate::state::{AgentState, SinglePanelView};
+use crate::ui::helpers::{keyword_style, symbol_style};
 
 /* ============================================================
    Public API
    ============================================================ */
 
-/// Render a single-panel view if one is active.
-///
-/// Returns:
-/// - true  → panel rendered, execution/diff/logs must NOT render
-/// - false → no panel active
 pub fn render_panel(
     f: &mut ratatui::Frame,
     area: Rect,
@@ -63,23 +54,23 @@ fn render_testgen_panel(
 
     /* ---------- HEADER ---------- */
     lines.push(Line::from(Span::styled(
-        "GENERATED TEST",
+        "🤖 GENERATED TEST",
         Style::default()
-            .fg(Color::Yellow)
+            .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD),
     )));
     lines.push(Line::from(""));
 
     /* ---------- META ---------- */
     lines.push(Line::from(vec![
-        Span::styled("File: ", Style::default().fg(Color::Gray)),
+        Span::styled("File: ", keyword_style()),
         Span::raw(&candidate.file),
     ]));
 
     if let Some(sym) = &candidate.symbol {
         lines.push(Line::from(vec![
-            Span::styled("Symbol: ", Style::default().fg(Color::Gray)),
-            Span::raw(sym),
+            Span::styled("Symbol: ", keyword_style()),
+            Span::styled(sym, symbol_style()),
         ]));
     }
 
@@ -87,7 +78,7 @@ fn render_testgen_panel(
     lines.push(Line::from(Span::styled(
         "TEST CODE",
         Style::default()
-            .fg(Color::Cyan)
+            .fg(Color::Blue)
             .add_modifier(Modifier::BOLD),
     )));
     lines.push(Line::from(""));
@@ -96,13 +87,18 @@ fn render_testgen_panel(
     match generated_test {
         Some(code) => {
             for l in code.lines() {
-                lines.push(Line::from(Span::raw(l)));
+                lines.push(Line::from(Span::styled(
+                    l,
+                    Style::default().fg(Color::White),
+                )));
             }
         }
         None => {
             lines.push(Line::from(Span::styled(
                 "Generating test…",
-                Style::default().fg(Color::DarkGray),
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::ITALIC),
             )));
         }
     }
@@ -131,7 +127,7 @@ fn render_test_result_panel(
 
     /* ---------- HEADER ---------- */
     lines.push(Line::from(Span::styled(
-        if passed { "TEST PASSED" } else { "TEST FAILED" },
+        if passed { "✔ TEST PASSED" } else { "✖ TEST FAILED" },
         Style::default()
             .fg(if passed { Color::Green } else { Color::Red })
             .add_modifier(Modifier::BOLD),
@@ -142,11 +138,16 @@ fn render_test_result_panel(
     if output.is_empty() {
         lines.push(Line::from(Span::styled(
             "No test output.",
-            Style::default().fg(Color::DarkGray),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
         )));
     } else {
         for l in output.lines() {
-            lines.push(Line::from(Span::raw(l)));
+            lines.push(Line::from(Span::styled(
+                l,
+                Style::default().fg(Color::White),
+            )));
         }
     }
 

@@ -3,8 +3,10 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{Sender, Receiver};
 use std::time::{Instant, Duration};
+
 use crate::detectors::{framework::TestFramework, language::Language};
 use crate::testgen::candidate::TestCandidate;
+use crate::testgen::summarizer::SemanticSummary;
 
 pub const MAX_LOGS: usize = 1000;
 
@@ -32,14 +34,14 @@ pub enum Phase {
     DetectBase,
     Idle,
     ExecuteAgent,
-    Running, 
+    Running,
     CreateNewAgent,
     Rollback,
     Done,
 }
 
 /* ============================================================
-   Diff + Symbol Delta Model
+   Diff + Symbol Delta Model (FACTS ONLY)
    ============================================================ */
 
 /// Raw before/after source for a symbol or file.
@@ -51,7 +53,7 @@ pub struct SymbolDelta {
 }
 
 /* ============================================================
-   Diff Analysis (FACTS ONLY)
+   Diff Analysis (STATIC FACTS)
    ============================================================ */
 
 #[derive(Debug, Clone)]
@@ -92,18 +94,19 @@ pub struct DiffAnalysis {
     /// None means no meaningful code delta.
     pub delta: Option<SymbolDelta>,
 
-    /// Semantic meaning (populated later).
-    ///
-    /// INVARIANT:
-    /// - semantic MUST be None during diff analysis
-    /// - semantic is populated only after delta extraction
-    pub semantic: Option<SemanticChange>,
+    /// Lightweight semantic summary (UI + prompt hints).
+    /// Populated AFTER diff analysis.
+    pub summary: Option<SemanticSummary>,
 }
 
+
+
 /* ============================================================
-   Semantic Interpretation (LLM-FACING)
+   Semantic Change (AGENT-LOCAL, LLM-FACING)
    ============================================================ */
 
+/// Heavy semantic object built ONLY during agent execution.
+/// NEVER stored in global state.
 #[derive(Debug, Clone)]
 pub struct SemanticChange {
     pub file: String,
@@ -118,14 +121,6 @@ pub struct SemanticChange {
     pub risk: RiskLevel,
     pub test_intent: TestIntent,
     pub failure_mode: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct SemanticSummary {
-    pub what_changed: String,
-    pub new_branches: Vec<String>,
-    pub removed_behavior: Vec<String>,
-    pub state_impact: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -206,7 +201,7 @@ impl LogBuffer {
 }
 
 /* ============================================================
-   Lifecycle State (Agent Reality)
+   Lifecycle State (AGENT REALITY)
    ============================================================ */
 
 pub struct LifecycleState {
@@ -222,7 +217,7 @@ pub struct LifecycleState {
 }
 
 /* ============================================================
-   Agent Context (Thinking / Memory)
+   Agent Context (THINKING / MEMORY)
    ============================================================ */
 
 pub struct AgentContext {
@@ -232,7 +227,7 @@ pub struct AgentContext {
 }
 
 /* ============================================================
-   UI State (Pure Presentation)
+   UI State (PURE PRESENTATION)
    ============================================================ */
 
 pub struct UiState {
@@ -263,10 +258,13 @@ pub struct UiState {
     pub active_spinner: Option<String>,
     pub spinner_started_at: Option<Instant>,
     pub spinner_elapsed: Option<Duration>,
+
     /* panel */
     pub panel_view: Option<SinglePanelView>,
     pub panel_scroll: usize,
     pub panel_scroll_x: usize,
+
+    /* render cache */
     pub cached_log_lines: Vec<ratatui::text::Line<'static>>,
     pub last_log_len: usize,
     pub dirty: bool,
@@ -274,7 +272,7 @@ pub struct UiState {
 }
 
 /* ============================================================
-   Root Agent State (Thin, Honest)
+   Root Agent State
    ============================================================ */
 
 pub struct AgentState {
@@ -282,10 +280,13 @@ pub struct AgentState {
     pub context: AgentContext,
     pub ui: UiState,
     pub logs: LogBuffer,
+
     pub agent_tx: Sender<AgentEvent>,
     pub agent_rx: Receiver<AgentEvent>,
+
     pub cancel_requested: Arc<AtomicBool>,
 }
+
 
 /* ============================================================
    Shared Helpers

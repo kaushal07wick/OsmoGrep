@@ -76,7 +76,11 @@ fn render_header(f: &mut ratatui::Frame, area: Rect) {
 }
 
 /* ============================================================
-   Status block
+   Status block (production-grade)
+   ============================================================ */
+
+/* ============================================================
+   Status block (production-grade, corrected)
    ============================================================ */
 
 fn render_status_block(
@@ -86,137 +90,116 @@ fn render_status_block(
 ) {
     let (sym, label, phase_color) = phase_badge(&state.lifecycle.phase);
 
-    let is_active =
-        state.ui.selected_diff.is_some()
-            || state.ui.panel_view.is_some()
-            || !matches!(state.lifecycle.phase, Phase::Idle)
-            || Instant::now()
-                .duration_since(state.ui.last_activity)
-                < Duration::from_secs(10);
+    let mut lines: Vec<Line> = Vec::with_capacity(10);
 
-    let (activity_label, activity_color) = if is_active {
-        ("Active", Color::Green)
-    } else {
-        ("Idle", Color::Yellow)
-    };
+    /* =====================================================
+       Primary state (single source of truth)
+       ===================================================== */
 
-    let mut lines: Vec<Line> = Vec::with_capacity(9);
-
-    /* ---------- Phase ---------- */
-    lines.push(Line::from(vec![
-        Span::styled("Phase: ", Style::default().fg(Color::Gray)),
+    let mut state_spans = vec![
         Span::styled(
             format!("{sym} {label}"),
             Style::default()
                 .fg(phase_color)
                 .add_modifier(Modifier::BOLD),
         ),
-    ]));
-
-    /* ---------- Activity ---------- */
-    let mut activity = vec![
-        Span::styled("Status: ", Style::default().fg(Color::Gray)),
-        Span::styled(
-            format!("● {}", activity_label),
-            Style::default()
-                .fg(activity_color)
-                .add_modifier(Modifier::BOLD),
-        ),
     ];
 
-    if is_active {
-        activity.push(Span::raw(" "));
-        activity.push(Span::styled(
-            spinner(
-                (Instant::now()
-                    .duration_since(state.ui.last_activity)
-                    .as_millis()
-                    / 120) as usize,
-            ),
-            Style::default().fg(Color::Green),
-        ));
-    }
-
-    lines.push(Line::from(activity));
-
-    /* ---------- Diff context (NEW) ---------- */
-    if let Some(idx) = state.ui.selected_diff {
-        if let Some(d) = state.context.diff_analysis.get(idx) {
-            let mut spans = vec![
-                Span::styled("Diff: ", keyword_style()),
-                Span::styled(&d.file, Style::default()),
-            ];
-
-            if let Some(sym) = &d.symbol {
-                spans.push(Span::raw(" :: "));
-                spans.push(Span::styled(sym, symbol_style()));
-            }
-
-            lines.push(Line::from(spans));
+    if matches!(state.lifecycle.phase, Phase::Running) {
+        if let Some(start) = state.ui.spinner_started_at {
+            let frame = (start.elapsed().as_millis() / 120) as usize;
+            state_spans.push(Span::raw("  "));
+            state_spans.push(Span::styled(
+                spinner(frame),
+                Style::default().fg(phase_color),
+            ));
         }
     }
 
-    /* ---------- Branches ---------- */
-    lines.push(Line::from(vec![
-        Span::styled("Current Branch: ", Style::default().fg(Color::Gray)),
-        Span::styled(
-            state
-                .lifecycle
-                .current_branch
-                .clone()
-                .unwrap_or_else(|| "unknown".into()),
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        ),
-    ]));
+    lines.push(Line::from(state_spans));
+    lines.push(Line::from(""));
 
-    lines.push(Line::from(vec![
-        Span::styled("Base Branch: ", Style::default().fg(Color::Gray)),
-        Span::styled(
-            state
-                .lifecycle
-                .base_branch
-                .clone()
-                .unwrap_or_else(|| "unknown".into()),
-            Style::default().fg(Color::DarkGray),
-        ),
-    ]));
+    /* =====================================================
+       Diff context (ONLY when in diff view)
+       ===================================================== */
 
-    lines.push(Line::from(vec![
-        Span::styled("Agent Branch: ", Style::default().fg(Color::Gray)),
-        Span::styled(
-            state
-                .lifecycle
-                .agent_branch
-                .clone()
-                .unwrap_or_else(|| "none".into()),
-            Style::default().fg(Color::Yellow),
-        ),
-    ]));
+    if state.ui.in_diff_view {
+        if let Some(idx) = state.ui.selected_diff {
+            if let Some(d) = state.context.diff_analysis.get(idx) {
+                let mut spans = vec![
+                    Span::styled("Diff: ", keyword_style()),
+                    Span::styled(&d.file, Style::default()),
+                ];
 
-    /* ---------- Language ---------- */
+                if let Some(sym) = &d.symbol {
+                    spans.push(Span::raw(" :: "));
+                    spans.push(Span::styled(sym, symbol_style()));
+                }
+
+                lines.push(Line::from(spans));
+                lines.push(Line::from(""));
+            }
+        }
+    }
+
+    /* =====================================================
+       Branch context (always show current)
+       ===================================================== */
+
+    if let Some(cur) = &state.lifecycle.current_branch {
+        lines.push(Line::from(vec![
+            Span::styled("Branch: ", keyword_style()),
+            Span::styled(
+                cur,
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
+    }
+
+    if let Some(agent) = &state.lifecycle.agent_branch {
+        lines.push(Line::from(vec![
+            Span::styled("Agent: ", keyword_style()),
+            Span::styled(
+                agent,
+                Style::default().fg(Color::Yellow),
+            ),
+        ]));
+    }
+
+    /* =====================================================
+       Language / framework (tertiary metadata)
+       ===================================================== */
+
+    let mut meta: Vec<Span> = Vec::new();
+
     if let Some(lang) = &state.lifecycle.language {
         let (badge, color) = language_badge(&format!("{:?}", lang));
-        lines.push(Line::from(vec![
-            Span::styled("Language: ", Style::default().fg(Color::Gray)),
-            Span::styled(badge, Style::default().fg(color)),
-        ]));
+        meta.push(Span::styled(badge, Style::default().fg(color)));
     }
 
-    /* ---------- Framework ---------- */
     if let Some(fw) = &state.lifecycle.framework {
+        if !meta.is_empty() {
+            meta.push(Span::raw("   "));
+        }
         let (badge, color) = framework_badge(&format!("{:?}", fw));
-        lines.push(Line::from(vec![
-            Span::styled("Framework: ", Style::default().fg(Color::Gray)),
-            Span::styled(badge, Style::default().fg(color)),
-        ]));
+        meta.push(Span::styled(badge, Style::default().fg(color)));
     }
+
+    if !meta.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(meta));
+    }
+
+    /* =====================================================
+       Render
+       ===================================================== */
 
     let status = Paragraph::new(lines).block(
         Block::default()
             .borders(Borders::ALL)
-            .title("STATUS")
+            .title("STATE")
             .title_alignment(Alignment::Center),
     );
 

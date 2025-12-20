@@ -285,6 +285,7 @@ fn handle_mouse(
     let pos = (m.column, m.row).into();
 
     match m.kind {
+        // ---------- focus on click ----------
         MouseEventKind::Down(_) => {
             if diff_rect.contains(pos) {
                 state.ui.focus = Focus::Diff;
@@ -295,21 +296,31 @@ fn handle_mouse(
                 state.ui.focus = Focus::Input;
             }
         }
-        MouseEventKind::ScrollUp if state.ui.focus == Focus::Diff => {
-            state.ui.diff_scroll = state.ui.diff_scroll.saturating_sub(3);
+
+        // ---------- scroll DIFF (hover-based) ----------
+        MouseEventKind::ScrollUp if diff_rect.contains(pos) => {
+            state.ui.focus = Focus::Diff;
+            state.ui.diff_scroll = state.ui.diff_scroll.saturating_sub(2);
         }
-        MouseEventKind::ScrollDown if state.ui.focus == Focus::Diff => {
-            state.ui.diff_scroll = state.ui.diff_scroll.saturating_add(3);
+        MouseEventKind::ScrollDown if diff_rect.contains(pos) => {
+            state.ui.focus = Focus::Diff;
+            state.ui.diff_scroll = state.ui.diff_scroll.saturating_add(2);
         }
-        MouseEventKind::ScrollUp if state.ui.focus == Focus::Execution => {
-            state.ui.exec_scroll = state.ui.exec_scroll.saturating_sub(3);
+
+        // ---------- scroll EXECUTION (hover-based) ----------
+        MouseEventKind::ScrollUp if exec_rect.contains(pos) => {
+            state.ui.focus = Focus::Execution;
+            state.ui.exec_scroll = state.ui.exec_scroll.saturating_sub(2);
         }
-        MouseEventKind::ScrollDown if state.ui.focus == Focus::Execution => {
-            state.ui.exec_scroll = state.ui.exec_scroll.saturating_add(3);
+        MouseEventKind::ScrollDown if exec_rect.contains(pos) => {
+            state.ui.focus = Focus::Execution;
+            state.ui.exec_scroll = state.ui.exec_scroll.saturating_add(2);
         }
+
         _ => {}
     }
 }
+
 
 /* ============================================================
    Terminal Lifecycle

@@ -10,7 +10,9 @@ use crate::{
     git,
     llm::orchestrator::run_llm_test_flow,
     logger::log,
+    testgen::summarizer::summarize,
 };
+
 use crate::state::{AgentState, LogLevel, Phase};
 
 /* ============================================================
@@ -24,15 +26,18 @@ pub fn step(state: &mut AgentState) {
         Phase::Init => init_repo(state),
         Phase::DetectBase => detect_base_branch(state),
         Phase::CreateNewAgent => create_agent_branch(state),
+
+        // 👇 semantic enrichment happens only while idle
+        Phase::Idle => attach_summaries(state),
+
         Phase::ExecuteAgent => execute_agent(state),
+        Phase::Running => handle_running(state),
         Phase::Rollback => rollback_agent(state),
 
-        // 👇 async execution in progress
-        Phase::Running => handle_running(state),
-
-        Phase::Idle | Phase::Done => {}
+        Phase::Done => {}
     }
 }
+
 
 /* ============================================================
    Phase Implementations
@@ -76,13 +81,7 @@ fn detect_base_branch(state: &mut AgentState) {
 
 fn create_agent_branch(state: &mut AgentState) {
     let branch = ensure_agent_branch(state);
-
-    log(
-        state,
-        LogLevel::Success,
-        format!("Created agent branch {}", branch),
-    );
-
+    log(state, LogLevel::Success, format!("Created agent branch {}", branch));
     transition(state, Phase::Idle);
 }
 
@@ -93,7 +92,6 @@ fn execute_agent(state: &mut AgentState) {
     }
 
     if state.cancel_requested.load(Ordering::SeqCst) {
-        log(state, LogLevel::Info, "Agent execution cancelled before start.");
         transition(state, Phase::Rollback);
         return;
     }
@@ -124,7 +122,7 @@ fn execute_agent(state: &mut AgentState) {
 
     let framework = state.lifecycle.framework.clone();
 
-    log(state, LogLevel::Info, "Agent started");
+    log(state, LogLevel::Info, "🤖 Agent started");
 
     let cancel_flag = state.cancel_requested.clone();
 
@@ -140,7 +138,6 @@ fn execute_agent(state: &mut AgentState) {
 }
 
 fn handle_running(state: &mut AgentState) {
-    // cancellation is observed here
     if state.cancel_requested.load(Ordering::SeqCst) {
         log(state, LogLevel::Warn, "Agent cancelled.");
         transition(state, Phase::Rollback);
@@ -154,11 +151,7 @@ fn rollback_agent(state: &mut AgentState) {
 
     if let Some(agent) = state.lifecycle.agent_branch.take() {
         git::delete_branch(&agent);
-        log(
-            state,
-            LogLevel::Success,
-            format!("Deleted agent branch {}", agent),
-        );
+        log(state, LogLevel::Success, format!("Deleted agent branch {}", agent));
     }
 
     reset_views(state);
@@ -176,25 +169,12 @@ fn ensure_agent_branch(state: &mut AgentState) -> String {
 
     let branch = git::create_agent_branch();
     state.lifecycle.agent_branch = Some(branch.clone());
-
-    log(
-        state,
-        LogLevel::Success,
-        format!("Created agent branch {}", branch),
-    );
-
     branch
 }
 
 fn checkout_branch(state: &mut AgentState, branch: &str) {
     git::checkout(branch);
     state.lifecycle.current_branch = Some(branch.to_string());
-
-    log(
-        state,
-        LogLevel::Success,
-        format!("Checked out branch {}", branch),
-    );
 }
 
 fn reset_views(state: &mut AgentState) {
@@ -208,12 +188,16 @@ fn detect_repo_root() -> PathBuf {
 }
 
 fn transition(state: &mut AgentState, next: Phase) {
-    let prev = state.lifecycle.phase.clone();
     state.lifecycle.phase = next;
+}
 
-    log(
-        state,
-        LogLevel::Info,
-        format!("Phase transition: {:?} → {:?}", prev, state.lifecycle.phase),
-    );
+/* ============================================================
+   Semantic enrichment (ONE-SHOT, CORRECT)
+   ============================================================ */
+fn attach_summaries(state: &mut AgentState) {
+    for diff in &mut state.context.diff_analysis {
+        if diff.summary.is_none() {
+            diff.summary = Some(summarize(diff));
+        }
+    }
 }

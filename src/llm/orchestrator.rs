@@ -40,7 +40,7 @@ pub fn run_llm_test_flow(
         let cancel_and_exit = |reason: &str| {
             let _ = tx.send(AgentEvent::Log(
                 LogLevel::Warn,
-                format!("🤖 {}", reason),
+                format!(" {}", reason),
             ));
             let _ = tx.send(AgentEvent::SpinnerStop);
             let _ = tx.send(AgentEvent::Failed("Execution cancelled".into()));
@@ -48,12 +48,12 @@ pub fn run_llm_test_flow(
 
         // ---------- start ----------
         let _ = tx.send(AgentEvent::SpinnerStart(
-            "🤖 AI generating tests…".into(),
+            " AI generating tests…".into(),
         ));
 
         let _ = tx.send(AgentEvent::Log(
             LogLevel::Info,
-            "🤖 Agent execution started".into(),
+            " Agent execution started".into(),
         ));
 
         if cancelled() {
@@ -99,26 +99,33 @@ pub fn run_llm_test_flow(
 
         let _ = tx.send(AgentEvent::Log(
             LogLevel::Success,
-            "🤖 AI returned generated test".into(),
+            " AI returned generated test".into(),
         ));
 
         // ---------- materialize ----------
-        if let Err(e) =
-            materialize_test(language, &candidate, &resolution, &code)
-        {
-            let _ = tx.send(AgentEvent::SpinnerStop);
-            let _ = tx.send(AgentEvent::Failed(e.to_string()));
-            return;
-        }
+        let path = match materialize_test(language, &candidate, &resolution, &code) {
+            Ok(p) => p,
+            Err(e) => {
+                let _ = tx.send(AgentEvent::SpinnerStop);
+                let _ = tx.send(AgentEvent::Failed(e.to_string()));
+                return;
+            }
+        };
+
+        let _ = tx.send(AgentEvent::Log(
+            LogLevel::Success,
+            format!(" Test written to {}", path.display()),
+        ));
 
         let _ = tx.send(AgentEvent::GeneratedTest(code));
+
 
         // ---------- finish ----------
         let elapsed = started.elapsed().as_secs_f32();
 
         let _ = tx.send(AgentEvent::Log(
             LogLevel::Info,
-            format!("🤖 Finished in {:.2}s", elapsed),
+            format!(" Finished in {:.2}s", elapsed),
         ));
 
         let _ = tx.send(AgentEvent::SpinnerStop);

@@ -139,14 +139,19 @@ pub fn symbol_style() -> Style {
 /// Color mapping for diff change surface.
 pub fn surface_color(surface: &ChangeSurface) -> Color {
     match surface {
-        ChangeSurface::PureLogic     => Color::Green,
-        ChangeSurface::Branching     => Color::Yellow,
-        ChangeSurface::Contract      => Color::Magenta,
-        ChangeSurface::ErrorPath     => Color::Red,
-        ChangeSurface::State         => Color::Cyan,
-        ChangeSurface::Integration  => Color::Blue,
-        ChangeSurface::Observability => Color::LightBlue,
-        ChangeSurface::Cosmetic      => Color::DarkGray,
+        // Safe / low-risk surfaces → muted
+        ChangeSurface::PureLogic
+        | ChangeSurface::Cosmetic
+        | ChangeSurface::Observability => Color::DarkGray,
+
+        // Conditional / structural changes → warning
+        ChangeSurface::Branching
+        | ChangeSurface::Integration => Color::Yellow,
+
+        // API / state / error paths → attention
+        ChangeSurface::Contract
+        | ChangeSurface::State
+        | ChangeSurface::ErrorPath => Color::Red,
     }
 }
 
