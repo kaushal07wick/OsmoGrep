@@ -1,43 +1,39 @@
+//! detectors/ast/ast.rs
+//!
+//! AST-based symbol detection utilities.
+//! FACTS ONLY. No semantics.
+
 use crate::git;
-use std::collections::HashSet;
 use tree_sitter::{Node, Parser};
+use std::cell::RefCell;
 
 /* ============================================================
-   Public helpers
+   Parser reuse
    ============================================================ */
 
-/// Extract full source of a symbol (function / class / impl)
-pub fn extract_symbol_source(
-    source: &str,
-    file: &str,
-    symbol: &str,
-) -> Option<String> {
-    let mut parser = Parser::new();
+thread_local! {
+    static PY_PARSER: RefCell<Parser> = RefCell::new(make_python_parser());
+    static RS_PARSER: RefCell<Parser> = RefCell::new(make_rust_parser());
+}
 
-    if file.ends_with(".py") {
-        parser.set_language(&tree_sitter_python::language()).ok()?;
-    } else if file.ends_with(".rs") {
-        parser.set_language(&tree_sitter_rust::language()).ok()?;
-    } else {
-        return None;
-    }
+fn make_python_parser() -> Parser {
+    let mut p = Parser::new();
+    p.set_language(&tree_sitter_python::language()).unwrap();
+    p
+}
 
-    let tree = parser.parse(source, None)?;
-    let root = tree.root_node();
-
-    find_symbol_node(root, source, symbol)
-        .and_then(|n| n.utf8_text(source.as_bytes()).ok())
-        .map(|s| s.to_string())
+fn make_rust_parser() -> Parser {
+    let mut p = Parser::new();
+    p.set_language(&tree_sitter_rust::language()).unwrap();
+    p
 }
 
 /* ============================================================
    Public API
    ============================================================ */
 
-/// Detect enclosing symbol affected by diff hunks
-/// Uses STAGED content if available, otherwise HEAD
 pub fn detect_symbol(file: &str, hunks: &str) -> Option<String> {
-    if !(file.ends_with(".py") || file.ends_with(".rs")) {
+    if !is_supported(file) {
         return None;
     }
 
@@ -47,39 +43,59 @@ pub fn detect_symbol(file: &str, hunks: &str) -> Option<String> {
 
     let line_offsets = compute_line_offsets(&source);
     let ranges = changed_byte_ranges(hunks, &line_offsets);
-
     if ranges.is_empty() {
         return None;
     }
 
-    let mut parser = Parser::new();
-    if file.ends_with(".py") {
-        parser.set_language(&tree_sitter_python::language()).ok()?;
-    } else {
-        parser.set_language(&tree_sitter_rust::language()).ok()?;
-    }
-
-    let tree = parser.parse(&source, None)?;
+    let tree = parse_source(file, &source)?;
     let root = tree.root_node();
 
-    let mut seen = HashSet::new();
+    // Collect ALL candidates, then pick the smallest enclosing node
+    let mut best: Option<(usize, String)> = None;
 
     for (start, end) in ranges {
-        if let Some(sym) = find_enclosing_symbol(root, &source, start, end) {
-            if seen.insert(sym.clone()) {
-                return Some(sym);
-            }
-        }
+        collect_enclosing_symbols(root, &source, start, end, &mut best);
     }
 
-    None
+    best.map(|(_, name)| name)
+}
+
+pub fn extract_symbol_source(
+    source: &str,
+    file: &str,
+    symbol: &str,
+) -> Option<String> {
+    let tree = parse_source(file, source)?;
+    let root = tree.root_node();
+
+    find_symbol_node(root, source, symbol)
+        .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+        .map(str::to_owned)
 }
 
 /* ============================================================
-   Line → byte mapping
+   Core helpers
    ============================================================ */
 
-fn compute_line_offsets(src: &str) -> Vec<usize> {
+pub fn is_supported(file: &str) -> bool {
+    file.ends_with(".py") || file.ends_with(".rs")
+}
+
+pub fn parse_source(file: &str, source: &str) -> Option<tree_sitter::Tree> {
+    if file.ends_with(".py") {
+        PY_PARSER.with(|p| p.borrow_mut().parse(source, None))
+    } else if file.ends_with(".rs") {
+        RS_PARSER.with(|p| p.borrow_mut().parse(source, None))
+    } else {
+        None
+    }
+}
+
+/* ============================================================
+   Diff → byte ranges
+   ============================================================ */
+
+pub fn compute_line_offsets(src: &str) -> Vec<usize> {
     let mut offsets = vec![0];
     for (i, b) in src.bytes().enumerate() {
         if b == b'\n' {
@@ -89,30 +105,30 @@ fn compute_line_offsets(src: &str) -> Vec<usize> {
     offsets
 }
 
-fn changed_byte_ranges(
+pub fn changed_byte_ranges(
     hunks: &str,
-    line_offsets: &[usize],
+    offsets: &[usize],
 ) -> Vec<(usize, usize)> {
     let mut ranges = Vec::new();
 
     for line in hunks.lines() {
-        if let Some((start_line, count)) = parse_hunk_header(line) {
-            let start_idx = start_line.saturating_sub(1);
-            let end_idx = start_idx + count;
+        if let Some((start, len)) = parse_hunk_header(line) {
+            let s = start.saturating_sub(1);
+            let e = s + len;
 
-            let start = *line_offsets.get(start_idx).unwrap_or(&0);
-            let end = *line_offsets
-                .get(end_idx)
-                .unwrap_or_else(|| line_offsets.last().unwrap_or(&0));
+            let start_byte = *offsets.get(s).unwrap_or(&0);
+            let end_byte = *offsets
+                .get(e)
+                .unwrap_or_else(|| offsets.last().unwrap());
 
-            ranges.push((start, end));
+            ranges.push((start_byte, end_byte));
         }
     }
 
     ranges
 }
 
-fn parse_hunk_header(line: &str) -> Option<(usize, usize)> {
+pub fn parse_hunk_header(line: &str) -> Option<(usize, usize)> {
     if !line.starts_with("@@") {
         return None;
     }
@@ -128,60 +144,73 @@ fn parse_hunk_header(line: &str) -> Option<(usize, usize)> {
 }
 
 /* ============================================================
-   AST traversal
+   Symbol detection (deterministic)
    ============================================================ */
 
-fn find_enclosing_symbol(
+fn collect_enclosing_symbols(
     node: Node,
     source: &str,
     start: usize,
     end: usize,
-) -> Option<String> {
+    best: &mut Option<(usize, String)>,
+) {
     if node.end_byte() < start || node.start_byte() > end {
-        return None;
+        return;
     }
 
-    match node.kind() {
-        // Python
-        "function_definition" => return extract_python_function(node, source),
-        "class_definition" => return extract_python_class(node, source),
-
-        // Rust
-        "function_item" => return extract_rust_named(node, source, "fn "),
-        "struct_item" => return extract_rust_named(node, source, "struct "),
-        "enum_item" => return extract_rust_named(node, source, "enum "),
-        "impl_item" => return extract_rust_impl(node, source),
-
-        _ => {}
+    if let Some(name) = symbol_name(node, source) {
+        let span = node.end_byte() - node.start_byte();
+        match best {
+            Some((best_span, _)) if *best_span <= span => {}
+            _ => *best = Some((span, name)),
+        }
     }
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        if let Some(sym) = find_enclosing_symbol(child, source, start, end) {
-            return Some(sym);
-        }
+        collect_enclosing_symbols(child, source, start, end, best);
     }
-
-    None
 }
 
-/// Used by extract_symbol_source
-fn find_symbol_node<'a>(
+fn symbol_name(node: Node, source: &str) -> Option<String> {
+    match node.kind() {
+        // Python
+        "function_definition" | "class_definition" => {
+            node.child_by_field_name("name")
+                .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+                .map(str::to_owned)
+        }
+
+        // Rust
+        "function_item" | "struct_item" | "enum_item" => {
+            node.child_by_field_name("name")
+                .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+                .map(str::to_owned)
+        }
+
+        // Rust impl Foo / impl Trait for Foo
+        "impl_item" => {
+            node.child_by_field_name("type")
+                .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+                .map(|t| format!("impl {}", t))
+        }
+
+        _ => None,
+    }
+}
+
+/* ============================================================
+   Symbol source extraction
+   ============================================================ */
+
+pub fn find_symbol_node<'a>(
     node: Node<'a>,
     source: &str,
     symbol: &str,
 ) -> Option<Node<'a>> {
-    if let Ok(text) = node.utf8_text(source.as_bytes()) {
-        if text.contains(symbol) {
-            match node.kind() {
-                "function_definition"
-                | "class_definition"
-                | "function_item"
-                | "struct_item"
-                | "enum_item"
-                | "impl_item" => return Some(node),
-                _ => {}
-            }
+    if let Some(name) = symbol_name(node, source) {
+        if name == symbol {
+            return Some(node);
         }
     }
 
@@ -193,67 +222,4 @@ fn find_symbol_node<'a>(
     }
 
     None
-}
-
-
-/* ============================================================
-   Python extraction
-   ============================================================ */
-
-fn extract_python_function(node: Node, source: &str) -> Option<String> {
-    let name = python_identifier(node, source)?;
-    let class = enclosing_python_class(node, source);
-
-    Some(match class {
-        Some(cls) => format!("{}.{}", cls, name),
-        None => name,
-    })
-}
-
-fn extract_python_class(node: Node, source: &str) -> Option<String> {
-    python_identifier(node, source)
-}
-
-fn python_identifier(node: Node, source: &str) -> Option<String> {
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if child.kind() == "identifier" {
-            return child
-                .utf8_text(source.as_bytes())
-                .ok()
-                .map(|s| s.to_string());
-        }
-    }
-    None
-}
-
-fn enclosing_python_class(node: Node, source: &str) -> Option<String> {
-    let mut cur = node.parent();
-    while let Some(n) = cur {
-        if n.kind() == "class_definition" {
-            return python_identifier(n, source);
-        }
-        cur = n.parent();
-    }
-    None
-}
-
-/* ============================================================
-   Rust extraction
-   ============================================================ */
-
-fn extract_rust_named(
-    node: Node,
-    source: &str,
-    prefix: &str,
-) -> Option<String> {
-    node.child_by_field_name("name")
-        .and_then(|n| n.utf8_text(source.as_bytes()).ok())
-        .map(|n| format!("{}{}", prefix, n))
-}
-
-fn extract_rust_impl(node: Node, source: &str) -> Option<String> {
-    node.child_by_field_name("type")
-        .and_then(|n| n.utf8_text(source.as_bytes()).ok())
-        .map(|t| format!("impl {}", t))
 }

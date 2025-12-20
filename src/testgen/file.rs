@@ -1,8 +1,9 @@
+// src/testgen/file.rs
+
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use crate::state::AgentState;
 use crate::detectors::language::Language;
 use crate::testgen::candidate::TestCandidate;
 use crate::testgen::resolve::TestResolution;
@@ -12,16 +13,16 @@ use crate::testgen::resolve::TestResolution;
    ============================================================ */
 
 pub fn materialize_test(
-    state: &AgentState,
+    language: Language,
     candidate: &TestCandidate,
     resolution: &TestResolution,
     test_code: &str,
 ) -> io::Result<PathBuf> {
-    match state.language.as_ref() {
-        Some(Language::Python) => {
+    match language {
+        Language::Python => {
             write_python_test(candidate, resolution, test_code)
         }
-        Some(Language::Rust) => {
+        Language::Rust => {
             write_rust_test(candidate, resolution, test_code)
         }
         _ => Err(io::Error::new(
@@ -42,31 +43,22 @@ fn write_python_test(
 ) -> io::Result<PathBuf> {
     let path = match resolution {
         TestResolution::Found { file, .. } => PathBuf::from(file),
-
         TestResolution::Ambiguous(_) => {
             return Err(io::Error::new(
                 io::ErrorKind::Other,
-                "Multiple possible Python test files found; user input required",
+                "Multiple possible Python test files found",
             ));
         }
-
         TestResolution::NotFound => default_python_test_path(candidate),
     };
 
     ensure_parent_dir(&path)?;
-    append_or_create(&path, test_code)?;
+    append_once(&path, test_code, "# OSMOGREP TEST")?;
     Ok(path)
 }
 
 fn default_python_test_path(c: &TestCandidate) -> PathBuf {
-    let mut name = c.file.replace('/', "_");
-    name = name.replace(".py", "");
-
-    if let Some(sym) = &c.symbol {
-        name.push('_');
-        name.push_str(sym);
-    }
-
+    let name = sanitize(&c.file, &c.symbol);
     PathBuf::from(format!("tests/test_{}_regression.py", name))
 }
 
@@ -80,7 +72,6 @@ fn write_rust_test(
     test_code: &str,
 ) -> io::Result<PathBuf> {
     match resolution {
-        // NOTE: For Rust, `file` must be the source `.rs` file containing code
         TestResolution::Found { file, .. } => {
             let path = PathBuf::from(file);
             append_inline_rust_test(&path, test_code)?;
@@ -88,30 +79,23 @@ fn write_rust_test(
         }
 
         TestResolution::Ambiguous(_) => {
-            return Err(io::Error::new(
+            Err(io::Error::new(
                 io::ErrorKind::Other,
-                "Multiple possible Rust test locations found; user input required",
-            ));
+                "Multiple possible Rust test locations found",
+            ))
         }
 
         TestResolution::NotFound => {
             let path = default_rust_test_path(candidate);
             ensure_parent_dir(&path)?;
-            append_or_create(&path, test_code)?;
+            append_once(&path, test_code, "// OSMOGREP TEST")?;
             Ok(path)
         }
     }
 }
 
 fn default_rust_test_path(c: &TestCandidate) -> PathBuf {
-    let mut name = c.file.replace('/', "_");
-    name = name.replace(".rs", "");
-
-    if let Some(sym) = &c.symbol {
-        name.push('_');
-        name.push_str(sym);
-    }
-
+    let name = sanitize(&c.file, &c.symbol);
     PathBuf::from(format!("tests/{}_regression.rs", name))
 }
 
@@ -126,30 +110,43 @@ fn ensure_parent_dir(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn append_or_create(path: &Path, content: &str) -> io::Result<()> {
+/// Append content only if sentinel is not already present
+fn append_once(
+    path: &Path,
+    content: &str,
+    sentinel: &str,
+) -> io::Result<()> {
+    let existing = fs::read_to_string(path).unwrap_or_default();
+    if existing.contains(sentinel) {
+        return Ok(());
+    }
+
     let mut file = fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(path)?;
 
-    writeln!(file, "\n{}", content.trim_end())?;
+    writeln!(file, "\n{}\n{}", sentinel, content.trim_end())?;
     Ok(())
 }
 
-fn append_inline_rust_test(path: &Path, test_code: &str) -> io::Result<()> {
+fn append_inline_rust_test(
+    path: &Path,
+    test_code: &str,
+) -> io::Result<()> {
     let src = fs::read_to_string(path)?;
 
-    if src.contains("#[cfg(test)]") {
-        let mut file = fs::OpenOptions::new().append(true).open(path)?;
-        writeln!(file, "\n{}", test_code.trim_end())?;
-    } else {
-        let mut file = fs::OpenOptions::new().append(true).open(path)?;
-        writeln!(
-            file,
-            "\n\n#[cfg(test)]\nmod tests {{\n{}\n}}\n",
-            indent(test_code.trim_end(), 4)
-        )?;
+    if src.contains("// OSMOGREP TEST") {
+        return Ok(());
     }
+
+    let mut file = fs::OpenOptions::new().append(true).open(path)?;
+
+    writeln!(
+        file,
+        "\n\n#[cfg(test)]\nmod osmogrep_tests {{\n{}\n}}\n// OSMOGREP TEST\n",
+        indent(test_code.trim_end(), 4)
+    )?;
 
     Ok(())
 }
@@ -160,4 +157,15 @@ fn indent(s: &str, spaces: usize) -> String {
         .map(|l| format!("{pad}{l}"))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn sanitize(file: &str, symbol: &Option<String>) -> String {
+    let mut name = file.replace('/', "_");
+
+    if let Some(sym) = symbol {
+        name.push('_');
+        name.push_str(sym);
+    }
+
+    name.replace(|c: char| !c.is_ascii_alphanumeric() && c != '_', "_")
 }

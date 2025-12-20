@@ -1,5 +1,7 @@
 use crate::testgen::candidate::{TestCandidate, TestType, TestTarget};
-use crate::state::{RiskLevel, TestDecision, Language, TestFramework};
+use crate::state::RiskLevel;
+use crate::detectors::language::Language;
+use crate::detectors::framework::TestFramework;
 use crate::testgen::resolve::TestResolution;
 
 #[derive(Debug)]
@@ -14,34 +16,37 @@ pub fn build_prompt(
     language: Option<&Language>,
     framework: Option<&TestFramework>,
 ) -> LlmPrompt {
-    let system = system_prompt();
-    let user = user_prompt(candidate, resolution, language, framework);
-
-    LlmPrompt { system, user }
+    LlmPrompt {
+        system: system_prompt(),
+        user: user_prompt(candidate, resolution, language, framework),
+    }
 }
 
 /* ============================================================
-   System prompt (stable, reused)
+   System prompt
    ============================================================ */
 
 fn system_prompt() -> String {
     r#"
-You are an expert software engineer focused on writing correct, minimal, high-signal tests.
+You are an expert software engineer who writes precise, minimal, high-signal tests.
 
-Rules:
-- Prefer regression tests unless explicitly instructed otherwise
+ABSOLUTE RULES:
+- Output ONLY valid test code
+- Do NOT include explanations, comments, or markdown
 - Do NOT refactor production code
-- Do NOT change behavior unless instructed
-- Tests must be deterministic and readable
-- Modify existing tests when possible; avoid duplication
-- Only output valid test code, nothing else
+- Do NOT change behavior beyond what is required for the test
+- Tests must be deterministic, readable, and minimal
+- Prefer modifying existing tests over creating new ones
+- Assume the code under test already compiles
+
+Violating these rules is incorrect behavior.
 "#
     .trim()
     .to_string()
 }
 
 /* ============================================================
-   User prompt (fully derived from TestCandidate)
+   User prompt
    ============================================================ */
 
 fn user_prompt(
@@ -53,7 +58,7 @@ fn user_prompt(
     let mut out = String::new();
 
     /* ---------- CONTEXT ---------- */
-    out.push_str("CONTEXT\n");
+    out.push_str("=== CONTEXT ===\n");
     out.push_str(&format!("File: {}\n", c.file));
 
     if let Some(sym) = &c.symbol {
@@ -61,11 +66,11 @@ fn user_prompt(
     }
 
     if let Some(lang) = language {
-        out.push_str(&format!("Language: {:?}\n", lang));
+        out.push_str(&format!("Language: {}\n", format!("{:?}", lang)));
     }
 
     if let Some(fw) = framework {
-        out.push_str(&format!("Test Framework: {:?}\n", fw));
+        out.push_str(&format!("Test Framework: {}\n", format!("{:?}", fw)));
     }
 
     out.push_str(&format!(
@@ -75,18 +80,9 @@ fn user_prompt(
 
     out.push_str(&format!("Target: {}\n\n", format_target(&c.target)));
 
-    out.push_str(
-        "Decision meaning:\n\
-         - Yes: test must be written or updated\n\
-         - Conditional: write test only if meaningful for this change\n\n",
-    );
-
     /* ---------- INTENT ---------- */
-    out.push_str("INTENT\n");
-    out.push_str(&format!(
-        "Behavior to preserve:\n{}\n\n",
-        c.behavior
-    ));
+    out.push_str("=== INTENT ===\n");
+    out.push_str(&format!("Behavior to preserve:\n{}\n\n", c.behavior));
     out.push_str(&format!(
         "Failure mode if incorrect:\n{}\n\n",
         c.failure_mode
@@ -94,32 +90,31 @@ fn user_prompt(
 
     /* ---------- CODE CONTEXT ---------- */
     if let Some(old) = &c.old_code {
-        out.push_str("OLD CODE\n```\n");
+        out.push_str("=== OLD CODE ===\n");
+        out.push_str("```\n");
         out.push_str(old);
         out.push_str("\n```\n\n");
     }
 
     if let Some(new) = &c.new_code {
-        out.push_str("NEW CODE\n```\n");
+        out.push_str("=== NEW CODE ===\n");
+        out.push_str("```\n");
         out.push_str(new);
         out.push_str("\n```\n\n");
     }
 
     /* ---------- TEST RESOLUTION ---------- */
-    out.push_str("TEST STATUS\n");
+    out.push_str("=== TEST RESOLUTION ===\n");
 
     match resolution {
         TestResolution::Found { file, test_fn } => {
             out.push_str(&format!(
-                "An existing test was found at: {}\n",
+                "Existing test file: {}\n",
                 file
             ));
 
             if let Some(name) = test_fn {
-                out.push_str(&format!(
-                    "Relevant test function: {}\n",
-                    name
-                ));
+                out.push_str(&format!("Relevant test function: {}\n", name));
             }
 
             out.push_str(
@@ -128,7 +123,7 @@ fn user_prompt(
         }
 
         TestResolution::Ambiguous(paths) => {
-            out.push_str("Multiple possible test locations were found:\n");
+            out.push_str("Multiple possible test locations:\n");
             for p in paths {
                 out.push_str(&format!("- {}\n", p));
             }
@@ -147,16 +142,25 @@ fn user_prompt(
     /* ---------- LANGUAGE-SPECIFIC RULES ---------- */
     if matches!(language, Some(Language::Rust)) {
         out.push_str(
-            "\nRust testing rules:\n\
+            "\n=== RUST TESTING RULES ===\n\
              - Prefer #[cfg(test)] mod tests in the same file\n\
              - Only create files under tests/ if clearly appropriate\n",
         );
     }
 
     /* ---------- CONSTRAINTS ---------- */
-    out.push_str("\nCONSTRAINTS\n");
-    out.push_str(&risk_constraints(c.risk));
-    out.push_str(&test_type_constraints(c.test_type));
+    out.push_str("\n=== CONSTRAINTS ===\n");
+    out.push_str(&risk_constraints(&c.risk));
+    out.push_str(&test_type_constraints(&c.test_type));
+
+    /* ---------- OUTPUT ---------- */
+    out.push_str(
+        "\n=== OUTPUT REQUIREMENTS ===\n\
+         - Output ONLY valid test code\n\
+         - No explanations\n\
+         - No markdown\n\
+         - No comments outside the test code\n",
+    );
 
     out
 }
@@ -173,30 +177,24 @@ fn format_target(t: &TestTarget) -> String {
     }
 }
 
-fn risk_constraints(risk: RiskLevel) -> String {
+fn risk_constraints(risk: &RiskLevel) -> String {
     match risk {
-        RiskLevel::High => {
-            "- Include edge cases\n- Include failure assertions\n- Be strict\n".into()
-        }
-        RiskLevel::Medium => {
-            "- Cover core behavior\n- Avoid over-testing\n".into()
-        }
-        RiskLevel::Low => {
-            "- Minimal sanity check only\n".into()
-        }
+        RiskLevel::High =>
+            "- Include edge cases\n- Include failure assertions\n- Be strict\n".into(),
+        RiskLevel::Medium =>
+            "- Cover core behavior\n- Avoid over-testing\n".into(),
+        RiskLevel::Low =>
+            "- Minimal sanity check only\n".into(),
     }
 }
 
-fn test_type_constraints(tt: TestType) -> String {
+fn test_type_constraints(tt: &TestType) -> String {
     match tt {
-        TestType::Regression => {
-            "- Assert previously working behavior still holds\n".into()
-        }
-        TestType::Unit => {
-            "- Isolate the function\n- Avoid external dependencies\n".into()
-        }
-        TestType::Integration => {
-            "- Use real components\n- Avoid mocks unless required\n".into()
-        }
+        TestType::Regression =>
+            "- Assert previously working behavior still holds\n".into(),
+        TestType::Unit =>
+            "- Isolate the function\n- Avoid external dependencies\n".into(),
+        TestType::Integration =>
+            "- Use real components\n- Avoid mocks unless required\n".into(),
     }
 }

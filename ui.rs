@@ -246,26 +246,18 @@ fn render_side_by_side(
     );
 }
 
-fn render_testgen_panel(
+fn render_testgen_preview_panel(
     f: &mut ratatui::Frame,
     area: Rect,
     state: &AgentState,
     candidate: &crate::testgen::candidate::TestCandidate,
+    generated_test: Option<&str>,
 ) {
     let mut lines: Vec<Line> = Vec::new();
 
-    /* ---------- EXIT HINT ---------- */
-    lines.push(Line::from(Span::styled(
-        "ESC / q → return to execution view",
-        Style::default()
-            .fg(Color::DarkGray)
-            .add_modifier(Modifier::ITALIC),
-    )));
-    lines.push(Line::from(""));
-
     /* ---------- HEADER ---------- */
     lines.push(Line::from(Span::styled(
-        "TEST GENERATION PREVIEW",
+        "GENERATED TEST",
         Style::default()
             .fg(Color::Yellow)
             .add_modifier(Modifier::BOLD),
@@ -275,10 +267,7 @@ fn render_testgen_panel(
     /* ---------- META ---------- */
     lines.push(Line::from(vec![
         Span::styled("FILE: ", Style::default().fg(Color::Gray)),
-        Span::styled(
-            &candidate.file,
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
-        ),
+        Span::styled(&candidate.file, Style::default().fg(Color::White)),
     ]));
 
     if let Some(sym) = &candidate.symbol {
@@ -288,148 +277,24 @@ fn render_testgen_panel(
         ]));
     }
 
-    if let Some(lang) = &state.language {
-        let (badge, color) = language_badge(&format!("{:?}", lang));
-        lines.push(Line::from(vec![
-            Span::styled("LANG: ", Style::default().fg(Color::Gray)),
-            Span::styled(badge, Style::default().fg(color)),
-        ]));
-    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "TEST CODE",
+        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(""));
 
-    if let Some(fw) = &state.framework {
-        let (badge, color) = framework_badge(&format!("{:?}", fw));
-        lines.push(Line::from(vec![
-            Span::styled("TEST FW: ", Style::default().fg(Color::Gray)),
-            Span::styled(badge, Style::default().fg(color)),
-        ]));
-    }
-    /* ---------- TEST PRESENCE ---------- */
-    let resolution = crate::testgen::resolve::resolve_test(state, candidate);
-
-    match &resolution {
-        TestResolution::Found { file, test_fn } => {
-            lines.push(Line::from(vec![
-                Span::styled("TEST: ", Style::default().fg(Color::Gray)),
-                Span::styled(
-                    "EXISTS",
-                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
-                ),
-                Span::raw("  "),
-                Span::styled(file, Style::default().fg(Color::DarkGray)),
-            ]));
-
-            if let Some(name) = test_fn {
-                lines.push(Line::from(vec![
-                    Span::styled("TEST FN: ", Style::default().fg(Color::Gray)),
-                    Span::styled(name, Style::default().fg(Color::White)),
-                ]));
+    /* ---------- GENERATED TEST CODE ---------- */
+    match generated_test {
+        Some(code) => {
+            for line in code.lines() {
+                lines.push(Line::from(Span::raw(line)));
             }
         }
-
-        TestResolution::Ambiguous(files) => {
-            lines.push(Line::from(vec![
-                Span::styled("TEST: ", Style::default().fg(Color::Gray)),
-                Span::styled(
-                    "AMBIGUOUS",
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-                ),
-            ]));
-
-            for f in files {
-                lines.push(Line::from(Span::styled(
-                    format!("  • {}", f),
-                    Style::default().fg(Color::DarkGray),
-                )));
-            }
-        }
-
-        TestResolution::NotFound => {
-            lines.push(Line::from(vec![
-                Span::styled("TEST: ", Style::default().fg(Color::Gray)),
-                Span::styled(
-                    "NOT FOUND",
-                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-                ),
-                Span::raw("  "),
-                Span::styled(
-                    "New test will be generated",
-                    Style::default().fg(Color::DarkGray),
-                ),
-            ]));
-        }
-    }
-
-    lines.push(Line::from(""));
-
-
-    lines.push(Line::from(vec![
-        Span::styled("TEST TYPE: ", Style::default().fg(Color::Gray)),
-        Span::styled(
-            format!("{:?}", candidate.test_type),
-            Style::default().fg(Color::Yellow),
-        ),
-        Span::raw("   "),
-        Span::styled("RISK: ", Style::default().fg(Color::Gray)),
-        Span::styled(
-            format!("{:?}", candidate.risk),
-            Style::default().fg(risk_color(&candidate.risk)),
-        ),
-    ]));
-
-    lines.push(Line::from(""));
-
-    /* ---------- BEHAVIOR ---------- */
-    lines.push(Line::from(Span::styled(
-        "BEHAVIOR",
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-    )));
-    lines.push(Line::from(Span::raw(&candidate.behavior)));
-    lines.push(Line::from(""));
-
-    /* ---------- FAILURE MODE ---------- */
-    lines.push(Line::from(Span::styled(
-        "FAILURE MODE",
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-    )));
-    lines.push(Line::from(Span::raw(&candidate.failure_mode)));
-    lines.push(Line::from(""));
-
-    /* ---------- OLD CODE ---------- */
-    if let Some(old) = &candidate.old_code {
-        lines.push(Line::from(""));
-
-        lines.push(Line::from(Span::styled(
-            "──────── OLD CODE (before change) ────────",
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-        )));
-
-        lines.push(Line::from(""));
-
-        for l in old.lines() {
+        None => {
             lines.push(Line::from(Span::styled(
-                l,
-                Style::default().fg(Color::Red),
-            )));
-        }
-
-        lines.push(Line::from(""));
-        lines.push(Line::from(""));
-    }
-
-    if let Some(new) = &candidate.new_code {
-        lines.push(Line::from(""));
-
-        lines.push(Line::from(Span::styled(
-            "──────── NEW CODE (to be tested) ────────",
-            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
-        )));
-
-        lines.push(Line::from(""));
-
-        for l in new.lines() {
-            lines.push(Line::from(Span::styled(
-                l,
-                Style::default().fg(Color::Green),
+                "Generating test…",
+                Style::default().fg(Color::DarkGray),
             )));
         }
     }
@@ -447,7 +312,57 @@ fn render_testgen_panel(
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .title("TESTGEN")
+        .title("LLM OUTPUT")
+        .title_alignment(Alignment::Center);
+
+    f.render_widget(Paragraph::new(visible).block(block), area);
+}
+
+
+fn render_test_result_panel(
+    f: &mut ratatui::Frame,
+    area: Rect,
+    state: &AgentState,
+    output: &str,
+    passed: bool,
+) {
+    let mut lines: Vec<Line> = Vec::new();
+
+    /* ---------- HEADER ---------- */
+    lines.push(Line::from(Span::styled(
+        if passed { "TEST PASSED" } else { "TEST FAILED" },
+        Style::default()
+            .fg(if passed { Color::Green } else { Color::Red })
+            .add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(""));
+
+    /* ---------- OUTPUT ---------- */
+    if output.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No test output.",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        for l in output.lines() {
+            lines.push(Line::from(Span::raw(l)));
+        }
+    }
+
+    /* ---------- SCROLL ---------- */
+    let height = area.height.saturating_sub(2) as usize;
+    let max_scroll = lines.len().saturating_sub(height);
+    let scroll = state.exec_scroll.min(max_scroll);
+
+    let visible = lines
+        .into_iter()
+        .skip(scroll)
+        .take(height)
+        .collect::<Vec<_>>();
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("TEST RESULT")
         .title_alignment(Alignment::Center);
 
     f.render_widget(Paragraph::new(visible).block(block), area);
@@ -626,15 +541,33 @@ pub fn draw_ui<B: Backend>(
 
         let mut rendered_custom = false;
 
-        /* ---------- SINGLE PANEL VIEW (TESTGEN, LLM, RESULTS) ---------- */
+        /* ---------- SINGLE PANEL VIEW (LLM OUTPUT / RESULTS) ---------- */
         if let Some(view) = &state.panel_view {
             match view {
-                SinglePanelView::TestGenPreview(c) => {
-                    render_testgen_panel(f, layout[2], state, c);
+                SinglePanelView::TestGenPreview {
+                    candidate,
+                    generated_test,
+                } => {
+                    render_testgen_preview_panel(
+                        f,
+                        layout[2],
+                        state,
+                        candidate,
+                        generated_test.as_deref(),
+                    );
+                    rendered_custom = true;
+                }
+
+                SinglePanelView::TestResult { output, passed } => {
+                    render_test_result_panel(f, layout[2], state, output, *passed);
                     rendered_custom = true;
                 }
             }
         }
+
+
+
+
 
         /* ---------- SIDE-BY-SIDE DIFF VIEW ---------- */
         else if let Some(idx) = state.selected_diff {

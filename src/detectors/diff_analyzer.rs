@@ -1,15 +1,33 @@
+//! diff_analyzer.rs
+//!
+//! Extracts raw, symbol-aware diffs.
+//!
+//! Responsibilities:
+//! - Split git diff per file
+//! - Detect affected symbol (best-effort)
+//! - Extract before/after source (NEVER drop diffs)
+//! - Classify change surface (cheap heuristics only)
+//!
+//! Non-responsibilities:
+//! - NO test decision
+//! - NO risk judgment
+//! - NO semantic interpretation
+
 use crate::git;
-use crate::state::{ChangeSurface, DiffAnalysis, RiskLevel, TestDecision};
+use crate::state::{ChangeSurface, DiffAnalysis};
 use crate::detectors::ast::ast::detect_symbol;
 use crate::detectors::ast::symboldelta::compute_symbol_delta;
-use crate::detectors::ast::pretty::pretty_diff;
 
 /* ============================================================
-   Public entry
+   Public entrypoint
    ============================================================ */
 
 pub fn analyze_diff() -> Vec<DiffAnalysis> {
     let raw = git::diff_cached();
+    if raw.is_empty() {
+        return Vec::new();
+    }
+
     let diff = String::from_utf8_lossy(&raw);
     let base_branch = git::detect_base_branch();
 
@@ -21,7 +39,7 @@ pub fn analyze_diff() -> Vec<DiffAnalysis> {
 }
 
 /* ============================================================
-   Core analysis
+   Per-file analysis (FACTS ONLY)
    ============================================================ */
 
 fn analyze_file(
@@ -29,51 +47,77 @@ fn analyze_file(
     file: &str,
     hunks: &str,
 ) -> DiffAnalysis {
+    // Cheap surface classification
     let surface = detect_surface(file, hunks);
-    let (decision, risk, reason) = decide_test(file, hunks, &surface);
 
+    // Best-effort symbol detection (AST owns correctness)
     let symbol = if is_supported_code_file(file) {
         detect_symbol(file, hunks)
     } else {
         None
     };
 
-    let mut delta = None;
-    let mut pretty = None;
-
-    if matches!(decision, TestDecision::Yes | TestDecision::Conditional) {
-        if let Some(sym) = &symbol {
-            if let Some(d) = compute_symbol_delta(base_branch, file, sym) {
-                pretty = Some(pretty_diff(
-                    Some(&d.old_source),
-                    Some(&d.new_source),
-                ));
-                delta = Some(d);
-            }
+    // 🔥 ALWAYS attempt delta extraction for code files
+    let delta = if is_supported_code_file(file) {
+        match &symbol {
+            Some(sym) => compute_symbol_delta(base_branch, file, sym),
+            None => compute_symbol_delta(base_branch, file, "<file>"),
         }
-    }
+    } else {
+        None
+    };
 
     DiffAnalysis {
         file: file.to_string(),
         symbol,
         surface,
-        test_required: decision,
-        risk,
-        reason,
         delta,
-        pretty,
+        semantic: None, // populated later (LLM stage)
     }
 }
 
 /* ============================================================
-   Surface detection
+   Diff parsing (simple + correct)
+   ============================================================ */
+
+fn split_diff_by_file(diff: &str) -> Vec<(String, String)> {
+    let mut results = Vec::new();
+    let mut current_file: Option<String> = None;
+    let mut buffer = String::new();
+
+    for line in diff.lines() {
+        if let Some(rest) = line.strip_prefix("diff --git ") {
+            if let Some(file) = current_file.take() {
+                results.push((file, std::mem::take(&mut buffer)));
+            }
+
+            let parts: Vec<_> = rest.split_whitespace().collect();
+            let path = parts
+                .get(1)
+                .and_then(|p| p.strip_prefix("b/"))
+                .unwrap_or(parts[1]);
+
+            current_file = Some(path.to_string());
+        } else if current_file.is_some() {
+            buffer.push_str(line);
+            buffer.push('\n');
+        }
+    }
+
+    if let Some(file) = current_file {
+        results.push((file, buffer));
+    }
+
+    results
+}
+
+/* ============================================================
+   Surface detection (CHEAP HEURISTICS ONLY)
    ============================================================ */
 
 fn detect_surface(file: &str, hunks: &str) -> ChangeSurface {
-    if is_python_file(file) {
-        if python_behavior_change(hunks) {
-            return ChangeSurface::Branching;
-        }
+    if is_python_file(file) && python_behavior_change(hunks) {
+        return ChangeSurface::Branching;
     }
 
     if is_stateful(hunks) {
@@ -90,61 +134,6 @@ fn detect_surface(file: &str, hunks: &str) -> ChangeSurface {
 
     ChangeSurface::PureLogic
 }
-
-/* ============================================================
-   Decision + risk logic
-   ============================================================ */
-
-fn decide_test(
-    file: &str,
-    hunks: &str,
-    surface: &ChangeSurface,
-) -> (TestDecision, RiskLevel, String) {
-
-    // 🔒 Always-low files (already correct)
-    if is_always_low(file) {
-        return (
-            TestDecision::No,
-            RiskLevel::Low,
-            "Non-runtime or structural file".into(),
-        );
-    }
-
-    // 🔥 ANY function change = HIGH risk
-    if is_function_change(hunks) {
-        return (
-            TestDecision::Yes,
-            RiskLevel::High,
-            "Function or method definition changed".into(),
-        );
-    }
-
-    // 🐍 Python logic (non-function)
-    if is_python_file(file) {
-        return (
-            TestDecision::Conditional,
-            RiskLevel::Medium,
-            "Python logic change (non-function)".into(),
-        );
-    }
-
-    // 🦀 Rust logic (non-function)
-    if is_rust_file(file) {
-        return (
-            TestDecision::Conditional,
-            RiskLevel::Medium,
-            "Rust logic change (non-function)".into(),
-        );
-    }
-
-    // 📄 Everything else
-    (
-        TestDecision::No,
-        RiskLevel::Low,
-        "Non-code change".into(),
-    )
-}
-
 
 /* ============================================================
    File classification
@@ -176,36 +165,20 @@ fn is_rust_file(file: &str) -> bool {
     file.ends_with(".rs")
 }
 
-fn is_always_low(file: &str) -> bool {
-    file.ends_with("mod.rs")
-        || file == "pyproject.toml"
-        || file == "poetry.lock"
-}
-
 /* ============================================================
-   Python-focused heuristics
+   Heuristics (non-authoritative)
    ============================================================ */
 
 fn python_behavior_change(text: &str) -> bool {
     text.contains("def ")
         || text.contains("class ")
         || text.contains("async ")
-        || text.contains("await ")
-        || text.contains("@")
-        || text.contains("raise ")
-        || text.contains("except ")
-        || text.contains("import ")
-        || text.contains("from ")
 }
-
-/* ============================================================
-   Shared heuristics
-   ============================================================ */
 
 fn is_contract(text: &str) -> bool {
     text.contains("def ")
         || text.contains("pub fn")
-        || text.contains("->")
+        || text.contains("fn ")
 }
 
 fn is_error_path(text: &str) -> bool {
@@ -216,53 +189,6 @@ fn is_error_path(text: &str) -> bool {
 }
 
 fn is_stateful(text: &str) -> bool {
-    text.contains("=")
-        && (text.contains("self.")
-            || text.contains("global ")
-            || text.contains("INSERT")
-            || text.contains("UPDATE")
-            || text.contains("DELETE"))
-}
-fn is_function_change(text: &str) -> bool {
-    text.contains("def ")
-        || text.contains("async def ")
-        || text.contains("pub fn")
-        || text.contains("fn ")
-}
-
-
-/* ============================================================
-   Diff parsing
-   ============================================================ */
-
-fn split_diff_by_file(diff: &str) -> Vec<(String, String)> {
-    let mut results = Vec::new();
-    let mut current_file: Option<String> = None;
-    let mut buffer = String::new();
-
-    for line in diff.lines() {
-        if let Some(rest) = line.strip_prefix("diff --git ") {
-            if let Some(file) = current_file.take() {
-                results.push((file, buffer.clone()));
-                buffer.clear();
-            }
-
-            let parts: Vec<_> = rest.split_whitespace().collect();
-            let path = parts
-                .get(1)
-                .and_then(|p| p.strip_prefix("b/"))
-                .unwrap_or(parts[1]);
-
-            current_file = Some(path.to_string());
-        } else if current_file.is_some() {
-            buffer.push_str(line);
-            buffer.push('\n');
-        }
-    }
-
-    if let Some(file) = current_file {
-        results.push((file, buffer));
-    }
-
-    results
+    text.contains("self.")
+        || text.contains("global ")
 }

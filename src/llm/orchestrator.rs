@@ -1,117 +1,127 @@
-use std::io;
-use std::path::PathBuf;
+//! orchestrator.rs
+//!
+//! Async agent execution runner.
+//!
+//! Guarantees:
+//! - Runs fully in background thread
+//! - Never blocks UI loop
+//! - Cooperative cancellation
+//! - Deterministic event ordering
 
-use crate::state::{AgentState, LogLevel};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc::Sender,
+    Arc,
+};
+use std::thread;
+use std::time::Instant;
+
+use crate::detectors::{framework::TestFramework, language::Language};
+use crate::llm::ollama::Ollama;
+use crate::llm::prompt::build_prompt;
+use crate::state::{AgentEvent, LogLevel};
 use crate::testgen::candidate::TestCandidate;
-use crate::testgen::resolve::{resolve_test, TestResolution};
 use crate::testgen::file::materialize_test;
-use crate::llm::prompt::{build_prompt, LlmPrompt};
-use crate::llm::runner::{run_tests, TestRunResult};
-use crate::llm::client::LlmClient;
-use crate::logger::log;
-
-/* ============================================================
-   Public entry
-   ============================================================ */
+use crate::testgen::resolve::resolve_test;
 
 pub fn run_llm_test_flow(
-    state: &mut AgentState,
-    candidate: &TestCandidate,
-    llm: &dyn LlmClient,
-) -> io::Result<()> {
-    log(state, LogLevel::Info, "Resolving existing tests…");
+    tx: Sender<AgentEvent>,
+    cancel_flag: Arc<AtomicBool>,
+    language: Language,
+    framework: Option<TestFramework>,
+    candidate: TestCandidate,
+) {
+    thread::spawn(move || {
+        let started = Instant::now();
 
-    let resolution = resolve_test(state, candidate);
+        // ---------- helpers ----------
+        let cancelled = || cancel_flag.load(Ordering::SeqCst);
 
-    log_resolution(state, &resolution);
-
-    /* ---------- PROMPT ---------- */
-
-    let prompt = build_prompt(candidate, &resolution);
-
-    log(state, LogLevel::Info, "Sending prompt to LLM…");
-
-    let test_code = llm.generate(prompt)?;
-
-    /* ---------- WRITE TEST ---------- */
-
-    log(state, LogLevel::Info, "Writing test to filesystem…");
-
-    let test_path =
-        materialize_test(state, candidate, &resolution, &test_code)?;
-
-    log(
-        state,
-        LogLevel::Success,
-        format!("Test written to {}", test_path.display()),
-    );
-
-    /* ---------- RUN TESTS ---------- */
-
-    log(state, LogLevel::Info, "Running tests…");
-
-    let result = run_tests(state, &test_path)?;
-
-    report_result(state, &result);
-
-    Ok(())
-}
-
-/* ============================================================
-   Logging helpers
-   ============================================================ */
-
-fn log_resolution(state: &mut AgentState, r: &TestResolution) {
-    match r {
-        TestResolution::Found { file, test_fn } => {
-            log(
-                state,
-                LogLevel::Success,
-                format!("Existing test found: {}", file),
-            );
-
-            if let Some(name) = test_fn {
-                log(
-                    state,
-                    LogLevel::Info,
-                    format!("Target test function: {}", name),
-                );
-            }
-        }
-
-        TestResolution::Ambiguous(paths) => {
-            log(
-                state,
+        let cancel_and_exit = |reason: &str| {
+            let _ = tx.send(AgentEvent::Log(
                 LogLevel::Warn,
-                "Multiple possible test files found:",
-            );
-            for p in paths {
-                log(state, LogLevel::Warn, format!(" - {}", p));
+                format!("🤖 {}", reason),
+            ));
+            let _ = tx.send(AgentEvent::SpinnerStop);
+            let _ = tx.send(AgentEvent::Failed("Execution cancelled".into()));
+        };
+
+        // ---------- start ----------
+        let _ = tx.send(AgentEvent::SpinnerStart(
+            "🤖 AI generating tests…".into(),
+        ));
+
+        let _ = tx.send(AgentEvent::Log(
+            LogLevel::Info,
+            "🤖 Agent execution started".into(),
+        ));
+
+        if cancelled() {
+            cancel_and_exit("Cancellation detected before execution");
+            return;
+        }
+
+        // ---------- resolve ----------
+        let resolution = resolve_test(&language, &candidate);
+
+        if cancelled() {
+            cancel_and_exit("Cancelled during test resolution");
+            return;
+        }
+
+        // ---------- prompt ----------
+        let prompt = build_prompt(
+            &candidate,
+            &resolution,
+            Some(&language),
+            framework.as_ref(),
+        );
+
+        if cancelled() {
+            cancel_and_exit("Cancelled before LLM invocation");
+            return;
+        }
+
+        // ---------- LLM ----------
+        let code = match Ollama::run(prompt) {
+            Ok(code) => code,
+            Err(e) => {
+                let _ = tx.send(AgentEvent::SpinnerStop);
+                let _ = tx.send(AgentEvent::Failed(e.to_string()));
+                return;
             }
+        };
+
+        if cancelled() {
+            cancel_and_exit("Cancelled after LLM response");
+            return;
         }
 
-        TestResolution::NotFound => {
-            log(
-                state,
-                LogLevel::Info,
-                "No existing test found, creating new regression test",
-            );
-        }
-    }
-}
+        let _ = tx.send(AgentEvent::Log(
+            LogLevel::Success,
+            "🤖 AI returned generated test".into(),
+        ));
 
-fn report_result(state: &mut AgentState, r: &TestRunResult) {
-    match r {
-        TestRunResult::Passed { output } => {
-            log(state, LogLevel::Success, "Tests passed");
-            if !output.is_empty() {
-                log(state, LogLevel::Info, output);
-            }
+        // ---------- materialize ----------
+        if let Err(e) =
+            materialize_test(language, &candidate, &resolution, &code)
+        {
+            let _ = tx.send(AgentEvent::SpinnerStop);
+            let _ = tx.send(AgentEvent::Failed(e.to_string()));
+            return;
         }
 
-        TestRunResult::Failed { output } => {
-            log(state, LogLevel::Error, "Tests failed");
-            log(state, LogLevel::Error, output);
-        }
-    }
+        let _ = tx.send(AgentEvent::GeneratedTest(code));
+
+        // ---------- finish ----------
+        let elapsed = started.elapsed().as_secs_f32();
+
+        let _ = tx.send(AgentEvent::Log(
+            LogLevel::Info,
+            format!("🤖 Finished in {:.2}s", elapsed),
+        ));
+
+        let _ = tx.send(AgentEvent::SpinnerStop);
+        let _ = tx.send(AgentEvent::Finished);
+    });
 }

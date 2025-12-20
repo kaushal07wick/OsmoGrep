@@ -1,7 +1,9 @@
-// src/detectors/framework.rs
+//! detectors/framework.rs
+//!
+//! Test framework detection based on repository structure.
+
 use std::path::Path;
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum TestFramework {
     Pytest,
@@ -12,40 +14,55 @@ pub enum TestFramework {
     None,
 }
 
-pub fn detect_framework(root: &Path) -> TestFramework {
-    let has = |p: &str| root.join(p).exists();
+/* ============================================================
+   Public API
+   ============================================================ */
 
-    /* ---------- Rust (authoritative) ---------- */
-    // Cargo.toml alone implies `cargo test`
-    if has("Cargo.toml") {
+pub fn detect_framework(root: &Path) -> TestFramework {
+    // Fast path: Rust
+    if exists(root, "Cargo.toml") {
         return TestFramework::CargoTest;
     }
 
-    /* ---------- Python ---------- */
-    if has("pytest.ini") || has("conftest.py") {
+    // Python (prefer pytest)
+    if exists(root, "pytest.ini") || exists(root, "conftest.py") {
         return TestFramework::Pytest;
     }
 
-    // Fallback Python unittest detection
-    if has("setup.py") || has("pyproject.toml") {
-        // Heuristic: assume unittest if pytest not found
+    if exists(root, "pyproject.toml") || exists(root, "setup.py") {
         return TestFramework::Unittest;
     }
 
-    /* ---------- JavaScript / TypeScript ---------- */
-    if has("package.json") {
-        let pkg = root.join("package.json");
-        if let Ok(c) = std::fs::read_to_string(pkg) {
-            if c.contains("jest") || c.contains("vitest") {
-                return TestFramework::Jest;
-            }
+    // JavaScript / TypeScript
+    if exists(root, "package.json") {
+        if package_uses_jest(root) {
+            return TestFramework::Jest;
         }
     }
 
-    /* ---------- Go ---------- */
-    if has("go.mod") {
+    // Go
+    if exists(root, "go.mod") {
         return TestFramework::GoTest;
     }
 
     TestFramework::None
+}
+
+/* ============================================================
+   Helpers
+   ============================================================ */
+
+#[inline]
+fn exists(root: &Path, file: &str) -> bool {
+    root.join(file).exists()
+}
+
+fn package_uses_jest(root: &Path) -> bool {
+    let pkg = root.join("package.json");
+    let Ok(contents) = std::fs::read_to_string(pkg) else {
+        return false;
+    };
+
+    // Cheap string scan; avoids JSON parsing cost
+    contents.contains("jest") || contents.contains("vitest")
 }

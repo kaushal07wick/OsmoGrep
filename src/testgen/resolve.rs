@@ -1,4 +1,22 @@
-use crate::state::AgentState;
+//! resolve.rs
+//!
+//! Test resolution engine for Osmogrep.
+//!
+//! Responsibilities:
+//! - Determine whether a test already exists for a given TestCandidate
+//! - Classify resolution outcome as Found / Ambiguous / NotFound
+//!
+//! Guarantees:
+//! - Read-only filesystem access
+//! - No side effects
+//! - Deterministic results
+//!
+//! Non-responsibilities:
+//! - No test generation
+//! - No file writes
+//! - No UI logic
+
+use crate::detectors::language::Language;
 use crate::testgen::candidate::TestCandidate;
 
 /* ============================================================
@@ -9,29 +27,29 @@ use crate::testgen::candidate::TestCandidate;
 pub enum TestResolution {
     Found {
         file: String,
-        test_fn: Option<String>, // Python may refine later
+        test_fn: Option<String>,
     },
     Ambiguous(Vec<String>),
     NotFound,
 }
 
 /* ============================================================
-   Public entry
+   Public entrypoint
    ============================================================ */
 
 pub fn resolve_test(
-    state: &AgentState,
+    language: &Language,
     c: &TestCandidate,
 ) -> TestResolution {
-    match state.language.as_ref().map(|l| format!("{:?}", l)).as_deref() {
-        Some("Rust") => resolve_rust_test(c),
-        Some("Python") => resolve_python_test(c),
+    match language {
+        Language::Rust => resolve_rust_test(c),
+        Language::Python => resolve_python_test(c),
         _ => TestResolution::NotFound,
     }
 }
 
 /* ============================================================
-   Rust resolution (tests live in same file)
+   Rust resolution
    ============================================================ */
 
 fn resolve_rust_test(c: &TestCandidate) -> TestResolution {
@@ -49,11 +67,10 @@ fn resolve_rust_test(c: &TestCandidate) -> TestResolution {
         return TestResolution::NotFound;
     }
 
-    // crude but safe: test must reference the symbol
     if src.contains(&format!("{}(", symbol)) {
         TestResolution::Found {
             file: c.file.clone(),
-            test_fn: None, // inline tests
+            test_fn: None,
         }
     } else {
         TestResolution::NotFound
@@ -61,7 +78,7 @@ fn resolve_rust_test(c: &TestCandidate) -> TestResolution {
 }
 
 /* ============================================================
-   Python resolution (search tests/ recursively)
+   Python resolution
    ============================================================ */
 
 fn resolve_python_test(c: &TestCandidate) -> TestResolution {
@@ -71,8 +88,6 @@ fn resolve_python_test(c: &TestCandidate) -> TestResolution {
     };
 
     let mut hits = Vec::new();
-
-    // common pytest roots
     let roots = ["tests", "test", "testing"];
 
     for root in roots {
@@ -95,8 +110,6 @@ fn resolve_python_test(c: &TestCandidate) -> TestResolution {
                 Err(_) => continue,
             };
 
-            // pytest patterns:
-            // test_xxx(), xxx_test(), test_xxx_yyy()
             if content.contains(&format!("{}(", symbol)) {
                 hits.push(path.display().to_string());
             }
@@ -107,7 +120,7 @@ fn resolve_python_test(c: &TestCandidate) -> TestResolution {
         0 => TestResolution::NotFound,
         1 => TestResolution::Found {
             file: hits[0].clone(),
-            test_fn: None, // refine later if needed
+            test_fn: None,
         },
         _ => TestResolution::Ambiguous(hits),
     }

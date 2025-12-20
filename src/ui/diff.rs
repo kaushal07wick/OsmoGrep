@@ -1,0 +1,118 @@
+//! ui/diff.rs
+//!
+//! Side-by-side diff renderer (derived, not stored).
+
+use ratatui::{
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Color, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Paragraph},
+};
+
+use similar::{ChangeTag, TextDiff};
+
+use crate::state::{AgentState, Focus, SymbolDelta};
+use crate::ui::helpers::{hclip, ln};
+
+pub fn render_side_by_side(
+    f: &mut ratatui::Frame,
+    area: Rect,
+    delta: &SymbolDelta,
+    state: &AgentState,
+) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(area);
+
+    let gutter = 5;
+    let width = chunks[0].width.saturating_sub(gutter + 1) as usize;
+    let height = area.height as usize;
+
+    let diff = TextDiff::from_lines(
+        &delta.old_source,
+        &delta.new_source,
+    );
+
+    let changes: Vec<_> = diff.iter_all_changes().collect();
+
+    let total = changes.len();
+    let start = state.ui.diff_scroll.min(total);
+    let end = (start + height).min(total);
+
+    let mut left = Vec::with_capacity(end - start);
+    let mut right = Vec::with_capacity(end - start);
+
+    let mut old_ln = 1usize;
+    let mut new_ln = 1usize;
+
+    for change in &changes[start..end] {
+        match change.tag() {
+            ChangeTag::Equal => {
+                let text = hclip(change.value(), state.ui.diff_scroll_x, width);
+
+                left.push(Line::from(vec![
+                    ln(old_ln, Color::DarkGray),
+                    Span::raw(text),
+                ]));
+                right.push(Line::from(vec![
+                    ln(new_ln, Color::DarkGray),
+                    Span::raw(text),
+                ]));
+
+                old_ln += 1;
+                new_ln += 1;
+            }
+
+            ChangeTag::Delete => {
+                let text = hclip(change.value(), state.ui.diff_scroll_x, width);
+
+                left.push(Line::from(vec![
+                    ln(old_ln, Color::Red),
+                    Span::styled(text, Style::default().fg(Color::Red)),
+                ]));
+                right.push(Line::from(""));
+
+                old_ln += 1;
+            }
+
+            ChangeTag::Insert => {
+                let text = hclip(change.value(), state.ui.diff_scroll_x, width);
+
+                left.push(Line::from(""));
+                right.push(Line::from(vec![
+                    ln(new_ln, Color::Green),
+                    Span::styled(text, Style::default().fg(Color::Green)),
+                ]));
+
+                new_ln += 1;
+            }
+        }
+    }
+
+    let title_style = if state.ui.focus == Focus::Diff {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+    };
+
+    f.render_widget(
+        Paragraph::new(left).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled("OLD", title_style))
+                .title_alignment(Alignment::Center),
+        ),
+        chunks[0],
+    );
+
+    f.render_widget(
+        Paragraph::new(right).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled("NEW", title_style))
+                .title_alignment(Alignment::Center),
+        ),
+        chunks[1],
+    );
+}

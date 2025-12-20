@@ -1,64 +1,58 @@
-use std::time::Instant;
 use std::collections::VecDeque;
-
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::mpsc::{Sender, Receiver};
+use std::time::{Instant, Duration};
 use crate::detectors::{framework::TestFramework, language::Language};
-use similar::{ChangeTag, TextDiff};
 use crate::testgen::candidate::TestCandidate;
 
 pub const MAX_LOGS: usize = 1000;
 
-/* ---------- lifecycle ---------- */
+/* ============================================================
+   Agent Events (Async-safe)
+   ============================================================ */
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
+pub enum AgentEvent {
+    Log(LogLevel, String),
+    SpinnerStart(String),
+    SpinnerStop,
+    GeneratedTest(String),
+    Finished,
+    Failed(String),
+}
+
+/* ============================================================
+   Agent Lifecycle
+   ============================================================ */
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Phase {
     Init,
     DetectBase,
     Idle,
     ExecuteAgent,
+    Running, 
     CreateNewAgent,
     Rollback,
     Done,
 }
 
-/* ---------- symbol delta ---------- */
+/* ============================================================
+   Diff + Symbol Delta Model
+   ============================================================ */
 
+/// Raw before/after source for a symbol or file.
+/// No semantics. No interpretation.
 #[derive(Debug, Clone)]
 pub struct SymbolDelta {
-    pub file: String,
-    pub symbol: String,
     pub old_source: String,
     pub new_source: String,
-    pub lines: Vec<DiffLine>,
 }
 
-/* --------------view -------------- */
-#[derive(Clone, Debug)]
-pub enum SinglePanelView {
-    TestGenPreview(TestCandidate),
-   // LlmTest(String),
-    // TestResult { output: String, passed: bool },
-    // Suggestions(String),
-}
-
-
-/* ---------- logging ---------- */
-
-#[derive(Clone, Debug)]
-pub enum LogLevel {
-    Info,
-    Success,
-    Warn,
-    Error,
-}
-
-#[derive(Clone, Debug)]
-pub struct LogLine {
-    pub level: LogLevel,
-    pub text: String,
-    pub at: Instant,
-}
-
-/* ---------- diff analysis ---------- */
+/* ============================================================
+   Diff Analysis (FACTS ONLY)
+   ============================================================ */
 
 #[derive(Debug, Clone)]
 pub enum ChangeSurface {
@@ -70,25 +64,6 @@ pub enum ChangeSurface {
     Integration,
     Observability,
     Cosmetic,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Focus {
-    Input,
-    Diff,
-    Execution,
-}
-
-#[derive(Clone, Debug)]
-pub enum DiffKind {
-    Hunk(String),
-    Line(ChangeTag),
-}
-
-#[derive(Clone, Debug)]
-pub struct DiffLine {
-    pub kind: DiffKind,
-    pub text: String, // kept for future pretty/unified diff
 }
 
 #[derive(Debug, Clone)]
@@ -105,127 +80,115 @@ pub enum RiskLevel {
     High,
 }
 
+/// Output of static diff analysis.
+/// Contains NO interpretation beyond surface classification.
 #[derive(Debug, Clone)]
 pub struct DiffAnalysis {
     pub file: String,
     pub symbol: Option<String>,
-    pub surface: ChangeSurface,     // used later for test synthesis
-    pub test_required: TestDecision,
-    pub risk: RiskLevel,
-    pub reason: String,
+    pub surface: ChangeSurface,
+
+    /// Raw extracted delta (before/after).
+    /// None means no meaningful code delta.
     pub delta: Option<SymbolDelta>,
-    pub pretty: Option<String>,     // used later for reports
+
+    /// Semantic meaning (populated later).
+    ///
+    /// INVARIANT:
+    /// - semantic MUST be None during diff analysis
+    /// - semantic is populated only after delta extraction
+    pub semantic: Option<SemanticChange>,
 }
 
-/* ---------- agent state ---------- */
+/* ============================================================
+   Semantic Interpretation (LLM-FACING)
+   ============================================================ */
 
-pub struct AgentState {
-    /* lifecycle */
-    pub phase: Phase,
+#[derive(Debug, Clone)]
+pub struct SemanticChange {
+    pub file: String,
+    pub symbol: String,
+    pub language: Language,
 
-    pub base_branch: Option<String>,
-    pub original_branch: Option<String>,
-    pub current_branch: Option<String>,
-    pub agent_branch: Option<String>,
+    pub before: String,
+    pub after: String,
 
-    /* input */
-    pub input: String,
-    pub input_focused: bool,
+    pub summary: SemanticSummary,
 
-    /* command UX */
-    pub history: Vec<String>,
-    pub history_index: Option<usize>,
-    pub hint: Option<String>,
-    pub autocomplete: Option<String>,
-
-    /* logs (ring buffer) */
-    pub logs: VecDeque<LogLine>,
-
-    /* analysis */
-    pub diff_analysis: Vec<DiffAnalysis>,
-
-    /* status */
-    pub language: Option<Language>,
-    pub framework: Option<TestFramework>,
-
-    /* ui */
-    pub spinner_tick: usize,
-
-    /* diff viewer */
-    pub selected_diff: Option<usize>,
-    pub diff_scroll: usize,
-    pub diff_scroll_x: usize,
-    pub in_diff_view: bool,
-    pub diff_side_by_side: bool,
-    pub focus: Focus,
-
-    /* execution panel */
-    pub exec_scroll: usize,
-    /* test generation */
-    pub test_candidates: Vec<TestCandidate>,
-    pub panel_view: Option<SinglePanelView>,
-    pub panel_scroll: usize,
-    pub panel_scroll_x: usize,
-    pub last_activity: Instant,
-
+    pub risk: RiskLevel,
+    pub test_intent: TestIntent,
+    pub failure_mode: String,
 }
 
-/* ---------- helpers ---------- */
+#[derive(Debug, Clone)]
+pub struct SemanticSummary {
+    pub what_changed: String,
+    pub new_branches: Vec<String>,
+    pub removed_behavior: Vec<String>,
+    pub state_impact: bool,
+}
 
-impl AgentState {
-    pub fn push_char(&mut self, c: char) {
-        self.input.push(c);
-        self.history_index = None;
-    }
+#[derive(Debug, Clone)]
+pub enum TestIntent {
+    Regression,
+    NewBehavior,
+    Guardrail,
+}
 
-    pub fn backspace(&mut self) {
-        self.input.pop();
-    }
+/* ============================================================
+   UI Focus + Panels
+   ============================================================ */
 
-    pub fn history_prev(&mut self) {
-        if self.history.is_empty() {
-            return;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Focus {
+    Input,
+    Diff,
+    Execution,
+}
+
+#[derive(Clone, Debug)]
+pub enum SinglePanelView {
+    TestGenPreview {
+        candidate: TestCandidate,
+        generated_test: Option<String>,
+    },
+    TestResult {
+        output: String,
+        passed: bool,
+    },
+}
+
+/* ============================================================
+   Logging
+   ============================================================ */
+
+#[derive(Clone, Debug)]
+pub enum LogLevel {
+    Info,
+    Success,
+    Warn,
+    Error,
+}
+
+#[derive(Clone, Debug)]
+pub struct LogLine {
+    pub level: LogLevel,
+    pub text: String,
+    pub at: Instant,
+}
+
+pub struct LogBuffer {
+    logs: VecDeque<LogLine>,
+}
+
+impl LogBuffer {
+    pub fn new() -> Self {
+        Self {
+            logs: VecDeque::with_capacity(MAX_LOGS),
         }
-
-        let idx = match self.history_index {
-            Some(i) if i > 0 => i - 1,
-            Some(i) => i,
-            None => self.history.len() - 1,
-        };
-
-        self.history_index = Some(idx);
-        self.input = self.history[idx].clone();
     }
 
-    pub fn history_next(&mut self) {
-        match self.history_index {
-            Some(i) if i + 1 < self.history.len() => {
-                self.history_index = Some(i + 1);
-                self.input = self.history[i + 1].clone();
-            }
-            _ => {
-                self.history_index = None;
-                self.input.clear();
-            }
-        }
-    }
-
-    pub fn commit_input(&mut self) -> String {
-        let cmd = self.input.trim().to_string();
-
-        if !cmd.is_empty() {
-            self.history.push(cmd.clone());
-        }
-
-        self.input.clear();
-        self.history_index = None;
-        self.hint = None;
-        self.autocomplete = None;
-
-        cmd
-    }
-
-    pub fn push_log(&mut self, level: LogLevel, text: impl Into<String>) {
+    pub fn push(&mut self, level: LogLevel, text: impl Into<String>) {
         if self.logs.len() >= MAX_LOGS {
             self.logs.pop_front();
         }
@@ -237,37 +200,194 @@ impl AgentState {
         });
     }
 
-    pub fn compute_diff(old: &str, new: &str) -> Vec<DiffLine> {
-        let diff = TextDiff::from_lines(old, new);
-        let mut out = Vec::new();
+    pub fn iter(&self) -> impl Iterator<Item = &LogLine> {
+        self.logs.iter()
+    }
+}
 
-        out.push(DiffLine {
-            kind: DiffKind::Hunk("@@ @@".to_string()),
-            text: String::new(),
-        });
+/* ============================================================
+   Lifecycle State (Agent Reality)
+   ============================================================ */
 
-        for change in diff.iter_all_changes() {
-            out.push(DiffLine {
-                kind: DiffKind::Line(change.tag()),
-                text: change.to_string(),
-            });
+pub struct LifecycleState {
+    pub phase: Phase,
+
+    pub base_branch: Option<String>,
+    pub original_branch: Option<String>,
+    pub current_branch: Option<String>,
+    pub agent_branch: Option<String>,
+
+    pub language: Option<Language>,
+    pub framework: Option<TestFramework>,
+}
+
+/* ============================================================
+   Agent Context (Thinking / Memory)
+   ============================================================ */
+
+pub struct AgentContext {
+    pub diff_analysis: Vec<DiffAnalysis>,
+    pub test_candidates: Vec<TestCandidate>,
+    pub last_generated_test: Option<String>,
+}
+
+/* ============================================================
+   UI State (Pure Presentation)
+   ============================================================ */
+
+pub struct UiState {
+    /* input */
+    pub input: String,
+
+    /* command UX */
+    pub history: Vec<String>,
+    pub history_index: Option<usize>,
+    pub hint: Option<String>,
+    pub autocomplete: Option<String>,
+
+    /* activity */
+    pub last_activity: Instant,
+
+    /* diff viewer */
+    pub selected_diff: Option<usize>,
+    pub diff_scroll: usize,
+    pub diff_scroll_x: usize,
+    pub in_diff_view: bool,
+    pub diff_side_by_side: bool,
+    pub focus: Focus,
+
+    /* execution */
+    pub exec_scroll: usize,
+
+    /* spinner */
+    pub active_spinner: Option<String>,
+    pub spinner_started_at: Option<Instant>,
+    pub spinner_elapsed: Option<Duration>,
+    /* panel */
+    pub panel_view: Option<SinglePanelView>,
+    pub panel_scroll: usize,
+    pub panel_scroll_x: usize,
+    pub cached_log_lines: Vec<ratatui::text::Line<'static>>,
+    pub last_log_len: usize,
+    pub dirty: bool,
+    pub last_draw: Instant,
+}
+
+/* ============================================================
+   Root Agent State (Thin, Honest)
+   ============================================================ */
+
+pub struct AgentState {
+    pub lifecycle: LifecycleState,
+    pub context: AgentContext,
+    pub ui: UiState,
+    pub logs: LogBuffer,
+    pub agent_tx: Sender<AgentEvent>,
+    pub agent_rx: Receiver<AgentEvent>,
+    pub cancel_requested: Arc<AtomicBool>,
+}
+
+/* ============================================================
+   Shared Helpers
+   ============================================================ */
+
+impl AgentState {
+    /* ---------- input ---------- */
+
+    pub fn push_char(&mut self, c: char) {
+        self.ui.input.push(c);
+        self.ui.history_index = None;
+    }
+
+    pub fn backspace(&mut self) {
+        self.ui.input.pop();
+    }
+
+    pub fn history_prev(&mut self) {
+        if self.ui.history.is_empty() {
+            return;
         }
 
-        out
+        let idx = match self.ui.history_index {
+            Some(i) if i > 0 => i - 1,
+            Some(i) => i,
+            None => self.ui.history.len() - 1,
+        };
+
+        self.ui.history_index = Some(idx);
+        self.ui.input = self.ui.history[idx].clone();
     }
+
+    pub fn history_next(&mut self) {
+        match self.ui.history_index {
+            Some(i) if i + 1 < self.ui.history.len() => {
+                self.ui.history_index = Some(i + 1);
+                self.ui.input = self.ui.history[i + 1].clone();
+            }
+            _ => {
+                self.ui.history_index = None;
+                self.ui.input.clear();
+            }
+        }
+    }
+
+    pub fn commit_input(&mut self) -> String {
+        let cmd = self.ui.input.trim().to_string();
+
+        if !cmd.is_empty() {
+            self.ui.history.push(cmd.clone());
+        }
+
+        self.ui.input.clear();
+        self.ui.history_index = None;
+        self.ui.hint = None;
+        self.ui.autocomplete = None;
+
+        cmd
+    }
+
+    /* ---------- ui hints ---------- */
+
     pub fn set_hint(&mut self, hint: impl Into<String>) {
-        self.hint = Some(hint.into());
+        self.ui.hint = Some(hint.into());
     }
 
     pub fn clear_hint(&mut self) {
-        self.hint = None;
+        self.ui.hint = None;
     }
 
     pub fn set_autocomplete(&mut self, text: impl Into<String>) {
-        self.autocomplete = Some(text.into());
+        self.ui.autocomplete = Some(text.into());
     }
 
     pub fn clear_autocomplete(&mut self) {
-        self.autocomplete = None;
+        self.ui.autocomplete = None;
+    }
+
+    /* ---------- logging ---------- */
+
+    pub fn push_log(&mut self, level: LogLevel, text: impl Into<String>) {
+        self.logs.push(level, text);
+    }
+
+    /* ---------- spinner ---------- */
+
+    pub fn start_spinner(&mut self, text: impl Into<String>) {
+        let now = Instant::now();
+        self.ui.active_spinner = Some(text.into());
+        self.ui.spinner_started_at = Some(now);
+        self.ui.spinner_elapsed = Some(Duration::from_secs(0));
+    }
+
+    pub fn update_spinner(&mut self) {
+        if let Some(start) = self.ui.spinner_started_at {
+            self.ui.spinner_elapsed = Some(start.elapsed());
+        }
+    }
+
+    pub fn stop_spinner(&mut self) {
+        self.ui.active_spinner = None;
+        self.ui.spinner_started_at = None;
+        self.ui.spinner_elapsed = None;
     }
 }

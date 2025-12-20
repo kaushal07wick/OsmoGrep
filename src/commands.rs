@@ -1,215 +1,69 @@
-use std::time::Instant;
-use crate::state::{AgentState, Focus, LogLevel, Phase, SinglePanelView};
-use crate::logger::log;
-use crate::detectors::diff_analyzer::analyze_diff;
-use crate::git;
-use crate::logger::log_diff_analysis;
-use crate::testgen::generator::generate_test_candidates;
+//! command.rs
+//!
+//! Command interpretation layer.
+//!
+//! Responsibilities:
+//! - Parse and validate user commands
+//! - Translate commands into explicit state mutations
+//! - Emit informational logs
+//!
+//! Non-responsibilities:
+//! - Agent orchestration
+//! - Git side effects beyond intent signaling
+//! - UI rendering logic
 
+use std::time::Instant;
+
+use crate::{
+    detectors::diff_analyzer::analyze_diff,
+    git,
+    logger::{log, log_diff_analysis},
+    testgen::{generator::generate_test_candidates, resolve::resolve_test},
+};
+use crate::state::{AgentState, Focus, LogLevel, Phase, SinglePanelView};
+
+/* ============================================================
+   Command Handling
+   ============================================================ */
 
 pub fn handle_command(state: &mut AgentState, cmd: &str) {
-    state.last_activity = Instant::now();
+    state.ui.last_activity = Instant::now();
     state.clear_hint();
     state.clear_autocomplete();
 
     match cmd {
-        "help" => {
-            log(
-                state,
-                LogLevel::Info,
-                "Commands: analyze | diff | diff <n> | testgen <n> | exec | new | rollback | bls | quit | help",
-            );
+        "help" => help(state),
+        "inspect" => inspect(state),
+        "changes" => list_changes(state),
+        cmd if cmd.starts_with("changes ") => view_change(state, cmd),
+        cmd if cmd.starts_with("agent run ") => agent_run(state, cmd),
+
+        "agent status" => agent_status(state),
+        "agent cancel" => agent_cancel(state), // ✅ FIX
+
+        "artifacts test" => show_test_artifact(state),
+
+        "branch new" => {
+            log(state, LogLevel::Info, "Creating agent branch…");
+            state.lifecycle.phase = Phase::CreateNewAgent;
         }
 
-        /* ---------- ANALYZE ---------- */
-
-        "analyze" => {
-            log(state, LogLevel::Info, "Analyzing git diff for test relevance…");
-
-            state.diff_analysis = analyze_diff();
-
-            state.selected_diff = None;
-            state.in_diff_view = false;
-            state.diff_scroll = 0;
-
-            if state.diff_analysis.is_empty() {
-                log(state, LogLevel::Success, "No relevant changes detected.");
-            } else {
-                log(
-                    state,
-                    LogLevel::Success,
-                    format!(
-                        "Diff analysis complete: {} file(s) analyzed.",
-                        state.diff_analysis.len()
-                    ),
-                );
-
-                // ✅ emit marker ONLY when we actually have analysis
-                log_diff_analysis(state);
-            }
-
-            state.phase = Phase::Idle;
+        "branch rollback" => {
+            log(state, LogLevel::Warn, "Rolling back agent branch…");
+            state.lifecycle.phase = Phase::Rollback;
         }
 
-
-        /* ---------- DIFF LIST ---------- */
-
-        "diff" => {
-            if state.diff_analysis.is_empty() {
-                log(state, LogLevel::Warn, "No diff analysis available. Run `analyze` first.");
-                return;
-            }
-
-            let messages: Vec<String> = state
-                .diff_analysis
-                .iter()
-                .enumerate()
-                .map(|(i, d)| {
-                    format!(
-                        "[{}] {}{}",
-                        i,
-                        d.file,
-                        d.symbol
-                            .as_ref()
-                            .map(|s| format!(" :: {}", s))
-                            .unwrap_or_default()
-                    )
-                })
-                .collect();
-
-            for msg in messages {
-                log(state, LogLevel::Info, msg);
-            }
-        }
-
-
-        /* ---------- DIFF VIEW ---------- */
-
-        cmd if cmd.starts_with("diff ") => {
-            if state.diff_analysis.is_empty() {
-                log(state, LogLevel::Warn, "No diff analysis available.");
-                return;
-            }
-
-            match cmd[5..].trim().parse::<usize>() {
-                Ok(idx) if idx < state.diff_analysis.len() => {
-                    if state.diff_analysis[idx].delta.is_some() {
-                        state.selected_diff = Some(idx);
-                        state.in_diff_view = true;
-                        state.diff_scroll = 0;
-
-                        log(
-                            state,
-                            LogLevel::Info,
-                            format!("Opened diff view for [{}]", idx),
-                        );
-                    } else {
-                        log(
-                            state,
-                            LogLevel::Warn,
-                            "Selected file has no symbol-level diff.",
-                        );
-                    }
-                }
-                _ => {
-                    log(state, LogLevel::Warn, "Invalid diff index.");
-                }
-            } 
-        }
-
-        /* ---------- TEST GENERATION ---------- */
-
-            cmd if cmd.starts_with("testgen ") => {
-                state.last_activity = Instant::now();
-
-                if state.diff_analysis.is_empty() {
-                    log(state, LogLevel::Warn, "No diff analysis available. Run `analyze` first.");
-                    return;
-                }
-
-                let idx = match cmd[8..].trim().parse::<usize>() {
-                    Ok(i) if i < state.diff_analysis.len() => i,
-                    _ => {
-                        log(state, LogLevel::Warn, "Invalid diff index for testgen.");
-                        return;
-                    }
-                };
-
-                let diff = state.diff_analysis[idx].clone();
-
-                let candidates = generate_test_candidates(state, std::slice::from_ref(&diff));
-
-                if candidates.is_empty() {
-                    log(
-                        state,
-                        LogLevel::Warn,
-                        format!("No test candidates generated for diff [{}]", idx),
-                    );
-                    return;
-                }
-
-                log(
-                    state,
-                    LogLevel::Success,
-                    format!(
-                        "Generated {} test candidate(s) for diff [{}]",
-                        candidates.len(),
-                        idx
-                    ),
-                );
-
-                /* ---------- persist ---------- */
-                state.test_candidates = candidates;
-
-                /* ---------- open single-panel preview ---------- */
-                if let Some(first) = state.test_candidates.first().cloned() {
-                    state.panel_view = Some(SinglePanelView::TestGenPreview(first));
-                    state.focus = Focus::Execution;
-                    state.exec_scroll = 0;
-                }
-            }
-
-        "close" => {
-            state.in_diff_view = false;
-            state.selected_diff = None;
-            state.diff_scroll = 0;
-
-            log(state, LogLevel::Info, "Closed diff view.");
-        }
-
-        /* ---------- BRANCH OPS ---------- */
-
-        "new" => {
-            log(state, LogLevel::Info, "Creating new agent branch…");
-            state.phase = Phase::CreateNewAgent;
-        }
-
-        "exec" => {
-            log(state, LogLevel::Info, "Executing agent…");
-            state.phase = Phase::ExecuteAgent;
-        }
-
-        "rollback" => {
-            log(
-                state,
-                LogLevel::Warn,
-                "Deleting agent branch and rolling back to base branch…",
-            );
-            state.phase = Phase::Rollback;
-        }
-
-        "bls" => {
-            let branches = git::list_branches();
-            for b in branches {
+        "branch list" => {
+            for b in git::list_branches() {
                 log(state, LogLevel::Info, b);
             }
         }
 
-        /* ---------- EXIT ---------- */
+        "close" => close_view(state),
 
         "quit" => {
-            log(state, LogLevel::Info, "Exiting OsmoGrep.");
-            state.phase = Phase::Done;
+            log(state, LogLevel::Info, "Exiting Osmogrep.");
+            state.lifecycle.phase = Phase::Done;
         }
 
         "" => {}
@@ -220,12 +74,222 @@ pub fn handle_command(state: &mut AgentState, cmd: &str) {
     }
 }
 
+
 /* ============================================================
-   Autocomplete + hints
+   Command Implementations
+   ============================================================ */
+
+fn help(state: &mut AgentState) {
+    use LogLevel::Info;
+
+    log(state, Info, "Commands:");
+    log(state, Info, "  inspect                  — analyze git changes");
+    log(state, Info, "  changes                  — list analyzed diffs");
+    log(state, Info, "  changes <n>               — view diff details");
+    log(state, Info, "  agent run <n>             — execute agent on diff");
+    log(state, Info, "  agent status              — show agent context");
+    log(state, Info, "  agent cancel              — cancel running agent");
+    log(state, Info, "  artifacts test            — view generated test");
+    log(state, Info, "  branch new                — create agent branch");
+    log(state, Info, "  branch rollback           — rollback agent branch");
+    log(state, Info, "  branch list               — list branches");
+    log(state, Info, "  close                     — close active view");
+    log(state, Info, "  quit                      — exit osmogrep");
+}
+
+
+fn inspect(state: &mut AgentState) {
+    log(state, LogLevel::Info, "Inspecting git changes…");
+
+    state.context.diff_analysis = analyze_diff();
+    reset_diff_view(state);
+
+    if state.context.diff_analysis.is_empty() {
+        log(state, LogLevel::Success, "No relevant changes detected.");
+    } else {
+        log(
+            state,
+            LogLevel::Success,
+            format!(
+                "Inspection complete: {} change(s) analyzed.",
+                state.context.diff_analysis.len()
+            ),
+        );
+        log_diff_analysis(state);
+    }
+
+    state.lifecycle.phase = Phase::Idle;
+}
+
+fn list_changes(state: &mut AgentState) {
+    if state.context.diff_analysis.is_empty() {
+        log(state, LogLevel::Warn, "No analysis data available. Run `inspect`.");
+        return;
+    }
+
+    // IMPORTANT: collect first, then log (borrow-safe)
+    let entries: Vec<String> = state
+        .context
+        .diff_analysis
+        .iter()
+        .enumerate()
+        .map(|(i, d)| {
+            d.symbol
+                .as_ref()
+                .map(|s| format!("[{}] {} :: {}", i, d.file, s))
+                .unwrap_or_else(|| format!("[{}] {}", i, d.file))
+        })
+        .collect();
+
+    for line in entries {
+        log(state, LogLevel::Info, line);
+    }
+}
+
+fn view_change(state: &mut AgentState, cmd: &str) {
+    if state.context.diff_analysis.is_empty() {
+        log(state, LogLevel::Warn, "No analysis data available.");
+        return;
+    }
+
+    let idx = match cmd["changes ".len()..].trim().parse::<usize>() {
+        Ok(i) if i < state.context.diff_analysis.len() => i,
+        _ => {
+            log(state, LogLevel::Warn, "Invalid change index.");
+            return;
+        }
+    };
+
+    let diff = &state.context.diff_analysis[idx];
+
+    if diff.delta.is_none() {
+        log(
+            state,
+            LogLevel::Warn,
+            "Selected change has no symbol-level diff.",
+        );
+        return;
+    }
+
+    state.ui.selected_diff = Some(idx);
+    state.ui.in_diff_view = true;
+    state.ui.diff_scroll = 0;
+
+    log(state, LogLevel::Info, format!("Opened change [{}]", idx));
+}
+
+fn agent_run(state: &mut AgentState, cmd: &str) {
+    let idx = match cmd["agent run ".len()..].trim().parse::<usize>() {
+        Ok(i) if i < state.context.diff_analysis.len() => i,
+        _ => {
+            log(state, LogLevel::Warn, "Invalid change index.");
+            return;
+        }
+    };
+
+    let diff = state.context.diff_analysis[idx].clone();
+    let candidates = generate_test_candidates(
+        std::slice::from_ref(&state.context.diff_analysis[idx]),
+        |c| resolve_test(
+        state.lifecycle.language.as_ref().unwrap(),
+        c,
+    ),
+
+    );
+
+
+    if candidates.is_empty() {
+        log(state, LogLevel::Warn, "No viable test candidates produced.");
+        return;
+    }
+
+    state.context.test_candidates = vec![candidates[0].clone()];
+
+    log(
+        state,
+        LogLevel::Success,
+        format!("Agent scheduled for change [{}]", idx),
+    );
+
+    state.lifecycle.phase = Phase::ExecuteAgent;
+}
+
+fn agent_status(state: &mut AgentState) {
+    log(
+        state,
+        LogLevel::Info,
+        format!("Agent phase: {:?}", state.lifecycle.phase),
+    );
+    log(
+        state,
+        LogLevel::Info,
+        format!(
+            "Test candidates: {}",
+            state.context.test_candidates.len()
+        ),
+    );
+}
+fn agent_cancel(state: &mut AgentState) {
+    use std::sync::atomic::Ordering;
+
+    if state.lifecycle.phase != Phase::ExecuteAgent {
+        log(state, LogLevel::Warn, "No agent is currently running.");
+        return;
+    }
+
+    state.cancel_requested.store(true, Ordering::SeqCst);
+    state.ui.active_spinner = Some("🛑 Canceling agent…".into());
+
+    log(state, LogLevel::Warn, "Agent cancellation requested.");
+}
+
+fn show_test_artifact(state: &mut AgentState) {
+    let code = match &state.context.last_generated_test {
+        Some(c) => c.clone(),
+        None => {
+            log(state, LogLevel::Warn, "No generated test available.");
+            return;
+        }
+    };
+
+    let candidate = match state.context.test_candidates.first().cloned() {
+        Some(c) => c,
+        None => {
+            log(state, LogLevel::Warn, "No test candidate context available.");
+            return;
+        }
+    };
+
+    state.ui.panel_view = Some(SinglePanelView::TestGenPreview {
+        candidate,
+        generated_test: Some(code),
+    });
+
+    state.ui.focus = Focus::Execution;
+    state.ui.exec_scroll = 0;
+
+    log(state, LogLevel::Info, "Opened test artifact.");
+}
+
+fn close_view(state: &mut AgentState) {
+    if state.ui.panel_view.is_some() {
+        state.ui.panel_view = None;
+        state.ui.exec_scroll = 0;
+        state.ui.focus = Focus::Input;
+        log(state, LogLevel::Info, "Closed panel.");
+        return;
+    }
+
+    reset_diff_view(state);
+    log(state, LogLevel::Info, "Closed view.");
+}
+
+/* ============================================================
+   Autocomplete + Hints
    ============================================================ */
 
 pub fn update_command_hints(state: &mut AgentState) {
-    let input = state.input.clone();
+    let input = state.ui.input.clone();
     state.clear_hint();
     state.clear_autocomplete();
 
@@ -234,37 +298,38 @@ pub fn update_command_hints(state: &mut AgentState) {
         return;
     }
 
-    if "analyze".starts_with(&input) {
-        state.set_autocomplete("analyze");
-        state.set_hint("analyze — inspect git diff and assess test need");
-    } else if "diff".starts_with(&input) {
-        state.set_autocomplete("diff");
-        state.set_hint("diff — list diffs, or `diff <n>` to view");
-    } else if "exec".starts_with(&input) {
-        state.set_autocomplete("exec");
-        state.set_hint("exec — switch to agent branch");
-    } else if "new".starts_with(&input) {
-        state.set_autocomplete("new");
-        state.set_hint("new — create a fresh agent branch");
-    } else if "rollback".starts_with(&input) {
-        state.set_autocomplete("rollback");
-        state.set_hint("rollback — delete agent branch and return");
-    } else if "bls".starts_with(&input) {
-        state.set_autocomplete("bls");
-        state.set_hint("bls — list local git branches");
-    } else if "close".starts_with(&input) {
-        state.set_autocomplete("close");
-        state.set_hint("close — exit diff viewer");
-    } else if "quit".starts_with(&input) {
-        state.set_autocomplete("quit");
-        state.set_hint("quit — exit OsmoGrep");
-    } else if "help".starts_with(&input) {
-        state.set_autocomplete("help");
-        state.set_hint("help — list commands");
-    } else if "testgen".starts_with(&input) {
-        state.set_autocomplete("testgen ");
-        state.set_hint("testgen <n> — generate tests for selected diff");
-    } else {
-        state.set_hint("Unknown command");
+    macro_rules! hint {
+        ($cmd:expr, $desc:expr) => {
+            if $cmd.starts_with(&input) {
+                state.set_autocomplete($cmd);
+                state.set_hint($desc);
+                return;
+            }
+        };
     }
+
+    hint!("inspect", "inspect — analyze git changes");
+    hint!("changes", "changes — list or view analyzed diffs");
+    hint!("agent run ", "agent run <n> — execute agent on diff");
+    hint!("agent status", "agent status — show agent context");
+    hint!("agent cancel", "agent cancel - cancel running agent");
+    hint!("artifacts test", "artifacts test — view generated test");
+    hint!("branch new", "branch new — create agent branch");
+    hint!("branch rollback", "branch rollback — rollback agent branch");
+    hint!("branch list", "branch list — list branches");
+    hint!("close", "close — close active view");
+    hint!("quit", "quit — exit osmogrep");
+    hint!("help", "help — show commands");
+
+    state.set_hint("Unknown command");
+}
+
+/* ============================================================
+   Small Helpers
+   ============================================================ */
+
+fn reset_diff_view(state: &mut AgentState) {
+    state.ui.in_diff_view = false;
+    state.ui.selected_diff = None;
+    state.ui.diff_scroll = 0;
 }

@@ -1,8 +1,11 @@
-use std::collections::HashMap;
+//! detectors/language.rs
+//!
+//! Heuristic language detection based on repository contents.
+
 use std::path::Path;
 use walkdir::WalkDir;
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum Language {
     Python,
     JavaScript,
@@ -13,32 +16,87 @@ pub enum Language {
     Unknown,
 }
 
+/* ============================================================
+   Public API
+   ============================================================ */
+
 pub fn detect_language(root: &Path) -> Language {
-    let mut counts: HashMap<Language, usize> = HashMap::new();
+    let mut py = 0usize;
+    let mut js = 0usize;
+    let mut ts = 0usize;
+    let mut rs = 0usize;
+    let mut go = 0usize;
+    let mut java = 0usize;
 
     for entry in WalkDir::new(root)
+        .max_depth(6) // enough signal, avoids full scan
         .into_iter()
         .filter_map(Result::ok)
         .filter(|e| e.file_type().is_file())
+        .filter(|e| !is_ignored(e.path()))
     {
-        if let Some(ext) = entry.path().extension().and_then(|e| e.to_str()) {
-            let lang = match ext {
-                "py" => Language::Python,
-                "js" => Language::JavaScript,
-                "ts" => Language::TypeScript,
-                "rs" => Language::Rust,
-                "go" => Language::Go,
-                "java" => Language::Java,
-                _ => continue,
-            };
+        match entry.path().extension().and_then(|e| e.to_str()) {
+            Some("rs") => rs += 1,
+            Some("py") => py += 1,
+            Some("ts") => ts += 1,
+            Some("js") => js += 1,
+            Some("go") => go += 1,
+            Some("java") => java += 1,
+            _ => {}
+        }
 
-            *counts.entry(lang).or_insert(0) += 1;
+        // Early exit for strong Rust or Python repos
+        if rs >= 10 {
+            return Language::Rust;
+        }
+        if py >= 10 {
+            return Language::Python;
         }
     }
 
-    counts
-        .into_iter()
-        .max_by_key(|(_, count)| *count)
-        .map(|(lang, _)| lang)
-        .unwrap_or(Language::Unknown)
+    dominant_language(py, js, ts, rs, go, java)
+}
+
+/* ============================================================
+   Helpers
+   ============================================================ */
+
+fn dominant_language(
+    py: usize,
+    js: usize,
+    ts: usize,
+    rs: usize,
+    go: usize,
+    java: usize,
+) -> Language {
+    let mut best = (Language::Unknown, 0);
+
+    for (lang, count) in [
+        (Language::Python, py),
+        (Language::TypeScript, ts),
+        (Language::JavaScript, js),
+        (Language::Rust, rs),
+        (Language::Go, go),
+        (Language::Java, java),
+    ] {
+        if count > best.1 {
+            best = (lang, count);
+        }
+    }
+
+    best.0
+}
+
+fn is_ignored(path: &Path) -> bool {
+    path.components().any(|c| {
+        matches!(
+            c.as_os_str().to_str(),
+            Some("target")
+                | Some("node_modules")
+                | Some(".git")
+                | Some(".venv")
+                | Some("dist")
+                | Some("build")
+        )
+    })
 }

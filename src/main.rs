@@ -1,4 +1,7 @@
 // src/main.rs
+//
+// Application entrypoint.
+
 mod state;
 mod logger;
 mod git;
@@ -7,293 +10,326 @@ mod commands;
 mod machine;
 mod detectors;
 mod testgen;
-use std::collections::VecDeque;
+mod llm;
 
-use std::time::Instant;
-use std::{error::Error, io, time::Duration};
+use std::{
+    error::Error,
+    io,
+    sync::{Arc, atomic::AtomicBool},
+    time::{Duration, Instant},
+};
+use std::sync::mpsc::channel;
 
 use crossterm::{
     event::{self, Event, KeyCode, MouseEventKind},
     execute,
     terminal::{
-        enable_raw_mode,
-        disable_raw_mode,
-        EnterAlternateScreen,
-        LeaveAlternateScreen,
+        disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
     },
 };
-use crossterm::event::{EnableMouseCapture, DisableMouseCapture};
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use ratatui::{backend::CrosstermBackend, Terminal};
 
-use state::{AgentState, Phase, Focus};
+use state::{
+    AgentContext, AgentEvent, AgentState, LifecycleState, LogBuffer,
+    Phase, Focus, UiState, LogLevel,
+};
 use commands::{handle_command, update_command_hints};
 use machine::step;
 
-fn main() -> Result<(), Box<dyn Error>> {
-    /* ---------- terminal setup ---------- */
+/* ============================================================
+   Entry Point
+   ============================================================ */
 
-    enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen)?;
-    execute!(io::stdout(), EnableMouseCapture)?;
+fn main() -> Result<(), Box<dyn Error>> {
+    setup_terminal()?;
 
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
-    /* ---------- state init ---------- */
+    let mut state = init_state();
 
-    let mut state = AgentState {
-        /* lifecycle */
-        phase: Phase::Init,
-
-        base_branch: None,
-        original_branch: None,
-        current_branch: None,
-        agent_branch: None,
-
-        /* input */
-        input: String::new(),
-        input_focused: true,
-
-        /* command UX */
-        history: Vec::new(),
-        history_index: None,
-        hint: None,
-        autocomplete: None,
-
-        /* logs (ring buffer) */
-        logs: VecDeque::new(),
-
-        /* analysis */
-        diff_analysis: Vec::new(),
-
-        /* status */
-        language: None,
-        framework: None,
-
-        /* ui */
-        spinner_tick: 0,
-
-        /* diff viewer */
-        selected_diff: None,
-        diff_scroll: 0,
-        diff_scroll_x: 0,
-        in_diff_view: false,
-        diff_side_by_side: false,
-        focus: Focus::Input,
-
-        /* execution panel */
-        exec_scroll: 0,
-        /* test generation */
-        test_candidates: Vec::new(),
-        /* single render panel */
-        panel_scroll: 0,
-        panel_scroll_x: 0,
-        panel_view: None,
-        last_activity: Instant::now(),
-
-    };
-
-
-    /* ---------- event loop ---------- */
+    /* ===================== EVENT LOOP ===================== */
 
     loop {
-        state.spinner_tick = state.spinner_tick.wrapping_add(1);
-
-        let (input_rect, diff_rect, exec_rect) = ui::draw_ui(&mut terminal, &state)?;
+        let (input_rect, diff_rect, exec_rect) =
+            ui::draw_ui(&mut terminal, &state)?;
 
         if event::poll(Duration::from_millis(120))? {
-            match event::read()? {
-
-                /* ================= SINGLE PANEL (TESTGEN / LLM / RESULTS) ================= */
-                Event::Key(k) if state.panel_view.is_some() => {
-                    match k.code {
-                        KeyCode::Esc | KeyCode::Char('q') => {
-                            state.panel_view = None;
-                            state.focus = Focus::Execution;
-                            state.exec_scroll = 0;
-                            state.last_activity = Instant::now();
-                        }
-
-                        KeyCode::Up => {
-                            state.exec_scroll = state.exec_scroll.saturating_sub(1);
-                        }
-                        KeyCode::Down => {
-                            state.exec_scroll = state.exec_scroll.saturating_add(1);
-                        }
-                        KeyCode::PageUp => {
-                            state.exec_scroll = state.exec_scroll.saturating_sub(10);
-                        }
-                        KeyCode::PageDown => {
-                            state.exec_scroll = state.exec_scroll.saturating_add(10);
-                        }
-
-                        _ => {}
-                    }
-                }
-
-                /* ================= DIFF (FOCUSED) ================= */
-                Event::Key(k) if state.in_diff_view && state.focus == Focus::Diff => {
-                    match k.code {
-                        KeyCode::Up => state.diff_scroll = state.diff_scroll.saturating_sub(1),
-                        KeyCode::Down => state.diff_scroll = state.diff_scroll.saturating_add(1),
-                        KeyCode::Left => state.diff_scroll_x = state.diff_scroll_x.saturating_sub(4),
-                        KeyCode::Right => state.diff_scroll_x = state.diff_scroll_x.saturating_add(4),
-                        KeyCode::PageUp => state.diff_scroll = state.diff_scroll.saturating_sub(10),
-                        KeyCode::PageDown => state.diff_scroll = state.diff_scroll.saturating_add(10),
-                        KeyCode::Char('s') => {
-                            state.diff_side_by_side = !state.diff_side_by_side;
-                            state.diff_scroll = 0;
-                        }
-                        KeyCode::Esc => {
-                            state.in_diff_view = false;
-                            state.focus = Focus::Input;
-                            state.diff_scroll = 0;
-                        }
-                        _ => {}
-                    }
-                }
-
-                /* ================= EXECUTION (FOCUSED) ================= */
-                Event::Key(k) if state.focus == Focus::Execution => {
-                    match k.code {
-                        KeyCode::Up => state.exec_scroll = state.exec_scroll.saturating_sub(1),
-                        KeyCode::Down => state.exec_scroll = state.exec_scroll.saturating_add(1),
-                        KeyCode::PageUp => state.exec_scroll = state.exec_scroll.saturating_sub(10),
-                        KeyCode::PageDown => state.exec_scroll = state.exec_scroll.saturating_add(10),
-                        _ => {}
-                    }
-                }
-
-                /* ================= INPUT (FOCUSED) ================= */
-                Event::Key(k) if state.focus == Focus::Input && state.input_focused => {
-                    match k.code {
-                        KeyCode::Char(c) => {
-                            state.push_char(c);
-                            update_command_hints(&mut state);
-                        }
-                        KeyCode::Backspace => {
-                            state.backspace();
-                            update_command_hints(&mut state);
-                        }
-                        KeyCode::Enter => {
-                            let cmd = state.commit_input();
-                            handle_command(&mut state, &cmd);
-                            update_command_hints(&mut state);
-                        }
-                        KeyCode::Up => {
-                            state.history_prev();
-                            update_command_hints(&mut state);
-                        }
-                        KeyCode::Down => {
-                            state.history_next();
-                            update_command_hints(&mut state);
-                        }
-                        KeyCode::Tab => {
-                            if let Some(ac) = state.autocomplete.clone() {
-                                state.input = ac;
-                                update_command_hints(&mut state);
-                            }
-                        }
-                        KeyCode::Esc => {
-                            state.input.clear();
-                            state.clear_hint();
-                            state.clear_autocomplete();
-                        }
-                        _ => {}
-                    }
-                }
-
-                /* ================= GLOBAL ================= */
-                Event::Key(k) => {
-                    match k.code {
-                        KeyCode::PageUp => {
-                            if !state.diff_analysis.is_empty() {
-                                let next = state.selected_diff.unwrap_or(0).saturating_sub(1);
-                                state.selected_diff = Some(next);
-                            }
-                        }
-                        KeyCode::PageDown => {
-                            if !state.diff_analysis.is_empty() {
-                                let next = state.selected_diff.unwrap_or(0) + 1;
-                                if next < state.diff_analysis.len() {
-                                    state.selected_diff = Some(next);
-                                }
-                            }
-                        }
-                        KeyCode::Enter => {
-                            if state.selected_diff.is_some() {
-                                state.in_diff_view = true;
-                                state.focus = Focus::Diff;
-                                state.diff_scroll = 0;
-                            }
-                        }
-                        KeyCode::Esc => state.phase = Phase::Done,
-                        _ => {}
-                    }
-                }
-
-                /* ================= MOUSE ================= */
-                Event::Mouse(m) => {
-                    let pos = (m.column, m.row).into();
-
-                    match m.kind {
-                        MouseEventKind::Down(_) => {
-                            if diff_rect.contains(pos) {
-                                state.in_diff_view = true;
-                                state.focus = Focus::Diff;
-                            } else if exec_rect.contains(pos) {
-                                state.focus = Focus::Execution; // ✅ only when inside exec
-                            } else if input_rect.contains(pos) {
-                                state.focus = Focus::Input;
-                            }
-                        }
-
-                        MouseEventKind::ScrollUp if state.focus == Focus::Diff => {
-                            state.diff_scroll = state.diff_scroll.saturating_sub(3);
-                        }
-                        MouseEventKind::ScrollDown if state.focus == Focus::Diff => {
-                            state.diff_scroll = state.diff_scroll.saturating_add(3);
-                        }
-
-                        MouseEventKind::ScrollLeft if state.focus == Focus::Diff => {
-                            state.diff_scroll_x = state.diff_scroll_x.saturating_sub(4);
-                        }
-                        MouseEventKind::ScrollRight if state.focus == Focus::Diff => {
-                            state.diff_scroll_x = state.diff_scroll_x.saturating_add(4);
-                        }
-
-                        MouseEventKind::ScrollUp if state.focus == Focus::Execution => {
-                            state.exec_scroll = state.exec_scroll.saturating_sub(3);
-                        }
-                        MouseEventKind::ScrollDown if state.focus == Focus::Execution => {
-                            state.exec_scroll = state.exec_scroll.saturating_add(3);
-                        }
-
-                        _ => {}
-                    }
-                }
-
-
-                _ => {}
-            }
-
+            let ev = event::read()?;
+            handle_event(&mut state, ev, input_rect, diff_rect, exec_rect);
         }
 
-        /* ---------- state machine ---------- */
-
+        // 1️⃣ advance lifecycle (schedules async work only)
         step(&mut state);
 
-        if let Phase::Done = state.phase {
+        // 2️⃣ CRITICAL: drain background agent events
+        drain_agent_events(&mut state);
+
+        if matches!(state.lifecycle.phase, Phase::Done) {
             break;
         }
     }
 
-    /* ---------- teardown ---------- */
+    teardown_terminal(&mut terminal)?;
+    Ok(())
+}
 
+/* ============================================================
+   Agent Event Reducer (🔥 REQUIRED 🔥)
+   ============================================================ */
+
+fn drain_agent_events(state: &mut AgentState) {
+    while let Ok(ev) = state.agent_rx.try_recv() {
+        match ev {
+            AgentEvent::Log(level, msg) => {
+                state.push_log(level, msg);
+            }
+
+            AgentEvent::SpinnerStart(text) => {
+                state.start_spinner(text);
+            }
+
+            AgentEvent::SpinnerStop => {
+                state.stop_spinner();
+            }
+
+            AgentEvent::GeneratedTest(code) => {
+                state.context.last_generated_test = Some(code);
+                state.push_log(LogLevel::Success, "🤖 Test generated");
+            }
+
+            AgentEvent::Finished => {
+                state.push_log(LogLevel::Success, "🤖 Agent finished");
+                state.lifecycle.phase = Phase::Idle;
+            }
+
+            AgentEvent::Failed(err) => {
+                state.push_log(LogLevel::Error, format!("🤖 {}", err));
+                state.lifecycle.phase = Phase::Idle;
+            }
+        }
+    }
+}
+
+/* ============================================================
+   State Initialization
+   ============================================================ */
+
+fn init_state() -> AgentState {
+    let (agent_tx, agent_rx) = channel::<AgentEvent>();
+
+    AgentState {
+        lifecycle: LifecycleState {
+            phase: Phase::Init,
+            base_branch: None,
+            original_branch: None,
+            current_branch: None,
+            agent_branch: None,
+            language: None,
+            framework: None,
+        },
+        context: AgentContext {
+            diff_analysis: Vec::new(),
+            test_candidates: Vec::new(),
+            last_generated_test: None,
+        },
+        ui: UiState {
+            input: String::new(),
+            history: Vec::new(),
+            history_index: None,
+            hint: None,
+            autocomplete: None,
+            last_activity: Instant::now(),
+
+            selected_diff: None,
+            diff_scroll: 0,
+            diff_scroll_x: 0,
+            in_diff_view: false,
+            diff_side_by_side: false,
+            focus: Focus::Input,
+
+            exec_scroll: 0,
+            active_spinner: None,
+            spinner_started_at: None,
+            spinner_elapsed: None,
+
+            panel_view: None,
+            panel_scroll: 0,
+            panel_scroll_x: 0,
+            cached_log_lines: Vec::new(),
+            last_log_len: 0,
+            dirty: true,
+            last_draw: Instant::now(),
+        },
+        logs: LogBuffer::new(),
+        agent_tx,
+        agent_rx,
+        cancel_requested: Arc::new(AtomicBool::new(false)),
+    }
+}
+
+/* ============================================================
+   Event Handling
+   ============================================================ */
+
+fn handle_event(
+    state: &mut AgentState,
+    event: impl Into<Event>,
+    input_rect: ratatui::layout::Rect,
+    diff_rect: ratatui::layout::Rect,
+    exec_rect: ratatui::layout::Rect,
+) {
+    match event.into() {
+        Event::Key(k) => handle_key(state, k),
+        Event::Mouse(m) => handle_mouse(state, m, input_rect, diff_rect, exec_rect),
+        _ => {}
+    }
+}
+
+fn handle_key(state: &mut AgentState, k: crossterm::event::KeyEvent) {
+    match state.ui.focus {
+        Focus::Input => handle_input_keys(state, k),
+        Focus::Diff => handle_diff_keys(state, k),
+        Focus::Execution => handle_exec_keys(state, k),
+    }
+
+    if k.code == KeyCode::Esc {
+        state.lifecycle.phase = Phase::Done;
+    }
+}
+
+/* ================= Input ================= */
+
+fn handle_input_keys(state: &mut AgentState, k: crossterm::event::KeyEvent) {
+    match k.code {
+        KeyCode::Char(c) => {
+            state.push_char(c);
+            update_command_hints(state);
+        }
+        KeyCode::Backspace => {
+            state.backspace();
+            update_command_hints(state);
+        }
+        KeyCode::Enter => {
+            let cmd = state.commit_input();
+            handle_command(state, &cmd);
+            update_command_hints(state);
+        }
+        KeyCode::Up => {
+            state.history_prev();
+            update_command_hints(state);
+        }
+        KeyCode::Down => {
+            state.history_next();
+            update_command_hints(state);
+        }
+        KeyCode::Tab => {
+            if let Some(ac) = state.ui.autocomplete.clone() {
+                state.ui.input = ac;
+                update_command_hints(state);
+            }
+        }
+        KeyCode::Esc => {
+            state.ui.input.clear();
+            state.clear_hint();
+            state.clear_autocomplete();
+        }
+        _ => {}
+    }
+}
+
+/* ================= Diff ================= */
+
+fn handle_diff_keys(state: &mut AgentState, k: crossterm::event::KeyEvent) {
+    match k.code {
+        KeyCode::Up => state.ui.diff_scroll = state.ui.diff_scroll.saturating_sub(1),
+        KeyCode::Down => state.ui.diff_scroll = state.ui.diff_scroll.saturating_add(1),
+        KeyCode::Left => state.ui.diff_scroll_x = state.ui.diff_scroll_x.saturating_sub(4),
+        KeyCode::Right => state.ui.diff_scroll_x = state.ui.diff_scroll_x.saturating_add(4),
+        KeyCode::PageUp => state.ui.diff_scroll = state.ui.diff_scroll.saturating_sub(10),
+        KeyCode::PageDown => state.ui.diff_scroll = state.ui.diff_scroll.saturating_add(10),
+        KeyCode::Char('s') => {
+            state.ui.diff_side_by_side = !state.ui.diff_side_by_side;
+            state.ui.diff_scroll = 0;
+        }
+        KeyCode::Esc => {
+            state.ui.in_diff_view = false;
+            state.ui.focus = Focus::Input;
+        }
+        _ => {}
+    }
+}
+
+/* ================= Execution ================= */
+
+fn handle_exec_keys(state: &mut AgentState, k: crossterm::event::KeyEvent) {
+    match k.code {
+        KeyCode::Up => state.ui.exec_scroll = state.ui.exec_scroll.saturating_sub(1),
+        KeyCode::Down => state.ui.exec_scroll = state.ui.exec_scroll.saturating_add(1),
+        KeyCode::PageUp => state.ui.exec_scroll = state.ui.exec_scroll.saturating_sub(10),
+        KeyCode::PageDown => state.ui.exec_scroll = state.ui.exec_scroll.saturating_add(10),
+        _ => {}
+    }
+}
+
+/* ================= Mouse ================= */
+
+fn handle_mouse(
+    state: &mut AgentState,
+    m: crossterm::event::MouseEvent,
+    input_rect: ratatui::layout::Rect,
+    diff_rect: ratatui::layout::Rect,
+    exec_rect: ratatui::layout::Rect,
+) {
+    let pos = (m.column, m.row).into();
+
+    match m.kind {
+        MouseEventKind::Down(_) => {
+            if diff_rect.contains(pos) {
+                state.ui.focus = Focus::Diff;
+                state.ui.in_diff_view = true;
+            } else if exec_rect.contains(pos) {
+                state.ui.focus = Focus::Execution;
+            } else if input_rect.contains(pos) {
+                state.ui.focus = Focus::Input;
+            }
+        }
+        MouseEventKind::ScrollUp if state.ui.focus == Focus::Diff => {
+            state.ui.diff_scroll = state.ui.diff_scroll.saturating_sub(3);
+        }
+        MouseEventKind::ScrollDown if state.ui.focus == Focus::Diff => {
+            state.ui.diff_scroll = state.ui.diff_scroll.saturating_add(3);
+        }
+        MouseEventKind::ScrollUp if state.ui.focus == Focus::Execution => {
+            state.ui.exec_scroll = state.ui.exec_scroll.saturating_sub(3);
+        }
+        MouseEventKind::ScrollDown if state.ui.focus == Focus::Execution => {
+            state.ui.exec_scroll = state.ui.exec_scroll.saturating_add(3);
+        }
+        _ => {}
+    }
+}
+
+/* ============================================================
+   Terminal Lifecycle
+   ============================================================ */
+
+fn setup_terminal() -> Result<(), Box<dyn Error>> {
+    enable_raw_mode()?;
+    execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
+    Ok(())
+}
+
+fn teardown_terminal(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+) -> Result<(), Box<dyn Error>> {
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-    execute!(terminal.backend_mut(), DisableMouseCapture)?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
     terminal.show_cursor()?;
-
     Ok(())
 }

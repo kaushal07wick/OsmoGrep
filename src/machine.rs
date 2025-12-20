@@ -1,112 +1,219 @@
-use std::path::Path;
+//! machine.rs
+//!
+//! Agent lifecycle state machine.
+
+use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 
 use crate::{
+    detectors::{framework::detect_framework, language::detect_language},
     git,
+    llm::orchestrator::run_llm_test_flow,
     logger::log,
-    detectors::{language::detect_language, framework::detect_framework},
 };
 use crate::state::{AgentState, LogLevel, Phase};
 
+/* ============================================================
+   Public API
+   ============================================================ */
+
+/// Advance the agent by one lifecycle step.
+/// MUST be called from the main loop.
 pub fn step(state: &mut AgentState) {
-    match state.phase {
-        /* ---------- INIT ---------- */
-        Phase::Init => {
-            if !git::is_git_repo() {
-                log(state, LogLevel::Error, "Not a git repository.");
-                state.phase = Phase::Done;
-                return;
-            }
+    match state.lifecycle.phase {
+        Phase::Init => init_repo(state),
+        Phase::DetectBase => detect_base_branch(state),
+        Phase::CreateNewAgent => create_agent_branch(state),
+        Phase::ExecuteAgent => execute_agent(state),
+        Phase::Rollback => rollback_agent(state),
 
-            let current = git::current_branch();
-            state.current_branch = Some(current.clone());
-            state.original_branch = Some(current);
-
-            let root = Path::new(".");
-            state.language = Some(detect_language(root));
-            state.framework = Some(detect_framework(root));
-
-            state.phase = Phase::DetectBase;
-        }
-
-        /* ---------- BASE BRANCH ---------- */
-        Phase::DetectBase => {
-            let base = git::detect_base_branch();
-            state.base_branch = Some(base.clone());
-            log(state, LogLevel::Success, format!("Base branch: {}", base));
-
-            if let Some(agent) = git::find_existing_agent() {
-                state.agent_branch = Some(agent.clone());
-                log(state, LogLevel::Info, format!("Found agent branch {}", agent));
-            }
-
-            if git::working_tree_dirty() {
-                log(state, LogLevel::Warn, "Uncommitted changes detected.");
-            }
-
-            state.phase = Phase::Idle;
-        }
-
-        /* ---------- NEW AGENT ---------- */
-        Phase::CreateNewAgent => {
-            let branch = git::create_agent_branch();
-            state.agent_branch = Some(branch.clone());
-
-            log(state, LogLevel::Success, format!("Created agent branch {}", branch));
-            log(
-                state,
-                LogLevel::Info,
-                "Branch created but not checked out. Use `exec` to switch.",
-            );
-
-            state.phase = Phase::Idle;
-        }
-
-        /* ---------- EXECUTE ---------- */
-        Phase::ExecuteAgent => {
-            if let Some(branch) = &state.agent_branch {
-                git::checkout(branch);
-                state.current_branch = Some(branch.clone());
-
-                log(state, LogLevel::Success, format!("Moved to branch {}", branch));
-            } else {
-                log(state, LogLevel::Warn, "No agent branch to execute on.");
-            }
-
-            state.phase = Phase::Idle;
-        }
-
-        /* ---------- ROLLBACK ---------- */
-        Phase::Rollback => {
-            // Step 1: checkout base branch
-            if let Some(base) = state.base_branch.clone() {
-                git::checkout(&base);
-                state.current_branch = Some(base.clone()); 
-                log(
-                    state,
-                    LogLevel::Success,
-                    format!("Checked out base branch {}", base),
-                );
-            }
-
-            // Step 2: delete agent branch (take ownership safely)
-            if let Some(agent) = state.agent_branch.take() {
-                git::delete_branch(&agent);
-                log(
-                    state,
-                    LogLevel::Success,
-                    format!("Deleted agent branch {}", agent),
-                );
-            }
-
-            // Step 3: reset state
-            state.in_diff_view = false;
-            state.selected_diff = None;
-            state.diff_scroll = 0;
-
-            state.phase = Phase::Idle;
-        }
-
+        // 👇 async execution in progress
+        Phase::Running => handle_running(state),
 
         Phase::Idle | Phase::Done => {}
     }
+}
+
+/* ============================================================
+   Phase Implementations
+   ============================================================ */
+
+fn init_repo(state: &mut AgentState) {
+    if !git::is_git_repo() {
+        log(state, LogLevel::Error, "Not a git repository.");
+        transition(state, Phase::Done);
+        return;
+    }
+
+    let current = git::current_branch();
+    state.lifecycle.current_branch = Some(current.clone());
+    state.lifecycle.original_branch = Some(current);
+
+    let repo_root = detect_repo_root();
+    state.lifecycle.language = Some(detect_language(&repo_root));
+    state.lifecycle.framework = Some(detect_framework(&repo_root));
+
+    transition(state, Phase::DetectBase);
+}
+
+fn detect_base_branch(state: &mut AgentState) {
+    let base = git::detect_base_branch();
+    state.lifecycle.base_branch = Some(base.clone());
+
+    log(state, LogLevel::Success, format!("Base branch detected: {}", base));
+
+    if let Some(agent) = git::find_existing_agent() {
+        state.lifecycle.agent_branch = Some(agent.clone());
+        log(state, LogLevel::Info, format!("Found existing agent branch {}", agent));
+    }
+
+    if git::working_tree_dirty() {
+        log(state, LogLevel::Warn, "Working tree contains uncommitted changes.");
+    }
+
+    transition(state, Phase::Idle);
+}
+
+fn create_agent_branch(state: &mut AgentState) {
+    let branch = ensure_agent_branch(state);
+
+    log(
+        state,
+        LogLevel::Success,
+        format!("Created agent branch {}", branch),
+    );
+
+    transition(state, Phase::Idle);
+}
+
+/// Schedule async agent execution (NON-BLOCKING)
+fn execute_agent(state: &mut AgentState) {
+    if state.lifecycle.phase != Phase::ExecuteAgent {
+        return;
+    }
+
+    if state.cancel_requested.load(Ordering::SeqCst) {
+        log(state, LogLevel::Info, "Agent execution cancelled before start.");
+        transition(state, Phase::Rollback);
+        return;
+    }
+
+    // reset cancel flag for this run
+    state.cancel_requested.store(false, Ordering::SeqCst);
+
+    let branch = ensure_agent_branch(state);
+    checkout_branch(state, &branch);
+
+    let candidate = match state.context.test_candidates.first().cloned() {
+        Some(c) => c,
+        None => {
+            log(state, LogLevel::Warn, "No test candidate available.");
+            transition(state, Phase::Idle);
+            return;
+        }
+    };
+
+    let language = match state.lifecycle.language {
+        Some(l) => l,
+        None => {
+            log(state, LogLevel::Error, "Language not detected.");
+            transition(state, Phase::Idle);
+            return;
+        }
+    };
+
+    let framework = state.lifecycle.framework.clone();
+
+    log(state, LogLevel::Info, "Agent started");
+
+    let cancel_flag = state.cancel_requested.clone();
+
+    run_llm_test_flow(
+        state.agent_tx.clone(),
+        cancel_flag,
+        language,
+        framework,
+        candidate,
+    );
+
+    transition(state, Phase::Running);
+}
+
+fn handle_running(state: &mut AgentState) {
+    // cancellation is observed here
+    if state.cancel_requested.load(Ordering::SeqCst) {
+        log(state, LogLevel::Warn, "Agent cancelled.");
+        transition(state, Phase::Rollback);
+    }
+}
+
+fn rollback_agent(state: &mut AgentState) {
+    if let Some(base) = state.lifecycle.base_branch.clone() {
+        checkout_branch(state, &base);
+    }
+
+    if let Some(agent) = state.lifecycle.agent_branch.take() {
+        git::delete_branch(&agent);
+        log(
+            state,
+            LogLevel::Success,
+            format!("Deleted agent branch {}", agent),
+        );
+    }
+
+    reset_views(state);
+    transition(state, Phase::Idle);
+}
+
+/* ============================================================
+   Helpers
+   ============================================================ */
+
+fn ensure_agent_branch(state: &mut AgentState) -> String {
+    if let Some(branch) = &state.lifecycle.agent_branch {
+        return branch.clone();
+    }
+
+    let branch = git::create_agent_branch();
+    state.lifecycle.agent_branch = Some(branch.clone());
+
+    log(
+        state,
+        LogLevel::Success,
+        format!("Created agent branch {}", branch),
+    );
+
+    branch
+}
+
+fn checkout_branch(state: &mut AgentState, branch: &str) {
+    git::checkout(branch);
+    state.lifecycle.current_branch = Some(branch.to_string());
+
+    log(
+        state,
+        LogLevel::Success,
+        format!("Checked out branch {}", branch),
+    );
+}
+
+fn reset_views(state: &mut AgentState) {
+    state.ui.in_diff_view = false;
+    state.ui.selected_diff = None;
+    state.ui.diff_scroll = 0;
+}
+
+fn detect_repo_root() -> PathBuf {
+    Path::new(".").to_path_buf()
+}
+
+fn transition(state: &mut AgentState, next: Phase) {
+    let prev = state.lifecycle.phase.clone();
+    state.lifecycle.phase = next;
+
+    log(
+        state,
+        LogLevel::Info,
+        format!("Phase transition: {:?} → {:?}", prev, state.lifecycle.phase),
+    );
 }
