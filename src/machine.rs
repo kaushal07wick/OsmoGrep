@@ -145,18 +145,23 @@ fn handle_running(state: &mut AgentState) {
         return;
     }
 
-    // TEMP MVP: run tests once LLM finishes
     if state.context.generated_tests_ready {
         use crate::executor::run::run_single_test;
+        use crate::state::AgentEvent;
 
-        log(state, LogLevel::Info, "Running generated tests");
+        // reset flag so this runs once
+        state.context.generated_tests_ready = false;
 
-        // Minimal proof: run entire test suite
-        run_single_test(state, &["cargo", "test", "--quiet"]);
+        let _ = state.agent_tx.send(AgentEvent::TestStarted);
+
+        let result = run_single_test(&["cargo", "test", "--quiet"]);
+
+        let _ = state.agent_tx.send(AgentEvent::TestFinished(result));
 
         transition(state, Phase::Done);
     }
 }
+
 
 
 fn rollback_agent(state: &mut AgentState) {

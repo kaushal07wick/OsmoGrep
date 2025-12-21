@@ -66,6 +66,13 @@ pub struct SymbolDelta {
     pub new_source: String,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum DiffBaseline {
+    BaseBranch, // base → HEAD / index
+    Staged,     // HEAD → index
+}
+
+
 /* ============================================================
    Diff Analysis (STATIC FACTS)
    ============================================================ */

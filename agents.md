@@ -38,7 +38,7 @@
 ### src/detectors/ast/symboldelta.rs
 
 **Functions**
-- pub fn compute_symbol_delta( base_branch: &str, file: &str, symbol: &str, ) -> Option<SymbolDelta>
+- pub fn compute_symbol_delta( baseline: DiffBaseline, base_branch: &str, file: &str, symbol: &str, ) -> Option<SymbolDelta>
 
 ### src/detectors/diff_analyzer.rs
 
@@ -73,7 +73,7 @@
 ### src/executor/run.rs
 
 **Functions**
-- pub fn run_single_test( state: &mut AgentState, cmd: &[&str], )
+- pub fn run_single_test(cmd: &[&str]) -> TestResult
 
 ### src/git.rs
 
@@ -215,6 +215,7 @@
 ### src/ui/execution.rs
 
 **Functions**
+- fn parse_change_line(s: &str) -> Option<(String, String, Option<String>)>
 - pub fn render_execution( f: &mut ratatui::Frame, area: Rect, state: &AgentState, )
 
 ### src/ui/helpers.rs

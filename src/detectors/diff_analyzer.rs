@@ -14,7 +14,7 @@
 //! - NO semantic interpretation
 
 use crate::git;
-use crate::state::{ChangeSurface, DiffAnalysis};
+use crate::state::{ChangeSurface, DiffAnalysis, DiffBaseline};
 use crate::detectors::ast::ast::detect_symbol;
 use crate::detectors::ast::symboldelta::compute_symbol_delta;
 
@@ -60,12 +60,23 @@ fn analyze_file(
     // ALWAYS attempt delta extraction for supported code files
     let delta = if is_supported_code_file(file) {
         match &symbol {
-            Some(sym) => compute_symbol_delta(base_branch, file, sym),
-            None => compute_symbol_delta(base_branch, file, "<file>"),
+            Some(sym) => compute_symbol_delta(
+                DiffBaseline::Staged,
+                base_branch,
+                file,
+                sym,
+            ),
+            None => compute_symbol_delta(
+                DiffBaseline::Staged,
+                base_branch,
+                file,
+                "<file>",
+            ),
         }
     } else {
         None
     };
+
 
     DiffAnalysis {
         file: file.to_string(),

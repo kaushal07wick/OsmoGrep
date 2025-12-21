@@ -121,23 +121,24 @@ fn inspect(state: &mut AgentState) {
     state.lifecycle.phase = Phase::Idle;
 }
 
+
 fn list_changes(state: &mut AgentState) {
     if state.context.diff_analysis.is_empty() {
         log(state, LogLevel::Warn, "No analysis data available. Run `inspect`.");
         return;
     }
 
-    // IMPORTANT: collect first, then log (borrow-safe)
     let entries: Vec<String> = state
         .context
         .diff_analysis
         .iter()
         .enumerate()
         .map(|(i, d)| {
-            d.symbol
-                .as_ref()
-                .map(|s| format!("[{}] {} :: {}", i, d.file, s))
-                .unwrap_or_else(|| format!("[{}] {}", i, d.file))
+            match (&d.symbol, &d.delta) {
+                (Some(sym), _) => format!("[{}] {} :: {}", i, d.file, sym),
+                (None, Some(_)) => format!("[{}] {} :: <file>", i, d.file),
+                _ => format!("[{}] {}", i, d.file),
+            }
         })
         .collect();
 
@@ -145,6 +146,7 @@ fn list_changes(state: &mut AgentState) {
         log(state, LogLevel::Info, line);
     }
 }
+
 
 fn view_change(state: &mut AgentState, cmd: &str) {
     if state.context.diff_analysis.is_empty() {
@@ -162,21 +164,25 @@ fn view_change(state: &mut AgentState, cmd: &str) {
 
     let diff = &state.context.diff_analysis[idx];
 
+    
     if diff.delta.is_none() {
-        log(
-            state,
-            LogLevel::Warn,
-            "Selected change has no symbol-level diff.",
-        );
+        log(state, LogLevel::Warn, "Selected change has no code delta.");
         return;
     }
 
     state.ui.selected_diff = Some(idx);
     state.ui.in_diff_view = true;
     state.ui.diff_scroll = 0;
+    state.ui.diff_scroll_x = 0;
 
-    log(state, LogLevel::Info, format!("Opened change [{}]", idx));
+    let target = match &diff.symbol {
+        Some(sym) => format!("{} :: {}", diff.file, sym),
+        None => diff.file.clone(),
+    };
+
+    log(state, LogLevel::Info, format!("Opened change [{}] {}", idx, target));
 }
+
 
 fn agent_run(state: &mut AgentState, cmd: &str) {
     let idx = match cmd["agent run ".len()..].trim().parse::<usize>() {
@@ -229,10 +235,11 @@ fn agent_status(state: &mut AgentState) {
         ),
     );
 }
+
 fn agent_cancel(state: &mut AgentState) {
     use std::sync::atomic::Ordering;
 
-    if state.lifecycle.phase != Phase::ExecuteAgent {
+    if state.lifecycle.phase != Phase::Running {
         log(state, LogLevel::Warn, "No agent is currently running.");
         return;
     }
@@ -242,6 +249,7 @@ fn agent_cancel(state: &mut AgentState) {
 
     log(state, LogLevel::Warn, "Agent cancellation requested.");
 }
+
 
 fn show_test_artifact(state: &mut AgentState) {
     let code = match &state.context.last_generated_test {

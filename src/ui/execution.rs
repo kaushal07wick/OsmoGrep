@@ -16,6 +16,34 @@ use std::time::{Duration, Instant};
 use crate::state::{AgentState, LogLevel};
 use crate::ui::helpers::risk_color;
 
+/* ============================================================
+   Helpers
+   ============================================================ */
+
+/// Parses lines like:
+/// "[2] src/foo.rs :: bar_fn"
+fn parse_change_line(s: &str) -> Option<(String, String, Option<String>)> {
+    let s = s.trim();
+    if !s.starts_with('[') {
+        return None;
+    }
+
+    let (idx, rest) = s.split_once("] ")?;
+    let index = format!("{}]", idx);
+
+    let (file, symbol) = match rest.split_once(" :: ") {
+        Some((f, sym)) if sym != "<file>" => (f.to_string(), Some(sym.to_string())),
+        Some((f, _)) => (f.to_string(), None),
+        None => (rest.to_string(), None),
+    };
+
+    Some((index, file, symbol))
+}
+
+/* ============================================================
+   Renderer
+   ============================================================ */
+
 pub fn render_execution(
     f: &mut ratatui::Frame,
     area: Rect,
@@ -26,11 +54,13 @@ pub fn render_execution(
     let fade_after = Duration::from_secs(3);
 
     let mut lines: Vec<Line> = Vec::new();
+
     let mut diff_idx = 0;
-    let mut counter = 1;
+    let mut diff_counter = 0;
+    let mut changes_heading_shown = false;
 
     for log in state.logs.iter() {
-        // Fade old warnings/errors
+        // fade old warnings/errors
         if matches!(log.level, LogLevel::Warn | LogLevel::Error)
             && now.duration_since(log.at) > fade_after
         {
@@ -39,6 +69,7 @@ pub fn render_execution(
 
         /* ================= DIFF ANALYSIS ================= */
         if log.text == "__DIFF_ANALYSIS__" {
+            lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
                 "Diff Analysis",
                 Style::default()
@@ -51,15 +82,14 @@ pub fn render_execution(
                 let d = &state.context.diff_analysis[diff_idx];
                 diff_idx += 1;
 
-                /* ---------- primary line ---------- */
                 let mut header = vec![
                     Span::styled(
-                        format!("[{:02}] ", counter),
+                        format!("[{}] ", diff_counter),
                         Style::default().fg(Color::DarkGray),
                     ),
                     Span::styled(
                         &d.file,
-                        Style::default().fg(Color::White),
+                        Style::default().fg(Color::Gray),
                     ),
                 ];
 
@@ -67,7 +97,9 @@ pub fn render_execution(
                     header.push(Span::raw(" :: "));
                     header.push(Span::styled(
                         sym,
-                        Style::default().fg(Color::White),
+                        Style::default()
+                            .fg(Color::Cyan) // 🔵 Rust-style function color
+                            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
                     ));
                 }
 
@@ -89,7 +121,6 @@ pub fn render_execution(
 
                 lines.push(Line::from(header));
 
-                /* ---------- semantic (ONE line only) ---------- */
                 if let Some(summary) = &d.summary {
                     lines.push(Line::from(vec![
                         Span::raw("     "),
@@ -102,12 +133,50 @@ pub fn render_execution(
                     ]));
                 }
 
-                // spacing between entries
                 lines.push(Line::from(""));
-
-                counter += 1;
+                diff_counter += 1;
             }
 
+            continue;
+        }
+
+        /* ================= CHANGES LIST ================= */
+        if let Some((idx, file, symbol)) = parse_change_line(&log.text) {
+            if !changes_heading_shown {
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    "Changes",
+                    Style::default()
+                        .fg(Color::Gray)
+                        .add_modifier(Modifier::BOLD),
+                )));
+                lines.push(Line::from(""));
+                changes_heading_shown = true;
+            }
+
+            let mut spans = vec![
+                Span::styled(
+                    idx + " ",
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::styled(
+                    file,
+                    Style::default().fg(Color::Gray),
+                ),
+            ];
+
+            if let Some(sym) = symbol {
+                spans.push(Span::raw(" :: "));
+                spans.push(Span::styled(
+                    sym,
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+                ));
+            }
+
+            lines.push(Line::from(spans));
+            lines.push(Line::from(""));
             continue;
         }
 
@@ -123,9 +192,10 @@ pub fn render_execution(
             &log.text,
             Style::default().fg(color),
         )));
+        lines.push(Line::from(""));
     }
 
-    /* ---------- scrolling ---------- */
+    /* ================= SCROLL ================= */
     let max_scroll = lines.len().saturating_sub(height);
     let scroll = state.ui.exec_scroll.min(max_scroll);
 
@@ -135,7 +205,7 @@ pub fn render_execution(
         .take(height)
         .collect::<Vec<_>>();
 
-    /* ---------- render ---------- */
+    /* ================= RENDER ================= */
     f.render_widget(
         Paragraph::new(visible).block(
             Block::default()
