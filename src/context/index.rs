@@ -35,7 +35,9 @@ use crate::detectors::{
     language::Language,
 };
 
-/* ---------- public entry ---------- */
+/* ============================================================
+   Public entry
+   ============================================================ */
 
 pub fn spawn_repo_indexer(repo_root: PathBuf) -> IndexHandle {
     let handle = IndexHandle::new_indexing();
@@ -54,7 +56,9 @@ pub fn spawn_repo_indexer(repo_root: PathBuf) -> IndexHandle {
     handle
 }
 
-/* ---------- repo facts ---------- */
+/* ============================================================
+   Repo facts
+   ============================================================ */
 
 fn extract_repo_facts(repo_root: &Path) -> RepoFacts {
     let mut languages = Vec::new();
@@ -73,34 +77,32 @@ fn extract_repo_facts(repo_root: &Path) -> RepoFacts {
         languages.push(Language::Python);
     }
 
-    /* ---------- source-based fallback (IMPORTANT) ---------- */
+    /* ---------- source-based fallback (CRITICAL) ---------- */
 
     if languages.is_empty() {
-        if WalkDir::new(repo_root)
+        let mut has_py = false;
+        let mut has_rs = false;
+
+        for entry in WalkDir::new(repo_root)
             .into_iter()
             .filter_map(Result::ok)
-            .any(|e| {
-                e.file_type().is_file()
-                    && matches!(
-                        e.path().extension().and_then(|s| s.to_str()),
-                        Some("py")
-                    )
-            })
+            .filter(|e| e.file_type().is_file())
         {
-            languages.push(Language::Python);
+            match entry.path().extension().and_then(|s| s.to_str()) {
+                Some("py") => has_py = true,
+                Some("rs") => has_rs = true,
+                _ => {}
+            }
+
+            if has_py && has_rs {
+                break;
+            }
         }
 
-        if WalkDir::new(repo_root)
-            .into_iter()
-            .filter_map(Result::ok)
-            .any(|e| {
-                e.file_type().is_file()
-                    && matches!(
-                        e.path().extension().and_then(|s| s.to_str()),
-                        Some("rs")
-                    )
-            })
-        {
+        if has_py {
+            languages.push(Language::Python);
+        }
+        if has_rs {
             languages.push(Language::Rust);
         }
     }
@@ -127,11 +129,13 @@ fn extract_repo_facts(repo_root: &Path) -> RepoFacts {
     }
 }
 
-/* ---------- symbol index ---------- */
+/* ============================================================
+   Symbol index
+   ============================================================ */
 
 fn build_symbol_index(repo_root: &Path) -> SymbolIndex {
-    let mut by_file = HashMap::new();
-    let mut by_symbol = HashMap::new();
+    let mut by_file: HashMap<PathBuf, FileSymbols> = HashMap::new();
+    let mut by_symbol: HashMap<String, SymbolDef> = HashMap::new();
 
     for entry in WalkDir::new(repo_root)
         .into_iter()
@@ -147,9 +151,11 @@ fn build_symbol_index(repo_root: &Path) -> SymbolIndex {
         };
 
         if let Some(file_syms) = file_syms {
+            // ⚠️ merge symbols instead of overwriting
             for sym in &file_syms.symbols {
-                by_symbol.insert(sym.name.clone(), sym.clone());
+                by_symbol.entry(sym.name.clone()).or_insert_with(|| sym.clone());
             }
+
             by_file.insert(path.to_path_buf(), file_syms);
         }
     }
@@ -157,7 +163,9 @@ fn build_symbol_index(repo_root: &Path) -> SymbolIndex {
     SymbolIndex { by_file, by_symbol }
 }
 
-/* ---------- unified file indexing ---------- */
+/* ============================================================
+   Unified file indexing
+   ============================================================ */
 
 #[derive(Clone, Copy)]
 enum LanguageKind {
@@ -185,7 +193,9 @@ fn index_file(path: &Path, kind: LanguageKind) -> Option<FileSymbols> {
     Some(FileSymbols { symbols, imports })
 }
 
-/* ---------- tree walking ---------- */
+/* ============================================================
+   Tree walking
+   ============================================================ */
 
 fn walk_tree(
     kind: LanguageKind,
@@ -199,7 +209,8 @@ fn walk_tree(
         let node = cursor.node();
 
         match (kind, node.kind()) {
-            // ---- Python ----
+            /* ---------- Python ---------- */
+
             (LanguageKind::Python, "function_definition")
             | (LanguageKind::Python, "class_definition") => {
                 extract_named_symbol(node, path, src, symbols);
@@ -242,7 +253,8 @@ fn walk_tree(
                 imports.push(Import { module, names });
             }
 
-            // ---- Rust ----
+            /* ---------- Rust ---------- */
+
             (LanguageKind::Rust, "function_item")
             | (LanguageKind::Rust, "struct_item")
             | (LanguageKind::Rust, "enum_item")
@@ -253,7 +265,11 @@ fn walk_tree(
             (LanguageKind::Rust, "use_declaration") => {
                 if let Ok(text) = node.utf8_text(src.as_bytes()) {
                     imports.push(Import {
-                        module: text.replace("use ", "").replace(';', ""),
+                        module: text
+                            .replace("use ", "")
+                            .replace(';', "")
+                            .trim()
+                            .to_string(),
                         names: Vec::new(),
                     });
                 }
@@ -273,7 +289,9 @@ fn walk_tree(
     }
 }
 
-/* ---------- helpers ---------- */
+/* ============================================================
+   Helpers
+   ============================================================ */
 
 fn extract_named_symbol(
     node: tree_sitter::Node,

@@ -59,14 +59,60 @@ pub struct Import {
     pub names: Vec<String>,
 }
 
+/* ================= Testing Semantics ================= */
+
+/// How values are executed / materialized.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionModel {
+    Eager,
+    Lazy,
+}
+
+/// What kind of test is intended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestIntent {
+    Regression,
+    Guardrail,
+    NewBehavior,
+}
+
+/// What assertion philosophy to prefer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssertionStyle {
+    Exact,        // strict equality
+    Approximate,  // tolerances allowed
+    Sanity,       // shape / finiteness / no-crash
+}
+
+/// Failure modes the test should protect against.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FailureMode {
+    Panic,
+    RuntimeError,
+    NaN,
+    Inf,
+    WrongShape,
+}
+
 /* ================= Context Slice ================= */
 
 #[derive(Debug, Clone)]
 pub struct ContextSlice {
+    /* repo-level facts */
     pub repo_facts: RepoFactsLite,
+
+    /* target */
     pub target: SymbolDef,
+
+    /* local structure */
     pub deps: Vec<SymbolDef>,
     pub imports: Vec<Import>,
+
+    /* derived testing semantics (NO logic here) */
+    pub execution_model: Option<ExecutionModel>,
+    pub test_intent: Option<TestIntent>,
+    pub assertion_style: Option<AssertionStyle>,
+    pub failure_modes: Vec<FailureMode>,
 }
 
 #[derive(Debug, Clone)]

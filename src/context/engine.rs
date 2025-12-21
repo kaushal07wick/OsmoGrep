@@ -10,6 +10,8 @@ use super::types::{
     SymbolIndex,
 };
 
+use std::path::PathBuf;
+
 pub struct ContextEngine<'a> {
     facts: &'a RepoFacts,
     symbols: &'a SymbolIndex,
@@ -28,7 +30,7 @@ impl<'a> ContextEngine<'a> {
         }
     }
 
-    /* ---------- symbol ---------- */
+    /* ================= Symbol ================= */
 
     fn slice_for_symbol(&self, name: &str) -> ContextSlice {
         let target = match self.symbols.by_symbol.get(name) {
@@ -39,7 +41,7 @@ impl<'a> ContextEngine<'a> {
         self.slice_from_file(target)
     }
 
-    /* ---------- module ---------- */
+    /* ================= Module ================= */
 
     fn slice_for_module(&self, module: &str) -> ContextSlice {
         let file = self.symbols.by_file.keys().find(|p| {
@@ -60,21 +62,19 @@ impl<'a> ContextEngine<'a> {
         self.slice_from_file(target)
     }
 
-    /* ---------- file ---------- */
+    /* ================= File ================= */
 
     fn slice_for_file(&self, file: &str) -> ContextSlice {
-        let path = std::path::PathBuf::from(file);
-
         let target = SymbolDef {
             name: file.to_string(),
-            file: path,
+            file: PathBuf::from(file),
             line: 0,
         };
 
         self.slice_from_file(target)
     }
 
-    /* ---------- shared ---------- */
+    /* ================= Core ================= */
 
     fn slice_from_file(&self, target: SymbolDef) -> ContextSlice {
         let mut deps = Vec::new();
@@ -85,11 +85,17 @@ impl<'a> ContextEngine<'a> {
                 .symbols
                 .iter()
                 .filter(|s| s.name != target.name)
-                .take(5)
+                .take(6)
                 .cloned()
                 .collect();
 
-            imports = file.imports.iter().take(5).cloned().collect();
+            imports = file
+                .imports
+                .iter()
+                .filter(|i| !i.module.is_empty())
+                .take(6)
+                .cloned()
+                .collect();
         }
 
         ContextSlice {
@@ -97,6 +103,12 @@ impl<'a> ContextEngine<'a> {
             target,
             deps,
             imports,
+
+            // ⬇️ DO NOT GUESS — fill only what is defined
+            execution_model: None,
+            assertion_style: None,
+            failure_modes: Vec::new(),
+            test_intent: None,
         }
     }
 
@@ -105,11 +117,16 @@ impl<'a> ContextEngine<'a> {
             repo_facts: RepoFactsLite::from(self.facts),
             target: SymbolDef {
                 name: name.to_string(),
-                file: std::path::PathBuf::new(),
+                file: PathBuf::new(),
                 line: 0,
             },
             deps: Vec::new(),
             imports: Vec::new(),
+
+            execution_model: None,
+            assertion_style: None,
+            failure_modes: Vec::new(),
+            test_intent: None,
         }
     }
 }
