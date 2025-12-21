@@ -140,19 +140,11 @@ fn handle_running(state: &mut AgentState) {
         return;
     }
     if state.context.generated_tests_ready {
-        state.context.generated_tests_ready = false;
+    state.context.generated_tests_ready = false;
 
-        let _ = state.agent_tx.send(AgentEvent::TestStarted);
-
-        // MVP: run whole suite (crate-level)
-        let result = run_single_test(&["cargo", "test", "--quiet"]);
-
-        let _ = state.agent_tx.send(AgentEvent::TestFinished(result));
-
-        // 🔑 ALWAYS return to base branch after execution
-        return_to_base_branch(state);
-
-        transition(state, Phase::Idle);
+    // Orchestrator already ran tests and emitted results
+    return_to_base_branch(state);
+    transition(state, Phase::Idle);
     }
 }
 

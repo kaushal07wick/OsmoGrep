@@ -1,4 +1,4 @@
-//src/executor/run.rs
+// src/executor/run.rs
 use std::process::Command;
 
 use crate::state::TestResult;
@@ -9,17 +9,32 @@ pub fn run_single_test(cmd: &[&str]) -> TestResult {
         .output();
 
     match output {
-        Ok(out) if out.status.success() => {
-            TestResult::Passed
-        }
+        Ok(out) if out.status.success() => TestResult::Passed,
+
         Ok(out) => {
-            let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-            TestResult::Failed { output: stderr }
-        }
-        Err(e) => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+
+            let mut combined = String::new();
+
+            if !stdout.trim().is_empty() {
+                combined.push_str(stdout.trim());
+            }
+
+            if !stderr.trim().is_empty() {
+                if !combined.is_empty() {
+                    combined.push('\n');
+                }
+                combined.push_str(stderr.trim());
+            }
+
             TestResult::Failed {
-                output: e.to_string(),
+                output: combined,
             }
         }
+
+        Err(e) => TestResult::Failed {
+            output: e.to_string(),
+        },
     }
 }
