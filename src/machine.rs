@@ -5,16 +5,16 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
-use crate::executor::run::run_single_test;
 use crate::{
     detectors::{framework::detect_framework, language::detect_language},
+    executor::run::run_single_test,
     git,
     llm::orchestrator::run_llm_test_flow,
     logger::log,
     testgen::summarizer::summarize,
 };
 
-use crate::state::{AgentState, LogLevel, Phase};
+use crate::state::{AgentEvent, AgentState, LogLevel, Phase};
 
 /* ============================================================
    Public API
@@ -28,7 +28,6 @@ pub fn step(state: &mut AgentState) {
         Phase::DetectBase => detect_base_branch(state),
         Phase::CreateNewAgent => create_agent_branch(state),
 
-        // 👇 semantic enrichment happens only while idle
         Phase::Idle => attach_summaries(state),
 
         Phase::ExecuteAgent => execute_agent(state),
@@ -38,7 +37,6 @@ pub fn step(state: &mut AgentState) {
         Phase::Done => {}
     }
 }
-
 
 /* ============================================================
    Phase Implementations
@@ -86,18 +84,16 @@ fn create_agent_branch(state: &mut AgentState) {
     transition(state, Phase::Idle);
 }
 
-/// Schedule async agent execution (NON-BLOCKING)
-fn execute_agent(state: &mut AgentState) {
-    if state.lifecycle.phase != Phase::ExecuteAgent {
-        return;
-    }
+/* ============================================================
+   Execution
+   ============================================================ */
 
+fn execute_agent(state: &mut AgentState) {
     if state.cancel_requested.load(Ordering::SeqCst) {
         transition(state, Phase::Rollback);
         return;
     }
 
-    // reset cancel flag for this run
     state.cancel_requested.store(false, Ordering::SeqCst);
 
     let branch = ensure_agent_branch(state);
@@ -123,13 +119,11 @@ fn execute_agent(state: &mut AgentState) {
 
     let framework = state.lifecycle.framework.clone();
 
-    log(state, LogLevel::Info, " Agent started");
-
-    let cancel_flag = state.cancel_requested.clone();
+    log(state, LogLevel::Info, "🤖 Agent started");
 
     run_llm_test_flow(
         state.agent_tx.clone(),
-        cancel_flag,
+        state.cancel_requested.clone(),
         language,
         framework,
         candidate,
@@ -145,24 +139,25 @@ fn handle_running(state: &mut AgentState) {
         return;
     }
 
+    // 🔑 GENERATED TEST → RUN TEST ONCE
     if state.context.generated_tests_ready {
-        use crate::executor::run::run_single_test;
-        use crate::state::AgentEvent;
-
-        // reset flag so this runs once
         state.context.generated_tests_ready = false;
 
         let _ = state.agent_tx.send(AgentEvent::TestStarted);
 
+        // MVP: run whole suite (crate-level)
         let result = run_single_test(&["cargo", "test", "--quiet"]);
 
         let _ = state.agent_tx.send(AgentEvent::TestFinished(result));
 
-        transition(state, Phase::Done);
+        // 🔑 RETURN TO IDLE, NOT DONE
+        transition(state, Phase::Idle);
     }
 }
 
-
+/* ============================================================
+   Rollback
+   ============================================================ */
 
 fn rollback_agent(state: &mut AgentState) {
     if let Some(base) = state.lifecycle.base_branch.clone() {
@@ -212,8 +207,9 @@ fn transition(state: &mut AgentState, next: Phase) {
 }
 
 /* ============================================================
-   Semantic enrichment (ONE-SHOT, CORRECT)
+   Semantic enrichment
    ============================================================ */
+
 fn attach_summaries(state: &mut AgentState) {
     for diff in &mut state.context.diff_analysis {
         if diff.summary.is_none() {

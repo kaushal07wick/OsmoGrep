@@ -181,6 +181,13 @@
 ### src/testgen/generator.rs
 
 **Functions**
+- fn normalize_source(file: &str, src: &str) -> String
+- fn normalize_rust(src: &str) -> String
+- fn normalize_python(src: &str) -> String
+- fn is_ui_or_glue_code(d: &DiffAnalysis) -> bool
+- fn is_test_worthy(d: &DiffAnalysis) -> bool
+- fn decide_test(d: &DiffAnalysis) -> TestDecision
+- fn priority(d: &DiffAnalysis) -> u8
 - pub fn generate_test_candidates( diffs: &[DiffAnalysis], resolve: impl Fn(&TestCandidate) -> TestResolution, ) -> Vec<TestCandidate>
 
 ### src/testgen/mod.rs

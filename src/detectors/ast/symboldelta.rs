@@ -1,19 +1,24 @@
 //! detectors/ast/symboldelta.rs
 //!
 //! Extracts before/after source for a symbol.
-//! Falls back to file-level delta if symbol extraction fails.
 //!
-//! FACTS ONLY — no semantics, no confidence, no interpretation.
+//! IMPORTANT INVARIANT:
+//! - ONLY returns symbol-level deltas
+//! - NEVER falls back to file-level
+//!
+//! FACTS ONLY — no semantics, no interpretation.
 
 use crate::git;
 use crate::detectors::ast::ast::extract_symbol_source;
 use crate::state::{SymbolDelta, DiffBaseline};
-/// Compute a before/after delta between base branch and index/HEAD.
+
+/// Compute a before/after delta for a single symbol.
 ///
 /// Rules:
-/// - Try symbol-level extraction first
-/// - Fall back to file-level extraction if symbol fails
-/// - Return None ONLY if before == after
+/// - Extract symbol source from both sides
+/// - If symbol extraction fails on either side → return None
+/// - If extracted sources are identical → return None
+/// - NEVER fall back to full file
 pub fn compute_symbol_delta(
     baseline: DiffBaseline,
     base_branch: &str,
@@ -36,21 +41,16 @@ pub fn compute_symbol_delta(
         }
     };
 
-    // Try symbol-level extraction
-    let old_symbol = extract_symbol_source(&old_file, file, symbol);
-    let new_symbol = extract_symbol_source(&new_file, file, symbol);
+    // -------- symbol extraction (STRICT) --------
+    let old_symbol = extract_symbol_source(&old_file, file, symbol)?;
+    let new_symbol = extract_symbol_source(&new_file, file, symbol)?;
 
-    let (old_src, new_src) = match (old_symbol, new_symbol) {
-        (Some(o), Some(n)) => (o, n),
-        _ => (old_file, new_file), // file-level fallback
-    };
-
-    if old_src == new_src {
+    if old_symbol == new_symbol {
         return None;
     }
 
     Some(SymbolDelta {
-        old_source: old_src,
-        new_source: new_src,
+        old_source: old_symbol,
+        new_source: new_symbol,
     })
 }

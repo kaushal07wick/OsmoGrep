@@ -67,10 +67,11 @@ fn resolve_rust_test(c: &TestCandidate) -> TestResolution {
         return TestResolution::NotFound;
     }
 
-    if src.contains(&format!("{}(", symbol)) {
+    // Require explicit test intent
+    if src.contains(&format!("test_{}", symbol)) {
         TestResolution::Found {
             file: c.file.clone(),
-            test_fn: None,
+            test_fn: Some(format!("test_{}", symbol)),
         }
     } else {
         TestResolution::NotFound

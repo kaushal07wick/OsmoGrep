@@ -5,7 +5,7 @@
 //! Responsibilities:
 //! - Split git diff per file
 //! - Detect affected symbol (best-effort)
-//! - Extract before/after source (NEVER drop diffs)
+//! - Extract before/after source (SYMBOL ONLY)
 //! - Classify change surface (cheap heuristics only)
 //!
 //! Non-responsibilities:
@@ -47,18 +47,24 @@ fn analyze_file(
     file: &str,
     hunks: &str,
 ) -> DiffAnalysis {
-    // Cheap surface classification
-    let surface = detect_surface(file, hunks);
+    let is_code = is_supported_code_file(file);
 
-    // Best-effort symbol detection (AST owns correctness)
-    let symbol = if is_supported_code_file(file) {
+    // ✅ Non-code files are ALWAYS cosmetic
+    let surface = if is_code {
+        detect_surface(file, hunks)
+    } else {
+        ChangeSurface::Cosmetic
+    };
+
+    // Best-effort symbol detection (code only)
+    let symbol = if is_code {
         detect_symbol(file, hunks)
     } else {
         None
     };
 
-    // ALWAYS attempt delta extraction for supported code files
-    let delta = if is_supported_code_file(file) {
+    // ✅ Delta extraction ONLY for code + symbol
+    let delta = if is_code {
         match &symbol {
             Some(sym) => compute_symbol_delta(
                 DiffBaseline::Staged,
@@ -66,24 +72,18 @@ fn analyze_file(
                 file,
                 sym,
             ),
-            None => compute_symbol_delta(
-                DiffBaseline::Staged,
-                base_branch,
-                file,
-                "<file>",
-            ),
+            None => None,
         }
     } else {
         None
     };
-
 
     DiffAnalysis {
         file: file.to_string(),
         symbol,
         surface,
         delta,
-        summary: None, // ✅ semantic interpretation happens later
+        summary: None, // semantic enrichment happens later
     }
 }
 

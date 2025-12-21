@@ -211,10 +211,15 @@ fn agent_run(state: &mut AgentState, cmd: &str) {
 
     state.context.test_candidates = vec![candidates[0].clone()];
 
+    let target = match &diff.symbol {
+    Some(sym) => format!("{} :: {}", diff.file, sym),
+    None => diff.file.clone(),
+    };
+
     log(
         state,
         LogLevel::Success,
-        format!("Agent scheduled for change [{}]", idx),
+        format!("Agent scheduled for {}", target),
     );
 
     state.lifecycle.phase = Phase::ExecuteAgent;
@@ -280,6 +285,13 @@ fn show_test_artifact(state: &mut AgentState) {
 }
 
 fn close_view(state: &mut AgentState) {
+    if matches!(state.ui.panel_view, Some(SinglePanelView::TestResult { .. }))
+        && state.lifecycle.phase == Phase::Running
+    {
+        log(state, LogLevel::Warn, "Cannot close test result while agent is running.");
+        return;
+    }
+
     if state.ui.panel_view.is_some() {
         state.ui.panel_view = None;
         state.ui.exec_scroll = 0;
@@ -291,6 +303,7 @@ fn close_view(state: &mut AgentState) {
     reset_diff_view(state);
     log(state, LogLevel::Info, "Closed view.");
 }
+
 
 /* ============================================================
    Autocomplete + Hints

@@ -33,12 +33,10 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 
 use state::{
     AgentContext, AgentEvent, AgentState, LifecycleState, LogBuffer,
-    Phase, Focus, UiState, LogLevel,
+    Phase, Focus, UiState, LogLevel, TestResult, SinglePanelView,
 };
 use commands::{handle_command, update_command_hints};
 use machine::step;
-
-use crate::state::TestResult;
 
 /* ============================================================
    Entry Point
@@ -52,8 +50,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut state = init_state();
 
-    /* ===================== EVENT LOOP ===================== */
-
     loop {
         let (input_rect, diff_rect, exec_rect) =
             ui::draw_ui(&mut terminal, &state)?;
@@ -63,10 +59,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             handle_event(&mut state, ev, input_rect, diff_rect, exec_rect);
         }
 
-        // 1️⃣ advance lifecycle (schedules async work only)
+        // advance lifecycle (async-safe)
         step(&mut state);
 
-        // 2️⃣ CRITICAL: drain background agent events
+        // drain background agent events
         drain_agent_events(&mut state);
 
         if matches!(state.lifecycle.phase, Phase::Done) {
@@ -110,14 +106,26 @@ fn drain_agent_events(state: &mut AgentState) {
             AgentEvent::TestFinished(result) => {
                 state.context.last_test_result = Some(result.clone());
 
-                match result {
+                match &result {
                     TestResult::Passed => {
                         state.push_log(LogLevel::Success, "🧪 Test passed");
+                        state.ui.panel_view = Some(SinglePanelView::TestResult {
+                            output: String::new(),
+                            passed: true,
+                        });
                     }
+
                     TestResult::Failed { output } => {
-                        state.push_log(LogLevel::Error, output);
+                        state.push_log(LogLevel::Error, "🧪 Test failed");
+                        state.ui.panel_view = Some(SinglePanelView::TestResult {
+                            output: output.clone(),
+                            passed: false,
+                        });
                     }
                 }
+
+                state.ui.focus = Focus::Execution;
+                state.ui.panel_scroll = 0;
             }
 
             AgentEvent::Finished => {
@@ -180,6 +188,7 @@ fn init_state() -> AgentState {
             panel_view: None,
             panel_scroll: 0,
             panel_scroll_x: 0,
+
             cached_log_lines: Vec::new(),
             last_log_len: 0,
             dirty: true,
@@ -287,6 +296,23 @@ fn handle_diff_keys(state: &mut AgentState, k: crossterm::event::KeyEvent) {
 /* ================= Execution ================= */
 
 fn handle_exec_keys(state: &mut AgentState, k: crossterm::event::KeyEvent) {
+    // PANEL OPEN → scroll panel
+    if state.ui.panel_view.is_some() {
+        match k.code {
+            KeyCode::Up => state.ui.panel_scroll = state.ui.panel_scroll.saturating_sub(1),
+            KeyCode::Down => state.ui.panel_scroll = state.ui.panel_scroll.saturating_add(1),
+            KeyCode::PageUp => state.ui.panel_scroll = state.ui.panel_scroll.saturating_sub(10),
+            KeyCode::PageDown => state.ui.panel_scroll = state.ui.panel_scroll.saturating_add(10),
+            KeyCode::Esc => {
+                state.ui.panel_view = None;
+                state.ui.focus = Focus::Input;
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    // NO PANEL → scroll execution log
     match k.code {
         KeyCode::Up => state.ui.exec_scroll = state.ui.exec_scroll.saturating_sub(1),
         KeyCode::Down => state.ui.exec_scroll = state.ui.exec_scroll.saturating_add(1),
@@ -308,7 +334,6 @@ fn handle_mouse(
     let pos = (m.column, m.row).into();
 
     match m.kind {
-        // ---------- focus on click ----------
         MouseEventKind::Down(_) => {
             if diff_rect.contains(pos) {
                 state.ui.focus = Focus::Diff;
@@ -320,30 +345,25 @@ fn handle_mouse(
             }
         }
 
-        // ---------- scroll DIFF (hover-based) ----------
-        MouseEventKind::ScrollUp if diff_rect.contains(pos) => {
-            state.ui.focus = Focus::Diff;
-            state.ui.diff_scroll = state.ui.diff_scroll.saturating_sub(2);
-        }
-        MouseEventKind::ScrollDown if diff_rect.contains(pos) => {
-            state.ui.focus = Focus::Diff;
-            state.ui.diff_scroll = state.ui.diff_scroll.saturating_add(2);
+        MouseEventKind::ScrollUp if exec_rect.contains(pos) => {
+            if state.ui.panel_view.is_some() {
+                state.ui.panel_scroll = state.ui.panel_scroll.saturating_sub(2);
+            } else {
+                state.ui.exec_scroll = state.ui.exec_scroll.saturating_sub(2);
+            }
         }
 
-        // ---------- scroll EXECUTION (hover-based) ----------
-        MouseEventKind::ScrollUp if exec_rect.contains(pos) => {
-            state.ui.focus = Focus::Execution;
-            state.ui.exec_scroll = state.ui.exec_scroll.saturating_sub(2);
-        }
         MouseEventKind::ScrollDown if exec_rect.contains(pos) => {
-            state.ui.focus = Focus::Execution;
-            state.ui.exec_scroll = state.ui.exec_scroll.saturating_add(2);
+            if state.ui.panel_view.is_some() {
+                state.ui.panel_scroll = state.ui.panel_scroll.saturating_add(2);
+            } else {
+                state.ui.exec_scroll = state.ui.exec_scroll.saturating_add(2);
+            }
         }
 
         _ => {}
     }
 }
-
 
 /* ============================================================
    Terminal Lifecycle

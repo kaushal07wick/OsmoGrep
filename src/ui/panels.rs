@@ -103,10 +103,11 @@ fn render_testgen_panel(
         }
     }
 
+    // ✅ FIX: use panel_scroll, not exec_scroll
     render_scrollable_block(
         f,
         area,
-        state.ui.exec_scroll,
+        state.ui.panel_scroll,
         lines,
         "LLM OUTPUT",
     );
@@ -151,10 +152,11 @@ fn render_test_result_panel(
         }
     }
 
+    // ✅ FIX: use panel_scroll, not exec_scroll
     render_scrollable_block(
         f,
         area,
-        state.ui.exec_scroll,
+        state.ui.panel_scroll,
         lines,
         "TEST RESULT",
     );

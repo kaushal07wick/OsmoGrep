@@ -29,7 +29,7 @@ fn parse_change_line(s: &str) -> Option<(String, String, Option<String>)> {
     }
 
     let (idx, rest) = s.split_once("] ")?;
-    let index = format!("{}]", idx);
+    let index = format!("{}]", idx.trim_start_matches('['));
 
     let (file, symbol) = match rest.split_once(" :: ") {
         Some((f, sym)) if sym != "<file>" => (f.to_string(), Some(sym.to_string())),
