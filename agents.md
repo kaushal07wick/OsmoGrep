@@ -66,6 +66,15 @@
 
 **Functions**
 
+### src/executor/mod.rs
+
+**Functions**
+
+### src/executor/run.rs
+
+**Functions**
+- pub fn run_single_test( state: &mut AgentState, cmd: &[&str], )
+
 ### src/git.rs
 
 **Functions**

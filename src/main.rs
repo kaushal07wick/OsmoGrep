@@ -11,6 +11,7 @@ mod machine;
 mod detectors;
 mod testgen;
 mod llm;
+mod executor;
 
 use std::{
     error::Error,
@@ -36,6 +37,8 @@ use state::{
 };
 use commands::{handle_command, update_command_hints};
 use machine::step;
+
+use crate::state::TestResult;
 
 /* ============================================================
    Entry Point
@@ -76,7 +79,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 /* ============================================================
-   Agent Event Reducer (🔥 REQUIRED 🔥)
+   Agent Event Reducer
    ============================================================ */
 
 fn drain_agent_events(state: &mut AgentState) {
@@ -96,16 +99,34 @@ fn drain_agent_events(state: &mut AgentState) {
 
             AgentEvent::GeneratedTest(code) => {
                 state.context.last_generated_test = Some(code);
-                state.push_log(LogLevel::Success, "🤖 Test generated");
+                state.context.generated_tests_ready = true;
+                state.push_log(LogLevel::Success, " Test generated");
+            }
+
+            AgentEvent::TestStarted => {
+                state.push_log(LogLevel::Info, "🧪 Test execution started");
+            }
+
+            AgentEvent::TestFinished(result) => {
+                state.context.last_test_result = Some(result.clone());
+
+                match result {
+                    TestResult::Passed => {
+                        state.push_log(LogLevel::Success, "🧪 Test passed");
+                    }
+                    TestResult::Failed { output } => {
+                        state.push_log(LogLevel::Error, output);
+                    }
+                }
             }
 
             AgentEvent::Finished => {
-                state.push_log(LogLevel::Success, "🤖 Agent finished");
+                state.push_log(LogLevel::Success, " Agent finished");
                 state.lifecycle.phase = Phase::Idle;
             }
 
             AgentEvent::Failed(err) => {
-                state.push_log(LogLevel::Error, format!("🤖 {}", err));
+                state.push_log(LogLevel::Error, format!(" {}", err));
                 state.lifecycle.phase = Phase::Idle;
             }
         }
@@ -133,6 +154,8 @@ fn init_state() -> AgentState {
             diff_analysis: Vec::new(),
             test_candidates: Vec::new(),
             last_generated_test: None,
+            generated_tests_ready: false,
+            last_test_result: None,
         },
         ui: UiState {
             input: String::new(),

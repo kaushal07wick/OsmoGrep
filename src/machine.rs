@@ -5,6 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
+use crate::executor::run::run_single_test;
 use crate::{
     detectors::{framework::detect_framework, language::detect_language},
     git,
@@ -122,7 +123,7 @@ fn execute_agent(state: &mut AgentState) {
 
     let framework = state.lifecycle.framework.clone();
 
-    log(state, LogLevel::Info, "🤖 Agent started");
+    log(state, LogLevel::Info, " Agent started");
 
     let cancel_flag = state.cancel_requested.clone();
 
@@ -141,8 +142,22 @@ fn handle_running(state: &mut AgentState) {
     if state.cancel_requested.load(Ordering::SeqCst) {
         log(state, LogLevel::Warn, "Agent cancelled.");
         transition(state, Phase::Rollback);
+        return;
+    }
+
+    // TEMP MVP: run tests once LLM finishes
+    if state.context.generated_tests_ready {
+        use crate::executor::run::run_single_test;
+
+        log(state, LogLevel::Info, "Running generated tests");
+
+        // Minimal proof: run entire test suite
+        run_single_test(state, &["cargo", "test", "--quiet"]);
+
+        transition(state, Phase::Done);
     }
 }
+
 
 fn rollback_agent(state: &mut AgentState) {
     if let Some(base) = state.lifecycle.base_branch.clone() {

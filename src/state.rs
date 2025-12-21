@@ -17,12 +17,26 @@ pub const MAX_LOGS: usize = 1000;
 #[derive(Debug)]
 pub enum AgentEvent {
     Log(LogLevel, String),
+
     SpinnerStart(String),
     SpinnerStop,
+
     GeneratedTest(String),
+
+    TestStarted,
+    TestFinished(TestResult),
+
     Finished,
     Failed(String),
 }
+
+
+#[derive(Debug, Clone)]
+pub enum TestResult {
+    Passed,
+    Failed { output: String },
+}
+
 
 /* ============================================================
    Agent Lifecycle
@@ -223,8 +237,12 @@ pub struct LifecycleState {
 pub struct AgentContext {
     pub diff_analysis: Vec<DiffAnalysis>,
     pub test_candidates: Vec<TestCandidate>,
+
     pub last_generated_test: Option<String>,
+    pub generated_tests_ready: bool,
+    pub last_test_result: Option<TestResult>,
 }
+
 
 /* ============================================================
    UI State (PURE PRESENTATION)
