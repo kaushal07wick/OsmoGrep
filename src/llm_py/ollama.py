@@ -9,7 +9,7 @@ def main():
         return
 
     # Change model here if needed
-    model = "qwen2.5-coder:0.5b"
+    model = "qwen2.5-coder:7b"
 
     # Call Ollama
     proc = subprocess.run(

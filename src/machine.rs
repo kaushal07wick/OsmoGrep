@@ -141,12 +141,12 @@ fn execute_agent(state: &mut AgentState) {
     log(state, LogLevel::Info, "🤖 Agent started");
 
     run_llm_test_flow(
-        state.agent_tx.clone(),
-        state.cancel_requested.clone(),
-        language,
-        framework,
-        candidate,
-    );
+    state.agent_tx.clone(),
+    state.cancel_requested.clone(),
+    state.context_index.clone().expect("context index missing"),
+    candidate,
+);
+
 
     transition(state, Phase::Running);
 }

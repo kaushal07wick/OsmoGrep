@@ -1,24 +1,13 @@
 // src/context/engine.rs
-//
-// Query layer over indexed repository context.
-//
-// This module:
-// - reads RepoFacts and SymbolIndex
-// - builds ContextSlice for a given TestTarget
-//
-// It is immutable, deterministic, and allocation-light.
-//
-
-use std::path::PathBuf;
 
 use crate::testgen::candidate::TestTarget;
 
 use super::types::{
-    RepoFacts,
-    SymbolIndex,
     ContextSlice,
+    RepoFacts,
     RepoFactsLite,
     SymbolDef,
+    SymbolIndex,
 };
 
 pub struct ContextEngine<'a> {
@@ -32,59 +21,70 @@ impl<'a> ContextEngine<'a> {
     }
 
     pub fn slice_for(&self, target: &TestTarget) -> ContextSlice {
-        ContextSlice::build(self.facts, self.symbols, target)
+        match target {
+            TestTarget::Symbol(name) => self.slice_for_symbol(name),
+            TestTarget::Module(name) => self.slice_for_module(name),
+            TestTarget::File(path) => self.slice_for_file(path),
+        }
     }
-}
 
-impl ContextSlice {
-    pub fn build(
-        facts: &RepoFacts,
-        symbols: &SymbolIndex,
-        target: &TestTarget,
-    ) -> Self {
-        let target_def = match target {
-            // -------- Symbol --------
-            TestTarget::Symbol(name) => {
-                match symbols.by_symbol.get(name) {
-                    Some(sym) => sym.clone(),
-                    None => return ContextSlice::empty(facts, name),
-                }
-            }
+    /* ---------- symbol ---------- */
 
-            // -------- Module --------
-            TestTarget::Module(module) => {
-                let file = symbols.by_file.keys().find(|p| {
-                    p.file_stem().and_then(|s| s.to_str()) == Some(module)
-                });
-
-                match file {
-                    Some(path) => SymbolDef {
-                        name: module.clone(),
-                        file: path.clone(),
-                        line: 0,
-                    },
-                    None => return ContextSlice::empty(facts, module),
-                }
-            }
-
-            // -------- File --------
-            TestTarget::File(file) => {
-                SymbolDef {
-                    name: file.clone(),
-                    file: PathBuf::from(file),
-                    line: 0,
-                }
-            }
+    fn slice_for_symbol(&self, name: &str) -> ContextSlice {
+        let target = match self.symbols.by_symbol.get(name) {
+            Some(s) => s.clone(),
+            None => return self.empty_slice(name),
         };
 
+        self.slice_from_file(target)
+    }
+
+    /* ---------- module ---------- */
+
+    fn slice_for_module(&self, module: &str) -> ContextSlice {
+        let file = self.symbols.by_file.keys().find(|p| {
+            p.file_stem()
+                .and_then(|s| s.to_str())
+                == Some(module)
+        });
+
+        let target = match file {
+            Some(path) => SymbolDef {
+                name: module.to_string(),
+                file: path.clone(),
+                line: 0,
+            },
+            None => return self.empty_slice(module),
+        };
+
+        self.slice_from_file(target)
+    }
+
+    /* ---------- file ---------- */
+
+    fn slice_for_file(&self, file: &str) -> ContextSlice {
+        let path = std::path::PathBuf::from(file);
+
+        let target = SymbolDef {
+            name: file.to_string(),
+            file: path,
+            line: 0,
+        };
+
+        self.slice_from_file(target)
+    }
+
+    /* ---------- shared ---------- */
+
+    fn slice_from_file(&self, target: SymbolDef) -> ContextSlice {
         let mut deps = Vec::new();
         let mut imports = Vec::new();
 
-        if let Some(file) = symbols.by_file.get(&target_def.file) {
+        if let Some(file) = self.symbols.by_file.get(&target.file) {
             deps = file
                 .symbols
                 .iter()
-                .filter(|s| s.name != target_def.name)
+                .filter(|s| s.name != target.name)
                 .take(5)
                 .cloned()
                 .collect();
@@ -93,19 +93,19 @@ impl ContextSlice {
         }
 
         ContextSlice {
-            repo_facts: RepoFactsLite::from(facts),
-            target: target_def,
+            repo_facts: RepoFactsLite::from(self.facts),
+            target,
             deps,
             imports,
         }
     }
 
-    fn empty(facts: &RepoFacts, name: &str) -> Self {
-        Self {
-            repo_facts: RepoFactsLite::from(facts),
+    fn empty_slice(&self, name: &str) -> ContextSlice {
+        ContextSlice {
+            repo_facts: RepoFactsLite::from(self.facts),
             target: SymbolDef {
                 name: name.to_string(),
-                file: PathBuf::new(),
+                file: std::path::PathBuf::new(),
                 line: 0,
             },
             deps: Vec::new(),

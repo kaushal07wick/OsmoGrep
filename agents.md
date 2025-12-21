@@ -23,8 +23,11 @@
 **Functions**
 -  pub fn new(facts: &'a RepoFacts, symbols: &'a SymbolIndex) -> Self
 -  pub fn slice_for(&self, target: &TestTarget) -> ContextSlice
--  pub fn build( facts: &RepoFacts, symbols: &SymbolIndex, target: &TestTarget, ) -> Self
--  fn empty(facts: &RepoFacts, name: &str) -> Self
+-  fn slice_for_symbol(&self, name: &str) -> ContextSlice
+-  fn slice_for_module(&self, module: &str) -> ContextSlice
+-  fn slice_for_file(&self, file: &str) -> ContextSlice
+-  fn slice_from_file(&self, target: SymbolDef) -> ContextSlice
+-  fn empty_slice(&self, name: &str) -> ContextSlice
 
 ### src/context/index.rs
 
@@ -129,13 +132,13 @@
 ### src/llm/orchestrator.rs
 
 **Functions**
-- pub fn run_llm_test_flow( tx: Sender<AgentEvent>, cancel_flag: Arc<AtomicBool>, language: Language, framework: Option<TestFramework>, candidate: TestCandidate, )
+- pub fn run_llm_test_flow( tx: Sender<AgentEvent>, cancel_flag: Arc<AtomicBool>, context_index: IndexHandle, candidate: TestCandidate, )
 
 ### src/llm/prompt.rs
 
 **Functions**
-- pub fn build_prompt( candidate: &TestCandidate, resolution: &TestResolution, language: Option<&Language>, framework: Option<&TestFramework>, ) -> LlmPrompt
-- fn user_prompt( c: &TestCandidate, resolution: &TestResolution, language: Option<&Language>, framework: Option<&TestFramework>, ) -> String
+- pub fn build_prompt( candidate: &TestCandidate, resolution: &TestResolution, context: &ContextSlice, ) -> LlmPrompt
+- fn user_prompt( c: &TestCandidate, resolution: &TestResolution, context: &ContextSlice, ) -> String
 - fn format_target(t: &TestTarget) -> String
 - fn risk_constraints(risk: &RiskLevel) -> String
 - fn test_type_constraints(tt: &TestType) -> String

@@ -1,6 +1,15 @@
 //! orchestrator.rs
 //!
 //! Async agent execution runner.
+//!
+//! Owns:
+//! - cancellation
+//! - prompt construction
+//! - LLM invocation
+//! - test materialization
+//! - test execution
+//!
+//! Does NOT index repos or manage UI state.
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -10,7 +19,8 @@ use std::sync::{
 use std::thread;
 use std::time::Instant;
 
-use crate::detectors::{framework::TestFramework, language::Language};
+use crate::context::engine::ContextEngine;
+use crate::context::types::IndexHandle;
 use crate::executor::run::run_single_test;
 use crate::llm::ollama::Ollama;
 use crate::llm::prompt::build_prompt;
@@ -22,20 +32,29 @@ use crate::testgen::resolve::resolve_test;
 pub fn run_llm_test_flow(
     tx: Sender<AgentEvent>,
     cancel_flag: Arc<AtomicBool>,
-    language: Language,
-    framework: Option<TestFramework>,
+    context_index: IndexHandle,
     candidate: TestCandidate,
 ) {
     thread::spawn(move || {
         let started = Instant::now();
 
-        /* ================= HARD PRE-FLIGHT ================= */
+        /* ================= Abort helpers ================= */
 
         let abort = |msg: &str| {
             let _ = tx.send(AgentEvent::Log(LogLevel::Warn, msg.into()));
             let _ = tx.send(AgentEvent::SpinnerStop);
             let _ = tx.send(AgentEvent::Failed(msg.into()));
         };
+
+        let cancelled = || cancel_flag.load(Ordering::SeqCst);
+
+        let cancel_and_exit = |reason: &str| {
+            let _ = tx.send(AgentEvent::Log(LogLevel::Warn, reason.into()));
+            let _ = tx.send(AgentEvent::SpinnerStop);
+            let _ = tx.send(AgentEvent::Failed(reason.into()));
+        };
+
+        /* ================= Pre-flight ================= */
 
         if matches!(candidate.decision, TestDecision::No) {
             abort("Change is not AI-test-worthy. Agent aborted.");
@@ -47,22 +66,42 @@ pub fn run_llm_test_flow(
             return;
         }
 
-        if !matches!(language, Language::Rust | Language::Python) {
-            abort("Unsupported language for test execution.");
-            return;
-        }
+        /* ================= Wait for context ================= */
 
-        /* ================= HELPERS ================= */
+        let (facts, symbols) = loop {
+            if cancelled() {
+                cancel_and_exit("Cancelled while waiting for context index");
+                return;
+            }
 
-        let cancelled = || cancel_flag.load(Ordering::SeqCst);
+            let status = context_index.status.read().unwrap().clone();
 
-        let cancel_and_exit = |reason: &str| {
-            let _ = tx.send(AgentEvent::Log(LogLevel::Warn, reason.into()));
-            let _ = tx.send(AgentEvent::SpinnerStop);
-            let _ = tx.send(AgentEvent::Failed("Execution cancelled".into()));
+            match status {
+                crate::context::types::IndexStatus::Ready => {
+                    let facts = context_index.facts.read().unwrap().clone();
+                    let symbols = context_index.symbols.read().unwrap().clone();
+
+                    match (facts, symbols) {
+                        (Some(f), Some(s)) => break (f, s),
+                        _ => abort("Context index incomplete"),
+                    }
+                }
+
+                crate::context::types::IndexStatus::Failed(err) => {
+                    abort(&format!("Context indexing failed: {}", err));
+                    return;
+                }
+
+                crate::context::types::IndexStatus::Indexing => {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+            }
         };
 
-        /* ================= START ================= */
+        let ctx_engine = ContextEngine::new(&facts, &symbols);
+        let ctx_slice = ctx_engine.slice_for(&candidate.target);
+
+        /* ================= Start ================= */
 
         let _ = tx.send(AgentEvent::SpinnerStart(" AI generating tests…".into()));
         let _ = tx.send(AgentEvent::Log(
@@ -83,22 +122,18 @@ pub fn run_llm_test_flow(
             return;
         }
 
-        /* ================= RESOLVE ================= */
+        /* ================= Resolve ================= */
 
-        let resolution = resolve_test(&language, &candidate);
+        let resolution = resolve_test(&facts.languages[0], &candidate);
+
         if cancelled() {
             cancel_and_exit("Cancelled during test resolution");
             return;
         }
 
-        /* ================= PROMPT ================= */
+        /* ================= Prompt ================= */
 
-        let prompt = build_prompt(
-            &candidate,
-            &resolution,
-            Some(&language),
-            framework.as_ref(),
-        );
+        let prompt = build_prompt(&candidate, &resolution, &ctx_slice);
 
         /* ================= LLM ================= */
 
@@ -116,7 +151,9 @@ pub fn run_llm_test_flow(
             "AI returned generated test".into(),
         ));
 
-        /* ================= MATERIALIZE ================= */
+        /* ================= Materialize ================= */
+
+        let language = facts.languages[0];
 
         let path = match materialize_test(language, &candidate, &resolution, &code) {
             Ok(p) => p,
@@ -127,23 +164,30 @@ pub fn run_llm_test_flow(
             }
         };
 
+        let _ = tx.send(AgentEvent::GeneratedTest(code.clone()));
         let _ = tx.send(AgentEvent::Log(
             LogLevel::Success,
             format!("Test written to {}", path.display()),
         ));
-        let _ = tx.send(AgentEvent::GeneratedTest(code));
 
         if cancelled() {
             cancel_and_exit("Cancelled before test execution");
             return;
         }
 
-        /* ================= TEST EXECUTION ================= */
+        /* ================= Execute ================= */
 
         let cmd: Vec<&str> = match language {
-            Language::Rust => vec!["cargo", "test", "--quiet"],
-            Language::Python => vec!["pytest", "-q"],
-            _ => unreachable!(),
+            crate::detectors::language::Language::Rust => {
+                vec!["cargo", "test", "--quiet"]
+            }
+            crate::detectors::language::Language::Python => {
+                vec!["pytest", "-q"]
+            }
+            _ => {
+                abort("Unsupported language for execution");
+                return;
+            }
         };
 
         let _ = tx.send(AgentEvent::TestStarted);
@@ -157,6 +201,7 @@ pub fn run_llm_test_flow(
                     "🧪 Test passed".into(),
                 ));
             }
+
             TestResult::Failed { output } => {
                 let _ = tx.send(AgentEvent::Log(
                     LogLevel::Error,
@@ -168,7 +213,7 @@ pub fn run_llm_test_flow(
             }
         }
 
-        /* ================= FINISH ================= */
+        /* ================= Finish ================= */
 
         let elapsed = started.elapsed().as_secs_f32();
         let _ = tx.send(AgentEvent::Log(
