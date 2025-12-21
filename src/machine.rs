@@ -135,11 +135,10 @@ fn execute_agent(state: &mut AgentState) {
 fn handle_running(state: &mut AgentState) {
     if state.cancel_requested.load(Ordering::SeqCst) {
         log(state, LogLevel::Warn, "Agent cancelled.");
-        transition(state, Phase::Rollback);
+        return_to_base_branch(state);
+        transition(state, Phase::Idle);
         return;
     }
-
-    // 🔑 GENERATED TEST → RUN TEST ONCE
     if state.context.generated_tests_ready {
         state.context.generated_tests_ready = false;
 
@@ -150,10 +149,13 @@ fn handle_running(state: &mut AgentState) {
 
         let _ = state.agent_tx.send(AgentEvent::TestFinished(result));
 
-        // 🔑 RETURN TO IDLE, NOT DONE
+        // 🔑 ALWAYS return to base branch after execution
+        return_to_base_branch(state);
+
         transition(state, Phase::Idle);
     }
 }
+
 
 /* ============================================================
    Rollback
@@ -204,6 +206,13 @@ fn detect_repo_root() -> PathBuf {
 
 fn transition(state: &mut AgentState, next: Phase) {
     state.lifecycle.phase = next;
+}
+
+fn return_to_base_branch(state: &mut AgentState) {
+    if let Some(base) = state.lifecycle.base_branch.clone() {
+        git::checkout(&base);
+        state.lifecycle.current_branch = Some(base);
+    }
 }
 
 /* ============================================================

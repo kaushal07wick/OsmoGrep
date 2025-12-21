@@ -132,6 +132,7 @@
 - fn handle_running(state: &mut AgentState)
 - fn rollback_agent(state: &mut AgentState)
 - fn ensure_agent_branch(state: &mut AgentState) -> String
+- fn return_to_base_branch(state: &mut AgentState)
 - fn attach_summaries(state: &mut AgentState)
 
 ### src/main.rs

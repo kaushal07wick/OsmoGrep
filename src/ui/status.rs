@@ -75,12 +75,9 @@ fn render_header(f: &mut ratatui::Frame, area: Rect) {
     f.render_widget(header, area);
 }
 
-/* ============================================================
-   Status block (production-grade)
-   ============================================================ */
 
 /* ============================================================
-   Status block (production-grade, corrected)
+   Status block
    ============================================================ */
 
 fn render_status_block(
@@ -146,9 +143,13 @@ fn render_status_block(
        Branch context (always show current)
        ===================================================== */
 
+    /* =====================================================
+   Branch context (explicit + informational)
+   ===================================================== */
+
     if let Some(cur) = &state.lifecycle.current_branch {
         lines.push(Line::from(vec![
-            Span::styled("Branch: ", keyword_style()),
+            Span::styled("Current: ", keyword_style()),
             Span::styled(
                 cur,
                 Style::default()
@@ -158,15 +159,26 @@ fn render_status_block(
         ]));
     }
 
+    if let Some(base) = &state.lifecycle.base_branch {
+        lines.push(Line::from(vec![
+            Span::styled("Base:    ", keyword_style()),
+            Span::styled(
+                base,
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]));
+    }
+
     if let Some(agent) = &state.lifecycle.agent_branch {
         lines.push(Line::from(vec![
-            Span::styled("Agent: ", keyword_style()),
+            Span::styled("Agent:   ", keyword_style()),
             Span::styled(
                 agent,
                 Style::default().fg(Color::Yellow),
             ),
         ]));
     }
+
 
     /* =====================================================
        Language / framework (tertiary metadata)
