@@ -20,14 +20,26 @@ pub fn render_side_by_side(
     delta: &SymbolDelta,
     state: &AgentState,
 ) {
+    /* =====================================================
+       Layout
+       ===================================================== */
+
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(area);
 
     let gutter = 5;
-    let width = chunks[0].width.saturating_sub(gutter + 1) as usize;
-    let height = area.height as usize;
+    let width = chunks[0]
+        .width
+        .saturating_sub(gutter + 1) as usize;
+
+    // ⬅️ IMPORTANT: subtract borders
+    let height = area.height.saturating_sub(2) as usize;
+
+    /* =====================================================
+       Diff preparation
+       ===================================================== */
 
     let diff = TextDiff::from_lines(
         &delta.old_source,
@@ -35,26 +47,48 @@ pub fn render_side_by_side(
     );
 
     let changes: Vec<_> = diff.iter_all_changes().collect();
-
     let total = changes.len();
-    let start = state.ui.diff_scroll.min(total);
+
+    let max_scroll = total.saturating_sub(height);
+    let start = state.ui.diff_scroll.min(max_scroll);
     let end = (start + height).min(total);
 
-    let mut left = Vec::with_capacity(end - start);
-    let mut right = Vec::with_capacity(end - start);
+    /* =====================================================
+       Advance line numbers to scroll offset
+       ===================================================== */
 
     let mut old_ln = 1usize;
     let mut new_ln = 1usize;
 
+    for change in &changes[..start] {
+        match change.tag() {
+            ChangeTag::Equal => {
+                old_ln += 1;
+                new_ln += 1;
+            }
+            ChangeTag::Delete => old_ln += 1,
+            ChangeTag::Insert => new_ln += 1,
+        }
+    }
+
+    /* =====================================================
+       Render visible window
+       ===================================================== */
+
+    let mut left: Vec<Line> = Vec::with_capacity(end - start);
+    let mut right: Vec<Line> = Vec::with_capacity(end - start);
+
     for change in &changes[start..end] {
         match change.tag() {
             ChangeTag::Equal => {
-                let text = hclip(change.value(), state.ui.diff_scroll_x, width);
+                let text =
+                    hclip(change.value(), state.ui.diff_scroll_x, width);
 
                 left.push(Line::from(vec![
                     ln(old_ln, Color::DarkGray),
                     Span::raw(text),
                 ]));
+
                 right.push(Line::from(vec![
                     ln(new_ln, Color::DarkGray),
                     Span::raw(text),
@@ -65,24 +99,34 @@ pub fn render_side_by_side(
             }
 
             ChangeTag::Delete => {
-                let text = hclip(change.value(), state.ui.diff_scroll_x, width);
+                let text =
+                    hclip(change.value(), state.ui.diff_scroll_x, width);
 
                 left.push(Line::from(vec![
                     ln(old_ln, Color::Red),
-                    Span::styled(text, Style::default().fg(Color::Red)),
+                    Span::styled(
+                        text,
+                        Style::default().fg(Color::Red),
+                    ),
                 ]));
+
                 right.push(Line::from(""));
 
                 old_ln += 1;
             }
 
             ChangeTag::Insert => {
-                let text = hclip(change.value(), state.ui.diff_scroll_x, width);
+                let text =
+                    hclip(change.value(), state.ui.diff_scroll_x, width);
 
                 left.push(Line::from(""));
+
                 right.push(Line::from(vec![
                     ln(new_ln, Color::Green),
-                    Span::styled(text, Style::default().fg(Color::Green)),
+                    Span::styled(
+                        text,
+                        Style::default().fg(Color::Green),
+                    ),
                 ]));
 
                 new_ln += 1;
@@ -90,11 +134,19 @@ pub fn render_side_by_side(
         }
     }
 
+    /* =====================================================
+       Titles
+       ===================================================== */
+
     let title_style = if state.ui.focus == Focus::Diff {
         Style::default().fg(Color::Yellow)
     } else {
         Style::default()
     };
+
+    /* =====================================================
+       Render
+       ===================================================== */
 
     f.render_widget(
         Paragraph::new(left).block(

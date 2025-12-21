@@ -1,18 +1,21 @@
-// src/llm/prompt.rs
-//
-// LLM prompt construction.
-//
-// This module:
-// - consumes TestCandidate, TestResolution, ContextSlice
-// - produces a deterministic text prompt
-//
-// It does NOT know about indexing, UI, or execution.
-//
+//! src/llm/prompt.rs
+//!
+//! Deterministic LLM prompt construction.
+//!
+//! Inputs:
+//! - TestCandidate
+//! - TestResolution
+//! - ContextSlice
+//!
+//! Output:
+//! - Minimal, high-signal prompt
+//!
+//! This module knows NOTHING about indexing, UI, or execution.
 
-use crate::testgen::candidate::{TestCandidate, TestType, TestTarget};
-use crate::testgen::resolve::TestResolution;
-use crate::state::RiskLevel;
 use crate::context::types::ContextSlice;
+use crate::state::RiskLevel;
+use crate::testgen::candidate::{TestCandidate, TestTarget, TestType};
+use crate::testgen::resolve::TestResolution;
 
 /* ============================================================
    Prompt model
@@ -40,69 +43,69 @@ pub fn build_prompt(
 }
 
 /* ============================================================
-   System prompt
+   System prompt (strict + short)
    ============================================================ */
 
 fn system_prompt() -> String {
     r#"
-You are an expert software engineer who writes precise, minimal, high-signal tests.
+You write minimal, correct, deterministic tests.
 
-ABSOLUTE RULES:
+RULES:
 - Output ONLY valid test code
-- Do NOT include explanations, markdown, or commentary
+- NO explanations, markdown, or extra text
 - Do NOT refactor production code
-- Do NOT change behavior beyond what is required for the test
-- Tests must be deterministic and minimal
-- Prefer modifying existing tests over creating new ones
-- Assume the code under test already compiles
-
-Violating these rules is incorrect behavior.
+- Do NOT change behavior beyond the test
+- Prefer updating existing tests
+- Assume code compiles
 "#
     .trim()
     .to_string()
 }
 
 /* ============================================================
-   User prompt
+   User prompt (signal-first)
    ============================================================ */
 
 fn user_prompt(
     c: &TestCandidate,
     resolution: &TestResolution,
-    context: &ContextSlice,
+    ctx: &ContextSlice,
 ) -> String {
     let mut out = String::new();
 
-    /* ---------- repository context ---------- */
+    /* ---------- context (only if useful) ---------- */
 
-    out.push_str("=== REPOSITORY CONTEXT ===\n");
-    out.push_str("Languages: ");
-    out.push_str(&context.repo_facts.languages.join(", "));
-    out.push('\n');
-
-    out.push_str("Test Frameworks: ");
-    out.push_str(&context.repo_facts.test_frameworks.join(", "));
-    out.push('\n');
-
-    if !context.repo_facts.forbidden_deps.is_empty() {
-        out.push_str("Forbidden deps: ");
-        out.push_str(&context.repo_facts.forbidden_deps.join(", "));
+    if !ctx.repo_facts.languages.is_empty() {
+        out.push_str("Languages: ");
+        out.push_str(&ctx.repo_facts.languages.join(", "));
         out.push('\n');
     }
 
-    out.push('\n');
+    if !ctx.repo_facts.test_frameworks.is_empty() {
+        out.push_str("Test frameworks: ");
+        out.push_str(&ctx.repo_facts.test_frameworks.join(", "));
+        out.push('\n');
+    }
 
-    out.push_str("Target Symbol:\n");
+    if !ctx.repo_facts.forbidden_deps.is_empty() {
+        out.push_str("Forbidden deps: ");
+        out.push_str(&ctx.repo_facts.forbidden_deps.join(", "));
+        out.push('\n');
+    }
+
+    /* ---------- target ---------- */
+
+    out.push_str("\nTARGET:\n");
     out.push_str(&format!(
         "- {} ({}:{})\n",
-        context.target.name,
-        context.target.file.display(),
-        context.target.line
+        ctx.target.name,
+        ctx.target.file.display(),
+        ctx.target.line
     ));
 
-    if !context.deps.is_empty() {
-        out.push_str("\nRelated Symbols:\n");
-        for s in &context.deps {
+    if !ctx.deps.is_empty() {
+        out.push_str("\nRELATED SYMBOLS:\n");
+        for s in ctx.deps.iter().take(5) {
             out.push_str(&format!(
                 "- {} ({}:{})\n",
                 s.name,
@@ -112,103 +115,68 @@ fn user_prompt(
         }
     }
 
-    if !context.imports.is_empty() {
-        out.push_str("\nImports:\n");
-        for i in &context.imports {
-            out.push_str("- ");
-            out.push_str(&i.module);
-            if !i.names.is_empty() {
-                out.push_str(" [");
-                out.push_str(&i.names.join(", "));
-                out.push(']');
-            }
-            out.push('\n');
-        }
-    }
+    /* ---------- intent ---------- */
 
-    out.push('\n');
-
-
-    /* ---------- test target ---------- */
-
-    out.push_str("=== TEST TARGET ===\n");
-    out.push_str(&format!("Target: {}\n", format_target(&c.target)));
+    out.push_str("\nINTENT:\n");
     out.push_str(&format!(
-        "Test Type: {:?}\nRisk: {:?}\nDecision: {:?}\n\n",
+        "- Test type: {:?}\n- Risk: {:?}\n- Decision: {:?}\n",
         c.test_type, c.risk, c.decision
     ));
 
-    /* ---------- intent ---------- */
-
-    out.push_str("=== INTENT ===\n");
-    out.push_str("Behavior to preserve:\n");
+    out.push_str("\nBehavior:\n");
     out.push_str(&c.behavior);
-    out.push_str("\n\n");
+    out.push('\n');
 
-    out.push_str("Failure mode if incorrect:\n");
+    out.push_str("\nFailure mode:\n");
     out.push_str(&c.failure_mode);
-    out.push_str("\n\n");
+    out.push('\n');
 
     /* ---------- code delta ---------- */
 
     if let Some(old) = &c.old_code {
-        out.push_str("=== PREVIOUS CODE ===\n");
+        out.push_str("\nBEFORE:\n");
         out.push_str(old);
-        out.push_str("\n\n");
+        out.push('\n');
     }
 
     if let Some(new) = &c.new_code {
-        out.push_str("=== UPDATED CODE ===\n");
+        out.push_str("\nAFTER:\n");
         out.push_str(new);
-        out.push_str("\n\n");
+        out.push('\n');
     }
 
     /* ---------- test resolution ---------- */
 
-    out.push_str("=== TEST RESOLUTION ===\n");
+    out.push_str("\nTEST LOCATION:\n");
 
     match resolution {
         TestResolution::Found { file, test_fn } => {
-            out.push_str(&format!("Existing test file: {}\n", file));
+            out.push_str(&format!("- Modify {}\n", file));
             if let Some(name) = test_fn {
-                out.push_str(&format!("Relevant test function: {}\n", name));
+                out.push_str(&format!("- Target test: {}\n", name));
             }
-            out.push_str(
-                "Modify the existing test. Do NOT create a new test unless strictly necessary.\n",
-            );
         }
-
         TestResolution::Ambiguous(paths) => {
-            out.push_str("Multiple possible test locations:\n");
+            out.push_str("- Choose best location from:\n");
             for p in paths {
-                out.push_str(&format!("- {}\n", p));
+                out.push_str(&format!("  - {}\n", p));
             }
-            out.push_str(
-                "Choose the most appropriate location and add a regression test.\n",
-            );
         }
-
         TestResolution::NotFound => {
-            out.push_str(
-                "No existing test was found.\nCreate a new regression test.\n",
-            );
+            out.push_str("- Create a new regression test\n");
         }
     }
 
     /* ---------- constraints ---------- */
 
-    out.push_str("\n=== CONSTRAINTS ===\n");
+    out.push_str("\nCONSTRAINTS:\n");
     out.push_str(&risk_constraints(&c.risk));
     out.push_str(&test_type_constraints(&c.test_type));
 
     /* ---------- output ---------- */
 
     out.push_str(
-        "\n=== OUTPUT REQUIREMENTS ===\n\
-         - Output ONLY valid test code\n\
-         - No explanations\n\
-         - No markdown\n\
-         - No extra text\n",
+        "\nOUTPUT:\n- Valid test code only\n- No extra text\n",
     );
 
     out
@@ -218,32 +186,24 @@ fn user_prompt(
    Helpers
    ============================================================ */
 
-fn format_target(t: &TestTarget) -> String {
-    match t {
-        TestTarget::Symbol(s) => format!("Function {}", s),
-        TestTarget::Module(m) => format!("Module {}", m),
-        TestTarget::File(f) => format!("File {}", f),
-    }
-}
-
-fn risk_constraints(risk: &RiskLevel) -> String {
+fn risk_constraints(risk: &RiskLevel) -> &str {
     match risk {
         RiskLevel::High =>
-            "- Include edge cases\n- Include failure assertions\n- Be strict\n".into(),
+            "- Include edge cases\n- Assert failures\n",
         RiskLevel::Medium =>
-            "- Cover core behavior\n- Avoid over-testing\n".into(),
+            "- Cover core behavior\n",
         RiskLevel::Low =>
-            "- Minimal sanity check only\n".into(),
+            "- Minimal sanity test\n",
     }
 }
 
-fn test_type_constraints(tt: &TestType) -> String {
+fn test_type_constraints(tt: &TestType) -> &str {
     match tt {
         TestType::Regression =>
-            "- Assert previously working behavior still holds\n".into(),
+            "- Assert previously working behavior\n",
         TestType::Unit =>
-            "- Isolate the function\n- Avoid external dependencies\n".into(),
+            "- Isolate the function\n",
         TestType::Integration =>
-            "- Use real components\n- Avoid mocks unless required\n".into(),
+            "- Use real components\n",
     }
 }

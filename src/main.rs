@@ -344,6 +344,18 @@ fn handle_mouse(
             }
         }
 
+        /* ===== DIFF SCROLL (MISSING PART) ===== */
+
+        MouseEventKind::ScrollUp if diff_rect.contains(pos) => {
+            state.ui.diff_scroll = state.ui.diff_scroll.saturating_sub(2);
+        }
+
+        MouseEventKind::ScrollDown if diff_rect.contains(pos) => {
+            state.ui.diff_scroll = state.ui.diff_scroll.saturating_add(2);
+        }
+
+        /* ===== EXEC / PANEL SCROLL ===== */
+
         MouseEventKind::ScrollUp if exec_rect.contains(pos) => {
             if state.ui.panel_view.is_some() {
                 state.ui.panel_scroll = state.ui.panel_scroll.saturating_sub(2);

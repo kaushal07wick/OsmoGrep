@@ -60,6 +60,8 @@ fn extract_repo_facts(repo_root: &Path) -> RepoFacts {
     let mut languages = Vec::new();
     let mut test_frameworks = Vec::new();
 
+    /* ---------- explicit metadata ---------- */
+
     if repo_root.join("Cargo.toml").exists() {
         languages.push(Language::Rust);
     }
@@ -70,6 +72,40 @@ fn extract_repo_facts(repo_root: &Path) -> RepoFacts {
     {
         languages.push(Language::Python);
     }
+
+    /* ---------- source-based fallback (IMPORTANT) ---------- */
+
+    if languages.is_empty() {
+        if WalkDir::new(repo_root)
+            .into_iter()
+            .filter_map(Result::ok)
+            .any(|e| {
+                e.file_type().is_file()
+                    && matches!(
+                        e.path().extension().and_then(|s| s.to_str()),
+                        Some("py")
+                    )
+            })
+        {
+            languages.push(Language::Python);
+        }
+
+        if WalkDir::new(repo_root)
+            .into_iter()
+            .filter_map(Result::ok)
+            .any(|e| {
+                e.file_type().is_file()
+                    && matches!(
+                        e.path().extension().and_then(|s| s.to_str()),
+                        Some("rs")
+                    )
+            })
+        {
+            languages.push(Language::Rust);
+        }
+    }
+
+    /* ---------- test frameworks ---------- */
 
     if repo_root.join("tests").exists() {
         if languages.contains(&Language::Python) {

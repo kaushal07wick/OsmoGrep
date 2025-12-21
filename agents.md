@@ -133,15 +133,15 @@
 
 **Functions**
 - pub fn run_llm_test_flow( tx: Sender<AgentEvent>, cancel_flag: Arc<AtomicBool>, context_index: IndexHandle, candidate: TestCandidate, )
+- fn debug_context(ctx: &ContextSlice) -> String
 
 ### src/llm/prompt.rs
 
 **Functions**
 - pub fn build_prompt( candidate: &TestCandidate, resolution: &TestResolution, context: &ContextSlice, ) -> LlmPrompt
-- fn user_prompt( c: &TestCandidate, resolution: &TestResolution, context: &ContextSlice, ) -> String
-- fn format_target(t: &TestTarget) -> String
-- fn risk_constraints(risk: &RiskLevel) -> String
-- fn test_type_constraints(tt: &TestType) -> String
+- fn user_prompt( c: &TestCandidate, resolution: &TestResolution, ctx: &ContextSlice, ) -> String
+- fn risk_constraints(risk: &RiskLevel) -> &str
+- fn test_type_constraints(tt: &TestType) -> &str
 
 ### src/llm_py/ollama.py
 
