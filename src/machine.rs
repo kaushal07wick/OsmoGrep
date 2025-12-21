@@ -54,11 +54,30 @@ fn init_repo(state: &mut AgentState) {
     state.lifecycle.original_branch = Some(current);
 
     let repo_root = detect_repo_root();
-    state.lifecycle.language = Some(detect_language(&repo_root));
-    state.lifecycle.framework = Some(detect_framework(&repo_root));
+
+    // reuse existing detectors
+    let language = detect_language(&repo_root);
+    let framework = detect_framework(&repo_root);
+
+    state.lifecycle.language = Some(language);
+    state.lifecycle.framework = Some(framework);
+
+    // spawn context indexer ONCE, in Init
+    if state.context_index.is_none() {
+        state.context_index = Some(
+            crate::context::spawn_repo_indexer(repo_root.clone())
+        );
+
+        log(
+            state,
+            LogLevel::Info,
+            "Indexing repository context",
+        );
+    }
 
     transition(state, Phase::DetectBase);
 }
+
 
 fn detect_base_branch(state: &mut AgentState) {
     let base = git::detect_base_branch();

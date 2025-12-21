@@ -3,6 +3,7 @@
 //! Header + status renderer for Osmogrep.
 
 use std::time::{Duration, Instant};
+use crate::context::types::IndexStatus;
 
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -34,13 +35,25 @@ pub fn render_status(
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(6), // ASCII header
-            Constraint::Length(8), // status block
+            Constraint::Length(8), // status area
         ])
         .split(area);
 
     render_header(f, chunks[0]);
-    render_status_block(f, chunks[1], state);
+
+    // ⬇️ split the STATUS area horizontally
+    let status_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(70), // main status
+            Constraint::Percentage(30), // context index
+        ])
+        .split(chunks[1]);
+
+    render_status_block(f, status_chunks[0], state);
+    render_context_block(f, status_chunks[1], state);
 }
+
 
 /* ============================================================
    Header
@@ -140,10 +153,6 @@ fn render_status_block(
     }
 
     /* =====================================================
-       Branch context (always show current)
-       ===================================================== */
-
-    /* =====================================================
    Branch context (explicit + informational)
    ===================================================== */
 
@@ -178,32 +187,6 @@ fn render_status_block(
             ),
         ]));
     }
-
-
-    /* =====================================================
-       Language / framework (tertiary metadata)
-       ===================================================== */
-
-    let mut meta: Vec<Span> = Vec::new();
-
-    if let Some(lang) = &state.lifecycle.language {
-        let (badge, color) = language_badge(&format!("{:?}", lang));
-        meta.push(Span::styled(badge, Style::default().fg(color)));
-    }
-
-    if let Some(fw) = &state.lifecycle.framework {
-        if !meta.is_empty() {
-            meta.push(Span::raw("   "));
-        }
-        let (badge, color) = framework_badge(&format!("{:?}", fw));
-        meta.push(Span::styled(badge, Style::default().fg(color)));
-    }
-
-    if !meta.is_empty() {
-        lines.push(Line::from(""));
-        lines.push(Line::from(meta));
-    }
-
     /* =====================================================
        Render
        ===================================================== */
@@ -216,4 +199,76 @@ fn render_status_block(
     );
 
     f.render_widget(status, area);
+}
+
+fn render_context_block(
+    f: &mut ratatui::Frame,
+    area: Rect,
+    state: &AgentState,
+) {
+    let mut lines: Vec<Line> = Vec::new();
+
+    lines.push(Line::from(vec![
+        Span::styled(
+            "Repo Context",
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+    ]));
+
+    lines.push(Line::from(""));
+
+    /* ---------- index status ---------- */
+
+    if let Some(index) = &state.context_index {
+        let status = index.status.read().unwrap();
+
+        let (label, color) = match &*status {
+            IndexStatus::Indexing => ("Indexing…", Color::Yellow),
+            IndexStatus::Ready => ("Ready", Color::Green),
+            IndexStatus::Failed(_) => ("Failed", Color::Red),
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled("Status: ", keyword_style()),
+            Span::styled(label, Style::default().fg(color)),
+        ]));
+    } else {
+        lines.push(Line::from(vec![
+            Span::styled("Status: ", keyword_style()),
+            Span::styled("Not started", Style::default().fg(Color::DarkGray)),
+        ]));
+    }
+
+    /* ---------- language ---------- */
+
+    if let Some(lang) = &state.lifecycle.language {
+        lines.push(Line::from(vec![
+            Span::styled("Language: ", keyword_style()),
+            Span::styled(
+                format!("{:?}", lang),
+                Style::default().fg(Color::Cyan),
+            ),
+        ]));
+    }
+
+    /* ---------- framework ---------- */
+
+    if let Some(fw) = &state.lifecycle.framework {
+        lines.push(Line::from(vec![
+            Span::styled("Framework: ", keyword_style()),
+            Span::styled(
+                format!("{:?}", fw),
+                Style::default().fg(Color::Magenta),
+            ),
+        ]));
+    }
+
+    let block = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("CONTEXT")
+            .title_alignment(Alignment::Center),
+    );
+
+    f.render_widget(block, area);
 }

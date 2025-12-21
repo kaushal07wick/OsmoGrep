@@ -3,7 +3,7 @@
 //! Test framework detection based on repository structure.
 
 use std::path::Path;
-
+use std::fmt;
 #[derive(Debug, Clone)]
 pub enum TestFramework {
     Pytest,
@@ -65,4 +65,20 @@ fn package_uses_jest(root: &Path) -> bool {
 
     // Cheap string scan; avoids JSON parsing cost
     contents.contains("jest") || contents.contains("vitest")
+}
+
+
+
+impl fmt::Display for TestFramework {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            TestFramework::Pytest => "pytest",
+            TestFramework::Unittest => "unittest",
+            TestFramework::CargoTest => "cargo-test",
+            TestFramework::Jest => "jest",
+            TestFramework::GoTest => "go-test",
+            TestFramework::None => "none",
+        };
+        f.write_str(s)
+    }
 }

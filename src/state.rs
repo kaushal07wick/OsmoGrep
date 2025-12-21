@@ -4,6 +4,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{Sender, Receiver};
 use std::time::{Instant, Duration};
 
+use crate::context::IndexHandle;
 use crate::detectors::{framework::TestFramework, language::Language};
 use crate::testgen::candidate::TestCandidate;
 use crate::testgen::summarizer::SemanticSummary;
@@ -310,6 +311,7 @@ pub struct AgentState {
     pub agent_rx: Receiver<AgentEvent>,
 
     pub cancel_requested: Arc<AtomicBool>,
+    pub context_index: Option<IndexHandle>,
 }
 
 

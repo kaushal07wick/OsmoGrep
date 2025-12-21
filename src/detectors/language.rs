@@ -100,3 +100,20 @@ fn is_ignored(path: &Path) -> bool {
         )
     })
 }
+
+use std::fmt;
+
+impl fmt::Display for Language {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Language::Python => "python",
+            Language::JavaScript => "javascript",
+            Language::TypeScript => "typescript",
+            Language::Rust => "rust",
+            Language::Go => "go",
+            Language::Java => "java",
+            Language::Unknown => "unknown",
+        };
+        f.write_str(s)
+    }
+}

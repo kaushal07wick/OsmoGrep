@@ -12,12 +12,10 @@ mod detectors;
 mod testgen;
 mod llm;
 mod executor;
+mod context;
 
 use std::{
-    error::Error,
-    io,
-    sync::{Arc, atomic::AtomicBool},
-    time::{Duration, Instant},
+    error::Error, io, ops::Neg, sync::{Arc, atomic::AtomicBool}, time::{Duration, Instant}
 };
 use std::sync::mpsc::channel;
 
@@ -198,6 +196,7 @@ fn init_state() -> AgentState {
         agent_tx,
         agent_rx,
         cancel_requested: Arc::new(AtomicBool::new(false)),
+        context_index: None,
     }
 }
 

@@ -18,6 +18,35 @@
 - fn close_view(state: &mut AgentState)
 - pub fn update_command_hints(state: &mut AgentState)
 
+### src/context/engine.rs
+
+**Functions**
+-  pub fn new(facts: &'a RepoFacts, symbols: &'a SymbolIndex) -> Self
+-  pub fn slice_for(&self, target: &TestTarget) -> ContextSlice
+-  pub fn build( facts: &RepoFacts, symbols: &SymbolIndex, target: &TestTarget, ) -> Self
+-  fn empty(facts: &RepoFacts, name: &str) -> Self
+
+### src/context/index.rs
+
+**Functions**
+- pub fn spawn_repo_indexer(repo_root: PathBuf) -> IndexHandle
+- fn extract_repo_facts(repo_root: &Path) -> RepoFacts
+- fn build_symbol_index(repo_root: &Path) -> SymbolIndex
+- fn index_file(path: &Path, kind: LanguageKind) -> Option<FileSymbols>
+- fn walk_tree( kind: LanguageKind, cursor: &mut TreeCursor, path: &Path, src: &str, symbols: &mut Vec<SymbolDef>, imports: &mut Vec<Import>, )
+- fn extract_named_symbol( node: tree_sitter::Node, path: &Path, src: &str, symbols: &mut Vec<SymbolDef>, )
+
+### src/context/mod.rs
+
+**Functions**
+
+### src/context/types.rs
+
+**Functions**
+-  pub fn from(facts: &RepoFacts) -> Self
+-  pub fn new_indexing() -> Self
+-  pub fn mark_failed(&self, error: impl Into<String>)
+
 ### src/detectors/ast/ast.rs
 
 **Functions**
@@ -54,6 +83,7 @@
 **Functions**
 - pub fn detect_framework(root: &Path) -> TestFramework
 - fn package_uses_jest(root: &Path) -> bool
+-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result
 
 ### src/detectors/language.rs
 
@@ -61,6 +91,7 @@
 - pub fn detect_language(root: &Path) -> Language
 - fn dominant_language( py: usize, js: usize, ts: usize, rs: usize, go: usize, java: usize, ) -> Language
 - fn is_ignored(path: &Path) -> bool
+-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result
 
 ### src/detectors/mod.rs
 
@@ -256,4 +287,5 @@
 - pub fn render_status( f: &mut ratatui::Frame, area: Rect, state: &AgentState, )
 - fn render_header(f: &mut ratatui::Frame, area: Rect)
 - fn render_status_block( f: &mut ratatui::Frame, area: Rect, state: &AgentState, )
+- fn render_context_block( f: &mut ratatui::Frame, area: Rect, state: &AgentState, )
 
