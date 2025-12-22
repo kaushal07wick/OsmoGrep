@@ -8,10 +8,10 @@
 // - Symbol-exact
 // - No guessing
 // - No production code changes
+//
 
 use crate::context::types::{
     ContextSlice,
-    TestMatchKind,
     SymbolResolution,
 };
 use crate::testgen::candidate::TestCandidate;
@@ -48,7 +48,7 @@ pub fn build_prompt(
 
 fn system_prompt() -> String {
     r#"
-You generate tests.
+You are an extremely smart and robust software engineer that generates accurate tests.
 
 Rules:
 - Output ONLY valid test code
@@ -57,6 +57,7 @@ Rules:
 - Do NOT add new dependencies
 - Follow existing project test style
 - Assume the code compiles
+- Reference the test samples and code style properly
 "#.trim().to_string()
 }
 
@@ -66,7 +67,7 @@ Rules:
 
 fn user_prompt(
     c: &TestCandidate,
-    resolution: &TestResolution,
+    _resolution: &TestResolution,
     ctx: &ContextSlice,
 ) -> String {
     let mut out = String::new();
@@ -80,7 +81,7 @@ fn user_prompt(
     }
 
     if !ctx.repo_facts.test_frameworks.is_empty() {
-        out.push_str("Test frameworks: ");
+        out.push_str("Test framework: ");
         out.push_str(&ctx.repo_facts.test_frameworks.join(", "));
         out.push('\n');
     }
@@ -103,7 +104,7 @@ fn user_prompt(
         out.push_str(&format!("- Symbol (from diff): {}\n", sym));
     }
 
-    /* ---------- symbol resolution (STRICT) ---------- */
+    /* ---------- symbol resolution + hierarchy ---------- */
 
     out.push_str("\nSymbol resolution:\n");
 
@@ -113,10 +114,19 @@ fn user_prompt(
                 "- Resolved: {} (line {})\n",
                 sym.name, sym.line
             ));
+
+            if let Some((cls, method)) = sym.name.split_once('.') {
+                out.push_str(&format!(
+                    "- Hierarchy: method `{}` on class `{}`\n",
+                    method, cls
+                ));
+            } else {
+                out.push_str("- Hierarchy: top-level function\n");
+            }
         }
 
         SymbolResolution::Ambiguous(matches) => {
-            out.push_str("- Ambiguous symbol match:\n");
+            out.push_str("- Ambiguous symbol matches:\n");
             for s in matches {
                 out.push_str(&format!(
                     "  - {} (line {})\n",
@@ -124,23 +134,23 @@ fn user_prompt(
                 ));
             }
             out.push_str(
-                "Use ONLY the diff to determine correct test behavior.\n",
+                "Use ONLY the diff to infer correct behavior.\n",
             );
         }
 
         SymbolResolution::NotFound => {
             out.push_str(
                 "- Symbol not found in file.\n\
-                 Write tests strictly from diff-visible behavior.\n",
+Write tests strictly from diff-visible behavior.\n",
             );
         }
     }
 
-    /* ---------- local file context ---------- */
+    /* ---------- bounded local context ---------- */
 
     if !ctx.local_symbols.is_empty() {
-        out.push_str("\nOther symbols in same file:\n");
-        for s in ctx.local_symbols.iter().take(8) {
+        out.push_str("\nOther symbols in same file (non-authoritative):\n");
+        for s in ctx.local_symbols.iter().take(6) {
             out.push_str(&format!(
                 "- {} (line {})\n",
                 s.name, s.line
@@ -150,7 +160,7 @@ fn user_prompt(
 
     if !ctx.imports.is_empty() {
         out.push_str("\nImports in file:\n");
-        for i in ctx.imports.iter().take(8) {
+        for i in ctx.imports.iter().take(6) {
             out.push_str(&format!("- {}\n", i.module));
         }
     }
@@ -164,9 +174,28 @@ fn user_prompt(
         c.risk
     ));
 
+    /* ---------- behavior (EXPLICIT) ---------- */
+
     out.push_str("\nBehavior to validate:\n");
-    out.push_str(&c.behavior);
-    out.push('\n');
+    out.push_str("- Loss is computed correctly for valid class indices\n");
+    out.push_str("- ignore_index entries do not contribute to loss\n");
+    out.push_str("- Behavior is consistent across label dtypes\n");
+
+    if !c.behavior.is_empty() {
+        out.push_str("\nAdditional notes from diff analysis:\n");
+        out.push_str(&c.behavior);
+        out.push('\n');
+    }
+
+    /* ---------- input constraints (ANTI-GUESSING) ---------- */
+
+    out.push_str(
+        "\nInput constraints:\n\
+- Logits shape: (N, C) or broadcast-compatible\n\
+- Labels shape: (N,) or compatible with logits\n\
+- Labels may be integer tensor or equivalent dtype\n\
+- ignore_index may appear multiple times\n"
+    );
 
     /* ---------- code delta (AUTHORITATIVE) ---------- */
 
@@ -182,41 +211,64 @@ fn user_prompt(
         out.push('\n');
     }
 
-    /* ---------- test placement (DETERMINISTIC) ---------- */
+    /* ---------- numeric stability rules ---------- */
 
-    out.push_str("\nTest placement:\n");
+    out.push_str(
+        "\nNumeric stability rules:\n\
+- Do NOT use exact equality for floating-point assertions\n\
+- Prefer pytest.approx or tolerance-based comparisons\n\
+- Prefer relative differences or invariants over absolute values when possible\n\
+- Assume small numerical drift is acceptable\n\
+- Avoid asserting on internal tensor representations\n"
+    );
 
-    match ctx.test_context.match_kind {
-        TestMatchKind::Filename | TestMatchKind::Content => {
-            out.push_str(&format!(
-                "- Update existing test file: {}\n",
-                ctx.test_context.recommended_location.display()
-            ));
-        }
-        TestMatchKind::None => {
-            out.push_str(&format!(
-                "- Create new test file at: {}\n",
-                ctx.test_context.recommended_location.display()
-            ));
-        }
-    }
+    /* ---------- testing guardrails ---------- */
 
-    match resolution {
-        TestResolution::Found { test_fn, .. } => {
-            if let Some(name) = test_fn {
-                out.push_str(&format!(
-                    "- Target test function: {}\n",
-                    name
-                ));
-            }
-        }
-        TestResolution::Ambiguous(_) => {
-            out.push_str(
-                "- Multiple test files exist; choose the most relevant one.\n",
-            );
-        }
-        TestResolution::NotFound => {}
-    }
+    out.push_str(
+        "\nTesting guardrails:\n\
+- Test ONLY externally observable behavior\n\
+- Do NOT test private helpers or intermediate tensors\n\
+- Do NOT assert on implementation details or execution paths\n\
+- Focus on inputs → outputs → invariants\n"
+    );
+
+    /* ---------- reference tests (STYLE ONLY) ---------- */
+
+    out.push_str(
+        "\nReference tests from this repository (STYLE ONLY — do NOT copy behavior blindly):\n\
+\n\
+def test_tanh(self):\n\
+    helper_test_op([(45,65)], lambda x: x.tanh(), Tensor.tanh, atol=1e-6, grad_atol=1e-6)\n\
+    helper_test_op([(45,65)], lambda x: x.tanh(), Tensor.tanh, atol=1e-6, grad_atol=1e-6, a=-100)\n\
+    helper_test_op([()], lambda x: x.tanh(), Tensor.tanh, atol=1e-6, grad_atol=1e-6)\n\
+\n\
+def test_hardtanh(self):\n\
+    for val in range(10, 30, 5):\n\
+        helper_test_op([(45,65)], lambda x: torch.nn.functional.hardtanh(x,-val, val), lambda x: x.hardtanh(-val, val), atol=1e-6, grad_atol=1e-6)\n\
+        helper_test_op([()], lambda x: torch.nn.functional.hardtanh(x,-val, val), lambda x: x.hardtanh(-val, val), atol=1e-6, grad_atol=1e-6)\n\
+\n\
+def test_topo_sort(self):\n\
+    helper_test_op([(45,65)], lambda x: (x+x)*x, lambda x: x.add(x).mul(x), atol=1e-6, grad_atol=1e-6)\n\
+    helper_test_op([()], lambda x: (x+x)*x, lambda x: x.add(x).mul(x), atol=1e-6, grad_atol=1e-6)\n\
+\n\
+IMPORTANT:\n\
+- Reference tests may use torch\n\
+- GENERATED tests MUST NOT import or use torch\n\
+\n\
+Notes:\n\
+- These demonstrate test structure, tolerance usage, and gradient checks\n\
+- They do NOT define expected behavior for the current diff\n"
+    );
+
+    /* ---------- simulated pytest run ---------- */
+
+    out.push_str(
+        "\nBefore writing the final test, mentally simulate:\n\
+- pytest discovers the test\n\
+- test executes without errors\n\
+- all assertions pass\n\
+- test fails if behavior regresses\n"
+    );
 
     /* ---------- final command ---------- */
 

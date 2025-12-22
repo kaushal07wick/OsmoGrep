@@ -10,6 +10,8 @@ use std::sync::{
     Arc,
 };
 use std::thread;
+use crate::llm::prompt::build_prompt;
+use crate::testgen::resolve::TestResolution;
 
 use crate::context::engine::ContextEngine;
 use crate::context::types::{
@@ -103,13 +105,38 @@ pub fn run_llm_test_flow(
 
         /* ---------- dump FULL context ---------- */
 
-        let text = debug_context(&ctx_slice);
+        /* ---------- dump CONTEXT ---------- */
 
-        let _ = std::fs::write(".osmogrep_context.txt", &text);
+        let context_text = debug_context(&ctx_slice);
+        let _ = std::fs::write(".osmogrep_context.txt", &context_text);
+
         let _ = tx.send(AgentEvent::Log(
             LogLevel::Info,
-            "Full context written to .osmogrep_context.txt".into(),
+            "Context written to .osmogrep_context.txt".into(),
         ));
+
+        /* ---------- build + dump PROMPT ---------- */
+
+        let prompt = build_prompt(
+            &candidate,
+            &TestResolution::NotFound,
+            &ctx_slice,
+        );
+
+        let mut prompt_text = String::new();
+
+        prompt_text.push_str("=== SYSTEM PROMPT ===\n");
+        prompt_text.push_str(&prompt.system);
+        prompt_text.push_str("\n\n=== USER PROMPT ===\n");
+        prompt_text.push_str(&prompt.user);
+
+        let _ = std::fs::write(".osmogrep_prompt.txt", &prompt_text);
+
+        let _ = tx.send(AgentEvent::Log(
+            LogLevel::Info,
+            "Prompt written to .osmogrep_prompt.txt".into(),
+        ));
+
 
         let _ = tx.send(AgentEvent::Finished);
     });
