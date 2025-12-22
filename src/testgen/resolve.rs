@@ -7,17 +7,17 @@
 //! - Classify resolution outcome as Found / Ambiguous / NotFound
 //!
 //! Guarantees:
-//! - Read-only filesystem access
-//! - No side effects
+//! - Read-only access
 //! - Deterministic results
 //!
 //! Non-responsibilities:
 //! - No test generation
-//! - No file writes
+//! - No filesystem crawling
+//! - No AST parsing
 //! - No UI logic
 
-use crate::detectors::language::Language;
 use crate::testgen::candidate::TestCandidate;
+use crate::context::types::TestContext;
 
 /* ============================================================
    Resolution result
@@ -38,91 +38,57 @@ pub enum TestResolution {
    ============================================================ */
 
 pub fn resolve_test(
-    language: &Language,
     c: &TestCandidate,
+    ctx: Option<&TestContext>,
 ) -> TestResolution {
-    match language {
-        Language::Rust => resolve_rust_test(c),
-        Language::Python => resolve_python_test(c),
-        _ => TestResolution::NotFound,
+    let ctx = match ctx {
+        Some(c) => c,
+        None => return TestResolution::NotFound,
+    };
+
+    match resolve_from_context(c, ctx) {
+        Some(res) => res,
+        None => TestResolution::NotFound,
     }
 }
 
 /* ============================================================
-   Rust resolution
+   Core resolution logic
    ============================================================ */
 
-fn resolve_rust_test(c: &TestCandidate) -> TestResolution {
-    let symbol = match &c.symbol {
-        Some(s) => s,
-        None => return TestResolution::NotFound,
-    };
-
-    let src = match std::fs::read_to_string(&c.file) {
-        Ok(s) => s,
-        Err(_) => return TestResolution::NotFound,
-    };
-
-    if !src.contains("#[cfg(test)]") {
-        return TestResolution::NotFound;
-    }
-
-    // Require explicit test intent
-    if src.contains(&format!("test_{}", symbol)) {
-        TestResolution::Found {
-            file: c.file.clone(),
-            test_fn: Some(format!("test_{}", symbol)),
-        }
-    } else {
-        TestResolution::NotFound
-    }
-}
-
-/* ============================================================
-   Python resolution
-   ============================================================ */
-
-fn resolve_python_test(c: &TestCandidate) -> TestResolution {
-    let symbol = match &c.symbol {
-        Some(s) => s,
-        None => return TestResolution::NotFound,
-    };
+fn resolve_from_context(
+    c: &TestCandidate,
+    ctx: &TestContext,
+) -> Option<TestResolution> {
+    let symbol = c.symbol.as_ref()?;
 
     let mut hits = Vec::new();
-    let roots = ["tests", "test", "testing"];
 
-    for root in roots {
-        if !std::path::Path::new(root).exists() {
-            continue;
+    for path in &ctx.existing_tests {
+        let content = std::fs::read_to_string(path).ok()?;
+
+        // pytest / unittest style
+        let fn_name = format!("test_{}", symbol);
+
+        if content.contains(&fn_name) {
+            return Some(TestResolution::Found {
+                file: path.display().to_string(),
+                test_fn: Some(fn_name),
+            });
         }
 
-        for entry in walkdir::WalkDir::new(root)
-            .into_iter()
-            .filter_map(Result::ok)
-        {
-            let path = entry.path();
-
-            if path.extension().and_then(|e| e.to_str()) != Some("py") {
-                continue;
-            }
-
-            let content = match std::fs::read_to_string(path) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-
-            if content.contains(&format!("{}(", symbol)) {
-                hits.push(path.display().to_string());
-            }
+        // fallback: symbol referenced
+        if content.contains(symbol) {
+            hits.push(path.display().to_string());
         }
     }
 
     match hits.len() {
-        0 => TestResolution::NotFound,
-        1 => TestResolution::Found {
+        0 => None,
+        1 => Some(TestResolution::Found {
             file: hits[0].clone(),
             test_fn: None,
-        },
-        _ => TestResolution::Ambiguous(hits),
+        }),
+        _ => Some(TestResolution::Ambiguous(hits)),
     }
 }

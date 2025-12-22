@@ -14,13 +14,22 @@
 
 use std::time::Instant;
 
-use crate::{
-    detectors::diff_analyzer::analyze_diff,
-    git,
-    logger::{log, log_diff_analysis},
-    testgen::{generator::generate_test_candidates, resolve::resolve_test},
+use crate::context::ContextEngine;
+use crate::detectors::diff_analyzer::analyze_diff;
+use crate::git;
+use crate::logger::{log, log_diff_analysis};
+use crate::testgen::{
+    candidate::TestTarget,
+    generator::generate_test_candidates,
+    resolve::resolve_test,
 };
-use crate::state::{AgentState, Focus, LogLevel, Phase, SinglePanelView};
+use crate::state::{
+    AgentState,
+    Focus,
+    LogLevel,
+    Phase,
+    SinglePanelView,
+};
 
 /* ============================================================
    Command Handling
@@ -39,7 +48,7 @@ pub fn handle_command(state: &mut AgentState, cmd: &str) {
         cmd if cmd.starts_with("agent run ") => agent_run(state, cmd),
 
         "agent status" => agent_status(state),
-        "agent cancel" => agent_cancel(state), // ✅ FIX
+        "agent cancel" => agent_cancel(state),
 
         "artifacts test" => show_test_artifact(state),
 
@@ -74,7 +83,6 @@ pub fn handle_command(state: &mut AgentState, cmd: &str) {
     }
 }
 
-
 /* ============================================================
    Command Implementations
    ============================================================ */
@@ -97,11 +105,16 @@ fn help(state: &mut AgentState) {
     log(state, Info, "  quit                      — exit osmogrep");
 }
 
-
 fn inspect(state: &mut AgentState) {
     log(state, LogLevel::Info, "Inspecting git changes…");
 
     state.context.diff_analysis = analyze_diff();
+
+    // clear downstream state (CRITICAL)
+    state.context.test_candidates.clear();
+    state.context.last_generated_test = None;
+    state.context.generated_tests_ready = false;
+
     reset_diff_view(state);
 
     if state.context.diff_analysis.is_empty() {
@@ -121,14 +134,14 @@ fn inspect(state: &mut AgentState) {
     state.lifecycle.phase = Phase::Idle;
 }
 
-
 fn list_changes(state: &mut AgentState) {
     if state.context.diff_analysis.is_empty() {
         log(state, LogLevel::Warn, "No analysis data available. Run `inspect`.");
         return;
     }
 
-    let entries: Vec<String> = state
+    // -------- READ-ONLY --------
+    let lines: Vec<String> = state
         .context
         .diff_analysis
         .iter()
@@ -142,7 +155,8 @@ fn list_changes(state: &mut AgentState) {
         })
         .collect();
 
-    for line in entries {
+    // -------- MUTATION SAFE --------
+    for line in lines {
         log(state, LogLevel::Info, line);
     }
 }
@@ -164,7 +178,6 @@ fn view_change(state: &mut AgentState, cmd: &str) {
 
     let diff = &state.context.diff_analysis[idx];
 
-    
     if diff.delta.is_none() {
         log(state, LogLevel::Warn, "Selected change has no code delta.");
         return;
@@ -183,7 +196,6 @@ fn view_change(state: &mut AgentState, cmd: &str) {
     log(state, LogLevel::Info, format!("Opened change [{}] {}", idx, target));
 }
 
-
 fn agent_run(state: &mut AgentState, cmd: &str) {
     let idx = match cmd["agent run ".len()..].trim().parse::<usize>() {
         Ok(i) if i < state.context.diff_analysis.len() => i,
@@ -194,36 +206,61 @@ fn agent_run(state: &mut AgentState, cmd: &str) {
     };
 
     let diff = state.context.diff_analysis[idx].clone();
-    let candidates = generate_test_candidates(
-        std::slice::from_ref(&state.context.diff_analysis[idx]),
-        |c| resolve_test(
-        state.lifecycle.language.as_ref().unwrap(),
-        c,
-    ),
 
-    );
-
-
-    if candidates.is_empty() {
-        log(state, LogLevel::Warn, "No viable test candidates produced.");
-        return;
-    }
-
-    state.context.test_candidates = vec![candidates[0].clone()];
-
-    let target = match &diff.symbol {
-    Some(sym) => format!("{} :: {}", diff.file, sym),
-    None => diff.file.clone(),
+    let index = match &state.context_index {
+        Some(h) => h,
+        None => {
+            log(state, LogLevel::Warn, "Repository index not ready.");
+            return;
+        }
     };
+
+    // -------- READ-ONLY SCOPE --------
+    let candidates = {
+        let facts_guard = index.facts.read().unwrap();
+        let symbols_guard = index.symbols.read().unwrap();
+
+        let facts = facts_guard.as_ref();
+        let symbols = symbols_guard.as_ref();
+
+        if facts.is_none() || symbols.is_none() {
+            return;
+        }
+
+        let engine = ContextEngine::new(
+            facts.unwrap(),
+            symbols.unwrap(),
+        );
+
+        let target = match &diff.symbol {
+            Some(sym) => TestTarget::Symbol(sym.clone()),
+            None => TestTarget::File(diff.file.clone()),
+        };
+
+        let slice = engine.slice_for(&target);
+
+        generate_test_candidates(
+            std::slice::from_ref(&diff),
+            |c| resolve_test(c, slice.test_context.as_ref()),
+        )
+    };
+    // -------- BORROWS DROPPED HERE --------
+
+    // -------- MUTATION SAFE --------
+    state.context.test_candidates = candidates;
 
     log(
         state,
         LogLevel::Success,
-        format!("Agent scheduled for {}", target),
+        format!(
+            "Generated {} test candidate(s).",
+            state.context.test_candidates.len()
+        ),
     );
 
     state.lifecycle.phase = Phase::ExecuteAgent;
 }
+
 
 fn agent_status(state: &mut AgentState) {
     log(
@@ -231,6 +268,20 @@ fn agent_status(state: &mut AgentState) {
         LogLevel::Info,
         format!("Agent phase: {:?}", state.lifecycle.phase),
     );
+
+    log(
+        state,
+        LogLevel::Info,
+        format!(
+            "Repository index: {}",
+            if state.context_index.is_some() {
+                "ready"
+            } else {
+                "not ready"
+            }
+        ),
+    );
+
     log(
         state,
         LogLevel::Info,
@@ -254,7 +305,6 @@ fn agent_cancel(state: &mut AgentState) {
 
     log(state, LogLevel::Warn, "Agent cancellation requested.");
 }
-
 
 fn show_test_artifact(state: &mut AgentState) {
     let code = match &state.context.last_generated_test {
@@ -288,7 +338,11 @@ fn close_view(state: &mut AgentState) {
     if matches!(state.ui.panel_view, Some(SinglePanelView::TestResult { .. }))
         && state.lifecycle.phase == Phase::Running
     {
-        log(state, LogLevel::Warn, "Cannot close test result while agent is running.");
+        log(
+            state,
+            LogLevel::Warn,
+            "Cannot close test result while agent is running.",
+        );
         return;
     }
 
@@ -303,7 +357,6 @@ fn close_view(state: &mut AgentState) {
     reset_diff_view(state);
     log(state, LogLevel::Info, "Closed view.");
 }
-
 
 /* ============================================================
    Autocomplete + Hints
@@ -333,7 +386,7 @@ pub fn update_command_hints(state: &mut AgentState) {
     hint!("changes", "changes — list or view analyzed diffs");
     hint!("agent run ", "agent run <n> — execute agent on diff");
     hint!("agent status", "agent status — show agent context");
-    hint!("agent cancel", "agent cancel - cancel running agent");
+    hint!("agent cancel", "agent cancel — cancel running agent");
     hint!("artifacts test", "artifacts test — view generated test");
     hint!("branch new", "branch new — create agent branch");
     hint!("branch rollback", "branch rollback — rollback agent branch");

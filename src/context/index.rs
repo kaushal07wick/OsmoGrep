@@ -2,38 +2,44 @@
 //
 // Repository indexing logic.
 //
-// Responsibilities:
-// - extract RepoFacts
-// - build SymbolIndex using tree-sitter (Python + Rust)
-// - publish results asynchronously
-//
-// This module does not define data types and does not talk to the LLM.
+// Guarantees:
+// - Bounded output
+// - No junk directories
+// - No semantic inference
+// - Deterministic symbol sets
 //
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
 };
 
-use walkdir::WalkDir;
-use tree_sitter::{Parser, TreeCursor};
+use walkdir::{DirEntry, WalkDir};
+use tree_sitter::{Node, Parser};
 use tree_sitter_python as python;
 use tree_sitter_rust as rust;
 
 use super::types::{
+    FileSymbols,
+    Import,
     IndexHandle,
     RepoFacts,
-    SymbolIndex,
-    FileSymbols,
     SymbolDef,
-    Import,
+    SymbolIndex,
 };
 
 use crate::detectors::{
     framework::TestFramework,
     language::Language,
 };
+
+/* ============================================================
+   Constants (hard limits)
+   ============================================================ */
+
+const MAX_SYMBOLS_PER_FILE: usize = 50;
+const MAX_IMPORTS_PER_FILE: usize = 20;
 
 /* ============================================================
    Public entry
@@ -44,13 +50,20 @@ pub fn spawn_repo_indexer(repo_root: PathBuf) -> IndexHandle {
     let handle_clone = handle.clone();
 
     std::thread::spawn(move || {
-        let facts = extract_repo_facts(&repo_root);
-        handle_clone.set_facts(facts);
+        let result = (|| {
+            let facts = extract_repo_facts(&repo_root);
+            handle_clone.set_facts(facts);
 
-        let symbols = build_symbol_index(&repo_root);
-        handle_clone.set_symbols(symbols);
+            let symbols = build_symbol_index(&repo_root);
+            handle_clone.set_symbols(symbols);
 
-        handle_clone.mark_ready();
+            Ok::<(), String>(())
+        })();
+
+        match result {
+            Ok(_) => handle_clone.mark_ready(),
+            Err(e) => handle_clone.mark_failed(e),
+        }
     });
 
     handle
@@ -64,8 +77,6 @@ fn extract_repo_facts(repo_root: &Path) -> RepoFacts {
     let mut languages = Vec::new();
     let mut test_frameworks = Vec::new();
 
-    /* ---------- explicit metadata ---------- */
-
     if repo_root.join("Cargo.toml").exists() {
         languages.push(Language::Rust);
     }
@@ -76,38 +87,6 @@ fn extract_repo_facts(repo_root: &Path) -> RepoFacts {
     {
         languages.push(Language::Python);
     }
-
-    /* ---------- source-based fallback (CRITICAL) ---------- */
-
-    if languages.is_empty() {
-        let mut has_py = false;
-        let mut has_rs = false;
-
-        for entry in WalkDir::new(repo_root)
-            .into_iter()
-            .filter_map(Result::ok)
-            .filter(|e| e.file_type().is_file())
-        {
-            match entry.path().extension().and_then(|s| s.to_str()) {
-                Some("py") => has_py = true,
-                Some("rs") => has_rs = true,
-                _ => {}
-            }
-
-            if has_py && has_rs {
-                break;
-            }
-        }
-
-        if has_py {
-            languages.push(Language::Python);
-        }
-        if has_rs {
-            languages.push(Language::Rust);
-        }
-    }
-
-    /* ---------- test frameworks ---------- */
 
     if repo_root.join("tests").exists() {
         if languages.contains(&Language::Python) {
@@ -134,30 +113,34 @@ fn extract_repo_facts(repo_root: &Path) -> RepoFacts {
    ============================================================ */
 
 fn build_symbol_index(repo_root: &Path) -> SymbolIndex {
-    let mut by_file: HashMap<PathBuf, FileSymbols> = HashMap::new();
-    let mut by_symbol: HashMap<String, SymbolDef> = HashMap::new();
+    let mut by_file = HashMap::new();
+    let mut by_symbol = HashMap::new();
 
     for entry in WalkDir::new(repo_root)
         .into_iter()
+        .filter_entry(|e| !is_ignored(e))
         .filter_map(Result::ok)
         .filter(|e| e.file_type().is_file())
     {
         let path = entry.path();
 
-        let file_syms = match path.extension().and_then(|s| s.to_str()) {
-            Some("py") => index_file(path, LanguageKind::Python),
-            Some("rs") => index_file(path, LanguageKind::Rust),
-            _ => None,
+        let kind = match path.extension().and_then(|s| s.to_str()) {
+            Some("py") => LanguageKind::Python,
+            Some("rs") => LanguageKind::Rust,
+            _ => continue,
         };
 
-        if let Some(file_syms) = file_syms {
-            // ⚠️ merge symbols instead of overwriting
-            for sym in &file_syms.symbols {
-                by_symbol.entry(sym.name.clone()).or_insert_with(|| sym.clone());
-            }
+        let file_symbols = match index_file(path, kind) {
+            Some(s) => s,
+            None => continue,
+        };
 
-            by_file.insert(path.to_path_buf(), file_syms);
+        for sym in &file_symbols.symbols {
+            let key = format!("{}::{}", sym.file.display(), sym.name);
+            by_symbol.entry(key).or_insert_with(|| sym.clone());
         }
+
+        by_file.insert(path.to_path_buf(), file_symbols);
     }
 
     SymbolIndex { by_file, by_symbol }
@@ -183,108 +166,85 @@ fn index_file(path: &Path, kind: LanguageKind) -> Option<FileSymbols> {
     }
 
     let tree = parser.parse(&src, None)?;
-    let mut cursor = tree.walk();
+    let root = tree.root_node();
 
     let mut symbols = Vec::new();
     let mut imports = Vec::new();
+    let mut import_set = HashSet::new();
 
-    walk_tree(kind, &mut cursor, path, &src, &mut symbols, &mut imports);
+    walk_node(
+        kind,
+        root,
+        path,
+        &src,
+        &mut symbols,
+        &mut imports,
+        &mut import_set,
+    );
+
+    symbols.truncate(MAX_SYMBOLS_PER_FILE);
+    imports.truncate(MAX_IMPORTS_PER_FILE);
 
     Some(FileSymbols { symbols, imports })
 }
 
 /* ============================================================
-   Tree walking
+   Tree walking (bounded)
    ============================================================ */
 
-fn walk_tree(
+fn walk_node(
     kind: LanguageKind,
-    cursor: &mut TreeCursor,
+    node: Node,
     path: &Path,
     src: &str,
     symbols: &mut Vec<SymbolDef>,
     imports: &mut Vec<Import>,
+    import_set: &mut HashSet<String>,
 ) {
-    loop {
-        let node = cursor.node();
+    if symbols.len() >= MAX_SYMBOLS_PER_FILE
+        && imports.len() >= MAX_IMPORTS_PER_FILE
+    {
+        return;
+    }
 
-        match (kind, node.kind()) {
-            /* ---------- Python ---------- */
+    match (kind, node.kind()) {
+        (LanguageKind::Python, "function_definition")
+        | (LanguageKind::Python, "class_definition")
+        | (LanguageKind::Rust, "function_item")
+        | (LanguageKind::Rust, "struct_item")
+        | (LanguageKind::Rust, "enum_item")
+        | (LanguageKind::Rust, "trait_item") => {
+            extract_named_symbol(node, path, src, symbols);
+        }
 
-            (LanguageKind::Python, "function_definition")
-            | (LanguageKind::Python, "class_definition") => {
-                extract_named_symbol(node, path, src, symbols);
-            }
-
-            (LanguageKind::Python, "import_statement") => {
-                if let Some(name) = node.child_by_field_name("name") {
-                    if let Ok(text) = name.utf8_text(src.as_bytes()) {
-                        imports.push(Import {
-                            module: text.to_string(),
-                            names: Vec::new(),
-                        });
-                    }
-                }
-            }
-
-            (LanguageKind::Python, "import_from_statement") => {
-                let module = node
-                    .child_by_field_name("module")
-                    .and_then(|n| n.utf8_text(src.as_bytes()).ok())
-                    .unwrap_or("")
-                    .to_string();
-
-                let mut names = Vec::new();
-                let mut c = node.walk();
-                if c.goto_first_child() {
-                    loop {
-                        let n = c.node();
-                        if n.kind() == "identifier" {
-                            if let Ok(t) = n.utf8_text(src.as_bytes()) {
-                                names.push(t.to_string());
-                            }
-                        }
-                        if !c.goto_next_sibling() {
-                            break;
-                        }
-                    }
-                }
-
-                imports.push(Import { module, names });
-            }
-
-            /* ---------- Rust ---------- */
-
-            (LanguageKind::Rust, "function_item")
-            | (LanguageKind::Rust, "struct_item")
-            | (LanguageKind::Rust, "enum_item")
-            | (LanguageKind::Rust, "trait_item") => {
-                extract_named_symbol(node, path, src, symbols);
-            }
-
-            (LanguageKind::Rust, "use_declaration") => {
-                if let Ok(text) = node.utf8_text(src.as_bytes()) {
+        (LanguageKind::Python, "import_statement")
+        | (LanguageKind::Python, "import_from_statement")
+        | (LanguageKind::Rust, "use_declaration") => {
+            if let Ok(text) = node.utf8_text(src.as_bytes()) {
+                let key = text.trim().to_string();
+                if import_set.insert(key.clone()) {
                     imports.push(Import {
-                        module: text
-                            .replace("use ", "")
-                            .replace(';', "")
-                            .trim()
-                            .to_string(),
+                        module: key,
                         names: Vec::new(),
                     });
                 }
             }
-
-            _ => {}
         }
 
-        if cursor.goto_first_child() {
-            walk_tree(kind, cursor, path, src, symbols, imports);
-            cursor.goto_parent();
-        }
+        _ => {}
+    }
 
-        if !cursor.goto_next_sibling() {
-            break;
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            walk_node(
+                kind,
+                child,
+                path,
+                src,
+                symbols,
+                imports,
+                import_set,
+            );
         }
     }
 }
@@ -294,7 +254,7 @@ fn walk_tree(
    ============================================================ */
 
 fn extract_named_symbol(
-    node: tree_sitter::Node,
+    node: Node,
     path: &Path,
     src: &str,
     symbols: &mut Vec<SymbolDef>,
@@ -308,4 +268,19 @@ fn extract_named_symbol(
             });
         }
     }
+}
+
+fn is_ignored(e: &DirEntry) -> bool {
+    let name = e.file_name().to_string_lossy();
+
+    matches!(
+        name.as_ref(),
+        ".git"
+            | ".venv"
+            | "node_modules"
+            | "target"
+            | "dist"
+            | "build"
+            | "__pycache__"
+    )
 }

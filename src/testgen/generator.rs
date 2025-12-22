@@ -2,16 +2,27 @@
 //!
 //! Test candidate generation pipeline.
 //!
-//! Hard guarantees:
+//! Guarantees:
 //! - No UI / rendering / glue code
 //! - No comment-only or formatting-only diffs
-//! - No trivial helpers / parsers / serializers
+//! - No trivial helpers / serializers
 //! - Only externally testable behavior reaches the agent
 
 use crate::state::{ChangeSurface, DiffAnalysis, TestDecision};
-use crate::testgen::candidate::{TestCandidate, TestType, TestTarget};
+use crate::testgen::candidate::{
+    TestCandidate,
+    TestType,
+    TestTarget,
+};
 use crate::testgen::resolve::TestResolution;
 use crate::testgen::summarizer;
+
+use crate::context::types::{
+    AssertionStyle,
+    FailureMode,
+    TestIntent,
+    TestOracle,
+};
 
 /* ============================================================
    Normalization (NO SEMANTICS)
@@ -41,7 +52,9 @@ fn normalize_python(src: &str) -> String {
     src.lines()
         .filter(|l| {
             let t = l.trim_start();
-            !t.starts_with('#') && !t.starts_with("\"\"\"") && !t.starts_with("'''")
+            !t.starts_with('#')
+                && !t.starts_with("\"\"\"")
+                && !t.starts_with("'''")
         })
         .map(|l| l.trim())
         .collect::<String>()
@@ -54,8 +67,6 @@ fn normalize_python(src: &str) -> String {
 fn is_ui_or_glue_code(d: &DiffAnalysis) -> bool {
     let file = d.file.to_lowercase();
 
-    /* ---------- directory / module ---------- */
-
     if file.contains("/ui/")
         || file.contains("/terminal/")
         || file.contains("/render_")
@@ -64,8 +75,6 @@ fn is_ui_or_glue_code(d: &DiffAnalysis) -> bool {
     {
         return true;
     }
-
-    /* ---------- framework / infra ---------- */
 
     if file.contains("ratatui")
         || file.contains("crossterm")
@@ -76,12 +85,9 @@ fn is_ui_or_glue_code(d: &DiffAnalysis) -> bool {
         return true;
     }
 
-    /* ---------- symbol-level ---------- */
-
     if let Some(sym) = &d.symbol {
         let s = sym.to_lowercase();
 
-        // language-agnostic helpers
         let helper_prefixes = [
             "render_",
             "draw_",
@@ -94,7 +100,6 @@ fn is_ui_or_glue_code(d: &DiffAnalysis) -> bool {
             return true;
         }
 
-        // python-specific hard exclusions
         let python_helpers = [
             "__repr__",
             "__str__",
@@ -125,17 +130,14 @@ fn is_test_worthy(d: &DiffAnalysis) -> bool {
     let old_norm = normalize_source(&d.file, &delta.old_source);
     let new_norm = normalize_source(&d.file, &delta.new_source);
 
-    // cosmetic-only changes
     if old_norm == new_norm {
         return false;
     }
 
-    // extremely small diffs
     if old_norm.len().abs_diff(new_norm.len()) < 10 {
         return false;
     }
 
-    // UI / glue / helpers
     if is_ui_or_glue_code(d) {
         return false;
     }
@@ -153,11 +155,14 @@ fn decide_test(d: &DiffAnalysis) -> TestDecision {
         | ChangeSurface::ErrorPath
         | ChangeSurface::Branching
         | ChangeSurface::State
-        | ChangeSurface::Integration => TestDecision::Yes,
+        | ChangeSurface::Integration =>
+            TestDecision::Yes,
 
-        ChangeSurface::PureLogic => TestDecision::Conditional,
+        ChangeSurface::PureLogic =>
+            TestDecision::Conditional,
 
-        _ => TestDecision::No,
+        _ =>
+            TestDecision::No,
     }
 }
 
@@ -196,7 +201,6 @@ pub fn generate_test_candidates(
     let mut scored = Vec::new();
 
     for d in diffs {
-        // 🔒 HARD GATE
         if !is_test_worthy(d) {
             continue;
         }
@@ -220,6 +224,29 @@ pub fn generate_test_candidates(
                 TestType::Regression,
         };
 
+        let test_intent = match d.surface {
+            ChangeSurface::PureLogic =>
+                TestIntent::Regression,
+            ChangeSurface::ErrorPath | ChangeSurface::Branching =>
+                TestIntent::Guardrail,
+            _ =>
+                TestIntent::Regression,
+        };
+
+        let assertion_style = match d.surface {
+            ChangeSurface::PureLogic =>
+                AssertionStyle::Approximate,
+            _ =>
+                AssertionStyle::Sanity,
+        };
+
+        let failure_modes = match d.surface {
+            ChangeSurface::ErrorPath | ChangeSurface::Branching =>
+                vec![FailureMode::RuntimeError],
+            _ =>
+                Vec::new(),
+        };
+
         let target = match &d.symbol {
             Some(sym) => TestTarget::Symbol(sym.clone()),
             None => TestTarget::File(d.file.clone()),
@@ -230,15 +257,19 @@ pub fn generate_test_candidates(
 
             file: d.file.clone(),
             symbol: d.symbol.clone(),
+            target,
 
             decision,
             risk: semantic.risk,
 
             test_type,
-            target,
+            test_intent,
 
             behavior: semantic.behavior.clone(),
-            failure_mode: semantic.failure_mode.clone(),
+
+            assertion_style,
+            failure_modes,
+            oracle: TestOracle::None,
 
             old_code: Some(delta.old_source.clone()),
             new_code: Some(delta.new_source.clone()),
@@ -247,7 +278,7 @@ pub fn generate_test_candidates(
         match resolve(&candidate) {
             TestResolution::Found { file, .. } => {
                 candidate.behavior =
-                    format!("Update existing test `{}`", file);
+                    format!("Extend existing test `{}`", file);
             }
             TestResolution::Ambiguous(paths) => {
                 candidate.decision = TestDecision::Conditional;
@@ -262,7 +293,7 @@ pub fn generate_test_candidates(
         candidate.id = TestCandidate::compute_id(
             &candidate.file,
             &candidate.symbol,
-            &candidate.decision,
+            &candidate.test_intent,
         );
 
         scored.push((priority(d), candidate));

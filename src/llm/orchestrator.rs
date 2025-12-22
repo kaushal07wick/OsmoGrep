@@ -1,8 +1,8 @@
-//! orchestrator.rs
-//!
-//! TEMPORARY: Context preview runner.
-//! Builds ContextSlice and shows it in a single panel.
-//! LLM + execution are intentionally disabled.
+// src/orchestrator.rs
+//
+// TEMPORARY: Context preview runner.
+// Builds ContextSlice and prints FULL context.
+// LLM + execution are intentionally disabled.
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -65,7 +65,7 @@ pub fn run_llm_test_flow(
                 }
 
                 IndexStatus::Indexing => {
-                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    thread::sleep(std::time::Duration::from_millis(50));
                 }
             }
         };
@@ -75,24 +75,23 @@ pub fn run_llm_test_flow(
         let ctx_engine = ContextEngine::new(&facts, &symbols);
         let ctx_slice = ctx_engine.slice_for(&candidate.target);
 
-        // TEMP: dump context for inspection
-        if let Ok(text) = std::fs::write(
-            ".osmogrep_context.txt",
-            debug_context(&ctx_slice),
-        ) {
-            let _ = tx.send(AgentEvent::Log(
-                LogLevel::Info,
-                "Context written to .osmogrep_context.txt".into(),
-            ));
-        }
-return;
+        /* ---------- dump FULL context and exit ---------- */
 
+        let text = debug_context(&ctx_slice);
 
+        let _ = std::fs::write(".osmogrep_context.txt", &text);
+        let _ = tx.send(AgentEvent::Log(
+            LogLevel::Info,
+            "Full context written to .osmogrep_context.txt".into(),
+        ));
+
+        // HARD STOP: no LLM, no execution
+        let _ = tx.send(AgentEvent::Finished);
     });
 }
 
 /* ============================================================
-   Debug formatting
+   FULL Context Printer (deterministic, explicit)
    ============================================================ */
 
 fn debug_context(ctx: &ContextSlice) -> String {
@@ -100,33 +99,46 @@ fn debug_context(ctx: &ContextSlice) -> String {
 
     s.push_str("=== CONTEXT SLICE ===\n\n");
 
+    /* ---------- TARGET ---------- */
+
+    s.push_str("TARGET:\n");
     s.push_str(&format!(
-        "TARGET:\n- {} ({}:{})\n\n",
+        "- {} ({}:{})\n\n",
         ctx.target.name,
         ctx.target.file.display(),
         ctx.target.line
     ));
 
-    if !ctx.deps.is_empty() {
-        s.push_str("RELATED SYMBOLS:\n");
-        for d in &ctx.deps {
-            s.push_str(&format!(
-                "- {} ({}:{})\n",
-                d.name,
-                d.file.display(),
-                d.line
-            ));
+    /* ---------- LOCAL STRUCTURE ---------- */
+
+    s.push_str("LOCAL STRUCTURE:\n");
+
+    if ctx.deps.is_empty() && ctx.imports.is_empty() {
+        s.push_str("- None\n\n");
+    } else {
+        if !ctx.deps.is_empty() {
+            s.push_str("- Related symbols:\n");
+            for d in &ctx.deps {
+                s.push_str(&format!(
+                    "  - {} ({}:{})\n",
+                    d.name,
+                    d.file.display(),
+                    d.line
+                ));
+            }
         }
+
+        if !ctx.imports.is_empty() {
+            s.push_str("- Imports:\n");
+            for i in &ctx.imports {
+                s.push_str(&format!("  - {}\n", i.module));
+            }
+        }
+
         s.push('\n');
     }
 
-    if !ctx.imports.is_empty() {
-        s.push_str("IMPORTS:\n");
-        for i in &ctx.imports {
-            s.push_str(&format!("- {}\n", i.module));
-        }
-        s.push('\n');
-    }
+    /* ---------- REPO FACTS ---------- */
 
     s.push_str("REPO FACTS:\n");
     s.push_str(&format!(
@@ -137,12 +149,88 @@ fn debug_context(ctx: &ContextSlice) -> String {
         "- Test frameworks: {}\n",
         ctx.repo_facts.test_frameworks.join(", ")
     ));
-
     if !ctx.repo_facts.forbidden_deps.is_empty() {
         s.push_str(&format!(
             "- Forbidden deps: {}\n",
             ctx.repo_facts.forbidden_deps.join(", ")
         ));
+    }
+    s.push('\n');
+
+    /* ---------- EXECUTION MODEL ---------- */
+
+    s.push_str("EXECUTION MODEL:\n");
+    match ctx.execution_model {
+        Some(m) => s.push_str(&format!("- {:?}\n\n", m)),
+        None => s.push_str("- Unknown\n\n"),
+    }
+
+    /* ---------- TEST SEMANTICS ---------- */
+
+    s.push_str("TEST SEMANTICS:\n");
+
+    match ctx.test_intent {
+        Some(t) => s.push_str(&format!("- Test intent: {:?}\n", t)),
+        None => s.push_str("- Test intent: Unknown\n"),
+    }
+
+    match ctx.assertion_style {
+        Some(a) => s.push_str(&format!("- Assertion style: {:?}\n", a)),
+        None => s.push_str("- Assertion style: Unknown\n"),
+    }
+
+    if ctx.failure_modes.is_empty() {
+        s.push_str("- Failure modes: None\n");
+    } else {
+        s.push_str("- Failure modes:\n");
+        for f in &ctx.failure_modes {
+            s.push_str(&format!("  - {:?}\n", f));
+        }
+    }
+
+    s.push('\n');
+
+    /* ---------- TEST ECOSYSTEM ---------- */
+
+    s.push_str("TEST CONTEXT:\n");
+
+    match &ctx.test_context {
+        None => {
+            s.push_str("- No tests directory found\n\n");
+        }
+        Some(tc) => {
+            if tc.existing_tests.is_empty() {
+                s.push_str("- Existing tests: None\n");
+            } else {
+                s.push_str("- Existing tests:\n");
+                for p in &tc.existing_tests {
+                    s.push_str(&format!("  - {}\n", p.display()));
+                }
+            }
+
+            if let Some(p) = &tc.recommended_location {
+                s.push_str(&format!(
+                    "- Recommended test location: {}\n",
+                    p.display()
+                ));
+            }
+
+            if let Some(o) = &tc.oracle {
+                s.push_str(&format!("- Oracle: {:?}\n", o));
+            }
+
+            if let Some(io) = &tc.io_contract {
+                s.push_str("- IO Contract:\n");
+                for i in &io.input_notes {
+                    s.push_str(&format!("  input: {}\n", i));
+                }
+                for o in &io.output_notes {
+                    s.push_str(&format!("  output: {}\n", o));
+                }
+            }
+
+            s.push('\n');
+        }
     }
 
     s

@@ -2,16 +2,19 @@
 //
 // Shared data model for the repository context engine.
 //
-// This file defines ONLY data structures and trivial helpers.
-// No indexing, no traversal, no diffing, no LLM logic.
+// Defines ONLY data structures and trivial helpers.
+// NO indexing logic.
+// NO traversal.
+// NO diffing.
+// NO LLM logic.
 //
 // These types are reused across:
 // - repository indexing
-// - context slicing
+// - test context synthesis
 // - prompt construction
 //
 // Agent lifecycle, UI state, logging, cancellation, and execution
-// are intentionally handled elsewhere (state.rs).
+// are handled elsewhere (state.rs).
 //
 
 use std::collections::HashMap;
@@ -23,7 +26,9 @@ use crate::detectors::{
     language::Language,
 };
 
-/* ================= Repo Facts ================= */
+/* ============================================================
+   Repository Facts
+   ============================================================ */
 
 #[derive(Debug, Clone)]
 pub struct RepoFacts {
@@ -32,7 +37,30 @@ pub struct RepoFacts {
     pub forbidden_deps: Vec<String>,
 }
 
-/* ================= Symbol Index ================= */
+#[derive(Debug, Clone)]
+pub struct RepoFactsLite {
+    pub languages: Vec<String>,
+    pub test_frameworks: Vec<String>,
+    pub forbidden_deps: Vec<String>,
+}
+
+impl RepoFactsLite {
+    pub fn from(facts: &RepoFacts) -> Self {
+        Self {
+            languages: facts.languages.iter().map(|l| l.to_string()).collect(),
+            test_frameworks: facts
+                .test_frameworks
+                .iter()
+                .map(|t| t.to_string())
+                .collect(),
+            forbidden_deps: facts.forbidden_deps.clone(),
+        }
+    }
+}
+
+/* ============================================================
+   Symbol Index (Code Context)
+   ============================================================ */
 
 #[derive(Debug, Clone)]
 pub struct SymbolIndex {
@@ -59,16 +87,16 @@ pub struct Import {
     pub names: Vec<String>,
 }
 
-/* ================= Testing Semantics ================= */
+/* ============================================================
+   Testing Semantics (Derived, Not Executed)
+   ============================================================ */
 
-/// How values are executed / materialized.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionModel {
     Eager,
     Lazy,
 }
 
-/// What kind of test is intended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TestIntent {
     Regression,
@@ -76,15 +104,13 @@ pub enum TestIntent {
     NewBehavior,
 }
 
-/// What assertion philosophy to prefer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssertionStyle {
-    Exact,        // strict equality
-    Approximate,  // tolerances allowed
-    Sanity,       // shape / finiteness / no-crash
+    Exact,
+    Approximate,
+    Sanity,
 }
 
-/// Failure modes the test should protect against.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FailureMode {
     Panic,
@@ -94,19 +120,64 @@ pub enum FailureMode {
     WrongShape,
 }
 
-/* ================= Context Slice ================= */
+/* ============================================================
+   Test Ecosystem Context (CRITICAL)
+   ============================================================ */
+
+#[derive(Debug, Clone)]
+pub struct TestContext {
+    /// Existing test files related to the target (heuristic match).
+    pub existing_tests: Vec<PathBuf>,
+
+    /// Known helpers / fixtures / utilities used in tests.
+    pub helpers: Vec<String>,
+
+    /// Recommended test file location if a new test is required.
+    pub recommended_location: Option<PathBuf>,
+
+    /// What the test should validate against.
+    pub oracle: Option<TestOracle>,
+
+    /// Lightweight input/output expectations.
+    pub io_contract: Option<IOContract>,
+}
+
+#[derive(Debug, Clone)]
+pub enum TestOracle {
+    /// Compare against another symbol (e.g. reference implementation).
+    ReferenceSymbol(String),
+
+    /// Assert an invariant (no crash, finite, shape, etc).
+    Invariant(String),
+
+    /// No usable oracle (sanity-only tests).
+    None,
+}
+
+#[derive(Debug, Clone)]
+pub struct IOContract {
+    pub input_notes: Vec<String>,
+    pub output_notes: Vec<String>,
+}
+
+/* ============================================================
+   Context Slice (What the LLM Sees)
+   ============================================================ */
 
 #[derive(Debug, Clone)]
 pub struct ContextSlice {
-    /* repo-level facts */
+    /* repository-level constraints */
     pub repo_facts: RepoFactsLite,
 
-    /* target */
+    /* target under test */
     pub target: SymbolDef,
 
-    /* local structure */
+    /* local code structure */
     pub deps: Vec<SymbolDef>,
     pub imports: Vec<Import>,
+
+    /* test ecosystem awareness */
+    pub test_context: Option<TestContext>,
 
     /* derived testing semantics (NO logic here) */
     pub execution_model: Option<ExecutionModel>,
@@ -115,28 +186,9 @@ pub struct ContextSlice {
     pub failure_modes: Vec<FailureMode>,
 }
 
-#[derive(Debug, Clone)]
-pub struct RepoFactsLite {
-    pub languages: Vec<String>,
-    pub test_frameworks: Vec<String>,
-    pub forbidden_deps: Vec<String>,
-}
-
-impl RepoFactsLite {
-    pub fn from(facts: &RepoFacts) -> Self {
-        Self {
-            languages: facts.languages.iter().map(|l| l.to_string()).collect(),
-            test_frameworks: facts
-                .test_frameworks
-                .iter()
-                .map(|t| t.to_string())
-                .collect(),
-            forbidden_deps: facts.forbidden_deps.clone(),
-        }
-    }
-}
-
-/* ================= Index Lifecycle ================= */
+/* ============================================================
+   Index Lifecycle
+   ============================================================ */
 
 #[derive(Debug, Clone)]
 pub enum IndexStatus {
@@ -178,7 +230,9 @@ impl IndexHandle {
     }
 }
 
-/* ================= Incremental Indexing ================= */
+/* ============================================================
+   Incremental Indexing Support
+   ============================================================ */
 
 #[derive(Debug, Clone)]
 pub struct FileHash {

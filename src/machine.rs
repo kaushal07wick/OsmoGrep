@@ -49,35 +49,37 @@ fn init_repo(state: &mut AgentState) {
         return;
     }
 
+    let repo_root = match assert_repo_root() {
+        Ok(p) => p,
+        Err(e) => {
+            log(state, LogLevel::Error, e);
+            transition(state, Phase::Done);
+            return;
+        }
+    };
+
     let current = git::current_branch();
     state.lifecycle.current_branch = Some(current.clone());
     state.lifecycle.original_branch = Some(current);
 
-    let repo_root = detect_repo_root();
-
-    // reuse existing detectors
+    // deterministic detectors
     let language = detect_language(&repo_root);
     let framework = detect_framework(&repo_root);
 
     state.lifecycle.language = Some(language);
     state.lifecycle.framework = Some(framework);
 
-    // spawn context indexer ONCE, in Init
+    // spawn context indexer ONCE, at Init
     if state.context_index.is_none() {
         state.context_index = Some(
             crate::context::spawn_repo_indexer(repo_root.clone())
         );
 
-        log(
-            state,
-            LogLevel::Info,
-            "Indexing repository context",
-        );
+        log(state, LogLevel::Info, "Indexing repository context");
     }
 
     transition(state, Phase::DetectBase);
 }
-
 
 fn detect_base_branch(state: &mut AgentState) {
     let base = git::detect_base_branch();
@@ -136,17 +138,14 @@ fn execute_agent(state: &mut AgentState) {
         }
     };
 
-    let framework = state.lifecycle.framework.clone();
-
     log(state, LogLevel::Info, "🤖 Agent started");
 
     run_llm_test_flow(
-    state.agent_tx.clone(),
-    state.cancel_requested.clone(),
-    state.context_index.clone().expect("context index missing"),
-    candidate,
-);
-
+        state.agent_tx.clone(),
+        state.cancel_requested.clone(),
+        state.context_index.clone().expect("context index missing"),
+        candidate,
+    );
 
     transition(state, Phase::Running);
 }
@@ -158,15 +157,13 @@ fn handle_running(state: &mut AgentState) {
         transition(state, Phase::Idle);
         return;
     }
-    if state.context.generated_tests_ready {
-    state.context.generated_tests_ready = false;
 
-    // Orchestrator already ran tests and emitted results
-    return_to_base_branch(state);
-    transition(state, Phase::Idle);
+    if state.context.generated_tests_ready {
+        state.context.generated_tests_ready = false;
+        return_to_base_branch(state);
+        transition(state, Phase::Idle);
     }
 }
-
 
 /* ============================================================
    Rollback
@@ -211,10 +208,6 @@ fn reset_views(state: &mut AgentState) {
     state.ui.diff_scroll = 0;
 }
 
-fn detect_repo_root() -> PathBuf {
-    Path::new(".").to_path_buf()
-}
-
 fn transition(state: &mut AgentState, next: Phase) {
     state.lifecycle.phase = next;
 }
@@ -224,6 +217,36 @@ fn return_to_base_branch(state: &mut AgentState) {
         git::checkout(&base);
         state.lifecycle.current_branch = Some(base);
     }
+}
+
+/* ============================================================
+   Repo root enforcement (CRITICAL)
+   ============================================================ */
+
+fn assert_repo_root() -> Result<PathBuf, String> {
+    let cwd = std::env::current_dir()
+        .map_err(|e| format!("Failed to read current directory: {}", e))?;
+
+    let markers = [
+        ".git",
+        "pyproject.toml",
+        "setup.py",
+        "Cargo.toml",
+    ];
+
+    let is_root = markers.iter().any(|m| cwd.join(m).exists());
+
+    if !is_root {
+        return Err(format!(
+            "osmogrep must be run from the repository root.\n\
+             Current directory: {}\n\
+             Expected one of: {:?}",
+            cwd.display(),
+            markers
+        ));
+    }
+
+    Ok(cwd)
 }
 
 /* ============================================================
