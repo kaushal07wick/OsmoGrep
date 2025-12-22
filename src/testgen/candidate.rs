@@ -1,127 +1,63 @@
-use crate::state::{RiskLevel, TestDecision};
-use crate::context::types::{
-    AssertionStyle,
-    FailureMode,
-    TestIntent,
-    TestOracle,
-};
+use crate::state::{RiskLevel, TestDecision, DiffAnalysis};
+use crate::context::types::TestIntent;
 
-/// Type of test being generated.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum TestType {
-    Unit,
-    Integration,
-    Regression,
-}
+/* ============================================================
+   Test Target (LEGACY, will be removed later)
+   ============================================================ */
 
-/// What the test is scoped to.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum TestTarget {
-    Symbol(String),   // function / method
+    Symbol(String),
     Module(String),
     File(String),
 }
 
-/// Fully-specified test generation plan.
-///
-/// This is the *single contract* between:
-/// context slicing → planning → LLM generation.
+/* ============================================================
+   Test Candidate (DIFF-FIRST, AUTHORITATIVE)
+   ============================================================ */
+
 #[derive(Debug, Clone)]
 pub struct TestCandidate {
-    /* ======================================================
+    /* --------------------------------------------------------
        Stable identity
-       ====================================================== */
+       -------------------------------------------------------- */
 
-    /// Deterministic identity (UI, logs, retries).
     pub id: String,
 
-    /* ======================================================
-       Target identity
-       ====================================================== */
+    /* --------------------------------------------------------
+       AUTHORITATIVE DIFF (NON-OPTIONAL)
+       -------------------------------------------------------- */
 
-    /// Source file under test.
+    /// The exact diff this test is derived from.
+    /// This is the SINGLE source of truth.
+    pub diff: DiffAnalysis,
+
+    /* --------------------------------------------------------
+       Target identity (DERIVED, NON-AUTHORITATIVE)
+       -------------------------------------------------------- */
+
     pub file: String,
-
-    /// Symbol under test (if any).
     pub symbol: Option<String>,
-
-    /// Scope of the test.
     pub target: TestTarget,
 
-    /* ======================================================
-       Decision & risk (from diff analysis)
-       ====================================================== */
+    /* --------------------------------------------------------
+       Decision & risk
+       -------------------------------------------------------- */
 
-    /// Whether a test should be generated.
     pub decision: TestDecision,
-
-    /// Risk level of the change.
     pub risk: RiskLevel,
-
-    /* ======================================================
-       Test classification
-       ====================================================== */
-
-    /// Structural type of test.
-    pub test_type: TestType,
-
-    /// Semantic intent of the test.
     pub test_intent: TestIntent,
 
-    /* ======================================================
-       Behavioral intent (human-readable, LLM-facing)
-       ====================================================== */
+    /* --------------------------------------------------------
+       Behavioral intent
+       -------------------------------------------------------- */
 
-    /// What behavior is being validated.
-    ///
-    /// Example:
-    /// - "ignore_index values must not affect loss computation"
-    /// - "tanh must match reference implementation"
     pub behavior: String,
 
-    /* ======================================================
-       Assertion & failure semantics
-       ====================================================== */
+    /* --------------------------------------------------------
+       Grounding (symbol delta)
+       -------------------------------------------------------- */
 
-    /// Preferred assertion strategy.
-    pub assertion_style: AssertionStyle,
-
-    /// Failure modes the test must guard against.
-    pub failure_modes: Vec<FailureMode>,
-
-    /// What the test should validate against.
-    pub oracle: TestOracle,
-
-    /* ======================================================
-       Grounding context (optional but powerful)
-       ====================================================== */
-
-    /// Code before the change (if applicable).
     pub old_code: Option<String>,
-
-    /// Code after the change (if applicable).
     pub new_code: Option<String>,
-}
-
-impl TestCandidate {
-    /* ======================================================
-       Identity helpers
-       ====================================================== */
-
-    /// Compute a canonical, deterministic ID.
-    ///
-    /// Properties:
-    /// - stable across runs
-    /// - human-readable
-    /// - safe for logs / UI keys
-    pub fn compute_id(
-        file: &str,
-        symbol: &Option<String>,
-        intent: &TestIntent,
-    ) -> String {
-        match symbol {
-            Some(sym) => format!("{file}::{sym}::{intent:?}"),
-            None => format!("{file}::<file>::{intent:?}"),
-        }
-    }
 }

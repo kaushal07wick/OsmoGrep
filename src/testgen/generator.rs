@@ -1,28 +1,18 @@
 //! generator.rs
 //!
 //! Test candidate generation pipeline.
-//!
+//
 //! Guarantees:
-//! - No UI / rendering / glue code
-//! - No comment-only or formatting-only diffs
-//! - No trivial helpers / serializers
-//! - Only externally testable behavior reaches the agent
+//! - Diff-driven only
+//! - No framework assumptions
+//! - No assertion/oracle logic
+//! - No context inspection
+//! - Deterministic output
 
 use crate::state::{ChangeSurface, DiffAnalysis, TestDecision};
-use crate::testgen::candidate::{
-    TestCandidate,
-    TestType,
-    TestTarget,
-};
-use crate::testgen::resolve::TestResolution;
+use crate::testgen::candidate::TestCandidate;
 use crate::testgen::summarizer;
-
-use crate::context::types::{
-    AssertionStyle,
-    FailureMode,
-    TestIntent,
-    TestOracle,
-};
+use crate::context::types::TestIntent;
 
 /* ============================================================
    Normalization (NO SEMANTICS)
@@ -64,63 +54,6 @@ fn normalize_python(src: &str) -> String {
    HARD GATES (FACTS ONLY)
    ============================================================ */
 
-fn is_ui_or_glue_code(d: &DiffAnalysis) -> bool {
-    let file = d.file.to_lowercase();
-
-    if file.contains("/ui/")
-        || file.contains("/terminal/")
-        || file.contains("/render_")
-        || file.contains("/cli/")
-        || file.contains("/commands")
-    {
-        return true;
-    }
-
-    if file.contains("ratatui")
-        || file.contains("crossterm")
-        || file.contains("argparse")
-        || file.contains("click")
-        || file.contains("logging")
-    {
-        return true;
-    }
-
-    if let Some(sym) = &d.symbol {
-        let s = sym.to_lowercase();
-
-        let helper_prefixes = [
-            "render_",
-            "draw_",
-            "format_",
-            "parse_",
-            "normalize_",
-        ];
-
-        if helper_prefixes.iter().any(|p| s.starts_with(p)) {
-            return true;
-        }
-
-        let python_helpers = [
-            "__repr__",
-            "__str__",
-            "__eq__",
-            "to_dict",
-            "from_dict",
-            "serialize",
-            "deserialize",
-            "validate",
-            "validator",
-            "schema",
-        ];
-
-        if python_helpers.iter().any(|p| s.contains(p)) {
-            return true;
-        }
-    }
-
-    false
-}
-
 fn is_test_worthy(d: &DiffAnalysis) -> bool {
     let delta = match &d.delta {
         Some(d) => d,
@@ -134,11 +67,8 @@ fn is_test_worthy(d: &DiffAnalysis) -> bool {
         return false;
     }
 
+    // Ignore tiny cosmetic edits
     if old_norm.len().abs_diff(new_norm.len()) < 10 {
-        return false;
-    }
-
-    if is_ui_or_glue_code(d) {
         return false;
     }
 
@@ -146,7 +76,7 @@ fn is_test_worthy(d: &DiffAnalysis) -> bool {
 }
 
 /* ============================================================
-   Decision logic (OWNED BY TESTGEN)
+   Decision logic (DIFF-OWNED)
    ============================================================ */
 
 fn decide_test(d: &DiffAnalysis) -> TestDecision {
@@ -171,9 +101,7 @@ fn decide_test(d: &DiffAnalysis) -> TestDecision {
    ============================================================ */
 
 fn priority(d: &DiffAnalysis) -> u8 {
-    let mut score = 0;
-
-    score += match d.surface {
+    let mut score = match d.surface {
         ChangeSurface::Contract => 40,
         ChangeSurface::ErrorPath => 35,
         ChangeSurface::Branching => 30,
@@ -196,7 +124,6 @@ fn priority(d: &DiffAnalysis) -> u8 {
 
 pub fn generate_test_candidates(
     diffs: &[DiffAnalysis],
-    resolve: impl Fn(&TestCandidate) -> TestResolution,
 ) -> Vec<TestCandidate> {
     let mut scored = Vec::new();
 
@@ -210,91 +137,59 @@ pub fn generate_test_candidates(
             None => continue,
         };
 
-        let semantic = summarizer::summarize(d);
         let decision = decide_test(d);
-
         if matches!(decision, TestDecision::No) {
             continue;
         }
 
-        let test_type = match d.surface {
-            ChangeSurface::Integration | ChangeSurface::State =>
-                TestType::Integration,
-            _ =>
-                TestType::Regression,
-        };
+        let summary = summarizer::summarize(d);
 
         let test_intent = match d.surface {
-            ChangeSurface::PureLogic =>
-                TestIntent::Regression,
             ChangeSurface::ErrorPath | ChangeSurface::Branching =>
                 TestIntent::Guardrail,
+
+            ChangeSurface::PureLogic | ChangeSurface::Contract =>
+                TestIntent::Regression,
+
             _ =>
                 TestIntent::Regression,
-        };
-
-        let assertion_style = match d.surface {
-            ChangeSurface::PureLogic =>
-                AssertionStyle::Approximate,
-            _ =>
-                AssertionStyle::Sanity,
-        };
-
-        let failure_modes = match d.surface {
-            ChangeSurface::ErrorPath | ChangeSurface::Branching =>
-                vec![FailureMode::RuntimeError],
-            _ =>
-                Vec::new(),
-        };
-
-        let target = match &d.symbol {
-            Some(sym) => TestTarget::Symbol(sym.clone()),
-            None => TestTarget::File(d.file.clone()),
         };
 
         let mut candidate = TestCandidate {
             id: String::new(),
 
+            // ✅ AUTHORITATIVE DIFF (NEW)
+            diff: d.clone(),
+
+            // Derived identity (non-authoritative)
             file: d.file.clone(),
             symbol: d.symbol.clone(),
-            target,
+            target: crate::testgen::candidate::TestTarget::File(d.file.clone()),
 
             decision,
-            risk: semantic.risk,
-
-            test_type,
+            risk: summary.risk,
             test_intent,
 
-            behavior: semantic.behavior.clone(),
-
-            assertion_style,
-            failure_modes,
-            oracle: TestOracle::None,
+            behavior: summary.behavior.clone(),
 
             old_code: Some(delta.old_source.clone()),
             new_code: Some(delta.new_source.clone()),
         };
 
-        match resolve(&candidate) {
-            TestResolution::Found { file, .. } => {
-                candidate.behavior =
-                    format!("Extend existing test `{}`", file);
-            }
-            TestResolution::Ambiguous(paths) => {
-                candidate.decision = TestDecision::Conditional;
-                candidate.behavior = format!(
-                    "Multiple candidate tests found:\n{}",
-                    paths.join("\n")
-                );
-            }
-            TestResolution::NotFound => {}
-        }
+        candidate.id = match &candidate.symbol {
+            Some(sym) => format!(
+                "{}::{}::{:?}",
+                candidate.file,
+                sym,
+                candidate.test_intent
+            ),
+            None => format!(
+                "{}::<file>::{:?}",
+                candidate.file,
+                candidate.test_intent
+            ),
+        };
 
-        candidate.id = TestCandidate::compute_id(
-            &candidate.file,
-            &candidate.symbol,
-            &candidate.test_intent,
-        );
 
         scored.push((priority(d), candidate));
     }

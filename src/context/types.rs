@@ -2,19 +2,11 @@
 //
 // Shared data model for the repository context engine.
 //
-// Defines ONLY data structures and trivial helpers.
-// NO indexing logic.
-// NO traversal.
-// NO diffing.
-// NO LLM logic.
-//
-// These types are reused across:
-// - repository indexing
-// - test context synthesis
-// - prompt construction
-//
-// Agent lifecycle, UI state, logging, cancellation, and execution
-// are handled elsewhere (state.rs).
+// STRICT RULES:
+// - Data only (no logic)
+// - Diff-first (diff is authoritative)
+// - Index is auxiliary, never authoritative
+// - Explicit states > silent fallback
 //
 
 use std::collections::HashMap;
@@ -27,7 +19,7 @@ use crate::detectors::{
 };
 
 /* ============================================================
-   Repository Facts
+   Repository Facts (Stable, Repo-wide)
    ============================================================ */
 
 #[derive(Debug, Clone)]
@@ -59,13 +51,26 @@ impl RepoFactsLite {
 }
 
 /* ============================================================
-   Symbol Index (Code Context)
+   Diff-Anchored Target (AUTHORITATIVE)
    ============================================================ */
 
 #[derive(Debug, Clone)]
+pub struct DiffTarget {
+    /// File containing the change (from git diff)
+    pub file: PathBuf,
+
+    /// Symbol name if detected (from diff analyzer)
+    pub symbol: Option<String>,
+}
+
+/* ============================================================
+   Symbol Index (AUXILIARY CACHE — NEVER AUTHORITATIVE)
+   ============================================================ */
+
+#[derive(Debug, Clone, Default)]
 pub struct SymbolIndex {
+    /// File → symbols/imports (shallow, best-effort)
     pub by_file: HashMap<PathBuf, FileSymbols>,
-    pub by_symbol: HashMap<String, SymbolDef>,
 }
 
 #[derive(Debug, Clone)]
@@ -88,7 +93,45 @@ pub struct Import {
 }
 
 /* ============================================================
-   Testing Semantics (Derived, Not Executed)
+   Symbol Resolution Result (EXPLICIT)
+   ============================================================ */
+
+#[derive(Debug, Clone)]
+pub enum SymbolResolution {
+    /// Exactly one symbol resolved
+    Resolved(SymbolDef),
+
+    /// Multiple possible matches (e.g. method name)
+    Ambiguous(Vec<SymbolDef>),
+
+    /// No matching symbol found in file
+    NotFound,
+}
+
+/* ============================================================
+   Test Discovery Semantics
+   ============================================================ */
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestMatchKind {
+    Filename,
+    Content,
+    None,
+}
+
+/* ============================================================
+   Test Ecosystem Context
+   ============================================================ */
+
+#[derive(Debug, Clone)]
+pub struct TestContext {
+    pub existing_tests: Vec<PathBuf>,
+    pub recommended_location: PathBuf,
+    pub match_kind: TestMatchKind,
+}
+
+/* ============================================================
+   Derived Testing Hints (Non-binding)
    ============================================================ */
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,65 +164,23 @@ pub enum FailureMode {
 }
 
 /* ============================================================
-   Test Ecosystem Context (CRITICAL)
-   ============================================================ */
-
-#[derive(Debug, Clone)]
-pub struct TestContext {
-    /// Existing test files related to the target (heuristic match).
-    pub existing_tests: Vec<PathBuf>,
-
-    /// Known helpers / fixtures / utilities used in tests.
-    pub helpers: Vec<String>,
-
-    /// Recommended test file location if a new test is required.
-    pub recommended_location: Option<PathBuf>,
-
-    /// What the test should validate against.
-    pub oracle: Option<TestOracle>,
-
-    /// Lightweight input/output expectations.
-    pub io_contract: Option<IOContract>,
-}
-
-#[derive(Debug, Clone)]
-pub enum TestOracle {
-    /// Compare against another symbol (e.g. reference implementation).
-    ReferenceSymbol(String),
-
-    /// Assert an invariant (no crash, finite, shape, etc).
-    Invariant(String),
-
-    /// No usable oracle (sanity-only tests).
-    None,
-}
-
-#[derive(Debug, Clone)]
-pub struct IOContract {
-    pub input_notes: Vec<String>,
-    pub output_notes: Vec<String>,
-}
-
-/* ============================================================
-   Context Slice (What the LLM Sees)
+   Context Slice (DIFF-ANCHORED, EXPLICIT)
    ============================================================ */
 
 #[derive(Debug, Clone)]
 pub struct ContextSlice {
-    /* repository-level constraints */
     pub repo_facts: RepoFactsLite,
+    pub diff_target: DiffTarget,
 
-    /* target under test */
-    pub target: SymbolDef,
+    /// Explicit symbol resolution result
+    pub symbol_resolution: SymbolResolution,
 
-    /* local code structure */
-    pub deps: Vec<SymbolDef>,
+    /// Local structure (ENTIRE file, no truncation)
+    pub local_symbols: Vec<SymbolDef>,
     pub imports: Vec<Import>,
 
-    /* test ecosystem awareness */
-    pub test_context: Option<TestContext>,
+    pub test_context: TestContext,
 
-    /* derived testing semantics (NO logic here) */
     pub execution_model: Option<ExecutionModel>,
     pub test_intent: Option<TestIntent>,
     pub assertion_style: Option<AssertionStyle>,
@@ -187,7 +188,7 @@ pub struct ContextSlice {
 }
 
 /* ============================================================
-   Index Lifecycle
+   Index Lifecycle (Cache + Readiness Only)
    ============================================================ */
 
 #[derive(Debug, Clone)]
@@ -199,14 +200,22 @@ pub enum IndexStatus {
 
 #[derive(Debug, Clone)]
 pub struct IndexHandle {
+    pub repo_root: PathBuf,
+
+    pub code_roots: Arc<RwLock<Vec<PathBuf>>>,
+    pub test_roots: Arc<RwLock<Vec<PathBuf>>>,
+
     pub status: Arc<RwLock<IndexStatus>>,
     pub facts: Arc<RwLock<Option<RepoFacts>>>,
     pub symbols: Arc<RwLock<Option<SymbolIndex>>>,
 }
 
 impl IndexHandle {
-    pub fn new_indexing() -> Self {
+    pub fn new_indexing(repo_root: PathBuf) -> Self {
         Self {
+            repo_root,
+            code_roots: Arc::new(RwLock::new(Vec::new())),
+            test_roots: Arc::new(RwLock::new(Vec::new())),
             status: Arc::new(RwLock::new(IndexStatus::Indexing)),
             facts: Arc::new(RwLock::new(None)),
             symbols: Arc::new(RwLock::new(None)),
@@ -228,14 +237,4 @@ impl IndexHandle {
     pub fn mark_failed(&self, error: impl Into<String>) {
         *self.status.write().unwrap() = IndexStatus::Failed(error.into());
     }
-}
-
-/* ============================================================
-   Incremental Indexing Support
-   ============================================================ */
-
-#[derive(Debug, Clone)]
-pub struct FileHash {
-    pub path: PathBuf,
-    pub hash: u64,
 }

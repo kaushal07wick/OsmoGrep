@@ -2,272 +2,379 @@
 //
 // Context slicing engine.
 //
-// Responsibilities:
-// - select minimal relevant symbols + imports
-// - surface repository testing context
-// - locate existing tests (tests/ only)
-//
-// Guarantees:
-// - NO inference
-// - NO guessing
-// - Deterministic, factual context only
+// GUARANTEES:
+// - Diff is authoritative
+// - Only diff file is parsed
+// - Full-file scan ONLY to resolve symbol
+// - Deterministic
+// - No guessing
 //
 
+use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::testgen::candidate::TestTarget;
+use tree_sitter::{Node, Parser};
+use tree_sitter_python as python;
+use tree_sitter_rust as rust;
+
+use crate::state::DiffAnalysis;
 
 use super::types::{
     AssertionStyle,
     ContextSlice,
+    DiffTarget,
     ExecutionModel,
     FailureMode,
-    IOContract,
+    Import,
     RepoFacts,
     RepoFactsLite,
     SymbolDef,
-    SymbolIndex,
+    SymbolResolution,
     TestContext,
-    TestIntent,
-    TestOracle,
+    TestMatchKind,
 };
 
+/* ============================================================
+   Engine
+   ============================================================ */
+
 pub struct ContextEngine<'a> {
+    repo_root: &'a Path,
     facts: &'a RepoFacts,
-    symbols: &'a SymbolIndex,
+    test_roots: &'a [PathBuf],
 }
 
 impl<'a> ContextEngine<'a> {
-    pub fn new(facts: &'a RepoFacts, symbols: &'a SymbolIndex) -> Self {
-        Self { facts, symbols }
-    }
-
-    pub fn slice_for(&self, target: &TestTarget) -> ContextSlice {
-        match target {
-            TestTarget::Symbol(name) => self.slice_for_symbol(name),
-            TestTarget::Module(name) => self.slice_for_module(name),
-            TestTarget::File(path) => self.slice_for_file(path),
+    pub fn new(
+        repo_root: &'a Path,
+        facts: &'a RepoFacts,
+        _symbols: &'a super::types::SymbolIndex, // intentionally ignored
+        test_roots: &'a [PathBuf],
+    ) -> Self {
+        Self {
+            repo_root,
+            facts,
+            test_roots,
         }
     }
 
-    /* ============================================================
-       Target resolution
-       ============================================================ */
+    /* ========================================================
+       Public entry (DIFF-ONLY)
+       ======================================================== */
 
-    fn slice_for_symbol(&self, name: &str) -> ContextSlice {
-        let symbol = self
-            .symbols
-            .by_symbol
-            .values()
-            .find(|s| s.name == name)
-            .cloned();
+    pub fn slice_from_diff(&self, diff: &DiffAnalysis) -> ContextSlice {
+        let file = PathBuf::from(&diff.file);
+        let abs_file = self.repo_root.join(&file);
 
-        match symbol {
-            Some(s) => self.slice_from_file(s),
-            None => self.empty_slice(name),
-        }
-    }
+        let source = fs::read_to_string(&abs_file).unwrap_or_default();
 
-    fn slice_for_module(&self, module: &str) -> ContextSlice {
-        let path = self
-            .symbols
-            .by_file
-            .keys()
-            .find(|p| {
-                p.file_stem()
-                    .and_then(|s| s.to_str())
-                    == Some(module)
-            })
-            .cloned();
+        let (symbols, imports) = parse_file(&file, &source);
 
-        match path {
-            Some(p) => self.slice_from_file(SymbolDef {
-                name: module.to_string(),
-                file: p,
-                line: 0,
-            }),
-            None => self.empty_slice(module),
-        }
-    }
+        let symbol_resolution =
+            resolve_symbol(diff.symbol.as_deref(), &symbols);
 
-    fn slice_for_file(&self, file: &str) -> ContextSlice {
-        let path = PathBuf::from(file);
-
-        if !self.symbols.by_file.contains_key(&path) {
-            return self.empty_slice(file);
-        }
-
-        let name = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or(file)
-            .to_string();
-
-        self.slice_from_file(SymbolDef {
-            name,
-            file: path,
-            line: 0,
-        })
-    }
-
-    /* ============================================================
-       Core slice builder
-       ============================================================ */
-
-    fn slice_from_file(&self, target: SymbolDef) -> ContextSlice {
-        let mut deps = Vec::new();
-        let mut imports = Vec::new();
-
-        if let Some(file) = self.symbols.by_file.get(&target.file) {
-            deps = file
-                .symbols
-                .iter()
-                .filter(|s| {
-                    s.name != target.name &&
-                    !s.name.starts_with("__")
-                })
-                .take(8)
-                .cloned()
-                .collect();
-
-            imports = file
-                .imports
-                .iter()
-                .filter(|i| !i.module.is_empty())
-                .take(8)
-                .cloned()
-                .collect();
-        }
-
-        let test_context = self.build_test_context(&target);
+        let test_context =
+            self.build_test_context(&file, diff.symbol.as_deref());
 
         ContextSlice {
-            /* repository-level */
             repo_facts: RepoFactsLite::from(self.facts),
 
-            /* target */
-            target,
+            diff_target: DiffTarget {
+                file,
+                symbol: diff.symbol.clone(),
+            },
 
-            /* local code structure */
-            deps,
+            symbol_resolution,
+
+            local_symbols: symbols,
             imports,
 
-            /* test ecosystem */
             test_context,
 
-            /* execution semantics */
-            execution_model: Some(ExecutionModel::Lazy),
-
-            /* deterministic test semantics */
-            test_intent: Some(TestIntent::Regression),
-            assertion_style: Some(AssertionStyle::Sanity),
-            failure_modes: vec![
-                FailureMode::RuntimeError,
-                FailureMode::NaN,
-                FailureMode::Inf,
-                FailureMode::WrongShape,
-            ],
-        }
-    }
-
-    /* ============================================================
-       Test ecosystem context (STRICT)
-       ============================================================ */
-
-    fn build_test_context(&self, target: &SymbolDef) -> Option<TestContext> {
-        let repo_root = self
-            .symbols
-            .by_file
-            .keys()
-            .next()
-            .and_then(|p| p.parent())
-            .map(|p| p.to_path_buf())?;
-
-        let tests_dir = repo_root.join("tests");
-
-        if !tests_dir.exists() {
-            return None;
-        }
-
-        let mut existing_tests = Vec::new();
-        let target_name = &target.name;
-
-        for entry in walkdir::WalkDir::new(&tests_dir)
-            .into_iter()
-            .filter_map(Result::ok)
-            .filter(|e| e.file_type().is_file())
-        {
-            let path = entry.path();
-
-            if path.extension().and_then(|s| s.to_str()) != Some("py") {
-                continue;
-            }
-
-            let content = match std::fs::read_to_string(path) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-
-            // Strict, factual relevance only
-            if content.contains(&format!("{}(", target_name)) {
-                existing_tests.push(path.to_path_buf());
-            }
-        }
-
-        existing_tests.truncate(5);
-
-        Some(TestContext {
-            existing_tests,
-            helpers: Vec::new(),
-            recommended_location: recommend_test_path(&target.file),
-
-            oracle: Some(TestOracle::Invariant(
-                "Must not crash; output must be finite scalar".into(),
-            )),
-
-            io_contract: Some(IOContract {
-                input_notes: vec![
-                    "logits: Tensor[float32] shape (N, C)".into(),
-                    "labels: Tensor[int32] shape (N,)".into(),
-                    "labels may include ignore_index".into(),
-                ],
-                output_notes: vec![
-                    "scalar Tensor".into(),
-                    "finite value".into(),
-                ],
-            }),
-        })
-    }
-
-
-    /* ============================================================
-       Empty fallback
-       ============================================================ */
-
-    fn empty_slice(&self, name: &str) -> ContextSlice {
-        ContextSlice {
-            repo_facts: RepoFactsLite::from(self.facts),
-            target: SymbolDef {
-                name: name.to_string(),
-                file: PathBuf::new(),
-                line: 0,
-            },
-            deps: Vec::new(),
-            imports: Vec::new(),
-            test_context: None,
             execution_model: None,
             test_intent: None,
             assertion_style: None,
             failure_modes: Vec::new(),
         }
     }
+
+    /* ========================================================
+       Test discovery (STRICT, DIFF-DRIVEN)
+       ======================================================== */
+
+    fn build_test_context(
+        &self,
+        src_file: &Path,
+        symbol: Option<&str>,
+    ) -> TestContext {
+        let candidates = find_candidate_tests(self.test_roots, src_file);
+
+        if let Some(sym) = symbol {
+            let hits = match_symbol_in_tests(&candidates, sym);
+            if !hits.is_empty() {
+                return TestContext {
+                    existing_tests: hits.clone(),
+                    recommended_location: hits[0].clone(),
+                    match_kind: TestMatchKind::Content,
+                };
+            }
+
+            return TestContext {
+                existing_tests: Vec::new(),
+                recommended_location: default_test_path(
+                    self.repo_root,
+                    src_file,
+                    Some(sym),
+                ),
+                match_kind: TestMatchKind::None,
+            };
+        }
+
+        if !candidates.is_empty() {
+            return TestContext {
+                existing_tests: candidates.clone(),
+                recommended_location: candidates[0].clone(),
+                match_kind: TestMatchKind::Filename,
+            };
+        }
+
+        TestContext {
+            existing_tests: Vec::new(),
+            recommended_location: default_test_path(
+                self.repo_root,
+                src_file,
+                None,
+            ),
+            match_kind: TestMatchKind::None,
+        }
+    }
 }
 
 /* ============================================================
-   Helpers
+   File parsing (AUTHORITATIVE)
    ============================================================ */
 
-fn recommend_test_path(src: &Path) -> Option<PathBuf> {
-    let filename = src.file_stem()?.to_str()?;
-    Some(PathBuf::from("tests").join(format!("test_{}.py", filename)))
+fn parse_file(
+    file: &Path,
+    source: &str,
+) -> (Vec<SymbolDef>, Vec<Import>) {
+    let mut parser = Parser::new();
+
+    let lang = match file.extension().and_then(|s| s.to_str()) {
+        Some("py") => python::language(),
+        Some("rs") => rust::language(),
+        _ => return (Vec::new(), Vec::new()),
+    };
+
+    if parser.set_language(&lang).is_err() {
+        return (Vec::new(), Vec::new());
+    }
+
+    let Some(tree) = parser.parse(source, None) else {
+        return (Vec::new(), Vec::new());
+    };
+
+    let mut symbols = Vec::new();
+    let mut imports = Vec::new();
+
+    walk(
+        tree.root_node(),
+        file,
+        source,
+        &mut symbols,
+        &mut imports,
+        None,
+    );
+
+    (symbols, imports)
+}
+
+fn walk(
+    node: Node,
+    file: &Path,
+    src: &str,
+    symbols: &mut Vec<SymbolDef>,
+    imports: &mut Vec<Import>,
+    current_class: Option<String>,
+) {
+    match node.kind() {
+        "class_definition" => {
+            if let Some(n) = node.child_by_field_name("name") {
+                if let Ok(name) = n.utf8_text(src.as_bytes()) {
+                    let cls = name.to_string();
+                    symbols.push(SymbolDef {
+                        name: cls.clone(),
+                        file: file.to_path_buf(),
+                        line: node.start_position().row + 1,
+                    });
+
+                    for i in 0..node.child_count() {
+                        if let Some(c) = node.child(i) {
+                            walk(
+                                c,
+                                file,
+                                src,
+                                symbols,
+                                imports,
+                                Some(cls.clone()),
+                            );
+                        }
+                    }
+                    return;
+                }
+            }
+        }
+
+        "function_definition" => {
+            if let Some(n) = node.child_by_field_name("name") {
+                if let Ok(name) = n.utf8_text(src.as_bytes()) {
+                    let full = match &current_class {
+                        Some(c) => format!("{c}.{name}"),
+                        None => name.to_string(),
+                    };
+
+                    symbols.push(SymbolDef {
+                        name: full,
+                        file: file.to_path_buf(),
+                        line: node.start_position().row + 1,
+                    });
+                }
+            }
+        }
+
+        "import_statement" | "import_from_statement" => {
+            if let Ok(text) = node.utf8_text(src.as_bytes()) {
+                imports.push(Import {
+                    module: text.trim().to_string(),
+                    names: Vec::new(),
+                });
+            }
+        }
+
+        _ => {}
+    }
+
+    for i in 0..node.child_count() {
+        if let Some(c) = node.child(i) {
+            walk(
+                c,
+                file,
+                src,
+                symbols,
+                imports,
+                current_class.clone(),
+            );
+        }
+    }
+}
+
+/* ============================================================
+   Symbol resolution (STRICT)
+   ============================================================ */
+
+fn resolve_symbol(
+    target: Option<&str>,
+    symbols: &[SymbolDef],
+) -> SymbolResolution {
+    let Some(sym) = target else {
+        return SymbolResolution::NotFound;
+    };
+
+    let matches: Vec<_> = symbols
+        .iter()
+        .cloned()
+        .filter(|s| s.name == sym || s.name.ends_with(&format!(".{sym}")))
+        .collect();
+
+    match matches.len() {
+        0 => SymbolResolution::NotFound,
+        1 => SymbolResolution::Resolved(matches[0].clone()),
+        _ => SymbolResolution::Ambiguous(matches),
+    }
+}
+
+/* ============================================================
+   Test helpers (PURE FUNCTIONS)
+   ============================================================ */
+
+fn find_candidate_tests(
+    test_roots: &[PathBuf],
+    src_file: &Path,
+) -> Vec<PathBuf> {
+    let stem = src_file
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+
+    let mut out = Vec::new();
+
+    for root in test_roots {
+        for entry in walkdir::WalkDir::new(root)
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_type().is_file())
+        {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("py") {
+                continue;
+            }
+
+            let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            if name.contains(stem) || name.starts_with("test_") {
+                out.push(path.to_path_buf());
+            }
+        }
+    }
+
+    out
+}
+
+fn match_symbol_in_tests(
+    files: &[PathBuf],
+    symbol: &str,
+) -> Vec<PathBuf> {
+    let variants = symbol_variants(symbol);
+
+    files
+        .iter()
+        .filter(|p| {
+            fs::read_to_string(p)
+                .map(|src| variants.iter().any(|v| src.contains(v)))
+                .unwrap_or(false)
+        })
+        .cloned()
+        .collect()
+}
+
+fn symbol_variants(symbol: &str) -> Vec<String> {
+    let base = symbol.split('.').last().unwrap_or(symbol);
+
+    vec![
+        format!("def {}", base),
+        format!("class {}", base),
+        format!("test_{}", base),
+        format!("test_{}", symbol.replace('.', "_")),
+    ]
+}
+
+fn default_test_path(
+    repo_root: &Path,
+    src_file: &Path,
+    symbol: Option<&str>,
+) -> PathBuf {
+    let root = repo_root.join("tests");
+
+    let name = symbol
+        .map(|s| format!("test_{s}.py"))
+        .unwrap_or_else(|| {
+            format!(
+                "test_{}.py",
+                src_file
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("unknown")
+            )
+        });
+
+    root.join(name)
 }

@@ -1,20 +1,15 @@
 //! resolve.rs
 //!
-//! Test resolution engine for Osmogrep.
+//! Test resolution engine.
 //!
 //! Responsibilities:
-//! - Determine whether a test already exists for a given TestCandidate
-//! - Classify resolution outcome as Found / Ambiguous / NotFound
+//! - Detect existing tests for a TestCandidate
+//! - Classify as Found / Ambiguous / NotFound
 //!
 //! Guarantees:
-//! - Read-only access
-//! - Deterministic results
-//!
-//! Non-responsibilities:
-//! - No test generation
-//! - No filesystem crawling
-//! - No AST parsing
-//! - No UI logic
+//! - Read-only
+//! - Deterministic
+//! - No crawling beyond provided TestContext
 
 use crate::testgen::candidate::TestCandidate;
 use crate::context::types::TestContext;
@@ -46,10 +41,7 @@ pub fn resolve_test(
         None => return TestResolution::NotFound,
     };
 
-    match resolve_from_context(c, ctx) {
-        Some(res) => res,
-        None => TestResolution::NotFound,
-    }
+    resolve_from_context(c, ctx)
 }
 
 /* ============================================================
@@ -59,36 +51,41 @@ pub fn resolve_test(
 fn resolve_from_context(
     c: &TestCandidate,
     ctx: &TestContext,
-) -> Option<TestResolution> {
-    let symbol = c.symbol.as_ref()?;
+) -> TestResolution {
+    let symbol = match &c.symbol {
+        Some(s) => s,
+        None => return TestResolution::NotFound,
+    };
 
-    let mut hits = Vec::new();
+    let test_fn = format!("test_{}", symbol);
+    let mut symbol_hits = Vec::new();
 
     for path in &ctx.existing_tests {
-        let content = std::fs::read_to_string(path).ok()?;
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => continue, // ✅ never abort resolution
+        };
 
-        // pytest / unittest style
-        let fn_name = format!("test_{}", symbol);
-
-        if content.contains(&fn_name) {
-            return Some(TestResolution::Found {
+        // Strong signal: explicit test function
+        if content.contains(&test_fn) {
+            return TestResolution::Found {
                 file: path.display().to_string(),
-                test_fn: Some(fn_name),
-            });
+                test_fn: Some(test_fn),
+            };
         }
 
-        // fallback: symbol referenced
+        // Weak signal: symbol referenced
         if content.contains(symbol) {
-            hits.push(path.display().to_string());
+            symbol_hits.push(path.display().to_string());
         }
     }
 
-    match hits.len() {
-        0 => None,
-        1 => Some(TestResolution::Found {
-            file: hits[0].clone(),
+    match symbol_hits.len() {
+        0 => TestResolution::NotFound,
+        1 => TestResolution::Found {
+            file: symbol_hits[0].clone(),
             test_fn: None,
-        }),
-        _ => Some(TestResolution::Ambiguous(hits)),
+        },
+        _ => TestResolution::Ambiguous(symbol_hits),
     }
 }

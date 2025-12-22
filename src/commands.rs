@@ -15,6 +15,7 @@
 use std::time::Instant;
 
 use crate::context::ContextEngine;
+use crate::context::types::IndexStatus;
 use crate::detectors::diff_analyzer::analyze_diff;
 use crate::git;
 use crate::logger::{log, log_diff_analysis};
@@ -215,38 +216,41 @@ fn agent_run(state: &mut AgentState, cmd: &str) {
         }
     };
 
-    // -------- READ-ONLY SCOPE --------
-    let candidates = {
-        let facts_guard = index.facts.read().unwrap();
-        let symbols_guard = index.symbols.read().unwrap();
+    /* ---------- ensure index ready (DROP BORROW EARLY) ---------- */
 
-        let facts = facts_guard.as_ref();
-        let symbols = symbols_guard.as_ref();
+    let index_status = {
+        index.status.read().unwrap().clone()
+    };
 
-        if facts.is_none() || symbols.is_none() {
+    match index_status {
+        IndexStatus::Ready => {}
+        IndexStatus::Indexing => {
+            log(state, LogLevel::Warn, "Repository index still building.");
             return;
         }
+        IndexStatus::Failed(err) => {
+            log(
+                state,
+                LogLevel::Error,
+                format!("Repository indexing failed: {}", err),
+            );
+            return;
+        }
+    }
 
-        let engine = ContextEngine::new(
-            facts.unwrap(),
-            symbols.unwrap(),
+    /* ---------- generate candidates (DIFF-ONLY) ---------- */
+
+    let candidates = generate_test_candidates(std::slice::from_ref(&diff));
+
+    if candidates.is_empty() {
+        log(
+            state,
+            LogLevel::Warn,
+            "No test candidates generated for this change.",
         );
+        return;
+    }
 
-        let target = match &diff.symbol {
-            Some(sym) => TestTarget::Symbol(sym.clone()),
-            None => TestTarget::File(diff.file.clone()),
-        };
-
-        let slice = engine.slice_for(&target);
-
-        generate_test_candidates(
-            std::slice::from_ref(&diff),
-            |c| resolve_test(c, slice.test_context.as_ref()),
-        )
-    };
-    // -------- BORROWS DROPPED HERE --------
-
-    // -------- MUTATION SAFE --------
     state.context.test_candidates = candidates;
 
     log(
@@ -257,6 +261,8 @@ fn agent_run(state: &mut AgentState, cmd: &str) {
             state.context.test_candidates.len()
         ),
     );
+
+    /* ---------- advance lifecycle ---------- */
 
     state.lifecycle.phase = Phase::ExecuteAgent;
 }
