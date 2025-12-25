@@ -360,6 +360,7 @@
 -  pub fn history_prev(&mut self)
 -  pub fn history_next(&mut self)
 -  pub fn commit_input(&mut self) -> String
+-  pub fn on_logs_appended(&mut self)
 -  pub fn update_spinner(&mut self)
 
 **Calls**

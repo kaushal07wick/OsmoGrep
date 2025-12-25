@@ -166,7 +166,6 @@ fn init_state() -> AgentState {
             focus: Focus::Input,
 
             exec_scroll: 0,
-            auto_scroll: true,
             active_spinner: None,
             spinner_started_at: None,
             spinner_elapsed: None,
@@ -295,29 +294,37 @@ fn handle_exec_keys(state: &mut AgentState, k: crossterm::event::KeyEvent) {
     }
 
     match k.code {
-    KeyCode::Up | KeyCode::PageUp => {
-        state.ui.auto_scroll = false;
-        state.ui.exec_scroll = match k.code {
-            KeyCode::Up => state.ui.exec_scroll.saturating_sub(1),
-            _ => state.ui.exec_scroll.saturating_sub(10),
-        };
+        KeyCode::Up => {
+            state.ui.exec_scroll = state.ui.exec_scroll.saturating_sub(1);
+        }
+
+        KeyCode::PageUp => {
+            state.ui.exec_scroll = state.ui.exec_scroll.saturating_sub(10);
+        }
+
+        KeyCode::Down => {
+            state.ui.exec_scroll = state.ui.exec_scroll.saturating_add(1);
+
+            // if user hits bottom → re-enable follow
+            if state.ui.exec_scroll >= state.logs.len().saturating_sub(1) {
+                state.ui.exec_scroll = usize::MAX;
+            }
+        }
+
+        KeyCode::PageDown => {
+            state.ui.exec_scroll = state.ui.exec_scroll.saturating_add(10);
+
+            if state.ui.exec_scroll >= state.logs.len().saturating_sub(1) {
+                state.ui.exec_scroll = usize::MAX;
+            }
+        }
+
+        KeyCode::End => {
+            state.ui.exec_scroll = usize::MAX;
+        }
+
+        _ => {}
     }
-
-    KeyCode::Down | KeyCode::PageDown => {
-        state.ui.exec_scroll = match k.code {
-            KeyCode::Down => state.ui.exec_scroll.saturating_add(1),
-            _ => state.ui.exec_scroll.saturating_add(10),
-        };
-    }
-
-    KeyCode::End => {
-        state.ui.auto_scroll = true;
-        state.ui.exec_scroll = usize::MAX;
-    }
-
-    _ => {}
-}
-
 }
 
 

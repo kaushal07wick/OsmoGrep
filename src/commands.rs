@@ -169,13 +169,9 @@ fn list_changes(state: &mut AgentState) {
 
 fn clear_logs(state: &mut AgentState) {
     state.logs.clear();
-    state.ui.exec_scroll = 0;
-    state.ui.auto_scroll = true;
+    state.ui.exec_scroll = usize::MAX; // follow bottom
     state.ui.dirty = true;
 }
-
-
-
 
 fn view_change(state: &mut AgentState, cmd: &str) {
     let idx = match cmd["changes ".len()..].trim().parse::<usize>() {

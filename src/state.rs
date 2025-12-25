@@ -149,14 +149,13 @@ pub enum LogLevel {
     Error,
 }
 
-///timestamped log entries
 #[derive(Clone, Debug)]
 pub struct LogLine {
     pub level: LogLevel,
     pub text: String,
     pub at: Instant,
 }
-///fixed size rolling buffer for logs
+
 pub struct LogBuffer {
     logs: VecDeque<LogLine>,
 }
@@ -167,12 +166,9 @@ impl LogBuffer {
             logs: VecDeque::with_capacity(MAX_LOGS),
         }
     }
-     pub fn len(&self) -> usize {
-        self.logs.len()
-    }
 
-    pub fn is_empty(&self) -> bool {
-        self.logs.is_empty()
+    pub fn len(&self) -> usize {
+        self.logs.len()
     }
 
     pub fn clear(&mut self) {
@@ -195,7 +191,6 @@ impl LogBuffer {
         self.logs.iter()
     }
 }
-
 /// mutable state tracking the agent lifecylce
 pub struct LifecycleState {
     pub phase: Phase,
@@ -231,7 +226,6 @@ pub struct UiState {
     pub diff_side_by_side: bool,
     pub focus: Focus,
     pub exec_scroll: usize,
-    pub auto_scroll: bool,
     pub active_spinner: Option<String>,
     pub spinner_started_at: Option<Instant>,
     pub spinner_elapsed: Option<Duration>,
@@ -328,6 +322,12 @@ impl AgentState {
 
     pub fn push_log(&mut self, level: LogLevel, text: impl Into<String>) {
         crate::logger::log(self, level, text);
+    }
+
+    pub fn on_logs_appended(&mut self) {
+        if self.ui.exec_scroll == usize::MAX {
+            self.ui.exec_scroll = usize::MAX;
+        }
     }
 
     pub fn start_spinner(&mut self, text: impl Into<String>) {

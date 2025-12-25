@@ -178,20 +178,22 @@ pub fn render_execution(
     }
 
     /* ================= SCROLL ================= */
-    let max_scroll = lines.len().saturating_sub(height);
+    let content_len = lines.len();
+    let max_scroll = content_len.saturating_sub(height);
 
-    let scroll = if state.ui.auto_scroll {
+    let scroll = if state.ui.exec_scroll == usize::MAX {
+        // follow tail
         max_scroll
     } else {
         state.ui.exec_scroll.min(max_scroll)
     };
-
 
     let visible = lines
         .into_iter()
         .skip(scroll)
         .take(height)
         .collect::<Vec<_>>();
+
 
     /* ================= RENDER ================= */
     f.render_widget(
