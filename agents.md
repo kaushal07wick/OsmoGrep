@@ -18,37 +18,76 @@
 - fn close_view(state: &mut AgentState)
 - pub fn update_command_hints(state: &mut AgentState)
 
+**Calls**
+- IndexStatus::Failed
+- Instant::now
+- git::list_branches
+- slice::from_ref
+
 ### src/context/engine.rs
 
 **Functions**
--  pub fn new(facts: &'a RepoFacts, symbols: &'a SymbolIndex) -> Self
--  pub fn slice_for(&self, target: &TestTarget) -> ContextSlice
--  fn slice_for_symbol(&self, name: &str) -> ContextSlice
--  fn slice_for_module(&self, module: &str) -> ContextSlice
--  fn slice_for_file(&self, file: &str) -> ContextSlice
--  fn slice_from_file(&self, target: SymbolDef) -> ContextSlice
--  fn empty_slice(&self, name: &str) -> ContextSlice
+-  pub fn new( repo_root: &'a Path, facts: &'a RepoFacts, _symbols: &'a super::types::SymbolIndex, // intentionally ignored test_roots: &'a [PathBuf], ) -> Self
+-  pub fn slice_from_diff(&self, diff: &DiffAnalysis) -> ContextSlice
+-  fn build_test_context( &self, src_file: &Path, symbol: Option<&str>, ) -> TestContext
+- fn parse_file( file: &Path, source: &str, ) -> (Vec<SymbolDef>, Vec<Import>)
+- fn walk( node: Node, file: &Path, src: &str, symbols: &mut Vec<SymbolDef>, imports: &mut Vec<Import>, current_class: Option<String>, )
+- fn resolve_symbol( target: Option<&str>, symbols: &[SymbolDef], ) -> SymbolResolution
+- fn find_candidate_tests( test_roots: &[PathBuf], src_file: &Path, ) -> Vec<PathBuf>
+- fn match_symbol_in_tests( files: &[PathBuf], symbol: &str, ) -> Vec<PathBuf>
+- fn symbol_variants(symbol: &str) -> Vec<String>
+- fn default_test_path( repo_root: &Path, src_file: &Path, symbol: Option<&str>, ) -> PathBuf
+
+**Calls**
+- Parser::new
+- PathBuf::from
+- RepoFactsLite::from
+- SymbolResolution::Ambiguous
+- SymbolResolution::Resolved
+- Vec::new
+- WalkDir::new
+- fs::read_to_string
+- python::language
+- rust::language
 
 ### src/context/index.rs
 
 **Functions**
 - pub fn spawn_repo_indexer(repo_root: PathBuf) -> IndexHandle
 - fn extract_repo_facts(repo_root: &Path) -> RepoFacts
-- fn build_symbol_index(repo_root: &Path) -> SymbolIndex
-- fn index_file(path: &Path, kind: LanguageKind) -> Option<FileSymbols>
-- fn walk_tree( kind: LanguageKind, cursor: &mut TreeCursor, path: &Path, src: &str, symbols: &mut Vec<SymbolDef>, imports: &mut Vec<Import>, )
-- fn extract_named_symbol( node: tree_sitter::Node, path: &Path, src: &str, symbols: &mut Vec<SymbolDef>, )
+- fn detect_code_roots(repo_root: &Path) -> Vec<PathBuf>
+- fn build_symbol_index( repo_root: &Path, code_roots: &[PathBuf], test_roots: &[PathBuf], ) -> SymbolIndex
+- fn index_file( abs_path: &Path, rel_path: &Path, kind: LanguageKind, ) -> Option<FileSymbols>
+- fn walk_node( kind: LanguageKind, node: Node, file: &Path, src: &str, symbols: &mut Vec<SymbolDef>, imports: &mut Vec<Import>, current_class: Option<String>, )
+
+**Calls**
+- HashMap::new
+- IndexHandle::new_indexing
+- Parser::new
+- Vec::new
+- WalkDir::new
+- fs::read_to_string
+- python::language
+- rust::language
+- thread::spawn
 
 ### src/context/mod.rs
 
 **Functions**
 
+**Calls**
+
 ### src/context/types.rs
 
 **Functions**
 -  pub fn from(facts: &RepoFacts) -> Self
--  pub fn new_indexing() -> Self
--  pub fn mark_failed(&self, error: impl Into<String>)
+-  pub fn new_indexing(repo_root: PathBuf) -> Self
+
+**Calls**
+- Arc::new
+- IndexStatus::Failed
+- RwLock::new
+- Vec::new
 
 ### src/detectors/ast/ast.rs
 
@@ -63,14 +102,32 @@
 - fn symbol_name(node: Node, source: &str) -> Option<String>
 - pub fn find_symbol_node<'a>( node: Node<'a>, source: &str, symbol: &str, ) -> Option<Node<'a>>
 
+**Calls**
+- Parser::new
+- RefCell::new
+- Vec::new
+- fs::read_to_string
+- git::show_head
+- git::show_index
+- tree_sitter_python::language
+- tree_sitter_rust::language
+
 ### src/detectors/ast/mod.rs
 
 **Functions**
+
+**Calls**
 
 ### src/detectors/ast/symboldelta.rs
 
 **Functions**
 - pub fn compute_symbol_delta( baseline: DiffBaseline, base_branch: &str, file: &str, symbol: &str, ) -> Option<SymbolDelta>
+
+**Calls**
+- git::base_commit
+- git::show_file_at
+- git::show_head
+- git::show_index
 
 ### src/detectors/diff_analyzer.rs
 
@@ -81,12 +138,23 @@
 - fn detect_surface(file: &str, hunks: &str) -> ChangeSurface
 - fn should_analyze(file: &str) -> bool
 
+**Calls**
+- String::from_utf8_lossy
+- String::new
+- Vec::new
+- git::detect_base_branch
+- git::diff_cached
+- mem::take
+
 ### src/detectors/framework.rs
 
 **Functions**
 - pub fn detect_framework(root: &Path) -> TestFramework
 - fn package_uses_jest(root: &Path) -> bool
 -  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result
+
+**Calls**
+- fs::read_to_string
 
 ### src/detectors/language.rs
 
@@ -96,18 +164,30 @@
 - fn is_ignored(path: &Path) -> bool
 -  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result
 
+**Calls**
+- WalkDir::new
+
 ### src/detectors/mod.rs
 
 **Functions**
+
+**Calls**
 
 ### src/executor/mod.rs
 
 **Functions**
 
+**Calls**
+
 ### src/executor/run.rs
 
 **Functions**
 - pub fn run_single_test(cmd: &[&str]) -> TestResult
+
+**Calls**
+- Command::new
+- String::from_utf8_lossy
+- String::new
 
 ### src/git.rs
 
@@ -120,14 +200,28 @@
 - pub fn base_commit(base_branch: &str) -> Option<String>
 - pub fn show_file_at(commit: &str, path: &str) -> Option<String>
 
+**Calls**
+- Command::new
+- Path::new
+- String::from_utf8_lossy
+
 ### src/llm/mod.rs
 
 **Functions**
+
+**Calls**
 
 ### src/llm/ollama.rs
 
 **Functions**
 -  pub fn run(prompt: LlmPrompt) -> io::Result<String>
+
+**Calls**
+- Command::new
+- Error::new
+- PathBuf::from
+- Stdio::piped
+- String::from_utf8_lossy
 
 ### src/llm/orchestrator.rs
 
@@ -135,18 +229,42 @@
 - pub fn run_llm_test_flow( tx: Sender<AgentEvent>, cancel_flag: Arc<AtomicBool>, context_index: IndexHandle, candidate: TestCandidate, )
 - fn debug_context(ctx: &ContextSlice) -> String
 
+**Calls**
+- AgentEvent::Failed
+- AgentEvent::Log
+- ContextEngine::new
+- Duration::from_millis
+- IndexStatus::Failed
+- String::new
+- SymbolResolution::Ambiguous
+- SymbolResolution::Resolved
+- fs::write
+- thread::sleep
+- thread::spawn
+
 ### src/llm/prompt.rs
 
 **Functions**
 - pub fn build_prompt( candidate: &TestCandidate, resolution: &TestResolution, context: &ContextSlice, ) -> LlmPrompt
-- fn user_prompt( c: &TestCandidate, resolution: &TestResolution, ctx: &ContextSlice, ) -> String
-- fn risk_constraints(risk: &RiskLevel) -> &str
-- fn test_type_constraints(tt: &TestType) -> &str
+- fn user_prompt( c: &TestCandidate, _resolution: &TestResolution, ctx: &ContextSlice, ) -> String
+
+**Calls**
+- String::new
+- SymbolResolution::Ambiguous
+- SymbolResolution::Resolved
 
 ### src/llm_py/ollama.py
 
 **Functions**
 - def main()
+
+**Calls**
+- prompt.strip
+- stderr.write
+- stdin.read
+- stdout.write
+- subprocess.run
+- sys.exit
 
 ### src/logger.rs
 
@@ -154,6 +272,8 @@
 - pub fn log( state: &mut AgentState, level: LogLevel, msg: impl Into<String>, )
 - pub fn log_diff_analysis(state: &mut AgentState)
 -  fn as_str(&self) -> &'static str
+
+**Calls**
 
 ### src/machine.rs
 
@@ -167,7 +287,20 @@
 - fn rollback_agent(state: &mut AgentState)
 - fn ensure_agent_branch(state: &mut AgentState) -> String
 - fn return_to_base_branch(state: &mut AgentState)
+- fn assert_repo_root() -> Result<PathBuf, String>
 - fn attach_summaries(state: &mut AgentState)
+
+**Calls**
+- context::spawn_repo_indexer
+- env::current_dir
+- git::checkout
+- git::create_agent_branch
+- git::current_branch
+- git::delete_branch
+- git::detect_base_branch
+- git::find_existing_agent
+- git::is_git_repo
+- git::working_tree_dirty
 
 ### src/main.rs
 
@@ -183,6 +316,30 @@
 - fn handle_mouse( state: &mut AgentState, m: crossterm::event::MouseEvent, input_rect: ratatui::layout::Rect, diff_rect: ratatui::layout::Rect, exec_rect: ratatui::layout::Rect, )
 - fn teardown_terminal( terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, ) -> Result<(), Box<dyn Error>>
 
+**Calls**
+- AgentEvent::Failed
+- AgentEvent::GeneratedTest
+- AgentEvent::Log
+- AgentEvent::SpinnerStart
+- AgentEvent::TestFinished
+- Arc::new
+- AtomicBool::new
+- CrosstermBackend::new
+- Duration::from_millis
+- Event::Key
+- Event::Mouse
+- Instant::now
+- KeyCode::Char
+- LogBuffer::new
+- MouseEventKind::Down
+- String::new
+- Terminal::new
+- Vec::new
+- event::poll
+- event::read
+- io::stdout
+- ui::draw_ui
+
 ### src/state.rs
 
 **Functions**
@@ -194,10 +351,16 @@
 -  pub fn commit_input(&mut self) -> String
 -  pub fn update_spinner(&mut self)
 
+**Calls**
+- Duration::from_secs
+- Instant::now
+- VecDeque::with_capacity
+
 ### src/testgen/candidate.rs
 
 **Functions**
--  pub fn compute_id( file: &str, symbol: &Option<String>, decision: &TestDecision, ) -> String
+
+**Calls**
 
 ### src/testgen/file.rs
 
@@ -213,28 +376,48 @@
 - fn indent(s: &str, spaces: usize) -> String
 - fn sanitize(file: &str, symbol: &Option<String>) -> String
 
+**Calls**
+- Error::new
+- OpenOptions::new
+- PathBuf::from
+- TestResolution::Ambiguous
+- fs::create_dir_all
+- fs::read_to_string
+
 ### src/testgen/generator.rs
 
 **Functions**
 - fn normalize_source(file: &str, src: &str) -> String
 - fn normalize_rust(src: &str) -> String
 - fn normalize_python(src: &str) -> String
-- fn is_ui_or_glue_code(d: &DiffAnalysis) -> bool
 - fn is_test_worthy(d: &DiffAnalysis) -> bool
 - fn decide_test(d: &DiffAnalysis) -> TestDecision
 - fn priority(d: &DiffAnalysis) -> u8
-- pub fn generate_test_candidates( diffs: &[DiffAnalysis], resolve: impl Fn(&TestCandidate) -> TestResolution, ) -> Vec<TestCandidate>
+- pub fn generate_test_candidates( diffs: &[DiffAnalysis], ) -> Vec<TestCandidate>
+
+**Calls**
+- String::new
+- TestTarget::File
+- Vec::new
+- cmp::Reverse
+- summarizer::summarize
 
 ### src/testgen/mod.rs
 
 **Functions**
 
+**Calls**
+
 ### src/testgen/resolve.rs
 
 **Functions**
-- pub fn resolve_test( language: &Language, c: &TestCandidate, ) -> TestResolution
-- fn resolve_rust_test(c: &TestCandidate) -> TestResolution
-- fn resolve_python_test(c: &TestCandidate) -> TestResolution
+- pub fn resolve_test( c: &TestCandidate, ctx: Option<&TestContext>, ) -> TestResolution
+- fn resolve_from_context( c: &TestCandidate, ctx: &TestContext, ) -> TestResolution
+
+**Calls**
+- TestResolution::Ambiguous
+- Vec::new
+- fs::read_to_string
 
 ### src/testgen/summarizer.rs
 
@@ -244,21 +427,61 @@
 - fn failure_statement(d: &DiffAnalysis) -> String
 - fn infer_risk(d: &DiffAnalysis) -> RiskLevel
 
+**Calls**
+
 ### src/ui/diff.rs
 
 **Functions**
 - pub fn render_side_by_side( f: &mut ratatui::Frame, area: Rect, delta: &SymbolDelta, state: &AgentState, )
+
+**Calls**
+- Block::default
+- Constraint::Percentage
+- Layout::default
+- Line::from
+- Paragraph::new
+- Span::raw
+- Span::styled
+- Style::default
+- TextDiff::from_lines
+- Vec::with_capacity
 
 ### src/ui/draw.rs
 
 **Functions**
 - pub fn draw_ui<B: Backend>( terminal: &mut Terminal<B>, state: &AgentState, ) -> io::Result<(Rect, Rect, Rect)>
 
+**Calls**
+- Block::default
+- Constraint::Length
+- Constraint::Min
+- Layout::default
+- Line::from
+- Paragraph::new
+- Rect::default
+- Span::styled
+- Style::default
+- diff::render_side_by_side
+- execution::render_execution
+- panels::render_panel
+- status::render_status
+
 ### src/ui/execution.rs
 
 **Functions**
 - fn parse_change_line(s: &str) -> Option<(String, String, Option<String>)>
 - pub fn render_execution( f: &mut ratatui::Frame, area: Rect, state: &AgentState, )
+
+**Calls**
+- Block::default
+- Duration::from_secs
+- Instant::now
+- Line::from
+- Paragraph::new
+- Span::raw
+- Span::styled
+- Style::default
+- Vec::new
 
 ### src/ui/helpers.rs
 
@@ -272,9 +495,15 @@
 - pub fn hclip(s: &str, x: usize, width: usize) -> &str
 - pub fn surface_color(surface: &ChangeSurface) -> Color
 
+**Calls**
+- Span::styled
+- Style::default
+
 ### src/ui/mod.rs
 
 **Functions**
+
+**Calls**
 
 ### src/ui/panels.rs
 
@@ -284,6 +513,15 @@
 - fn render_test_result_panel( f: &mut ratatui::Frame, area: Rect, state: &AgentState, output: &str, passed: bool, )
 - fn render_scrollable_block( f: &mut ratatui::Frame, area: Rect, scroll: usize, lines: Vec<Line>, title: &str, )
 
+**Calls**
+- Block::default
+- Line::from
+- Paragraph::new
+- Span::raw
+- Span::styled
+- Style::default
+- Vec::new
+
 ### src/ui/status.rs
 
 **Functions**
@@ -291,4 +529,33 @@
 - fn render_header(f: &mut ratatui::Frame, area: Rect)
 - fn render_status_block( f: &mut ratatui::Frame, area: Rect, state: &AgentState, )
 - fn render_context_block( f: &mut ratatui::Frame, area: Rect, state: &AgentState, )
+
+**Calls**
+- Block::default
+- Constraint::Length
+- Constraint::Percentage
+- IndexStatus::Failed
+- Layout::default
+- Line::from
+- Paragraph::new
+- Span::raw
+- Span::styled
+- Style::default
+- Vec::new
+- Vec::with_capacity
+
+## Global Hotspots
+
+### Thread creation
+- src/context/index.rs → thread::spawn
+- src/llm/orchestrator.rs → thread::spawn
+
+### Process execution
+- src/executor/run.rs → Command::new
+- src/git.rs → Command::new
+- src/llm/ollama.rs → Command::new
+
+### AgentEvent fan-out
+- src/llm/orchestrator.rs
+- src/main.rs
 

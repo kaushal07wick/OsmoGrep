@@ -51,5 +51,49 @@ OUT="agents.md"
     esac
 
     echo ""
+    echo "**Calls**"
+
+    case "$file" in
+      *.rs)
+        grep -oE "[A-Za-z_][A-Za-z0-9_]*::[A-Za-z_][A-Za-z0-9_]*\s*\(" "$file" \
+          | sed 's/[[:space:]]*(//' \
+          | sort -u \
+          | sed 's/^/- /' || true
+        ;;
+      *.py)
+        grep -oE "[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*\s*\(" "$file" \
+          | sed 's/[[:space:]]*(//' \
+          | sort -u \
+          | sed 's/^/- /' || true
+        ;;
+    esac
+
+    echo ""
   done
+
+  # ==========================================================
+  # Global Hotspots (ONE TIME, AFTER FILE LOOP)
+  # ==========================================================
+
+  echo "## Global Hotspots"
+  echo ""
+
+  echo "### Thread creation"
+  grep -R "thread::spawn" "$ROOT" 2>/dev/null \
+    | awk -F: '{print "- " $1 " → thread::spawn"}' \
+    | sort -u
+  echo ""
+
+  echo "### Process execution"
+  grep -R "Command::new" "$ROOT" 2>/dev/null \
+    | awk -F: '{print "- " $1 " → Command::new"}' \
+    | sort -u
+  echo ""
+
+  echo "### AgentEvent fan-out"
+  grep -R "AgentEvent::" "$ROOT" 2>/dev/null \
+    | awk -F: '{print "- " $1}' \
+    | sort -u
+  echo ""
+
 } > "$OUT"
