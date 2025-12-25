@@ -22,10 +22,6 @@ use crate::ui::helpers::{
     keyword_style,
 };
 
-/* ============================================================
-   Public API
-   ============================================================ */
-
 pub fn render_status(
     f: &mut ratatui::Frame,
     area: Rect,
@@ -40,8 +36,6 @@ pub fn render_status(
         .split(area);
 
     render_header(f, chunks[0]);
-
-    // ⬇️ split the STATUS area horizontally
     let status_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -54,10 +48,6 @@ pub fn render_status(
     render_context_block(f, status_chunks[1], state);
 }
 
-
-/* ============================================================
-   Header
-   ============================================================ */
 
 fn render_header(f: &mut ratatui::Frame, area: Rect) {
     const HEADER: [&str; 6] = [
@@ -89,10 +79,6 @@ fn render_header(f: &mut ratatui::Frame, area: Rect) {
 }
 
 
-/* ============================================================
-   Status block
-   ============================================================ */
-
 fn render_status_block(
     f: &mut ratatui::Frame,
     area: Rect,
@@ -101,10 +87,6 @@ fn render_status_block(
     let (sym, label, phase_color) = phase_badge(&state.lifecycle.phase);
 
     let mut lines: Vec<Line> = Vec::with_capacity(10);
-
-    /* =====================================================
-       Primary state (single source of truth)
-       ===================================================== */
 
     let mut state_spans = vec![
         Span::styled(
@@ -129,10 +111,6 @@ fn render_status_block(
     lines.push(Line::from(state_spans));
     lines.push(Line::from(""));
 
-    /* =====================================================
-       Diff context (ONLY when in diff view)
-       ===================================================== */
-
     if state.ui.in_diff_view {
         if let Some(idx) = state.ui.selected_diff {
             if let Some(d) = state.context.diff_analysis.get(idx) {
@@ -151,10 +129,6 @@ fn render_status_block(
             }
         }
     }
-
-    /* =====================================================
-   Branch context (explicit + informational)
-   ===================================================== */
 
     if let Some(cur) = &state.lifecycle.current_branch {
         lines.push(Line::from(vec![
@@ -187,9 +161,6 @@ fn render_status_block(
             ),
         ]));
     }
-    /* =====================================================
-       Render
-       ===================================================== */
 
     let status = Paragraph::new(lines).block(
         Block::default()

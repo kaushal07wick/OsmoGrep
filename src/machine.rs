@@ -16,12 +16,6 @@ use crate::{
 
 use crate::state::{AgentEvent, AgentState, LogLevel, Phase};
 
-/* ============================================================
-   Public API
-   ============================================================ */
-
-/// Advance the agent by one lifecycle step.
-/// MUST be called from the main loop.
 pub fn step(state: &mut AgentState) {
     match state.lifecycle.phase {
         Phase::Init => init_repo(state),
@@ -37,10 +31,6 @@ pub fn step(state: &mut AgentState) {
         Phase::Done => {}
     }
 }
-
-/* ============================================================
-   Phase Implementations
-   ============================================================ */
 
 fn init_repo(state: &mut AgentState) {
     if !git::is_git_repo() {
@@ -105,9 +95,6 @@ fn create_agent_branch(state: &mut AgentState) {
     transition(state, Phase::Idle);
 }
 
-/* ============================================================
-   Execution
-   ============================================================ */
 
 fn execute_agent(state: &mut AgentState) {
     if state.cancel_requested.load(Ordering::SeqCst) {
@@ -165,10 +152,6 @@ fn handle_running(state: &mut AgentState) {
     }
 }
 
-/* ============================================================
-   Rollback
-   ============================================================ */
-
 fn rollback_agent(state: &mut AgentState) {
     if let Some(base) = state.lifecycle.base_branch.clone() {
         checkout_branch(state, &base);
@@ -183,9 +166,6 @@ fn rollback_agent(state: &mut AgentState) {
     transition(state, Phase::Idle);
 }
 
-/* ============================================================
-   Helpers
-   ============================================================ */
 
 fn ensure_agent_branch(state: &mut AgentState) -> String {
     if let Some(branch) = &state.lifecycle.agent_branch {
@@ -219,9 +199,6 @@ fn return_to_base_branch(state: &mut AgentState) {
     }
 }
 
-/* ============================================================
-   Repo root enforcement (CRITICAL)
-   ============================================================ */
 
 fn assert_repo_root() -> Result<PathBuf, String> {
     let cwd = std::env::current_dir()
@@ -248,10 +225,6 @@ fn assert_repo_root() -> Result<PathBuf, String> {
 
     Ok(cwd)
 }
-
-/* ============================================================
-   Semantic enrichment
-   ============================================================ */
 
 fn attach_summaries(state: &mut AgentState) {
     for diff in &mut state.context.diff_analysis {

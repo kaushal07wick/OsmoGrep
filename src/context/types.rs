@@ -1,13 +1,7 @@
 // src/context/types.rs
 //
 // Shared data model for the repository context engine.
-//
-// STRICT RULES:
-// - Data only (no logic)
-// - Diff-first (diff is authoritative)
-// - Index is auxiliary, never authoritative
-// - Explicit states > silent fallback
-//
+
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -18,9 +12,6 @@ use crate::detectors::{
     language::Language,
 };
 
-/* ============================================================
-   Repository Facts (Stable, Repo-wide)
-   ============================================================ */
 
 #[derive(Debug, Clone)]
 pub struct RepoFacts {
@@ -50,9 +41,6 @@ impl RepoFactsLite {
     }
 }
 
-/* ============================================================
-   Diff-Anchored Target (AUTHORITATIVE)
-   ============================================================ */
 
 #[derive(Debug, Clone)]
 pub struct DiffTarget {
@@ -63,9 +51,6 @@ pub struct DiffTarget {
     pub symbol: Option<String>,
 }
 
-/* ============================================================
-   Symbol Index (AUXILIARY CACHE — NEVER AUTHORITATIVE)
-   ============================================================ */
 
 #[derive(Debug, Clone, Default)]
 pub struct SymbolIndex {
@@ -92,9 +77,6 @@ pub struct Import {
     pub names: Vec<String>,
 }
 
-/* ============================================================
-   Symbol Resolution Result (EXPLICIT)
-   ============================================================ */
 
 #[derive(Debug, Clone)]
 pub enum SymbolResolution {
@@ -108,9 +90,6 @@ pub enum SymbolResolution {
     NotFound,
 }
 
-/* ============================================================
-   Test Discovery Semantics
-   ============================================================ */
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TestMatchKind {
@@ -119,9 +98,6 @@ pub enum TestMatchKind {
     None,
 }
 
-/* ============================================================
-   Test Ecosystem Context
-   ============================================================ */
 
 #[derive(Debug, Clone)]
 pub struct TestContext {
@@ -130,9 +106,6 @@ pub struct TestContext {
     pub match_kind: TestMatchKind,
 }
 
-/* ============================================================
-   Derived Testing Hints (Non-binding)
-   ============================================================ */
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionModel {
@@ -163,9 +136,6 @@ pub enum FailureMode {
     WrongShape,
 }
 
-/* ============================================================
-   Context Slice (DIFF-ANCHORED, EXPLICIT)
-   ============================================================ */
 
 #[derive(Debug, Clone)]
 pub struct ContextSlice {
@@ -187,9 +157,6 @@ pub struct ContextSlice {
     pub failure_modes: Vec<FailureMode>,
 }
 
-/* ============================================================
-   Index Lifecycle (Cache + Readiness Only)
-   ============================================================ */
 
 #[derive(Debug, Clone)]
 pub enum IndexStatus {

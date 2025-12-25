@@ -12,10 +12,6 @@ use ratatui::{
 use crate::state::{AgentState, SinglePanelView};
 use crate::ui::helpers::{keyword_style, symbol_style};
 
-/* ============================================================
-   Public API
-   ============================================================ */
-
 pub fn render_panel(
     f: &mut ratatui::Frame,
     area: Rect,
@@ -39,9 +35,6 @@ pub fn render_panel(
     }
 }
 
-/* ============================================================
-   Test Generation Preview Panel
-   ============================================================ */
 
 fn render_testgen_panel(
     f: &mut ratatui::Frame,
@@ -103,7 +96,6 @@ fn render_testgen_panel(
         }
     }
 
-    // ✅ FIX: use panel_scroll, not exec_scroll
     render_scrollable_block(
         f,
         area,
@@ -113,9 +105,6 @@ fn render_testgen_panel(
     );
 }
 
-/* ============================================================
-   Test Result Panel
-   ============================================================ */
 
 fn render_test_result_panel(
     f: &mut ratatui::Frame,
@@ -151,8 +140,6 @@ fn render_test_result_panel(
             )));
         }
     }
-
-    // ✅ FIX: use panel_scroll, not exec_scroll
     render_scrollable_block(
         f,
         area,
@@ -162,9 +149,6 @@ fn render_test_result_panel(
     );
 }
 
-/* ============================================================
-   Shared helpers
-   ============================================================ */
 
 fn render_scrollable_block(
     f: &mut ratatui::Frame,

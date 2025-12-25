@@ -5,7 +5,6 @@ use std::path::PathBuf;
 use crate::llm::prompt::LlmPrompt;
 
 pub struct Ollama;
-
 impl Ollama {
     pub fn run(prompt: LlmPrompt) -> io::Result<String> {
         // 🔑 absolute path to ollama.py

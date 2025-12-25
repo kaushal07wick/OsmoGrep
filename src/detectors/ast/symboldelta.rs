@@ -1,12 +1,7 @@
 //! detectors/ast/symboldelta.rs
 //!
 //! Extracts before/after source for a symbol.
-//!
-//! IMPORTANT INVARIANT:
-//! - ONLY returns symbol-level deltas
-//! - NEVER falls back to file-level
-//!
-//! FACTS ONLY — no semantics, no interpretation.
+
 
 use crate::git;
 use crate::detectors::ast::ast::extract_symbol_source;
@@ -40,8 +35,6 @@ pub fn compute_symbol_delta(
             (old, new)
         }
     };
-
-    // -------- symbol extraction (STRICT) --------
     let old_symbol = extract_symbol_source(&old_file, file, symbol)?;
     let new_symbol = extract_symbol_source(&new_file, file, symbol)?;
 

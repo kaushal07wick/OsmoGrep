@@ -1,8 +1,6 @@
 //! ui/execution.rs
 //!
 //! Execution / log renderer.
-//!
-//! Compact, hierarchical diff + semantic view.
 
 use ratatui::{
     layout::{Alignment, Rect},
@@ -16,12 +14,6 @@ use std::time::{Duration, Instant};
 use crate::state::{AgentState, LogLevel};
 use crate::ui::helpers::risk_color;
 
-/* ============================================================
-   Helpers
-   ============================================================ */
-
-/// Parses lines like:
-/// "[2] src/foo.rs :: bar_fn"
 fn parse_change_line(s: &str) -> Option<(String, String, Option<String>)> {
     let s = s.trim();
     if !s.starts_with('[') {
@@ -40,9 +32,6 @@ fn parse_change_line(s: &str) -> Option<(String, String, Option<String>)> {
     Some((index, file, symbol))
 }
 
-/* ============================================================
-   Renderer
-   ============================================================ */
 
 pub fn render_execution(
     f: &mut ratatui::Frame,

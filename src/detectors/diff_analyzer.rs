@@ -7,20 +7,13 @@
 //! - Detect affected symbol (best-effort)
 //! - Extract before/after source (SYMBOL ONLY)
 //! - Classify change surface (cheap heuristics only)
-//!
-//! Non-responsibilities:
-//! - NO test decision
-//! - NO risk judgment
-//! - NO semantic interpretation
+
 
 use crate::git;
 use crate::state::{ChangeSurface, DiffAnalysis, DiffBaseline};
 use crate::detectors::ast::ast::detect_symbol;
 use crate::detectors::ast::symboldelta::compute_symbol_delta;
 
-/* ============================================================
-   Public entrypoint
-   ============================================================ */
 
 pub fn analyze_diff() -> Vec<DiffAnalysis> {
     let raw = git::diff_cached();
@@ -38,9 +31,6 @@ pub fn analyze_diff() -> Vec<DiffAnalysis> {
         .collect()
 }
 
-/* ============================================================
-   Per-file analysis (FACTS ONLY)
-   ============================================================ */
 
 fn analyze_file(
     base_branch: &str,
@@ -48,8 +38,6 @@ fn analyze_file(
     hunks: &str,
 ) -> DiffAnalysis {
     let is_code = is_supported_code_file(file);
-
-    // ✅ Non-code files are ALWAYS cosmetic
     let surface = if is_code {
         detect_surface(file, hunks)
     } else {
@@ -63,7 +51,6 @@ fn analyze_file(
         None
     };
 
-    // ✅ Delta extraction ONLY for code + symbol
     let delta = if is_code {
         match &symbol {
             Some(sym) => compute_symbol_delta(
@@ -87,9 +74,6 @@ fn analyze_file(
     }
 }
 
-/* ============================================================
-   Diff parsing (simple + correct)
-   ============================================================ */
 
 fn split_diff_by_file(diff: &str) -> Vec<(String, String)> {
     let mut results = Vec::new();
@@ -122,9 +106,6 @@ fn split_diff_by_file(diff: &str) -> Vec<(String, String)> {
     results
 }
 
-/* ============================================================
-   Surface detection (CHEAP HEURISTICS ONLY)
-   ============================================================ */
 
 fn detect_surface(file: &str, hunks: &str) -> ChangeSurface {
     if is_python_file(file) && python_behavior_change(hunks) {
@@ -146,9 +127,6 @@ fn detect_surface(file: &str, hunks: &str) -> ChangeSurface {
     ChangeSurface::PureLogic
 }
 
-/* ============================================================
-   File classification
-   ============================================================ */
 
 fn should_analyze(file: &str) -> bool {
     if file.starts_with('.') {
@@ -176,9 +154,6 @@ fn is_rust_file(file: &str) -> bool {
     file.ends_with(".rs")
 }
 
-/* ============================================================
-   Heuristics (non-authoritative)
-   ============================================================ */
 
 fn python_behavior_change(text: &str) -> bool {
     text.contains("def ")

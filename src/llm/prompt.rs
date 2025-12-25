@@ -1,14 +1,6 @@
 // src/llm/prompt.rs
 //
 // Deterministic LLM prompt construction.
-//
-// INVARIANTS:
-// - Test code ONLY
-// - Diff-driven
-// - Symbol-exact
-// - No guessing
-// - No production code changes
-//
 
 use crate::context::types::{
     ContextSlice,
@@ -17,9 +9,6 @@ use crate::context::types::{
 use crate::testgen::candidate::TestCandidate;
 use crate::testgen::resolve::TestResolution;
 
-/* ============================================================
-   Prompt model
-   ============================================================ */
 
 #[derive(Debug)]
 pub struct LlmPrompt {
@@ -27,9 +16,6 @@ pub struct LlmPrompt {
     pub user: String,
 }
 
-/* ============================================================
-   Public API
-   ============================================================ */
 
 pub fn build_prompt(
     candidate: &TestCandidate,
@@ -42,9 +28,6 @@ pub fn build_prompt(
     }
 }
 
-/* ============================================================
-   System prompt (HARD constraints)
-   ============================================================ */
 
 fn system_prompt() -> String {
     r#"
@@ -61,9 +44,6 @@ Rules:
 "#.trim().to_string()
 }
 
-/* ============================================================
-   User prompt (FACTS → CONSTRAINTS → COMMAND)
-   ============================================================ */
 
 fn user_prompt(
     c: &TestCandidate,
@@ -92,7 +72,7 @@ fn user_prompt(
         out.push('\n');
     }
 
-    /* ---------- diff target (AUTHORITATIVE) ---------- */
+    /* ---------- diff target---------- */
 
     out.push_str("\nDiff target:\n");
     out.push_str(&format!(
@@ -174,7 +154,7 @@ Write tests strictly from diff-visible behavior.\n",
         c.risk
     ));
 
-    /* ---------- behavior (EXPLICIT) ---------- */
+    /* ---------- behavior---------- */
 
     out.push_str("\nBehavior to validate:\n");
     out.push_str("- Loss is computed correctly for valid class indices\n");
@@ -187,7 +167,7 @@ Write tests strictly from diff-visible behavior.\n",
         out.push('\n');
     }
 
-    /* ---------- input constraints (ANTI-GUESSING) ---------- */
+    /* ---------- input constraints---------- */
 
     out.push_str(
         "\nInput constraints:\n\
@@ -197,7 +177,7 @@ Write tests strictly from diff-visible behavior.\n",
 - ignore_index may appear multiple times\n"
     );
 
-    /* ---------- code delta (AUTHORITATIVE) ---------- */
+    /* ---------- code delta ---------- */
 
     if let Some(old) = &c.old_code {
         out.push_str("\nPrevious code:\n");

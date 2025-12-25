@@ -1,6 +1,5 @@
 //! detectors/framework.rs
-//!
-//! Test framework detection based on repository structure.
+
 
 use std::path::Path;
 use std::fmt;
@@ -14,9 +13,6 @@ pub enum TestFramework {
     None,
 }
 
-/* ============================================================
-   Public API
-   ============================================================ */
 
 pub fn detect_framework(root: &Path) -> TestFramework {
     // Fast path: Rust
@@ -47,10 +43,6 @@ pub fn detect_framework(root: &Path) -> TestFramework {
 
     TestFramework::None
 }
-
-/* ============================================================
-   Helpers
-   ============================================================ */
 
 #[inline]
 fn exists(root: &Path, file: &str) -> bool {

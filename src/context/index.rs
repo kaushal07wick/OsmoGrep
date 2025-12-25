@@ -1,13 +1,6 @@
 // src/context/index.rs
 //
 // Repository indexing logic.
-//
-// PURPOSE:
-// - Cache shallow structural facts
-// - NEVER resolve symbols for diffs
-// - NEVER infer semantics
-// - BEST-EFFORT ONLY
-//
 
 use std::{
     collections::HashMap,
@@ -34,9 +27,6 @@ use crate::detectors::{
     language::Language,
 };
 
-/* ============================================================
-   Public entry
-   ============================================================ */
 
 pub fn spawn_repo_indexer(repo_root: PathBuf) -> IndexHandle {
     let handle = IndexHandle::new_indexing(repo_root.clone());
@@ -70,9 +60,6 @@ pub fn spawn_repo_indexer(repo_root: PathBuf) -> IndexHandle {
     handle
 }
 
-/* ============================================================
-   Repo facts (Cheap + Conservative)
-   ============================================================ */
 
 fn extract_repo_facts(repo_root: &Path) -> RepoFacts {
     let mut languages = Vec::new();
@@ -107,9 +94,6 @@ fn extract_repo_facts(repo_root: &Path) -> RepoFacts {
     }
 }
 
-/* ============================================================
-   Roots detection
-   ============================================================ */
 
 fn detect_code_roots(repo_root: &Path) -> Vec<PathBuf> {
     let mut roots = Vec::new();
@@ -144,9 +128,6 @@ fn detect_test_roots(repo_root: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/* ============================================================
-   Symbol index (AUXILIARY ONLY)
-   ============================================================ */
 
 fn build_symbol_index(
     repo_root: &Path,
@@ -189,10 +170,6 @@ fn build_symbol_index(
     SymbolIndex { by_file }
 }
 
-/* ============================================================
-   File indexing (FULL FILE, NO LIMITS)
-   ============================================================ */
-
 #[derive(Clone, Copy)]
 enum LanguageKind {
     Python,
@@ -231,9 +208,6 @@ fn index_file(
     Some(FileSymbols { symbols, imports })
 }
 
-/* ============================================================
-   Tree walk (FULL, CLASS-AWARE, FACTUAL)
-   ============================================================ */
 
 fn walk_node(
     kind: LanguageKind,
@@ -337,10 +311,6 @@ fn walk_node(
         }
     }
 }
-
-/* ============================================================
-   Helpers
-   ============================================================ */
 
 fn is_under_any(path: &Path, roots: &[PathBuf]) -> bool {
     roots.iter().any(|r| path.starts_with(r))

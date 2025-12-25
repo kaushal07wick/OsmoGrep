@@ -1,15 +1,11 @@
 //! detectors/ast/ast.rs
 //!
 //! AST-based symbol detection utilities.
-//! FACTS ONLY. No semantics.
-
+//! 
 use crate::git;
 use tree_sitter::{Node, Parser};
 use std::cell::RefCell;
 
-/* ============================================================
-   Parser reuse
-   ============================================================ */
 
 thread_local! {
     static PY_PARSER: RefCell<Parser> = RefCell::new(make_python_parser());
@@ -28,9 +24,6 @@ fn make_rust_parser() -> Parser {
     p
 }
 
-/* ============================================================
-   Public API
-   ============================================================ */
 
 pub fn detect_symbol(file: &str, hunks: &str) -> Option<String> {
     if !is_supported(file) {
@@ -73,9 +66,6 @@ pub fn extract_symbol_source(
         .map(str::to_owned)
 }
 
-/* ============================================================
-   Core helpers
-   ============================================================ */
 
 pub fn is_supported(file: &str) -> bool {
     file.ends_with(".py") || file.ends_with(".rs")
@@ -91,9 +81,6 @@ pub fn parse_source(file: &str, source: &str) -> Option<tree_sitter::Tree> {
     }
 }
 
-/* ============================================================
-   Diff → byte ranges
-   ============================================================ */
 
 pub fn compute_line_offsets(src: &str) -> Vec<usize> {
     let mut offsets = vec![0];
@@ -143,9 +130,6 @@ pub fn parse_hunk_header(line: &str) -> Option<(usize, usize)> {
     Some((start, len))
 }
 
-/* ============================================================
-   Symbol detection (deterministic)
-   ============================================================ */
 
 fn collect_enclosing_symbols(
     node: Node,
@@ -199,9 +183,6 @@ fn symbol_name(node: Node, source: &str) -> Option<String> {
     }
 }
 
-/* ============================================================
-   Symbol source extraction
-   ============================================================ */
 
 pub fn find_symbol_node<'a>(
     node: Node<'a>,

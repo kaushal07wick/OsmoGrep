@@ -1,8 +1,4 @@
 // src/orchestrator.rs
-//
-// Context preview runner.
-// Builds ContextSlice and prints FULL context.
-// LLM + execution are intentionally disabled.
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -42,8 +38,6 @@ pub fn run_llm_test_flow(
             return;
         }
 
-        /* ---------- wait for index (FACTS + TEST ROOTS ONLY) ---------- */
-
         let (repo_root, facts, test_roots) = loop {
             if cancelled() {
                 fail("Cancelled while waiting for context index.");
@@ -82,12 +76,10 @@ pub fn run_llm_test_flow(
             }
         };
 
-        /* ---------- read symbols SAFELY (even if unused) ---------- */
 
         let symbols_guard = context_index.symbols.read().unwrap();
         let symbols = symbols_guard.clone().unwrap_or_default();
 
-        /* ---------- build context (DIFF-ONLY) ---------- */
 
         let ctx_engine = ContextEngine::new(
             &repo_root,
@@ -102,10 +94,6 @@ pub fn run_llm_test_flow(
             fail("Diff target could not be resolved to a file.");
             return;
         }
-
-        /* ---------- dump FULL context ---------- */
-
-        /* ---------- dump CONTEXT ---------- */
 
         let context_text = debug_context(&ctx_slice);
         let _ = std::fs::write(".osmogrep_context.txt", &context_text);
@@ -142,9 +130,6 @@ pub fn run_llm_test_flow(
     });
 }
 
-/* ============================================================
-   Context Printer (TRUTHFUL)
-   ============================================================ */
 
 fn debug_context(ctx: &ContextSlice) -> String {
     let mut s = String::new();
@@ -188,7 +173,6 @@ fn debug_context(ctx: &ContextSlice) -> String {
         }
     }
 
-    /* ---------- LOCAL STRUCTURE ---------- */
 
     s.push_str("LOCAL STRUCTURE (same file):\n");
     if ctx.local_symbols.is_empty() && ctx.imports.is_empty() {
@@ -206,8 +190,6 @@ fn debug_context(ctx: &ContextSlice) -> String {
         }
         s.push('\n');
     }
-
-    /* ---------- TEST CONTEXT ---------- */
 
     s.push_str("TEST CONTEXT:\n");
     s.push_str(&format!(

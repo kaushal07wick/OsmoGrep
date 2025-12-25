@@ -1,7 +1,4 @@
 //! ui/mod.rs
-//!
-//! Top-level UI module for Osmogrep.
-
 pub mod draw;
 pub mod status;
 pub mod diff;

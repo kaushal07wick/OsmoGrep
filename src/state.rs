@@ -11,38 +11,27 @@ use crate::testgen::summarizer::SemanticSummary;
 
 pub const MAX_LOGS: usize = 1000;
 
-/* ============================================================
-   Agent Events (Async-safe)
-   ============================================================ */
-
+///events emitted by agent
 #[derive(Debug)]
 pub enum AgentEvent {
     Log(LogLevel, String),
-
     SpinnerStart(String),
     SpinnerStop,
-
     GeneratedTest(String),
-
     TestStarted,
     TestFinished(TestResult),
-
     Finished,
     Failed(String),
 }
 
-
+//results from single test event
 #[derive(Debug, Clone)]
 pub enum TestResult {
     Passed,
     Failed { output: String },
 }
 
-
-/* ============================================================
-   Agent Lifecycle
-   ============================================================ */
-
+///agent phase (lifecycle)
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Phase {
     Init,
@@ -55,29 +44,21 @@ pub enum Phase {
     Done,
 }
 
-/* ============================================================
-   Diff + Symbol Delta Model (FACTS ONLY)
-   ============================================================ */
-
-/// Raw before/after source for a symbol or file.
-/// No semantics. No interpretation.
+///source level change for a symbol (code)
 #[derive(Debug, Clone)]
 pub struct SymbolDelta {
     pub old_source: String,
     pub new_source: String,
 }
 
+///baseline when computing diffs
 #[derive(Debug, Clone, Copy)]
 pub enum DiffBaseline {
     BaseBranch, // base → HEAD / index
     Staged,     // HEAD → index
 }
 
-
-/* ============================================================
-   Diff Analysis (STATIC FACTS)
-   ============================================================ */
-
+///classification of semantic surface
 #[derive(Debug, Clone)]
 pub enum ChangeSurface {
     PureLogic,
@@ -90,6 +71,7 @@ pub enum ChangeSurface {
     Cosmetic,
 }
 
+///test decision (if test should be generated or not)
 #[derive(Debug, Clone)]
 pub enum TestDecision {
     Yes,
@@ -97,6 +79,7 @@ pub enum TestDecision {
     Conditional,
 }
 
+///estimated risk level of change
 #[derive(Debug, Clone)]
 pub enum RiskLevel {
     Low,
@@ -104,47 +87,31 @@ pub enum RiskLevel {
     High,
 }
 
-/// Output of static diff analysis.
-/// Contains NO interpretation beyond surface classification.
+///analysis of single changed file
 #[derive(Debug, Clone)]
 pub struct DiffAnalysis {
     pub file: String,
     pub symbol: Option<String>,
     pub surface: ChangeSurface,
-
-    /// Raw extracted delta (before/after).
-    /// None means no meaningful code delta.
     pub delta: Option<SymbolDelta>,
-
-    /// Lightweight semantic summary (UI + prompt hints).
-    /// Populated AFTER diff analysis.
     pub summary: Option<SemanticSummary>,
 }
 
-
-
-/* ============================================================
-   Semantic Change (AGENT-LOCAL, LLM-FACING)
-   ============================================================ */
-
-/// Heavy semantic object built ONLY during agent execution.
-/// NEVER stored in global state.
+///fully resolved semantic change ready for test synthesis
 #[derive(Debug, Clone)]
 pub struct SemanticChange {
     pub file: String,
     pub symbol: String,
     pub language: Language,
-
     pub before: String,
     pub after: String,
-
     pub summary: SemanticSummary,
-
     pub risk: RiskLevel,
     pub test_intent: TestIntent,
     pub failure_mode: String,
 }
 
+///intended purpose of a generated test
 #[derive(Debug, Clone)]
 pub enum TestIntent {
     Regression,
@@ -152,10 +119,7 @@ pub enum TestIntent {
     Guardrail,
 }
 
-/* ============================================================
-   UI Focus + Panels
-   ============================================================ */
-
+/// UI focus area
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Focus {
     Input,
@@ -163,6 +127,7 @@ pub enum Focus {
     Execution,
 }
 
+// UI panel view state
 #[derive(Clone, Debug)]
 pub enum SinglePanelView {
     TestGenPreview {
@@ -175,10 +140,7 @@ pub enum SinglePanelView {
     },
 }
 
-/* ============================================================
-   Logging
-   ============================================================ */
-
+/// security level for log entries
 #[derive(Clone, Debug)]
 pub enum LogLevel {
     Info,
@@ -187,16 +149,18 @@ pub enum LogLevel {
     Error,
 }
 
+///timestamped log entries
 #[derive(Clone, Debug)]
 pub struct LogLine {
     pub level: LogLevel,
     pub text: String,
     pub at: Instant,
 }
-
+///fixed size rolling buffer for logs
 pub struct LogBuffer {
     logs: VecDeque<LogLine>,
 }
+
 
 impl LogBuffer {
     pub fn new() -> Self {
@@ -222,26 +186,18 @@ impl LogBuffer {
     }
 }
 
-/* ============================================================
-   Lifecycle State (AGENT REALITY)
-   ============================================================ */
-
+/// mutable state tracking the agent lifecylce
 pub struct LifecycleState {
     pub phase: Phase,
-
     pub base_branch: Option<String>,
     pub original_branch: Option<String>,
     pub current_branch: Option<String>,
     pub agent_branch: Option<String>,
-
     pub language: Option<Language>,
     pub framework: Option<TestFramework>,
 }
 
-/* ============================================================
-   Agent Context (THINKING / MEMORY)
-   ============================================================ */
-
+/// execution context holding diff analysis and test artifacts
 pub struct AgentContext {
     pub diff_analysis: Vec<DiffAnalysis>,
     pub test_candidates: Vec<TestCandidate>,
@@ -251,77 +207,46 @@ pub struct AgentContext {
     pub last_test_result: Option<TestResult>,
 }
 
-
-/* ============================================================
-   UI State (PURE PRESENTATION)
-   ============================================================ */
-
+/// complete UI state.
 pub struct UiState {
-    /* input */
     pub input: String,
-
-    /* command UX */
     pub history: Vec<String>,
     pub history_index: Option<usize>,
     pub hint: Option<String>,
     pub autocomplete: Option<String>,
-
-    /* activity */
     pub last_activity: Instant,
-
-    /* diff viewer */
     pub selected_diff: Option<usize>,
     pub diff_scroll: usize,
     pub diff_scroll_x: usize,
     pub in_diff_view: bool,
     pub diff_side_by_side: bool,
     pub focus: Focus,
-
-    /* execution */
     pub exec_scroll: usize,
-
-    /* spinner */
     pub active_spinner: Option<String>,
     pub spinner_started_at: Option<Instant>,
     pub spinner_elapsed: Option<Duration>,
-
-    /* panel */
     pub panel_view: Option<SinglePanelView>,
     pub panel_scroll: usize,
     pub panel_scroll_x: usize,
-
-    /* render cache */
     pub cached_log_lines: Vec<ratatui::text::Line<'static>>,
     pub last_log_len: usize,
     pub dirty: bool,
     pub last_draw: Instant,
 }
 
-/* ============================================================
-   Root Agent State
-   ============================================================ */
-
+/// root container for the entire agent.
 pub struct AgentState {
     pub lifecycle: LifecycleState,
     pub context: AgentContext,
     pub ui: UiState,
     pub logs: LogBuffer,
-
     pub agent_tx: Sender<AgentEvent>,
     pub agent_rx: Receiver<AgentEvent>,
-
     pub cancel_requested: Arc<AtomicBool>,
     pub context_index: Option<IndexHandle>,
 }
 
-
-/* ============================================================
-   Shared Helpers
-   ============================================================ */
-
 impl AgentState {
-    /* ---------- input ---------- */
-
     pub fn push_char(&mut self, c: char) {
         self.ui.input.push(c);
         self.ui.history_index = None;
@@ -374,8 +299,6 @@ impl AgentState {
         cmd
     }
 
-    /* ---------- ui hints ---------- */
-
     pub fn set_hint(&mut self, hint: impl Into<String>) {
         self.ui.hint = Some(hint.into());
     }
@@ -392,13 +315,9 @@ impl AgentState {
         self.ui.autocomplete = None;
     }
 
-    /* ---------- logging ---------- */
-
     pub fn push_log(&mut self, level: LogLevel, text: impl Into<String>) {
         self.logs.push(level, text);
     }
-
-    /* ---------- spinner ---------- */
 
     pub fn start_spinner(&mut self, text: impl Into<String>) {
         let now = Instant::now();

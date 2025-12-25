@@ -4,12 +4,7 @@
 //!
 //! Converts raw DiffAnalysis + SymbolDelta into
 //! human-meaningful test intent.
-//!
-//! IMPORTANT:
-//! - No AST
-//! - No git
-//! - No LLM
-//! - Pure interpretation
+
 
 use crate::state::{
     ChangeSurface,
@@ -36,9 +31,6 @@ pub fn summarize(diff: &DiffAnalysis) -> SemanticSummary {
     }
 }
 
-/* ============================================================
-   Behavior intent
-   ============================================================ */
 
 fn behavior_statement(d: &DiffAnalysis) -> String {
     match d.surface {
@@ -68,9 +60,6 @@ fn behavior_statement(d: &DiffAnalysis) -> String {
     }
 }
 
-/* ============================================================
-   Failure intent
-   ============================================================ */
 
 fn failure_statement(d: &DiffAnalysis) -> String {
     match d.surface {
@@ -91,9 +80,6 @@ fn failure_statement(d: &DiffAnalysis) -> String {
     }
 }
 
-/* ============================================================
-   Risk inference (cheap, deterministic)
-   ============================================================ */
 
 fn infer_risk(d: &DiffAnalysis) -> RiskLevel {
     match d.surface {

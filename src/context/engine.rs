@@ -1,14 +1,6 @@
 // src/context/engine.rs
 //
 // Context slicing engine.
-//
-// GUARANTEES:
-// - Diff is authoritative
-// - Only diff file is parsed
-// - Full-file scan ONLY to resolve symbol
-// - Deterministic
-// - No guessing
-//
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -34,10 +26,6 @@ use super::types::{
     TestMatchKind,
 };
 
-/* ============================================================
-   Engine
-   ============================================================ */
-
 pub struct ContextEngine<'a> {
     repo_root: &'a Path,
     facts: &'a RepoFacts,
@@ -57,10 +45,6 @@ impl<'a> ContextEngine<'a> {
             test_roots,
         }
     }
-
-    /* ========================================================
-       Public entry (DIFF-ONLY)
-       ======================================================== */
 
     pub fn slice_from_diff(&self, diff: &DiffAnalysis) -> ContextSlice {
         let file = PathBuf::from(&diff.file);
@@ -97,10 +81,6 @@ impl<'a> ContextEngine<'a> {
             failure_modes: Vec::new(),
         }
     }
-
-    /* ========================================================
-       Test discovery (STRICT, DIFF-DRIVEN)
-       ======================================================== */
 
     fn build_test_context(
         &self,
@@ -150,9 +130,6 @@ impl<'a> ContextEngine<'a> {
     }
 }
 
-/* ============================================================
-   File parsing (AUTHORITATIVE)
-   ============================================================ */
 
 fn parse_file(
     file: &Path,
@@ -268,9 +245,6 @@ fn walk(
     }
 }
 
-/* ============================================================
-   Symbol resolution (STRICT)
-   ============================================================ */
 
 fn resolve_symbol(
     target: Option<&str>,
@@ -293,9 +267,6 @@ fn resolve_symbol(
     }
 }
 
-/* ============================================================
-   Test helpers (PURE FUNCTIONS)
-   ============================================================ */
 
 fn find_candidate_tests(
     test_roots: &[PathBuf],

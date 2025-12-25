@@ -1,22 +1,13 @@
 //! generator.rs
 //!
 //! Test candidate generation pipeline.
-//
-//! Guarantees:
-//! - Diff-driven only
-//! - No framework assumptions
-//! - No assertion/oracle logic
-//! - No context inspection
-//! - Deterministic output
+
 
 use crate::state::{ChangeSurface, DiffAnalysis, TestDecision};
 use crate::testgen::candidate::TestCandidate;
 use crate::testgen::summarizer;
 use crate::context::types::TestIntent;
 
-/* ============================================================
-   Normalization (NO SEMANTICS)
-   ============================================================ */
 
 fn normalize_source(file: &str, src: &str) -> String {
     if file.ends_with(".rs") {
@@ -50,10 +41,6 @@ fn normalize_python(src: &str) -> String {
         .collect::<String>()
 }
 
-/* ============================================================
-   HARD GATES (FACTS ONLY)
-   ============================================================ */
-
 fn is_test_worthy(d: &DiffAnalysis) -> bool {
     let delta = match &d.delta {
         Some(d) => d,
@@ -75,10 +62,6 @@ fn is_test_worthy(d: &DiffAnalysis) -> bool {
     true
 }
 
-/* ============================================================
-   Decision logic (DIFF-OWNED)
-   ============================================================ */
-
 fn decide_test(d: &DiffAnalysis) -> TestDecision {
     match d.surface {
         ChangeSurface::Contract
@@ -96,9 +79,6 @@ fn decide_test(d: &DiffAnalysis) -> TestDecision {
     }
 }
 
-/* ============================================================
-   Priority (DETERMINISTIC)
-   ============================================================ */
 
 fn priority(d: &DiffAnalysis) -> u8 {
     let mut score = match d.surface {
@@ -118,9 +98,6 @@ fn priority(d: &DiffAnalysis) -> u8 {
     score
 }
 
-/* ============================================================
-   Public API
-   ============================================================ */
 
 pub fn generate_test_candidates(
     diffs: &[DiffAnalysis],
@@ -157,11 +134,7 @@ pub fn generate_test_candidates(
 
         let mut candidate = TestCandidate {
             id: String::new(),
-
-            // ✅ AUTHORITATIVE DIFF (NEW)
             diff: d.clone(),
-
-            // Derived identity (non-authoritative)
             file: d.file.clone(),
             symbol: d.symbol.clone(),
             target: crate::testgen::candidate::TestTarget::File(d.file.clone()),

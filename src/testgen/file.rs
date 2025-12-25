@@ -8,9 +8,6 @@ use crate::detectors::language::Language;
 use crate::testgen::candidate::TestCandidate;
 use crate::testgen::resolve::TestResolution;
 
-/* ============================================================
-   Public API
-   ============================================================ */
 
 pub fn materialize_test(
     language: Language,
@@ -32,9 +29,6 @@ pub fn materialize_test(
     }
 }
 
-/* ============================================================
-   Python
-   ============================================================ */
 
 fn write_python_test(
     candidate: &TestCandidate,
@@ -61,10 +55,6 @@ fn default_python_test_path(c: &TestCandidate) -> PathBuf {
     let name = sanitize(&c.file, &c.symbol);
     PathBuf::from(format!("tests/test_{}_regression.py", name))
 }
-
-/* ============================================================
-   Rust
-   ============================================================ */
 
 fn write_rust_test(
     candidate: &TestCandidate,
@@ -99,9 +89,6 @@ fn default_rust_test_path(c: &TestCandidate) -> PathBuf {
     PathBuf::from(format!("tests/{}_regression.rs", name))
 }
 
-/* ============================================================
-   Helpers
-   ============================================================ */
 
 fn ensure_parent_dir(path: &Path) -> io::Result<()> {
     if let Some(parent) = path.parent() {

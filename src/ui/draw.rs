@@ -16,10 +16,6 @@ use ratatui::{
 use crate::state::{AgentState, Focus};
 use crate::ui::{diff, panels, status, execution};
 
-/* ============================================================
-   Public API
-   ============================================================ */
-
 pub fn draw_ui<B: Backend>(
     terminal: &mut Terminal<B>,
     state: &AgentState,
@@ -29,9 +25,6 @@ pub fn draw_ui<B: Backend>(
     let mut exec_rect = Rect::default();
 
     terminal.draw(|f| {
-        /* =====================================================
-         * Root Layout
-         * =================================================== */
 
         let layout = Layout::default()
             .direction(Direction::Vertical)
@@ -42,25 +35,13 @@ pub fn draw_ui<B: Backend>(
                 Constraint::Length(3),  // command input
             ])
             .split(f.size());
-
-        /* =====================================================
-         * Header + Status
-         * =================================================== */
-
         status::render_status(f, layout[0], state);
-
-        /* =====================================================
-         * Main Execution Area
-         * =================================================== */
-
         let mut rendered = false;
 
-        // 1) Single-panel views (LLM output, test result)
         if panels::render_panel(f, layout[1], state) {
             rendered = true;
         }
 
-        // 2) Diff view
         if !rendered {
             if let Some(idx) = state.ui.selected_diff {
                 if let Some(delta) = &state.context.diff_analysis[idx].delta {
@@ -71,16 +52,11 @@ pub fn draw_ui<B: Backend>(
             }
         }
 
-        // 3) Execution logs (DEFAULT)
         if !rendered {
             execution::render_execution(f, layout[1], state);
         }
 
         exec_rect = layout[1];
-
-        /* =====================================================
-         * Command Input (RESTORED)
-         * =================================================== */
 
         let mut spans = vec![
             Span::styled("$_ ", Style::default().fg(Color::Cyan)),

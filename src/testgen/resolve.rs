@@ -5,18 +5,9 @@
 //! Responsibilities:
 //! - Detect existing tests for a TestCandidate
 //! - Classify as Found / Ambiguous / NotFound
-//!
-//! Guarantees:
-//! - Read-only
-//! - Deterministic
-//! - No crawling beyond provided TestContext
 
 use crate::testgen::candidate::TestCandidate;
 use crate::context::types::TestContext;
-
-/* ============================================================
-   Resolution result
-   ============================================================ */
 
 #[derive(Debug, Clone)]
 pub enum TestResolution {
@@ -28,9 +19,6 @@ pub enum TestResolution {
     NotFound,
 }
 
-/* ============================================================
-   Public entrypoint
-   ============================================================ */
 
 pub fn resolve_test(
     c: &TestCandidate,
@@ -44,9 +32,6 @@ pub fn resolve_test(
     resolve_from_context(c, ctx)
 }
 
-/* ============================================================
-   Core resolution logic
-   ============================================================ */
 
 fn resolve_from_context(
     c: &TestCandidate,
@@ -63,10 +48,9 @@ fn resolve_from_context(
     for path in &ctx.existing_tests {
         let content = match std::fs::read_to_string(path) {
             Ok(c) => c,
-            Err(_) => continue, // ✅ never abort resolution
+            Err(_) => continue, 
         };
 
-        // Strong signal: explicit test function
         if content.contains(&test_fn) {
             return TestResolution::Found {
                 file: path.display().to_string(),
@@ -74,7 +58,6 @@ fn resolve_from_context(
             };
         }
 
-        // Weak signal: symbol referenced
         if content.contains(symbol) {
             symbol_hits.push(path.display().to_string());
         }

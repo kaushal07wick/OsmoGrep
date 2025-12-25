@@ -1,6 +1,4 @@
 // src/main.rs
-//
-// Application entrypoint.
 
 mod state;
 mod logger;
@@ -36,10 +34,6 @@ use state::{
 use commands::{handle_command, update_command_hints};
 use machine::step;
 
-/* ============================================================
-   Entry Point
-   ============================================================ */
-
 fn main() -> Result<(), Box<dyn Error>> {
     setup_terminal()?;
 
@@ -57,7 +51,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             handle_event(&mut state, ev, input_rect, diff_rect, exec_rect);
         }
 
-        // advance lifecycle (async-safe)
+        // advance lifecycle 
         step(&mut state);
 
         // drain background agent events
@@ -71,10 +65,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     teardown_terminal(&mut terminal)?;
     Ok(())
 }
-
-/* ============================================================
-   Agent Event Reducer
-   ============================================================ */
 
 fn drain_agent_events(state: &mut AgentState) {
     while let Ok(ev) = state.agent_rx.try_recv() {
@@ -139,9 +129,6 @@ fn drain_agent_events(state: &mut AgentState) {
     }
 }
 
-/* ============================================================
-   State Initialization
-   ============================================================ */
 
 fn init_state() -> AgentState {
     let (agent_tx, agent_rx) = channel::<AgentEvent>();
@@ -200,9 +187,6 @@ fn init_state() -> AgentState {
     }
 }
 
-/* ============================================================
-   Event Handling
-   ============================================================ */
 
 fn handle_event(
     state: &mut AgentState,
@@ -230,7 +214,6 @@ fn handle_key(state: &mut AgentState, k: crossterm::event::KeyEvent) {
     }
 }
 
-/* ================= Input ================= */
 
 fn handle_input_keys(state: &mut AgentState, k: crossterm::event::KeyEvent) {
     match k.code {
@@ -270,7 +253,6 @@ fn handle_input_keys(state: &mut AgentState, k: crossterm::event::KeyEvent) {
     }
 }
 
-/* ================= Diff ================= */
 
 fn handle_diff_keys(state: &mut AgentState, k: crossterm::event::KeyEvent) {
     match k.code {
@@ -292,7 +274,6 @@ fn handle_diff_keys(state: &mut AgentState, k: crossterm::event::KeyEvent) {
     }
 }
 
-/* ================= Execution ================= */
 
 fn handle_exec_keys(state: &mut AgentState, k: crossterm::event::KeyEvent) {
     // PANEL OPEN → scroll panel
@@ -310,8 +291,6 @@ fn handle_exec_keys(state: &mut AgentState, k: crossterm::event::KeyEvent) {
         }
         return;
     }
-
-    // NO PANEL → scroll execution log
     match k.code {
         KeyCode::Up => state.ui.exec_scroll = state.ui.exec_scroll.saturating_sub(1),
         KeyCode::Down => state.ui.exec_scroll = state.ui.exec_scroll.saturating_add(1),
@@ -321,7 +300,6 @@ fn handle_exec_keys(state: &mut AgentState, k: crossterm::event::KeyEvent) {
     }
 }
 
-/* ================= Mouse ================= */
 
 fn handle_mouse(
     state: &mut AgentState,
@@ -344,7 +322,6 @@ fn handle_mouse(
             }
         }
 
-        /* ===== DIFF SCROLL (MISSING PART) ===== */
 
         MouseEventKind::ScrollUp if diff_rect.contains(pos) => {
             state.ui.diff_scroll = state.ui.diff_scroll.saturating_sub(2);
@@ -353,8 +330,6 @@ fn handle_mouse(
         MouseEventKind::ScrollDown if diff_rect.contains(pos) => {
             state.ui.diff_scroll = state.ui.diff_scroll.saturating_add(2);
         }
-
-        /* ===== EXEC / PANEL SCROLL ===== */
 
         MouseEventKind::ScrollUp if exec_rect.contains(pos) => {
             if state.ui.panel_view.is_some() {
@@ -376,9 +351,6 @@ fn handle_mouse(
     }
 }
 
-/* ============================================================
-   Terminal Lifecycle
-   ============================================================ */
 
 fn setup_terminal() -> Result<(), Box<dyn Error>> {
     enable_raw_mode()?;

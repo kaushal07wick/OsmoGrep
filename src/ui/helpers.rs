@@ -1,23 +1,13 @@
 //! ui/helpers.rs
 //!
 //! Shared UI helper utilities.
-//!
-//! Design goals:
-//! - Pure rendering helpers only
-//! - No state mutation
-//! - No heap growth in hot paths
-//! - UTF-8 safe where applicable
+
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 use crate::state::{Phase, RiskLevel, TestDecision};
 use crate::state::ChangeSurface;
 
-/* ============================================================
-   Activity + phase
-   ============================================================ */
-
-/// Animated spinner frame.
 pub fn spinner(frame: usize) -> &'static str {
     const FRAMES: [&str; 4] = ["⠋", "⠙", "⠹", "⠸"];
     FRAMES[frame % FRAMES.len()]
@@ -36,9 +26,6 @@ pub fn phase_badge(phase: &Phase) -> (&'static str, &'static str, Color) {
     }
 }
 
-/* ============================================================
-   Badges (language / framework)
-   ============================================================ */
 
 /// Language badge (emoji label, color).
 pub fn language_badge(lang: &str) -> (&'static str, Color) {
@@ -66,9 +53,6 @@ pub fn framework_badge(fw: &str) -> (&'static str, Color) {
     }
 }
 
-/* ============================================================
-   Diff + layout helpers
-   ============================================================ */
 
 /// Fixed-width line number span.
 pub fn ln(n: usize, color: Color) -> Span<'static> {
@@ -96,8 +80,6 @@ pub fn risk_color(r: &RiskLevel) -> Color {
     }
 }
 
-/// UTF-8 safe horizontal clipping by character offset.
-///
 /// Used for diff horizontal scrolling.
 pub fn hclip(s: &str, x: usize, width: usize) -> &str {
     if width == 0 {
@@ -124,9 +106,6 @@ pub fn hclip(s: &str, x: usize, width: usize) -> &str {
     }
 }
 
-/* ============================================================
-   Symbol + code styling
-   ============================================================ */
 
 /// Style for function / symbol names.
 pub fn symbol_style() -> Style {

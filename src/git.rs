@@ -5,10 +5,6 @@
 
 use std::process::{Command};
 
-/* ============================================================
-   Internal helpers
-   ============================================================ */
-
 fn git(args: &[&str]) -> std::process::Output {
     Command::new("git")
         .args(args)
@@ -16,9 +12,6 @@ fn git(args: &[&str]) -> std::process::Output {
         .expect("git command failed")
 }
 
-/* ============================================================
-   Repository state
-   ============================================================ */
 
 pub fn is_git_repo() -> bool {
     std::path::Path::new(".git").exists()
@@ -34,9 +27,6 @@ pub fn working_tree_dirty() -> bool {
     !out.stdout.is_empty()
 }
 
-/* ============================================================
-   Branch discovery & lifecycle
-   ============================================================ */
 
 pub fn find_existing_agent() -> Option<String> {
     let out = git(&["branch"]);
@@ -77,9 +67,6 @@ pub fn list_branches() -> Vec<String> {
         .collect()
 }
 
-/* ============================================================
-   Base branch detection
-   ============================================================ */
 
 pub fn detect_base_branch() -> String {
     // Try origin/HEAD
@@ -110,18 +97,11 @@ pub fn detect_base_branch() -> String {
     }
 }
 
-/* ============================================================
-   Diff access
-   ============================================================ */
 
 pub fn diff_cached() -> Vec<u8> {
     git(&["diff", "--cached"]).stdout
 }
 
-
-/* ============================================================
-   File snapshots (AST / analysis support)
-   ============================================================ */
 
 pub fn show_head(path: &str) -> Option<String> {
     let out = Command::new("git")

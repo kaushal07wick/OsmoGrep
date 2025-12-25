@@ -1,6 +1,6 @@
 //! ui/diff.rs
 //!
-//! Side-by-side diff renderer (derived, not stored).
+//! Side-by-side diff renderer
 
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -20,9 +20,7 @@ pub fn render_side_by_side(
     delta: &SymbolDelta,
     state: &AgentState,
 ) {
-    /* =====================================================
-       Layout
-       ===================================================== */
+
 
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -33,13 +31,8 @@ pub fn render_side_by_side(
     let width = chunks[0]
         .width
         .saturating_sub(gutter + 1) as usize;
-
-    // ⬅️ IMPORTANT: subtract borders
     let height = area.height.saturating_sub(2) as usize;
 
-    /* =====================================================
-       Diff preparation
-       ===================================================== */
 
     let diff = TextDiff::from_lines(
         &delta.old_source,
@@ -52,11 +45,6 @@ pub fn render_side_by_side(
     let max_scroll = total.saturating_sub(height);
     let start = state.ui.diff_scroll.min(max_scroll);
     let end = (start + height).min(total);
-
-    /* =====================================================
-       Advance line numbers to scroll offset
-       ===================================================== */
-
     let mut old_ln = 1usize;
     let mut new_ln = 1usize;
 
@@ -71,9 +59,6 @@ pub fn render_side_by_side(
         }
     }
 
-    /* =====================================================
-       Render visible window
-       ===================================================== */
 
     let mut left: Vec<Line> = Vec::with_capacity(end - start);
     let mut right: Vec<Line> = Vec::with_capacity(end - start);
@@ -134,19 +119,11 @@ pub fn render_side_by_side(
         }
     }
 
-    /* =====================================================
-       Titles
-       ===================================================== */
-
     let title_style = if state.ui.focus == Focus::Diff {
         Style::default().fg(Color::Yellow)
     } else {
         Style::default()
     };
-
-    /* =====================================================
-       Render
-       ===================================================== */
 
     f.render_widget(
         Paragraph::new(left).block(

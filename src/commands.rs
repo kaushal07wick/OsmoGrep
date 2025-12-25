@@ -6,11 +6,6 @@
 //! - Parse and validate user commands
 //! - Translate commands into explicit state mutations
 //! - Emit informational logs
-//!
-//! Non-responsibilities:
-//! - Agent orchestration
-//! - Git side effects beyond intent signaling
-//! - UI rendering logic
 
 use std::time::Instant;
 
@@ -32,9 +27,7 @@ use crate::state::{
     SinglePanelView,
 };
 
-/* ============================================================
-   Command Handling
-   ============================================================ */
+
 
 pub fn handle_command(state: &mut AgentState, cmd: &str) {
     state.ui.last_activity = Instant::now();
@@ -84,9 +77,6 @@ pub fn handle_command(state: &mut AgentState, cmd: &str) {
     }
 }
 
-/* ============================================================
-   Command Implementations
-   ============================================================ */
 
 fn help(state: &mut AgentState) {
     use LogLevel::Info;
@@ -216,7 +206,7 @@ fn agent_run(state: &mut AgentState, cmd: &str) {
         }
     };
 
-    /* ---------- ensure index ready (DROP BORROW EARLY) ---------- */
+    /* ---------- ensure index ready ---------- */
 
     let index_status = {
         index.status.read().unwrap().clone()
@@ -238,7 +228,7 @@ fn agent_run(state: &mut AgentState, cmd: &str) {
         }
     }
 
-    /* ---------- generate candidates (DIFF-ONLY) ---------- */
+    /* ---------- generate candidates  ---------- */
 
     let candidates = generate_test_candidates(std::slice::from_ref(&diff));
 
@@ -364,10 +354,6 @@ fn close_view(state: &mut AgentState) {
     log(state, LogLevel::Info, "Closed view.");
 }
 
-/* ============================================================
-   Autocomplete + Hints
-   ============================================================ */
-
 pub fn update_command_hints(state: &mut AgentState) {
     let input = state.ui.input.clone();
     state.clear_hint();
@@ -403,10 +389,6 @@ pub fn update_command_hints(state: &mut AgentState) {
 
     state.set_hint("Unknown command");
 }
-
-/* ============================================================
-   Small Helpers
-   ============================================================ */
 
 fn reset_diff_view(state: &mut AgentState) {
     state.ui.in_diff_view = false;

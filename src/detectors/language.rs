@@ -16,9 +16,6 @@ pub enum Language {
     Unknown,
 }
 
-/* ============================================================
-   Public API
-   ============================================================ */
 
 pub fn detect_language(root: &Path) -> Language {
     let mut py = 0usize;
@@ -57,9 +54,6 @@ pub fn detect_language(root: &Path) -> Language {
     dominant_language(py, js, ts, rs, go, java)
 }
 
-/* ============================================================
-   Helpers
-   ============================================================ */
 
 fn dominant_language(
     py: usize,
