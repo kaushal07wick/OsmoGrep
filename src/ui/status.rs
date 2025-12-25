@@ -2,24 +2,23 @@
 //!
 //! Header + status renderer for Osmogrep.
 
-use std::time::{Duration, Instant};
-use crate::context::types::IndexStatus;
+use sysinfo::System;
 
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, BorderType, Paragraph},
 };
 
+use crate::context::types::IndexStatus;
 use crate::state::{AgentState, Phase};
 use crate::ui::helpers::{
     framework_badge,
+    keyword_style,
     language_badge,
     phase_badge,
     spinner,
-    symbol_style,
-    keyword_style,
 };
 
 pub fn render_status(
@@ -36,18 +35,18 @@ pub fn render_status(
         .split(area);
 
     render_header(f, chunks[0]);
-    let status_chunks = Layout::default()
+
+    let body = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(70), // main status
-            Constraint::Percentage(30), // context index
+            Constraint::Percentage(70),
+            Constraint::Percentage(30),
         ])
         .split(chunks[1]);
 
-    render_status_block(f, status_chunks[0], state);
-    render_context_block(f, status_chunks[1], state);
+    render_status_block(f, body[0], state);
+    render_context_block(f, body[1], state);
 }
-
 
 fn render_header(f: &mut ratatui::Frame, area: Rect) {
     const HEADER: [&str; 6] = [
@@ -60,24 +59,23 @@ fn render_header(f: &mut ratatui::Frame, area: Rect) {
     ];
 
     let header = Paragraph::new(
-        HEADER
-            .iter()
-            .map(|l| {
-                Line::from(Span::styled(
-                    *l,
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ))
-            })
-            .collect::<Vec<_>>(),
+        HEADER.iter().map(|l| {
+            Line::from(Span::styled(
+                *l,
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ))
+        }).collect::<Vec<_>>(),
     )
     .alignment(Alignment::Center)
-    .block(Block::default().borders(Borders::BOTTOM));
+    .block(
+        Block::default()
+            .border_style(Style::default().fg(Color::DarkGray)),
+    );
 
     f.render_widget(header, area);
 }
-
 
 fn render_status_block(
     f: &mut ratatui::Frame,
@@ -85,91 +83,105 @@ fn render_status_block(
     state: &AgentState,
 ) {
     let (sym, label, phase_color) = phase_badge(&state.lifecycle.phase);
+    let mut lines: Vec<Line> = Vec::new();
 
-    let mut lines: Vec<Line> = Vec::with_capacity(10);
-
-    let mut state_spans = vec![
+    // Status
+    let mut status_spans = vec![
+        Span::styled(format!("{:<8}", "Status:"), Style::default().fg(Color::DarkGray)),
         Span::styled(
             format!("{sym} {label}"),
-            Style::default()
-                .fg(phase_color)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(phase_color).add_modifier(Modifier::BOLD),
         ),
     ];
 
     if matches!(state.lifecycle.phase, Phase::Running) {
         if let Some(start) = state.ui.spinner_started_at {
             let frame = (start.elapsed().as_millis() / 120) as usize;
-            state_spans.push(Span::raw("  "));
-            state_spans.push(Span::styled(
-                spinner(frame),
-                Style::default().fg(phase_color),
-            ));
+            status_spans.push(Span::raw(" "));
+            status_spans.push(Span::styled(spinner(frame), Style::default().fg(phase_color)));
         }
     }
 
-    lines.push(Line::from(state_spans));
-    lines.push(Line::from(""));
+    lines.push(Line::from(status_spans));
 
-    if state.ui.in_diff_view {
-        if let Some(idx) = state.ui.selected_diff {
-            if let Some(d) = state.context.diff_analysis.get(idx) {
-                let mut spans = vec![
-                    Span::styled("Diff: ", keyword_style()),
-                    Span::styled(&d.file, Style::default()),
-                ];
+    // System info
+    // ── System info ───────────────────────────────
+    let mut sys = System::new();
+    sys.refresh_memory();
 
-                if let Some(sym) = &d.symbol {
-                    spans.push(Span::raw(" :: "));
-                    spans.push(Span::styled(sym, symbol_style()));
-                }
+    let used_gb =
+        sys.used_memory() as f64 / 1024.0 / 1024.0 / 1024.0;
+    let total_gb =
+        sys.total_memory() as f64 / 1024.0 / 1024.0 / 1024.0;
 
-                lines.push(Line::from(spans));
-                lines.push(Line::from(""));
-            }
+    let os = {
+        let raw = std::env::consts::OS;
+        let mut c = raw.chars();
+        match c.next() {
+            Some(f) => format!("{}{}", f.to_ascii_uppercase(), c.as_str()),
+            None => raw.to_string(),
         }
-    }
+    };
 
+    lines.push(Line::from(vec![
+        Span::styled(format!("{:<8}", "OS:"), Style::default().fg(Color::DarkGray)),
+        Span::styled(os, Style::default().fg(Color::White)),
+    ]));
+
+    lines.push(Line::from(vec![
+        Span::styled(format!("{:<8}", "RAM:"), Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!("{:.1} / {:.1} GB", used_gb, total_gb),
+            Style::default().fg(Color::Cyan),
+        ),
+    ]));
+
+    let model = if state.ollama_model.is_empty() {
+        "<default>"
+    } else {
+        &state.ollama_model
+    };
+
+    lines.push(Line::from(vec![
+        Span::styled(format!("{:<8}", "Model:"), Style::default().fg(Color::DarkGray)),
+        Span::styled(model, Style::default().fg(Color::White)),
+    ]));
+
+    // Git state (kept)
     if let Some(cur) = &state.lifecycle.current_branch {
         lines.push(Line::from(vec![
-            Span::styled("Current: ", keyword_style()),
+            Span::styled(format!("{:<8}", "Current:"), Style::default().fg(Color::DarkGray)),
             Span::styled(
                 cur,
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
             ),
         ]));
     }
 
     if let Some(base) = &state.lifecycle.base_branch {
         lines.push(Line::from(vec![
-            Span::styled("Base:    ", keyword_style()),
-            Span::styled(
-                base,
-                Style::default().fg(Color::DarkGray),
-            ),
+            Span::styled(format!("{:<8}", "Base:"), Style::default().fg(Color::DarkGray)),
+            Span::styled(base, Style::default().fg(Color::Gray)),
         ]));
     }
 
     if let Some(agent) = &state.lifecycle.agent_branch {
         lines.push(Line::from(vec![
-            Span::styled("Agent:   ", keyword_style()),
-            Span::styled(
-                agent,
-                Style::default().fg(Color::Yellow),
-            ),
+            Span::styled(format!("{:<8}", "Agent:"), Style::default().fg(Color::DarkGray)),
+            Span::styled(agent, Style::default().fg(Color::Yellow)),
         ]));
     }
 
-    let status = Paragraph::new(lines).block(
+    let block = Paragraph::new(lines).block(
         Block::default()
             .borders(Borders::ALL)
-            .title("STATE")
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::DarkGray))
+            .title("SYSTEM")
             .title_alignment(Alignment::Center),
     );
 
-    f.render_widget(status, area);
+    f.render_widget(block, area);
 }
 
 fn render_context_block(
@@ -179,57 +191,44 @@ fn render_context_block(
 ) {
     let mut lines: Vec<Line> = Vec::new();
 
-    lines.push(Line::from(vec![
-        Span::styled(
-            "Repo Context",
-            Style::default().add_modifier(Modifier::BOLD),
-        ),
-    ]));
-
+    // Top padding
     lines.push(Line::from(""));
-
-    /* ---------- index status ---------- */
 
     if let Some(index) = &state.context_index {
         let status = index.status.read().unwrap();
-
         let (label, color) = match &*status {
-            IndexStatus::Indexing => ("Indexing…", Color::Yellow),
-            IndexStatus::Ready => ("Ready", Color::Green),
-            IndexStatus::Failed(_) => ("Failed", Color::Red),
+            IndexStatus::Indexing => ("INDEXING", Color::Yellow),
+            IndexStatus::Ready => ("READY", Color::Green),
+            IndexStatus::Failed(_) => ("FAILED", Color::Red),
         };
 
         lines.push(Line::from(vec![
-            Span::styled("Status: ", keyword_style()),
-            Span::styled(label, Style::default().fg(color)),
-        ]));
-    } else {
-        lines.push(Line::from(vec![
-            Span::styled("Status: ", keyword_style()),
-            Span::styled("Not started", Style::default().fg(Color::DarkGray)),
-        ]));
-    }
-
-    /* ---------- language ---------- */
-
-    if let Some(lang) = &state.lifecycle.language {
-        lines.push(Line::from(vec![
-            Span::styled("Language: ", keyword_style()),
+            Span::styled(format!("{:<10}", "Index:"), Style::default().fg(Color::DarkGray)),
             Span::styled(
-                format!("{:?}", lang),
-                Style::default().fg(Color::Cyan),
+                format!(" {label} "),
+                Style::default().fg(Color::Black).bg(color).add_modifier(Modifier::BOLD),
             ),
         ]));
     }
 
-    /* ---------- framework ---------- */
+    if let Some(lang) = &state.lifecycle.language {
+        let (label, color) = language_badge(&format!("{:?}", lang));
+        lines.push(Line::from(vec![
+            Span::styled(format!("{:<10}", "Language:"), Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!(" {label} "),
+                Style::default().fg(Color::Black).bg(color).add_modifier(Modifier::BOLD),
+            ),
+        ]));
+    }
 
     if let Some(fw) = &state.lifecycle.framework {
+        let (label, color) = framework_badge(&format!("{:?}", fw));
         lines.push(Line::from(vec![
-            Span::styled("Framework: ", keyword_style()),
+            Span::styled(format!("{:<10}", "Framework:"), Style::default().fg(Color::DarkGray)),
             Span::styled(
-                format!("{:?}", fw),
-                Style::default().fg(Color::Magenta),
+                format!(" {label} "),
+                Style::default().fg(Color::Black).bg(color).add_modifier(Modifier::BOLD),
             ),
         ]));
     }
@@ -237,6 +236,8 @@ fn render_context_block(
     let block = Paragraph::new(lines).block(
         Block::default()
             .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::DarkGray))
             .title("CONTEXT")
             .title_alignment(Alignment::Center),
     );

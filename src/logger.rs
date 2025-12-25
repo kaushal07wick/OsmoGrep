@@ -1,27 +1,36 @@
 //! logger.rs
 //!
 //! Centralized logging API for Osmogrep.
-//!
-//! Responsibilities:
-//! - Append structured log entries to AgentState
-//! - Emit structured markers for UI rendering
-//! - Mark UI as dirty on log changes
 
 use crate::state::{AgentState, LogLevel};
 
-/// Delegates buffering to the log buffer owned by AgentState.
 pub fn log(
     state: &mut AgentState,
     level: LogLevel,
     msg: impl Into<String>,
 ) {
+    let at_bottom = state.ui.auto_scroll;
+
     state.logs.push(level, msg.into());
+
+    if at_bottom {
+        // follow logs
+        state.ui.exec_scroll = usize::MAX;
+    }
+
     state.ui.dirty = true;
 }
 
-/// Emits a structured marker indicating diff analysis output.
+
 pub fn log_diff_analysis(state: &mut AgentState) {
+    let at_bottom = state.ui.auto_scroll;
+
     state.logs.push(LogLevel::Info, LogMarker::DiffAnalysis.as_str());
+
+    if at_bottom {
+        state.ui.exec_scroll = usize::MAX;
+    }
+
     state.ui.dirty = true;
 }
 

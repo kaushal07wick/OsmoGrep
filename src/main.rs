@@ -166,6 +166,7 @@ fn init_state() -> AgentState {
             focus: Focus::Input,
 
             exec_scroll: 0,
+            auto_scroll: true,
             active_spinner: None,
             spinner_started_at: None,
             spinner_elapsed: None,
@@ -184,6 +185,7 @@ fn init_state() -> AgentState {
         agent_rx,
         cancel_requested: Arc::new(AtomicBool::new(false)),
         context_index: None,
+        ollama_model: "qwen2.5-coder:7b".to_string(),
     }
 }
 
@@ -276,7 +278,7 @@ fn handle_diff_keys(state: &mut AgentState, k: crossterm::event::KeyEvent) {
 
 
 fn handle_exec_keys(state: &mut AgentState, k: crossterm::event::KeyEvent) {
-    // PANEL OPEN → scroll panel
+    // Panel open → panel scroll only
     if state.ui.panel_view.is_some() {
         match k.code {
             KeyCode::Up => state.ui.panel_scroll = state.ui.panel_scroll.saturating_sub(1),
@@ -291,14 +293,33 @@ fn handle_exec_keys(state: &mut AgentState, k: crossterm::event::KeyEvent) {
         }
         return;
     }
+
     match k.code {
-        KeyCode::Up => state.ui.exec_scroll = state.ui.exec_scroll.saturating_sub(1),
-        KeyCode::Down => state.ui.exec_scroll = state.ui.exec_scroll.saturating_add(1),
-        KeyCode::PageUp => state.ui.exec_scroll = state.ui.exec_scroll.saturating_sub(10),
-        KeyCode::PageDown => state.ui.exec_scroll = state.ui.exec_scroll.saturating_add(10),
-        _ => {}
+    KeyCode::Up | KeyCode::PageUp => {
+        state.ui.auto_scroll = false;
+        state.ui.exec_scroll = match k.code {
+            KeyCode::Up => state.ui.exec_scroll.saturating_sub(1),
+            _ => state.ui.exec_scroll.saturating_sub(10),
+        };
     }
+
+    KeyCode::Down | KeyCode::PageDown => {
+        state.ui.exec_scroll = match k.code {
+            KeyCode::Down => state.ui.exec_scroll.saturating_add(1),
+            _ => state.ui.exec_scroll.saturating_add(10),
+        };
+    }
+
+    KeyCode::End => {
+        state.ui.auto_scroll = true;
+        state.ui.exec_scroll = usize::MAX;
+    }
+
+    _ => {}
 }
+
+}
+
 
 
 fn handle_mouse(

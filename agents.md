@@ -12,7 +12,14 @@
 - fn list_changes(state: &mut AgentState)
 - fn view_change(state: &mut AgentState, cmd: &str)
 - fn agent_run(state: &mut AgentState, cmd: &str)
-- fn agent_status(state: &mut AgentState)
+- fn set_model(state: &mut AgentState, cmd: &str)
+- fn show_model(state: &mut AgentState)
+- fn status_model(state: &mut AgentState)
+- fn status_agent(state: &mut AgentState)
+- fn status_context(state: &mut AgentState)
+- fn status_prompt(state: &mut AgentState)
+- fn status_git(state: &mut AgentState)
+- fn status_system(state: &mut AgentState)
 - fn agent_cancel(state: &mut AgentState)
 - fn show_test_artifact(state: &mut AgentState)
 - fn close_view(state: &mut AgentState)
@@ -21,7 +28,10 @@
 **Calls**
 - IndexStatus::Failed
 - Instant::now
+- fs::read_to_string
+- git::current_branch
 - git::list_branches
+- git::working_tree_dirty
 - slice::from_ref
 
 ### src/context/engine.rs
@@ -214,7 +224,7 @@
 ### src/llm/ollama.rs
 
 **Functions**
--  pub fn run(prompt: LlmPrompt) -> io::Result<String>
+-  pub fn run(prompt: LlmPrompt, model: &str) -> io::Result<String>
 
 **Calls**
 - Command::new
@@ -226,7 +236,7 @@
 ### src/llm/orchestrator.rs
 
 **Functions**
-- pub fn run_llm_test_flow( tx: Sender<AgentEvent>, cancel_flag: Arc<AtomicBool>, context_index: IndexHandle, candidate: TestCandidate, )
+- pub fn run_llm_test_flow( tx: Sender<AgentEvent>, cancel_flag: Arc<AtomicBool>, context_index: IndexHandle, candidate: TestCandidate, model: String, )
 - fn debug_context(ctx: &ContextSlice) -> String
 
 **Calls**
@@ -259,6 +269,7 @@
 - def main()
 
 **Calls**
+- environ.get
 - prompt.strip
 - stderr.write
 - stdin.read
@@ -355,6 +366,7 @@
 - Duration::from_secs
 - Instant::now
 - VecDeque::with_capacity
+- logger::log
 
 ### src/testgen/candidate.rs
 
@@ -541,8 +553,8 @@
 - Span::raw
 - Span::styled
 - Style::default
+- System::new
 - Vec::new
-- Vec::with_capacity
 
 ## Global Hotspots
 

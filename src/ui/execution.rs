@@ -6,7 +6,7 @@ use ratatui::{
     layout::{Alignment, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, BorderType, Borders, Paragraph},
 };
 
 use std::time::{Duration, Instant};
@@ -49,12 +49,9 @@ pub fn render_execution(
     let mut changes_heading_shown = false;
 
     for log in state.logs.iter() {
-        // fade old warnings/errors
-        if matches!(log.level, LogLevel::Warn | LogLevel::Error)
-            && now.duration_since(log.at) > fade_after
-        {
-            continue;
-        }
+        let faded =
+            matches!(log.level, LogLevel::Warn | LogLevel::Error)
+                && now.duration_since(log.at) > fade_after;
 
         /* ================= DIFF ANALYSIS ================= */
         if log.text == "__DIFF_ANALYSIS__" {
@@ -74,7 +71,7 @@ pub fn render_execution(
                 let mut header = vec![
                     Span::styled(
                         format!("[{}] ", diff_counter),
-                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(Color::Gray),
                     ),
                     Span::styled(
                         &d.file,
@@ -87,7 +84,7 @@ pub fn render_execution(
                     header.push(Span::styled(
                         sym,
                         Style::default()
-                            .fg(Color::Cyan) // 🔵 Rust-style function color
+                            .fg(Color::Cyan)
                             .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
                     ));
                 }
@@ -95,7 +92,7 @@ pub fn render_execution(
                 header.push(Span::raw(" | "));
                 header.push(Span::styled(
                     format!("{:?}", d.surface),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(Color::Gray),
                 ));
 
                 if let Some(summary) = &d.summary {
@@ -116,7 +113,7 @@ pub fn render_execution(
                         Span::styled(
                             format!("↳ {}", summary.behavior),
                             Style::default()
-                                .fg(Color::DarkGray)
+                                .fg(Color::Gray)
                                 .add_modifier(Modifier::ITALIC),
                         ),
                     ]));
@@ -144,14 +141,8 @@ pub fn render_execution(
             }
 
             let mut spans = vec![
-                Span::styled(
-                    idx + " ",
-                    Style::default().fg(Color::DarkGray),
-                ),
-                Span::styled(
-                    file,
-                    Style::default().fg(Color::Gray),
-                ),
+                Span::styled(idx + " ", Style::default().fg(Color::Gray)),
+                Span::styled(file, Style::default().fg(Color::Gray)),
             ];
 
             if let Some(sym) = symbol {
@@ -170,12 +161,14 @@ pub fn render_execution(
         }
 
         /* ================= NORMAL LOGS ================= */
-        let color = match log.level {
-            LogLevel::Info => Color::DarkGray,
+        let base_color = match log.level {
+            LogLevel::Info => Color::Gray,
             LogLevel::Success => Color::Green,
             LogLevel::Warn => Color::Yellow,
             LogLevel::Error => Color::Red,
         };
+
+        let color = if faded { Color::DarkGray } else { base_color };
 
         lines.push(Line::from(Span::styled(
             &log.text,
@@ -186,7 +179,13 @@ pub fn render_execution(
 
     /* ================= SCROLL ================= */
     let max_scroll = lines.len().saturating_sub(height);
-    let scroll = state.ui.exec_scroll.min(max_scroll);
+
+    let scroll = if state.ui.auto_scroll {
+        max_scroll
+    } else {
+        state.ui.exec_scroll.min(max_scroll)
+    };
+
 
     let visible = lines
         .into_iter()
@@ -199,6 +198,8 @@ pub fn render_execution(
         Paragraph::new(visible).block(
             Block::default()
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(Color::DarkGray))
                 .title("EXECUTION")
                 .title_alignment(Alignment::Center),
         ),

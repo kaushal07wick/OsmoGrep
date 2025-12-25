@@ -5,9 +5,10 @@ use std::path::PathBuf;
 use crate::llm::prompt::LlmPrompt;
 
 pub struct Ollama;
+
 impl Ollama {
-    pub fn run(prompt: LlmPrompt) -> io::Result<String> {
-        // 🔑 absolute path to ollama.py
+    pub fn run(prompt: LlmPrompt, model: &str) -> io::Result<String> {
+        // Absolute path to ollama.py
         let script: PathBuf = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("src")
             .join("llm_py")
@@ -15,6 +16,8 @@ impl Ollama {
 
         let mut child = Command::new("python3")
             .arg(script)
+            // 👇 single, explicit bridge
+            .env("OSMOGREP_OLLAMA_MODEL", model)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -27,7 +30,7 @@ impl Ollama {
                 io::Error::new(io::ErrorKind::BrokenPipe, "Failed to open stdin")
             })?;
             stdin.write_all(input.as_bytes())?;
-        } // stdin DROPPED → EOF
+        } // stdin dropped → EOF
 
         let output = child.wait_with_output()?;
 

@@ -161,12 +161,22 @@ pub struct LogBuffer {
     logs: VecDeque<LogLine>,
 }
 
-
 impl LogBuffer {
     pub fn new() -> Self {
         Self {
             logs: VecDeque::with_capacity(MAX_LOGS),
         }
+    }
+     pub fn len(&self) -> usize {
+        self.logs.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.logs.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.logs.clear();
     }
 
     pub fn push(&mut self, level: LogLevel, text: impl Into<String>) {
@@ -201,7 +211,6 @@ pub struct LifecycleState {
 pub struct AgentContext {
     pub diff_analysis: Vec<DiffAnalysis>,
     pub test_candidates: Vec<TestCandidate>,
-
     pub last_generated_test: Option<String>,
     pub generated_tests_ready: bool,
     pub last_test_result: Option<TestResult>,
@@ -222,6 +231,7 @@ pub struct UiState {
     pub diff_side_by_side: bool,
     pub focus: Focus,
     pub exec_scroll: usize,
+    pub auto_scroll: bool,
     pub active_spinner: Option<String>,
     pub spinner_started_at: Option<Instant>,
     pub spinner_elapsed: Option<Duration>,
@@ -240,6 +250,7 @@ pub struct AgentState {
     pub context: AgentContext,
     pub ui: UiState,
     pub logs: LogBuffer,
+    pub ollama_model: String,
     pub agent_tx: Sender<AgentEvent>,
     pub agent_rx: Receiver<AgentEvent>,
     pub cancel_requested: Arc<AtomicBool>,
@@ -316,7 +327,7 @@ impl AgentState {
     }
 
     pub fn push_log(&mut self, level: LogLevel, text: impl Into<String>) {
-        self.logs.push(level, text);
+        crate::logger::log(self, level, text);
     }
 
     pub fn start_spinner(&mut self, text: impl Into<String>) {

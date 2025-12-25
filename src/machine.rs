@@ -132,6 +132,7 @@ fn execute_agent(state: &mut AgentState) {
         state.cancel_requested.clone(),
         state.context_index.clone().expect("context index missing"),
         candidate,
+        state.ollama_model.clone(),
     );
 
     transition(state, Phase::Running);

@@ -24,6 +24,7 @@ pub fn run_llm_test_flow(
     cancel_flag: Arc<AtomicBool>,
     context_index: IndexHandle,
     candidate: TestCandidate,
+    model: String,
 ) {
     thread::spawn(move || {
         let cancelled = || cancel_flag.load(Ordering::SeqCst);
