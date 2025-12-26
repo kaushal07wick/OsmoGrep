@@ -1,29 +1,26 @@
-// src/orchestrator.rs
-
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc::Sender,
     Arc,
 };
 use std::thread;
-use crate::llm::prompt::build_prompt;
-use crate::testgen::resolve::TestResolution;
 
 use crate::context::engine::ContextEngine;
-use crate::context::types::{
-    ContextSlice,
-    IndexHandle,
-    IndexStatus,
-    SymbolResolution,
-};
+use crate::context::types::{ContextSlice, IndexHandle, IndexStatus, SymbolResolution};
+use crate::detectors::language::Language;
+use crate::executor::run::run_single_test;
+use crate::llm::{ollama::Ollama, prompt::build_prompt};
 use crate::state::{AgentEvent, LogLevel, TestDecision};
 use crate::testgen::candidate::TestCandidate;
+use crate::testgen::file::materialize_test;
+use crate::testgen::resolve::TestResolution;
 
 pub fn run_llm_test_flow(
     tx: Sender<AgentEvent>,
     cancel_flag: Arc<AtomicBool>,
     context_index: IndexHandle,
     candidate: TestCandidate,
+    language: Language,
     model: String,
 ) {
     thread::spawn(move || {
@@ -39,53 +36,47 @@ pub fn run_llm_test_flow(
             return;
         }
 
+        /* ================= CONTEXT ================= */
+
         let (repo_root, facts, test_roots) = loop {
             if cancelled() {
                 fail("Cancelled while waiting for context index.");
                 return;
             }
 
-            let status = {
-                context_index.status.read().unwrap().clone()
-            };
-
-            match status {
+            match context_index.status.read().unwrap().clone() {
                 IndexStatus::Ready => {
-                    let facts_guard = context_index.facts.read().unwrap();
-                    let test_roots_guard =
-                        context_index.test_roots.read().unwrap();
-
-                    let repo_root = context_index.repo_root.clone();
-
-                    match facts_guard.clone() {
-                        Some(f) => break (repo_root, f, test_roots_guard.clone()),
+                    let facts = context_index.facts.read().unwrap().clone();
+                    let roots = context_index.test_roots.read().unwrap().clone();
+                    match facts {
+                        Some(f) => break (context_index.repo_root.clone(), f, roots),
                         None => {
                             fail("Repository facts missing.");
                             return;
                         }
                     }
                 }
-
                 IndexStatus::Failed(err) => {
-                    fail(&format!("Context indexing failed: {}", err));
+                    fail(&format!("Context indexing failed: {err}"));
                     return;
                 }
-
                 IndexStatus::Indexing => {
                     thread::sleep(std::time::Duration::from_millis(50));
                 }
             }
         };
 
-
-        let symbols_guard = context_index.symbols.read().unwrap();
-        let symbols = symbols_guard.clone().unwrap_or_default();
-
+        let symbols = context_index
+            .symbols
+            .read()
+            .unwrap()
+            .clone()
+            .unwrap_or_default();
 
         let ctx_engine = ContextEngine::new(
             &repo_root,
             &facts,
-            &symbols, // ignored internally by design
+            &symbols,
             &test_roots,
         );
 
@@ -96,6 +87,8 @@ pub fn run_llm_test_flow(
             return;
         }
 
+        /* ================= CONTEXT DUMP ================= */
+
         let context_text = debug_context(&ctx_slice);
         let _ = std::fs::write(".osmogrep_context.txt", &context_text);
 
@@ -104,7 +97,7 @@ pub fn run_llm_test_flow(
             "Context written to .osmogrep_context.txt".into(),
         ));
 
-        /* ---------- build + dump PROMPT ---------- */
+        /* ================= PROMPT ================= */
 
         let prompt = build_prompt(
             &candidate,
@@ -112,32 +105,114 @@ pub fn run_llm_test_flow(
             &ctx_slice,
         );
 
-        let mut prompt_text = String::new();
-
-        prompt_text.push_str("=== SYSTEM PROMPT ===\n");
-        prompt_text.push_str(&prompt.system);
-        prompt_text.push_str("\n\n=== USER PROMPT ===\n");
-        prompt_text.push_str(&prompt.user);
+        let prompt_text = format!(
+            "=== SYSTEM PROMPT ===\n{}\n\n=== USER PROMPT ===\n{}",
+            prompt.system, prompt.user
+        );
 
         let _ = std::fs::write(".osmogrep_prompt.txt", &prompt_text);
 
         let _ = tx.send(AgentEvent::Log(
             LogLevel::Info,
-            "Prompt written to .osmogrep_prompt.txt".into(),
+            "Prompt prepared. Calling LLM…".into(),
         ));
 
+        /* ================= LLM EXECUTION ================= */
+
+        let llm_handle = {
+            let tx = tx.clone();
+            let model = model.clone();
+            let prompt = prompt.clone();
+
+            thread::spawn(move || {
+                let _ = tx.send(AgentEvent::Log(
+                    LogLevel::Info,
+                    "LLM generation started".into(),
+                ));
+
+                let result = Ollama::run(prompt, &model);
+
+                match result {
+                    Ok(text) => {
+                        let _ = tx.send(AgentEvent::Log(
+                            LogLevel::Success,
+                            "LLM generation completed".into(),
+                        ));
+                        Ok(text)
+                    }
+                    Err(e) => {
+                        let _ = tx.send(AgentEvent::Log(
+                            LogLevel::Error,
+                            format!("LLM error: {e}"),
+                        ));
+                        Err(e)
+                    }
+                }
+            })
+        };
+
+        let generated_test = match llm_handle.join() {
+            Ok(Ok(out)) => out,
+            _ => {
+                fail("LLM execution failed.");
+                return;
+            }
+        };
+
+        /* ================= MATERIALIZE TEST ================= */
+
+        let test_path = match materialize_test(
+            language,
+            &candidate,
+            &TestResolution::NotFound,
+            &generated_test,
+        ) {
+            Ok(p) => p,
+            Err(e) => {
+                fail(&format!("Failed to write test: {e}"));
+                return;
+            }
+        };
+
+        let _ = tx.send(AgentEvent::Log(
+            LogLevel::Info,
+            format!("Test written to {}", test_path.display()),
+        ));
+
+        /* ================= RUN TEST ================= */
+
+        let cmd: Vec<&str> = match language {
+            Language::Python => vec!["pytest", test_path.to_str().unwrap()],
+            Language::Rust => vec!["cargo", "test"],
+            _ => {
+                fail("Unsupported language");
+                return;
+            }
+        };
+
+        match run_single_test(&cmd) {
+            crate::state::TestResult::Passed => {
+                let _ = tx.send(AgentEvent::TestFinished(
+                    crate::state::TestResult::Passed,
+                ));
+            }
+            crate::state::TestResult::Failed { output } => {
+                let _ = tx.send(AgentEvent::TestFinished(
+                    crate::state::TestResult::Failed { output },
+                ));
+            }
+        }
 
         let _ = tx.send(AgentEvent::Finished);
     });
 }
 
+/* ================= CONTEXT DUMP ================= */
 
 fn debug_context(ctx: &ContextSlice) -> String {
     let mut s = String::new();
 
     s.push_str("=== CONTEXT SLICE ===\n\n");
-
-    /* ---------- DIFF TARGET ---------- */
 
     s.push_str("DIFF TARGET:\n");
     s.push_str(&format!(
@@ -148,8 +223,6 @@ fn debug_context(ctx: &ContextSlice) -> String {
         s.push_str(&format!("- Symbol (from diff): {}\n", sym));
     }
     s.push('\n');
-
-    /* ---------- SYMBOL RESOLUTION ---------- */
 
     s.push_str("SYMBOL RESOLUTION:\n");
     match &ctx.symbol_resolution {
@@ -162,10 +235,7 @@ fn debug_context(ctx: &ContextSlice) -> String {
         SymbolResolution::Ambiguous(matches) => {
             s.push_str("- Ambiguous matches:\n");
             for m in matches {
-                s.push_str(&format!(
-                    "  - {} (line {})\n",
-                    m.name, m.line
-                ));
+                s.push_str(&format!("  - {} (line {})\n", m.name, m.line));
             }
             s.push('\n');
         }
@@ -174,17 +244,12 @@ fn debug_context(ctx: &ContextSlice) -> String {
         }
     }
 
-
     s.push_str("LOCAL STRUCTURE (same file):\n");
     if ctx.local_symbols.is_empty() && ctx.imports.is_empty() {
         s.push_str("- None\n\n");
     } else {
         for d in &ctx.local_symbols {
-            s.push_str(&format!(
-                "  - {} (line {})\n",
-                d.name,
-                d.line
-            ));
+            s.push_str(&format!("  - {} (line {})\n", d.name, d.line));
         }
         for i in &ctx.imports {
             s.push_str(&format!("  - import {}\n", i.module));

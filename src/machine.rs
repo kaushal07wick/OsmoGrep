@@ -132,11 +132,13 @@ fn execute_agent(state: &mut AgentState) {
         state.cancel_requested.clone(),
         state.context_index.clone().expect("context index missing"),
         candidate,
+        language,  
         state.ollama_model.clone(),
     );
 
     transition(state, Phase::Running);
 }
+
 
 fn handle_running(state: &mut AgentState) {
     if state.cancel_requested.load(Ordering::SeqCst) {

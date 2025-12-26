@@ -10,7 +10,7 @@ use crate::testgen::candidate::TestCandidate;
 use crate::testgen::resolve::TestResolution;
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LlmPrompt {
     pub system: String,
     pub user: String,

@@ -12,11 +12,8 @@ use tree_sitter_rust as rust;
 use crate::state::DiffAnalysis;
 
 use super::types::{
-    AssertionStyle,
     ContextSlice,
     DiffTarget,
-    ExecutionModel,
-    FailureMode,
     Import,
     RepoFacts,
     RepoFactsLite,
@@ -36,7 +33,7 @@ impl<'a> ContextEngine<'a> {
     pub fn new(
         repo_root: &'a Path,
         facts: &'a RepoFacts,
-        _symbols: &'a super::types::SymbolIndex, // intentionally ignored
+        _symbols: &'a super::types::SymbolIndex,
         test_roots: &'a [PathBuf],
     ) -> Self {
         Self {
@@ -51,7 +48,6 @@ impl<'a> ContextEngine<'a> {
         let abs_file = self.repo_root.join(&file);
 
         let source = fs::read_to_string(&abs_file).unwrap_or_default();
-
         let (symbols, imports) = parse_file(&file, &source);
 
         let symbol_resolution =
@@ -62,19 +58,14 @@ impl<'a> ContextEngine<'a> {
 
         ContextSlice {
             repo_facts: RepoFactsLite::from(self.facts),
-
             diff_target: DiffTarget {
                 file,
                 symbol: diff.symbol.clone(),
             },
-
             symbol_resolution,
-
             local_symbols: symbols,
             imports,
-
             test_context,
-
             execution_model: None,
             test_intent: None,
             assertion_style: None,
@@ -98,16 +89,6 @@ impl<'a> ContextEngine<'a> {
                     match_kind: TestMatchKind::Content,
                 };
             }
-
-            return TestContext {
-                existing_tests: Vec::new(),
-                recommended_location: default_test_path(
-                    self.repo_root,
-                    src_file,
-                    Some(sym),
-                ),
-                match_kind: TestMatchKind::None,
-            };
         }
 
         if !candidates.is_empty() {
@@ -120,16 +101,13 @@ impl<'a> ContextEngine<'a> {
 
         TestContext {
             existing_tests: Vec::new(),
-            recommended_location: default_test_path(
-                self.repo_root,
-                src_file,
-                None,
-            ),
+            recommended_location: default_test_path(self.test_roots, src_file),
             match_kind: TestMatchKind::None,
         }
     }
 }
 
+/* ================= Parsing ================= */
 
 fn parse_file(
     file: &Path,
@@ -154,16 +132,31 @@ fn parse_file(
     let mut symbols = Vec::new();
     let mut imports = Vec::new();
 
-    walk(
-        tree.root_node(),
-        file,
-        source,
-        &mut symbols,
-        &mut imports,
-        None,
-    );
+    walk(tree.root_node(), file, source, &mut symbols, &mut imports, None);
 
     (symbols, imports)
+}
+
+
+fn resolve_symbol(
+    target: Option<&str>,
+    symbols: &[SymbolDef],
+) -> SymbolResolution {
+    let Some(sym) = target else {
+        return SymbolResolution::NotFound;
+    };
+
+    let matches: Vec<_> = symbols
+        .iter()
+        .cloned()
+        .filter(|s| s.name == sym || s.name.ends_with(&format!(".{sym}")))
+        .collect();
+
+    match matches.len() {
+        0 => SymbolResolution::NotFound,
+        1 => SymbolResolution::Resolved(matches[0].clone()),
+        _ => SymbolResolution::Ambiguous(matches),
+    }
 }
 
 fn walk(
@@ -187,14 +180,7 @@ fn walk(
 
                     for i in 0..node.child_count() {
                         if let Some(c) = node.child(i) {
-                            walk(
-                                c,
-                                file,
-                                src,
-                                symbols,
-                                imports,
-                                Some(cls.clone()),
-                            );
+                            walk(c, file, src, symbols, imports, Some(cls.clone()));
                         }
                     }
                     return;
@@ -233,40 +219,12 @@ fn walk(
 
     for i in 0..node.child_count() {
         if let Some(c) = node.child(i) {
-            walk(
-                c,
-                file,
-                src,
-                symbols,
-                imports,
-                current_class.clone(),
-            );
+            walk(c, file, src, symbols, imports, current_class.clone());
         }
     }
 }
 
-
-fn resolve_symbol(
-    target: Option<&str>,
-    symbols: &[SymbolDef],
-) -> SymbolResolution {
-    let Some(sym) = target else {
-        return SymbolResolution::NotFound;
-    };
-
-    let matches: Vec<_> = symbols
-        .iter()
-        .cloned()
-        .filter(|s| s.name == sym || s.name.ends_with(&format!(".{sym}")))
-        .collect();
-
-    match matches.len() {
-        0 => SymbolResolution::NotFound,
-        1 => SymbolResolution::Resolved(matches[0].clone()),
-        _ => SymbolResolution::Ambiguous(matches),
-    }
-}
-
+/* ================= Test resolution ================= */
 
 fn find_candidate_tests(
     test_roots: &[PathBuf],
@@ -328,24 +286,16 @@ fn symbol_variants(symbol: &str) -> Vec<String> {
     ]
 }
 
-fn default_test_path(
-    repo_root: &Path,
-    src_file: &Path,
-    symbol: Option<&str>,
-) -> PathBuf {
-    let root = repo_root.join("tests");
+fn default_test_path(test_roots: &[PathBuf], src_file: &Path) -> PathBuf {
+    let root = test_roots
+        .first()
+        .cloned()
+        .unwrap_or_else(|| PathBuf::from("tests"));
 
-    let name = symbol
-        .map(|s| format!("test_{s}.py"))
-        .unwrap_or_else(|| {
-            format!(
-                "test_{}.py",
-                src_file
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("unknown")
-            )
-        });
+    let name = src_file
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("test");
 
-    root.join(name)
+    root.join(format!("test_{name}.py"))
 }
