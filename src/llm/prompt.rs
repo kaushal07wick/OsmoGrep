@@ -1,6 +1,6 @@
 // src/llm/prompt.rs
 //
-// Deterministic LLM prompt construction.
+// Minimal deterministic prompt for test generation.
 
 use crate::context::types::{ContextSlice, SymbolResolution};
 use crate::testgen::candidate::TestCandidate;
@@ -23,17 +23,19 @@ pub fn build_prompt(
 
 fn system_prompt() -> String {
     r#"
-You are an expert software engineer generating high-quality automated tests.
+You are an expert software engineer writing automated tests.
 
 Rules:
 - Output ONLY valid test code
-- Do NOT include explanations, comments, or markdown
+- Do NOT use markdown or code fences
+- Do NOT import new libraries
 - Do NOT modify production code
-- Do NOT add new dependencies
-- Follow existing project testing conventions
-- Assume the code compiles
-- Prefer correctness, clarity, and determinism
-"#.trim().to_string()
+- Use only existing project APIs
+- Prefer behavior-based assertions
+- The output must be directly executable
+"#
+    .trim()
+    .to_string()
 }
 
 fn user_prompt(
@@ -42,30 +44,9 @@ fn user_prompt(
 ) -> String {
     let mut out = String::new();
 
-    /* ---------- repository facts ---------- */
+    /* === TARGET === */
 
-    if !ctx.repo_facts.languages.is_empty() {
-        out.push_str("Languages:\n");
-        out.push_str(
-            &ctx.repo_facts
-                .languages
-                .iter()
-                .map(|l| l.to_string())
-                .collect::<Vec<_>>()
-                .join(", "),
-        );
-        out.push('\n');
-    }
-
-    if !ctx.repo_facts.forbidden_deps.is_empty() {
-        out.push_str("Forbidden dependencies:\n");
-        out.push_str(&ctx.repo_facts.forbidden_deps.join(", "));
-        out.push('\n');
-    }
-
-    /* ---------- diff target ---------- */
-
-    out.push_str("\nDiff target:\n");
+    out.push_str("Target:\n");
     out.push_str(&format!(
         "- File: {}\n",
         ctx.diff_target.file.display()
@@ -75,95 +56,51 @@ fn user_prompt(
         out.push_str(&format!("- Symbol: {}\n", sym));
     }
 
-    /* ---------- symbol resolution ---------- */
-
-    out.push_str("\nSymbol resolution:\n");
+    /* === SYMBOL CONTEXT === */
 
     match &ctx.symbol_resolution {
         SymbolResolution::Resolved(sym) => {
             out.push_str(&format!(
-                "- Resolved symbol: {} (line {})\n",
+                "Resolved symbol: {} (line {})\n",
                 sym.name, sym.line
             ));
-
-            if let Some((cls, method)) = sym.name.split_once('.') {
-                out.push_str(&format!(
-                    "- Hierarchy: method `{}` on `{}`\n",
-                    method, cls
-                ));
-            } else {
-                out.push_str("- Hierarchy: top-level symbol\n");
-            }
         }
-
-        SymbolResolution::Ambiguous(matches) => {
-            out.push_str("- Ambiguous symbol matches:\n");
-            for s in matches {
-                out.push_str(&format!("  - {} (line {})\n", s.name, s.line));
-            }
-            out.push_str(
-                "Use ONLY the diff to infer intended behavior.\n",
-            );
+        SymbolResolution::Ambiguous(_) => {
+            out.push_str("Symbol resolution: ambiguous\n");
         }
-
         SymbolResolution::NotFound => {
-            out.push_str(
-                "- Symbol not found in file.\n\
-Write tests strictly from observable diff behavior.\n",
-            );
+            out.push_str("Symbol not found in file\n");
         }
     }
 
-    /* ---------- local context ---------- */
-
-    if !ctx.local_symbols.is_empty() {
-        out.push_str("\nOther nearby symbols:\n");
-        for s in ctx.local_symbols.iter().take(6) {
-            out.push_str(&format!("- {} (line {})\n", s.name, s.line));
-        }
-    }
-
-    if !ctx.imports.is_empty() {
-        out.push_str("\nImports in file:\n");
-        for i in ctx.imports.iter().take(6) {
-            out.push_str(&format!("- {}\n", i.module));
-        }
-    }
-
-    /* ---------- decision & risk ---------- */
-
-    out.push_str("\nTest decision:\n");
-    out.push_str(&format!(
-        "- Decision: {:?}\n- Risk: {:?}\n",
-        c.decision,
-        c.risk
-    ));
-
-    /* ---------- code context ---------- */
+    /* === SOURCE CODE === */
 
     if let Some(old) = &c.old_code {
-        out.push_str("\nPrevious code:\n");
+        out.push_str("\nOld code:\n");
         out.push_str(old);
         out.push('\n');
     }
 
     if let Some(new) = &c.new_code {
-        out.push_str("\nCurrent code:\n");
+        out.push_str("\nNew code:\n");
         out.push_str(new);
         out.push('\n');
     }
 
-    /* ---------- constraints ---------- */
+    /* === CONSTRAINTS === */
 
     out.push_str(
         "\nConstraints:\n\
-- Test only observable behavior\n\
-- Do not rely on internal state or private helpers\n\
+- Only test observable behavior\n\
 - Do not assert on implementation details\n\
-- Prefer behavior-driven assertions\n"
+- Do not import external libraries\n\
+- Do not use randomness\n\
+- Ensure test fails if behavior regresses\n",
     );
 
-    out.push_str("\nWrite the test now.\n");
+    /* === INSTRUCTION === */
+
+    out.push_str("\nWrite the test.\n");
 
     out
 }
