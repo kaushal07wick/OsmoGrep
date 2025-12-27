@@ -5,10 +5,9 @@ use std::sync::{
 };
 use std::thread;
 
-use crate::context::engine::ContextEngine;
+use crate::{context::engine::ContextEngine, testgen::runner::run_test};
 use crate::context::types::{ContextSlice, IndexHandle, IndexStatus, SymbolResolution};
 use crate::detectors::language::Language;
-use crate::executor::run::run_single_test;
 use crate::llm::{ollama::Ollama, prompt::build_prompt};
 use crate::state::{AgentEvent, LogLevel, TestDecision};
 use crate::testgen::candidate::TestCandidate;
@@ -190,7 +189,7 @@ pub fn run_llm_test_flow(
             }
         };
 
-        match run_single_test(&cmd) {
+        match run_test(&cmd) {
             crate::state::TestResult::Passed => {
                 let _ = tx.send(AgentEvent::TestFinished(
                     crate::state::TestResult::Passed,

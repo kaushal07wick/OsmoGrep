@@ -9,7 +9,6 @@ mod machine;
 mod detectors;
 mod testgen;
 mod llm;
-mod executor;
 mod context;
 
 use std::{

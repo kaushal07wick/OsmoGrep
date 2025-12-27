@@ -3,17 +3,21 @@
 //! Extracts raw, symbol-aware diffs.
 //!
 //! Responsibilities:
-//! - Split git diff per file
-//! - Detect affected symbol (best-effort)
-//! - Extract before/after source (SYMBOL ONLY)
-//! - Classify change surface (cheap heuristics only)
-
+//! - Read git diff
+//! - Load file contents
+//! - Detect affected symbols
+//! - Compute before/after deltas
+//! - Classify change surface
+//!
+//! Does NOT:
+//! - Parse AST directly
+//! - Perform semantic reasoning
+//! - Mutate global state
 
 use crate::git;
 use crate::state::{ChangeSurface, DiffAnalysis, DiffBaseline};
 use crate::detectors::ast::ast::detect_symbol;
 use crate::detectors::ast::symboldelta::compute_symbol_delta;
-
 
 pub fn analyze_diff() -> Vec<DiffAnalysis> {
     let raw = git::diff_cached();
@@ -27,53 +31,65 @@ pub fn analyze_diff() -> Vec<DiffAnalysis> {
     split_diff_by_file(&diff)
         .into_iter()
         .filter(|(file, _)| should_analyze(file))
-        .map(|(file, hunks)| analyze_file(&base_branch, &file, &hunks))
+        .filter_map(|(file, hunks)| analyze_file(&base_branch, &file, &hunks))
         .collect()
 }
-
 
 fn analyze_file(
     base_branch: &str,
     file: &str,
     hunks: &str,
-) -> DiffAnalysis {
+) -> Option<DiffAnalysis> {
     let is_code = is_supported_code_file(file);
+
     let surface = if is_code {
         detect_surface(file, hunks)
     } else {
         ChangeSurface::Cosmetic
     };
 
-    // Best-effort symbol detection (code only)
-    let symbol = if is_code {
-        detect_symbol(file, hunks)
-    } else {
-        None
-    };
-
-    let delta = if is_code {
-        match &symbol {
-            Some(sym) => compute_symbol_delta(
-                DiffBaseline::Staged,
-                base_branch,
-                file,
-                sym,
+    // Load file contents (ONLY place touching git)
+    let (old_src, new_src) = if is_code {
+        match DiffBaseline::Staged {
+            DiffBaseline::BaseBranch => {
+                let base = git::base_commit(base_branch)?;
+                (
+                    git::show_file_at(&base, file)?,
+                    git::show_index(file)?,
+                )
+            }
+            DiffBaseline::Staged => (
+                git::show_head(file)?,
+                git::show_index(file)?,
             ),
-            None => None,
         }
     } else {
+        (String::new(), String::new())
+    };
+
+    // Symbol detection (pure)
+    let symbol = if is_code {
+        detect_symbol(&new_src, hunks, file)
+    } else {
         None
     };
 
-    DiffAnalysis {
+    // Symbol delta (pure)
+    let delta = match (&symbol, is_code) {
+        (Some(sym), true) => {
+            compute_symbol_delta(&old_src, &new_src, file, sym)
+        }
+        _ => None,
+    };
+
+    Some(DiffAnalysis {
         file: file.to_string(),
         symbol,
         surface,
         delta,
-        summary: None, // semantic enrichment happens later
-    }
+        summary: None,
+    })
 }
-
 
 fn split_diff_by_file(diff: &str) -> Vec<(String, String)> {
     let mut results = Vec::new();
@@ -106,7 +122,6 @@ fn split_diff_by_file(diff: &str) -> Vec<(String, String)> {
     results
 }
 
-
 fn detect_surface(file: &str, hunks: &str) -> ChangeSurface {
     if is_python_file(file) && python_behavior_change(hunks) {
         return ChangeSurface::Branching;
@@ -126,7 +141,6 @@ fn detect_surface(file: &str, hunks: &str) -> ChangeSurface {
 
     ChangeSurface::PureLogic
 }
-
 
 fn should_analyze(file: &str) -> bool {
     if file.starts_with('.') {
@@ -153,7 +167,6 @@ fn is_python_file(file: &str) -> bool {
 fn is_rust_file(file: &str) -> bool {
     file.ends_with(".rs")
 }
-
 
 fn python_behavior_change(text: &str) -> bool {
     text.contains("def ")

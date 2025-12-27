@@ -1,9 +1,12 @@
-// src/executor/run.rs
+// src/testgen/runner.rs
+//
+// Executes generated tests.
+
 use std::process::Command;
 
 use crate::state::TestResult;
 
-pub fn run_single_test(cmd: &[&str]) -> TestResult {
+pub fn run_test(cmd: &[&str]) -> TestResult {
     let output = Command::new(cmd[0])
         .args(&cmd[1..])
         .output();
@@ -28,9 +31,7 @@ pub fn run_single_test(cmd: &[&str]) -> TestResult {
                 combined.push_str(stderr.trim());
             }
 
-            TestResult::Failed {
-                output: combined,
-            }
+            TestResult::Failed { output: combined }
         }
 
         Err(e) => TestResult::Failed {

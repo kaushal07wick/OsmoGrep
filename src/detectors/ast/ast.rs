@@ -1,11 +1,9 @@
 //! detectors/ast/ast.rs
 //!
 //! AST-based symbol detection utilities.
-//! 
-use crate::git;
+
 use tree_sitter::{Node, Parser};
 use std::cell::RefCell;
-
 
 thread_local! {
     static PY_PARSER: RefCell<Parser> = RefCell::new(make_python_parser());
@@ -24,30 +22,32 @@ fn make_rust_parser() -> Parser {
     p
 }
 
-
-pub fn detect_symbol(file: &str, hunks: &str) -> Option<String> {
+/// Detect symbol affected by a diff hunk.
+///
+/// `source` must be the full file content.
+/// `hunks` is the unified diff chunk.
+pub fn detect_symbol(
+    source: &str,
+    hunks: &str,
+    file: &str,
+) -> Option<String> {
     if !is_supported(file) {
         return None;
     }
 
-    let source = git::show_index(file)
-        .or_else(|| git::show_head(file))
-        .or_else(|| std::fs::read_to_string(file).ok())?;
-
-    let line_offsets = compute_line_offsets(&source);
+    let line_offsets = compute_line_offsets(source);
     let ranges = changed_byte_ranges(hunks, &line_offsets);
     if ranges.is_empty() {
         return None;
     }
 
-    let tree = parse_source(file, &source)?;
+    let tree = parse_source(file, source)?;
     let root = tree.root_node();
 
-    // Collect ALL candidates, then pick the smallest enclosing node
     let mut best: Option<(usize, String)> = None;
 
     for (start, end) in ranges {
-        collect_enclosing_symbols(root, &source, start, end, &mut best);
+        collect_enclosing_symbols(root, source, start, end, &mut best);
     }
 
     best.map(|(_, name)| name)
@@ -66,7 +66,6 @@ pub fn extract_symbol_source(
         .map(str::to_owned)
 }
 
-
 pub fn is_supported(file: &str) -> bool {
     file.ends_with(".py") || file.ends_with(".rs")
 }
@@ -80,7 +79,6 @@ pub fn parse_source(file: &str, source: &str) -> Option<tree_sitter::Tree> {
         None
     }
 }
-
 
 pub fn compute_line_offsets(src: &str) -> Vec<usize> {
     let mut offsets = vec![0];
@@ -104,9 +102,7 @@ pub fn changed_byte_ranges(
             let e = s + len;
 
             let start_byte = *offsets.get(s).unwrap_or(&0);
-            let end_byte = *offsets
-                .get(e)
-                .unwrap_or_else(|| offsets.last().unwrap());
+            let end_byte = *offsets.get(e).unwrap_or_else(|| offsets.last().unwrap());
 
             ranges.push((start_byte, end_byte));
         }
@@ -129,7 +125,6 @@ pub fn parse_hunk_header(line: &str) -> Option<(usize, usize)> {
 
     Some((start, len))
 }
-
 
 fn collect_enclosing_symbols(
     node: Node,
@@ -158,31 +153,24 @@ fn collect_enclosing_symbols(
 
 fn symbol_name(node: Node, source: &str) -> Option<String> {
     match node.kind() {
-        // Python
         "function_definition" | "class_definition" => {
             node.child_by_field_name("name")
                 .and_then(|n| n.utf8_text(source.as_bytes()).ok())
                 .map(str::to_owned)
         }
-
-        // Rust
         "function_item" | "struct_item" | "enum_item" => {
             node.child_by_field_name("name")
                 .and_then(|n| n.utf8_text(source.as_bytes()).ok())
                 .map(str::to_owned)
         }
-
-        // Rust impl Foo / impl Trait for Foo
         "impl_item" => {
             node.child_by_field_name("type")
                 .and_then(|n| n.utf8_text(source.as_bytes()).ok())
                 .map(|t| format!("impl {}", t))
         }
-
         _ => None,
     }
 }
-
 
 pub fn find_symbol_node<'a>(
     node: Node<'a>,

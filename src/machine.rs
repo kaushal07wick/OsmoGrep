@@ -7,7 +7,7 @@ use std::sync::atomic::Ordering;
 
 use crate::{
     detectors::{framework::detect_framework, language::detect_language},
-    executor::run::run_single_test,
+    testgen::runner::run_test,
     git,
     llm::orchestrator::run_llm_test_flow,
     logger::log,
