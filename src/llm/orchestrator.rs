@@ -5,14 +5,13 @@ use std::sync::{
 };
 use std::thread;
 
-use crate::{context::engine::ContextEngine, testgen::runner::run_test};
-use crate::context::types::{ContextSlice, IndexHandle, IndexStatus, SymbolResolution};
+use crate::context::{index::build_context, types::{ContextSlice, IndexHandle, IndexStatus, SymbolResolution}};
 use crate::detectors::language::Language;
 use crate::llm::{ollama::Ollama, prompt::build_prompt};
 use crate::state::{AgentEvent, LogLevel, TestDecision};
 use crate::testgen::candidate::TestCandidate;
-use crate::testgen::file::materialize_test;
-use crate::testgen::resolve::TestResolution;
+use crate::testgen::materialize::materialize_test;
+use crate::testgen::runner::run_test;
 
 pub fn run_llm_test_flow(
     tx: Sender<AgentEvent>,
@@ -31,13 +30,13 @@ pub fn run_llm_test_flow(
         };
 
         if matches!(candidate.decision, TestDecision::No) {
-            fail("Change is not AI-test-worthy.");
+            fail("Change is not test-worthy.");
             return;
         }
 
         /* ================= CONTEXT ================= */
 
-        let (repo_root, facts, test_roots) = loop {
+        let (repo_root, facts, symbols) = loop {
             if cancelled() {
                 fail("Cancelled while waiting for context index.");
                 return;
@@ -46,11 +45,13 @@ pub fn run_llm_test_flow(
             match context_index.status.read().unwrap().clone() {
                 IndexStatus::Ready => {
                     let facts = context_index.facts.read().unwrap().clone();
-                    let roots = context_index.test_roots.read().unwrap().clone();
-                    match facts {
-                        Some(f) => break (context_index.repo_root.clone(), f, roots),
-                        None => {
-                            fail("Repository facts missing.");
+                    let symbols = context_index.symbols.read().unwrap().clone();
+                    match (facts, symbols) {
+                        (Some(f), Some(s)) => {
+                            break (context_index.repo_root.clone(), f, s)
+                        }
+                        _ => {
+                            fail("Context index incomplete.");
                             return;
                         }
                     }
@@ -65,21 +66,17 @@ pub fn run_llm_test_flow(
             }
         };
 
-        let symbols = context_index
-            .symbols
-            .read()
-            .unwrap()
-            .clone()
-            .unwrap_or_default();
+        let ctx_slice = match build_context(
+            &context_index,
+            &candidate.diff,
+        ) {
+            Some(ctx) => ctx,
+            None => {
+                fail("Failed to build context slice.");
+                return;
+            }
+        };
 
-        let ctx_engine = ContextEngine::new(
-            &repo_root,
-            &facts,
-            &symbols,
-            &test_roots,
-        );
-
-        let ctx_slice = ctx_engine.slice_from_diff(&candidate.diff);
 
         if ctx_slice.diff_target.file.as_os_str().is_empty() {
             fail("Diff target could not be resolved to a file.");
@@ -98,11 +95,7 @@ pub fn run_llm_test_flow(
 
         /* ================= PROMPT ================= */
 
-        let prompt = build_prompt(
-            &candidate,
-            &TestResolution::NotFound,
-            &ctx_slice,
-        );
+        let prompt = build_prompt(&candidate, &ctx_slice);
 
         let prompt_text = format!(
             "=== SYSTEM PROMPT ===\n{}\n\n=== USER PROMPT ===\n{}",
@@ -161,9 +154,9 @@ pub fn run_llm_test_flow(
         /* ================= MATERIALIZE TEST ================= */
 
         let test_path = match materialize_test(
+            &repo_root,
             language,
             &candidate,
-            &TestResolution::NotFound,
             &generated_test,
         ) {
             Ok(p) => p,
@@ -206,7 +199,7 @@ pub fn run_llm_test_flow(
     });
 }
 
-/* ================= CONTEXT DUMP ================= */
+/* ================= CONTEXT DEBUG ================= */
 
 fn debug_context(ctx: &ContextSlice) -> String {
     let mut s = String::new();
@@ -219,61 +212,37 @@ fn debug_context(ctx: &ContextSlice) -> String {
         ctx.diff_target.file.display()
     ));
     if let Some(sym) = &ctx.diff_target.symbol {
-        s.push_str(&format!("- Symbol (from diff): {}\n", sym));
+        s.push_str(&format!("- Symbol: {}\n", sym));
     }
-    s.push('\n');
 
-    s.push_str("SYMBOL RESOLUTION:\n");
+    s.push_str("\nSYMBOL RESOLUTION:\n");
     match &ctx.symbol_resolution {
         SymbolResolution::Resolved(sym) => {
             s.push_str(&format!(
-                "- Resolved: {} (line {})\n\n",
+                "- Resolved: {} (line {})\n",
                 sym.name, sym.line
             ));
         }
-        SymbolResolution::Ambiguous(matches) => {
-            s.push_str("- Ambiguous matches:\n");
-            for m in matches {
-                s.push_str(&format!("  - {} (line {})\n", m.name, m.line));
+        SymbolResolution::Ambiguous(v) => {
+            s.push_str("- Ambiguous:\n");
+            for s2 in v {
+                s.push_str(&format!("  - {} (line {})\n", s2.name, s2.line));
             }
-            s.push('\n');
         }
         SymbolResolution::NotFound => {
-            s.push_str("- NOT FOUND in file\n\n");
+            s.push_str("- Not found\n");
         }
     }
 
-    s.push_str("LOCAL STRUCTURE (same file):\n");
-    if ctx.local_symbols.is_empty() && ctx.imports.is_empty() {
-        s.push_str("- None\n\n");
-    } else {
-        for d in &ctx.local_symbols {
-            s.push_str(&format!("  - {} (line {})\n", d.name, d.line));
-        }
-        for i in &ctx.imports {
-            s.push_str(&format!("  - import {}\n", i.module));
-        }
-        s.push('\n');
+    s.push_str("\nLOCAL SYMBOLS:\n");
+    for s2 in &ctx.local_symbols {
+        s.push_str(&format!("  - {} (line {})\n", s2.name, s2.line));
     }
 
-    s.push_str("TEST CONTEXT:\n");
-    s.push_str(&format!(
-        "- Match kind: {:?}\n",
-        ctx.test_context.match_kind
-    ));
-
-    if ctx.test_context.existing_tests.is_empty() {
-        s.push_str("- Existing tests: None\n");
-    } else {
-        for p in &ctx.test_context.existing_tests {
-            s.push_str(&format!("  - {}\n", p.display()));
-        }
+    s.push_str("\nIMPORTS:\n");
+    for i in &ctx.imports {
+        s.push_str(&format!("  - {}\n", i.module));
     }
-
-    s.push_str(&format!(
-        "- Recommended location: {}\n",
-        ctx.test_context.recommended_location.display()
-    ));
 
     s
 }

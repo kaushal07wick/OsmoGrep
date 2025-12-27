@@ -66,8 +66,6 @@ pub enum ChangeSurface {
     Contract,
     ErrorPath,
     State,
-    Integration,
-    Observability,
     Cosmetic,
 }
 
@@ -97,27 +95,6 @@ pub struct DiffAnalysis {
     pub summary: Option<SemanticSummary>,
 }
 
-///fully resolved semantic change ready for test synthesis
-#[derive(Debug, Clone)]
-pub struct SemanticChange {
-    pub file: String,
-    pub symbol: String,
-    pub language: Language,
-    pub before: String,
-    pub after: String,
-    pub summary: SemanticSummary,
-    pub risk: RiskLevel,
-    pub test_intent: TestIntent,
-    pub failure_mode: String,
-}
-
-///intended purpose of a generated test
-#[derive(Debug, Clone)]
-pub enum TestIntent {
-    Regression,
-    NewBehavior,
-    Guardrail,
-}
 
 /// UI focus area
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

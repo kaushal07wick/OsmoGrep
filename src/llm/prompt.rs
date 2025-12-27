@@ -2,12 +2,8 @@
 //
 // Deterministic LLM prompt construction.
 
-use crate::context::types::{
-    ContextSlice,
-    SymbolResolution,
-};
+use crate::context::types::{ContextSlice, SymbolResolution};
 use crate::testgen::candidate::TestCandidate;
-use crate::testgen::resolve::TestResolution;
 
 #[derive(Debug, Clone)]
 pub struct LlmPrompt {
@@ -17,12 +13,11 @@ pub struct LlmPrompt {
 
 pub fn build_prompt(
     candidate: &TestCandidate,
-    resolution: &TestResolution,
     context: &ContextSlice,
 ) -> LlmPrompt {
     LlmPrompt {
         system: system_prompt(),
-        user: user_prompt(candidate, resolution, context),
+        user: user_prompt(candidate, context),
     }
 }
 
@@ -43,7 +38,6 @@ Rules:
 
 fn user_prompt(
     c: &TestCandidate,
-    _resolution: &TestResolution,
     ctx: &ContextSlice,
 ) -> String {
     let mut out = String::new();
@@ -52,13 +46,14 @@ fn user_prompt(
 
     if !ctx.repo_facts.languages.is_empty() {
         out.push_str("Languages:\n");
-        out.push_str(&ctx.repo_facts.languages.join(", "));
-        out.push('\n');
-    }
-
-    if !ctx.repo_facts.test_frameworks.is_empty() {
-        out.push_str("Test frameworks:\n");
-        out.push_str(&ctx.repo_facts.test_frameworks.join(", "));
+        out.push_str(
+            &ctx.repo_facts
+                .languages
+                .iter()
+                .map(|l| l.to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
         out.push('\n');
     }
 
@@ -122,7 +117,7 @@ Write tests strictly from observable diff behavior.\n",
     /* ---------- local context ---------- */
 
     if !ctx.local_symbols.is_empty() {
-        out.push_str("\nOther nearby symbols (non-authoritative):\n");
+        out.push_str("\nOther nearby symbols:\n");
         for s in ctx.local_symbols.iter().take(6) {
             out.push_str(&format!("- {} (line {})\n", s.name, s.line));
         }
@@ -135,34 +130,16 @@ Write tests strictly from observable diff behavior.\n",
         }
     }
 
-    /* ---------- test intent ---------- */
+    /* ---------- decision & risk ---------- */
 
-    out.push_str("\nTest intent:\n");
+    out.push_str("\nTest decision:\n");
     out.push_str(&format!(
-        "- Intent: {:?}\n- Risk: {:?}\n",
-        c.test_intent,
+        "- Decision: {:?}\n- Risk: {:?}\n",
+        c.decision,
         c.risk
     ));
 
-    /* ---------- behavior contract ---------- */
-
-    if !c.behavior.is_empty() {
-        out.push_str("\nExpected behavior (from diff analysis):\n");
-        out.push_str(&c.behavior);
-        out.push('\n');
-    }
-
-    /* ---------- constraints ---------- */
-
-    out.push_str(
-        "\nConstraints:\n\
-- Test only observable behavior\n\
-- Do not rely on internal state or private helpers\n\
-- Do not assert on implementation details\n\
-- Prefer invariants and output correctness\n"
-    );
-
-    /* ---------- previous / new code ---------- */
+    /* ---------- code context ---------- */
 
     if let Some(old) = &c.old_code {
         out.push_str("\nPrevious code:\n");
@@ -176,39 +153,14 @@ Write tests strictly from observable diff behavior.\n",
         out.push('\n');
     }
 
-    /* ---------- numeric & stability rules ---------- */
+    /* ---------- constraints ---------- */
 
     out.push_str(
-        "\nNumeric stability rules:\n\
-- Avoid exact equality for floating-point comparisons\n\
-- Prefer tolerance-based or relative comparisons\n\
-- Assume small numerical drift is acceptable\n\
-- Avoid asserting on internal representations\n"
-    );
-
-    /* ---------- style reference ---------- */
-
-    out.push_str(
-        "\nReference tests (STYLE ONLY — do NOT copy behavior):\n\
-\n\
-def test_tanh(self):\n\
-    helper_test_op([(45,65)], lambda x: x.tanh(), Tensor.tanh, atol=1e-6, grad_atol=1e-6)\n\
-\n\
-def test_hardtanh(self):\n\
-    helper_test_op([(45,65)], lambda x: torch.nn.functional.hardtanh(x,-5, 5), lambda x: x.hardtanh(-5, 5), atol=1e-6)\n\
-\n\
-Notes:\n\
-- These illustrate structure, not semantics\n\
-- Generated tests MUST NOT import torch or external libs\n"
-    );
-
-    /* ---------- execution check ---------- */
-
-    out.push_str(
-        "\nBefore finalizing, mentally verify:\n\
-- pytest can discover the test\n\
-- the test runs deterministically\n\
-- the test fails if behavior regresses\n"
+        "\nConstraints:\n\
+- Test only observable behavior\n\
+- Do not rely on internal state or private helpers\n\
+- Do not assert on implementation details\n\
+- Prefer behavior-driven assertions\n"
     );
 
     out.push_str("\nWrite the test now.\n");

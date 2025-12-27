@@ -46,12 +46,6 @@ fn behavior_statement(d: &DiffAnalysis) -> String {
         ChangeSurface::State =>
             "State transitions remain valid across operations".into(),
 
-        ChangeSurface::Integration =>
-            "End-to-end behavior remains correct across components".into(),
-
-        ChangeSurface::Observability =>
-            "Instrumentation changes do not affect runtime behavior".into(),
-
         ChangeSurface::Cosmetic =>
             "Non-functional changes do not affect execution".into(),
 
@@ -72,9 +66,6 @@ fn failure_statement(d: &DiffAnalysis) -> String {
         ChangeSurface::State =>
             "Invalid state transitions may break flows".into(),
 
-        ChangeSurface::Integration =>
-            "Cross-component interaction may fail".into(),
-
         _ =>
             "Unexpected regression in existing behavior".into(),
     }
@@ -84,15 +75,13 @@ fn failure_statement(d: &DiffAnalysis) -> String {
 fn infer_risk(d: &DiffAnalysis) -> RiskLevel {
     match d.surface {
         ChangeSurface::Contract
-        | ChangeSurface::State
-        | ChangeSurface::Integration =>
+        | ChangeSurface::State =>
             RiskLevel::High,
 
         ChangeSurface::Branching
         | ChangeSurface::ErrorPath =>
             RiskLevel::Medium,
 
-        ChangeSurface::Observability
         | ChangeSurface::Cosmetic
         | ChangeSurface::PureLogic =>
             RiskLevel::Low,

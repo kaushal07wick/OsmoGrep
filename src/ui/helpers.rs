@@ -121,11 +121,7 @@ pub fn surface_color(surface: &ChangeSurface) -> Color {
         // Safe / low-risk surfaces → muted
         ChangeSurface::PureLogic
         | ChangeSurface::Cosmetic
-        | ChangeSurface::Observability => Color::DarkGray,
-
-        // Conditional / structural changes → warning
-        ChangeSurface::Branching
-        | ChangeSurface::Integration => Color::Yellow,
+        | ChangeSurface::Branching => Color::DarkGray,
 
         // API / state / error paths → attention
         ChangeSurface::Contract

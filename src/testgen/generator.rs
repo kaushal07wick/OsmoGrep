@@ -1,13 +1,14 @@
-//! generator.rs
-//!
-//! Test candidate generation pipeline.
-
+// src/testgen/generator.rs
+//
+// Test candidate generation pipeline.
 
 use crate::state::{ChangeSurface, DiffAnalysis, TestDecision};
-use crate::testgen::candidate::TestCandidate;
+use crate::testgen::candidate::{TestCandidate, TestTarget};
 use crate::testgen::summarizer;
-use crate::context::types::TestIntent;
 
+/* ============================================================
+   Helpers
+   ============================================================ */
 
 fn normalize_source(file: &str, src: &str) -> String {
     if file.ends_with(".rs") {
@@ -67,18 +68,13 @@ fn decide_test(d: &DiffAnalysis) -> TestDecision {
         ChangeSurface::Contract
         | ChangeSurface::ErrorPath
         | ChangeSurface::Branching
-        | ChangeSurface::State
-        | ChangeSurface::Integration =>
-            TestDecision::Yes,
+        | ChangeSurface::State => TestDecision::Yes,
 
-        ChangeSurface::PureLogic =>
-            TestDecision::Conditional,
+        ChangeSurface::PureLogic => TestDecision::Conditional,
 
-        _ =>
-            TestDecision::No,
+        _ => TestDecision::No,
     }
 }
-
 
 fn priority(d: &DiffAnalysis) -> u8 {
     let mut score = match d.surface {
@@ -86,7 +82,6 @@ fn priority(d: &DiffAnalysis) -> u8 {
         ChangeSurface::ErrorPath => 35,
         ChangeSurface::Branching => 30,
         ChangeSurface::State => 30,
-        ChangeSurface::Integration => 30,
         ChangeSurface::PureLogic => 20,
         _ => 0,
     };
@@ -98,6 +93,9 @@ fn priority(d: &DiffAnalysis) -> u8 {
     score
 }
 
+/* ============================================================
+   Public API
+   ============================================================ */
 
 pub fn generate_test_candidates(
     diffs: &[DiffAnalysis],
@@ -121,52 +119,29 @@ pub fn generate_test_candidates(
 
         let summary = summarizer::summarize(d);
 
-        let test_intent = match d.surface {
-            ChangeSurface::ErrorPath | ChangeSurface::Branching =>
-                TestIntent::Guardrail,
+        let candidate = TestCandidate {
+            id: format!(
+                "{}::{}",
+                d.file,
+                d.symbol.as_deref().unwrap_or("<file>")
+            ),
 
-            ChangeSurface::PureLogic | ChangeSurface::Contract =>
-                TestIntent::Regression,
-
-            _ =>
-                TestIntent::Regression,
-        };
-
-        let mut candidate = TestCandidate {
-            id: String::new(),
             diff: d.clone(),
             file: d.file.clone(),
             symbol: d.symbol.clone(),
-            target: crate::testgen::candidate::TestTarget::File(d.file.clone()),
+            target: TestTarget::File(d.file.clone()),
 
             decision,
             risk: summary.risk,
-            test_intent,
-
-            behavior: summary.behavior.clone(),
 
             old_code: Some(delta.old_source.clone()),
             new_code: Some(delta.new_source.clone()),
         };
 
-        candidate.id = match &candidate.symbol {
-            Some(sym) => format!(
-                "{}::{}::{:?}",
-                candidate.file,
-                sym,
-                candidate.test_intent
-            ),
-            None => format!(
-                "{}::<file>::{:?}",
-                candidate.file,
-                candidate.test_intent
-            ),
-        };
-
-
         scored.push((priority(d), candidate));
     }
 
-    scored.sort_by_key(|(p, _)| std::cmp::Reverse(*p));
+    scored.sort_by(|a, b| b.0.cmp(&a.0));
     scored.into_iter().map(|(_, c)| c).collect()
+
 }

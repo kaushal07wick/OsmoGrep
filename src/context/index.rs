@@ -1,6 +1,7 @@
 // src/context/index.rs
 //
-// Repository indexing logic.
+// Repository indexing + context construction.
+
 
 use std::{
     collections::HashMap,
@@ -13,18 +14,19 @@ use tree_sitter::{Node, Parser};
 use tree_sitter_python as python;
 use tree_sitter_rust as rust;
 
+use crate::detectors::language::Language;
+use crate::state::DiffAnalysis;
+
 use super::types::{
+    ContextSlice,
+    DiffTarget,
     FileSymbols,
     Import,
     IndexHandle,
     RepoFacts,
     SymbolDef,
     SymbolIndex,
-};
-
-use crate::detectors::{
-    framework::TestFramework,
-    language::Language,
+    SymbolResolution,
 };
 
 
@@ -35,17 +37,12 @@ pub fn spawn_repo_indexer(repo_root: PathBuf) -> IndexHandle {
     std::thread::spawn(move || {
         let result = (|| {
             let code_roots = detect_code_roots(&repo_root);
-            let test_roots = detect_test_roots(&repo_root);
-
             *handle_clone.code_roots.write().unwrap() = code_roots.clone();
-            *handle_clone.test_roots.write().unwrap() = test_roots.clone();
 
             let facts = extract_repo_facts(&repo_root);
             handle_clone.set_facts(facts);
 
-            // BEST-EFFORT auxiliary cache only
-            let symbols =
-                build_symbol_index(&repo_root, &code_roots, &test_roots);
+            let symbols = build_symbol_index(&repo_root, &code_roots);
             handle_clone.set_symbols(symbols);
 
             Ok::<(), String>(())
@@ -60,40 +57,93 @@ pub fn spawn_repo_indexer(repo_root: PathBuf) -> IndexHandle {
     handle
 }
 
+fn parse_file(
+    file: &Path,
+    source: &str,
+) -> (Vec<SymbolDef>, Vec<Import>) {
+    let mut parser = Parser::new();
+
+    let language = match file.extension().and_then(|s| s.to_str()) {
+        Some("py") => python::language(),
+        Some("rs") => rust::language(),
+        _ => return (Vec::new(), Vec::new()),
+    };
+
+    if parser.set_language(&language).is_err() {
+        return (Vec::new(), Vec::new());
+    }
+
+    let tree = match parser.parse(source, None) {
+        Some(t) => t,
+        None => return (Vec::new(), Vec::new()),
+    };
+
+    let mut symbols = Vec::new();
+    let mut imports = Vec::new();
+
+    walk_node(
+        match language {
+            _ if language == python::language() => LanguageKind::Python,
+            _ => LanguageKind::Rust,
+        },
+        tree.root_node(),
+        file,
+        source,
+        &mut symbols,
+        &mut imports,
+        None,
+    );
+
+    (symbols, imports)
+}
+
+pub fn build_context(
+    index: &IndexHandle,
+    diff: &DiffAnalysis,
+) -> Option<ContextSlice> {
+    let facts = index.facts.read().ok()?.clone()?;
+    let _symbols = index.symbols.read().ok()?.clone()?;
+
+    let file = PathBuf::from(&diff.file);
+    let abs = index.repo_root.join(&file);
+
+    let source = fs::read_to_string(&abs).unwrap_or_default();
+    let (local_symbols, imports) = parse_file(&file, &source);
+
+    let symbol_resolution = resolve_symbol(diff.symbol.as_deref(), &local_symbols);
+
+    Some(ContextSlice {
+        repo_facts: facts,
+        diff_target: DiffTarget {
+            file,
+            symbol: diff.symbol.clone(),
+        },
+        symbol_resolution,
+        local_symbols,
+        imports,
+    })
+}
+
 
 fn extract_repo_facts(repo_root: &Path) -> RepoFacts {
     let mut languages = Vec::new();
-    let mut test_frameworks = Vec::new();
 
     if repo_root.join("Cargo.toml").exists() {
         languages.push(Language::Rust);
-        test_frameworks.push(TestFramework::CargoTest);
     }
 
-    if repo_root.join("pytest.ini").exists()
-        || repo_root.join("conftest.py").exists()
-    {
-        languages.push(Language::Python);
-        test_frameworks.push(TestFramework::Pytest);
-    } else if repo_root.join("pyproject.toml").exists()
+    if repo_root.join("pyproject.toml").exists()
         || repo_root.join("setup.py").exists()
         || repo_root.join("requirements.txt").exists()
     {
         languages.push(Language::Python);
-        test_frameworks.push(TestFramework::Unittest);
     }
 
     RepoFacts {
         languages,
-        test_frameworks,
-        forbidden_deps: vec![
-            "torch".into(),
-            "tensorflow".into(),
-            "jax".into(),
-        ],
+        forbidden_deps: vec!["torch".into(), "tensorflow".into(), "jax".into()],
     }
 }
-
 
 fn detect_code_roots(repo_root: &Path) -> Vec<PathBuf> {
     let mut roots = Vec::new();
@@ -103,12 +153,8 @@ fn detect_code_roots(repo_root: &Path) -> Vec<PathBuf> {
         roots.push(src);
     }
 
-    let repo_name = repo_root
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
-
-    let named = repo_root.join(repo_name);
+    let name = repo_root.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    let named = repo_root.join(name);
     if named.is_dir() {
         roots.push(named);
     }
@@ -120,19 +166,9 @@ fn detect_code_roots(repo_root: &Path) -> Vec<PathBuf> {
     roots
 }
 
-fn detect_test_roots(repo_root: &Path) -> Vec<PathBuf> {
-    ["test", "tests"]
-        .iter()
-        .map(|n| repo_root.join(n))
-        .filter(|p| p.is_dir())
-        .collect()
-}
-
-
 fn build_symbol_index(
     repo_root: &Path,
     code_roots: &[PathBuf],
-    test_roots: &[PathBuf],
 ) -> SymbolIndex {
     let mut by_file = HashMap::new();
 
@@ -143,32 +179,25 @@ fn build_symbol_index(
             .filter_map(Result::ok)
             .filter(|e| e.file_type().is_file())
         {
-            let abs_path = entry.path();
+            let abs = entry.path();
 
-            // NEVER index tests
-            if is_under_any(abs_path, test_roots) {
-                continue;
-            }
+            let rel = abs.strip_prefix(repo_root).unwrap_or(abs).to_path_buf();
 
-            let rel_path = abs_path
-                .strip_prefix(repo_root)
-                .unwrap_or(abs_path)
-                .to_path_buf();
-
-            let kind = match rel_path.extension().and_then(|s| s.to_str()) {
+            let lang = match rel.extension().and_then(|s| s.to_str()) {
                 Some("py") => LanguageKind::Python,
                 Some("rs") => LanguageKind::Rust,
                 _ => continue,
             };
 
-            if let Some(fs) = index_file(abs_path, &rel_path, kind) {
-                by_file.insert(rel_path, fs);
+            if let Some(symbols) = index_file(abs, &rel, lang) {
+                by_file.insert(rel, symbols);
             }
         }
     }
 
     SymbolIndex { by_file }
 }
+
 
 #[derive(Clone, Copy)]
 enum LanguageKind {
@@ -195,19 +224,10 @@ fn index_file(
     let mut symbols = Vec::new();
     let mut imports = Vec::new();
 
-    walk_node(
-        kind,
-        root,
-        rel_path,
-        &src,
-        &mut symbols,
-        &mut imports,
-        None,
-    );
+    walk_node(kind, root, rel_path, &src, &mut symbols, &mut imports, None);
 
     Some(FileSymbols { symbols, imports })
 }
-
 
 fn walk_node(
     kind: LanguageKind,
@@ -219,12 +239,10 @@ fn walk_node(
     current_class: Option<String>,
 ) {
     match (kind, node.kind()) {
-        /* -------- Python class -------- */
         (LanguageKind::Python, "class_definition") => {
             if let Some(n) = node.child_by_field_name("name") {
                 if let Ok(cls) = n.utf8_text(src.as_bytes()) {
                     let cls = cls.to_string();
-
                     symbols.push(SymbolDef {
                         name: cls.clone(),
                         file: file.to_path_buf(),
@@ -233,15 +251,7 @@ fn walk_node(
 
                     for i in 0..node.child_count() {
                         if let Some(c) = node.child(i) {
-                            walk_node(
-                                kind,
-                                c,
-                                file,
-                                src,
-                                symbols,
-                                imports,
-                                Some(cls.clone()),
-                            );
+                            walk_node(kind, c, file, src, symbols, imports, Some(cls.clone()));
                         }
                     }
                     return;
@@ -249,17 +259,16 @@ fn walk_node(
             }
         }
 
-        /* -------- Python function -------- */
         (LanguageKind::Python, "function_definition") => {
             if let Some(n) = node.child_by_field_name("name") {
-                if let Ok(fn_name) = n.utf8_text(src.as_bytes()) {
-                    let name = match &current_class {
-                        Some(c) => format!("{c}.{fn_name}"),
-                        None => fn_name.to_string(),
+                if let Ok(name) = n.utf8_text(src.as_bytes()) {
+                    let full = match &current_class {
+                        Some(c) => format!("{c}.{name}"),
+                        None => name.to_string(),
                     };
 
                     symbols.push(SymbolDef {
-                        name,
+                        name: full,
                         file: file.to_path_buf(),
                         line: node.start_position().row + 1,
                     });
@@ -267,7 +276,6 @@ fn walk_node(
             }
         }
 
-        /* -------- Rust -------- */
         (LanguageKind::Rust, "function_item")
         | (LanguageKind::Rust, "struct_item")
         | (LanguageKind::Rust, "enum_item") => {
@@ -282,7 +290,6 @@ fn walk_node(
             }
         }
 
-        /* -------- Imports -------- */
         (LanguageKind::Python, "import_statement")
         | (LanguageKind::Python, "import_from_statement")
         | (LanguageKind::Rust, "use_declaration") => {
@@ -299,21 +306,30 @@ fn walk_node(
 
     for i in 0..node.child_count() {
         if let Some(c) = node.child(i) {
-            walk_node(
-                kind,
-                c,
-                file,
-                src,
-                symbols,
-                imports,
-                current_class.clone(),
-            );
+            walk_node(kind, c, file, src, symbols, imports, current_class.clone());
         }
     }
 }
 
-fn is_under_any(path: &Path, roots: &[PathBuf]) -> bool {
-    roots.iter().any(|r| path.starts_with(r))
+fn resolve_symbol(
+    target: Option<&str>,
+    symbols: &[SymbolDef],
+) -> SymbolResolution {
+    let Some(sym) = target else {
+        return SymbolResolution::NotFound;
+    };
+
+    let matches: Vec<_> = symbols
+        .iter()
+        .cloned()
+        .filter(|s| s.name == sym || s.name.ends_with(&format!(".{sym}")))
+        .collect();
+
+    match matches.len() {
+        0 => SymbolResolution::NotFound,
+        1 => SymbolResolution::Resolved(matches[0].clone()),
+        _ => SymbolResolution::Ambiguous(matches),
+    }
 }
 
 fn is_ignored(e: &DirEntry) -> bool {
