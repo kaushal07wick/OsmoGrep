@@ -27,7 +27,8 @@ fn normalize_rust(src: &str) -> String {
             !t.starts_with("//") && !t.starts_with("///")
         })
         .map(|l| l.trim())
-        .collect::<String>()
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn normalize_python(src: &str) -> String {
@@ -39,7 +40,8 @@ fn normalize_python(src: &str) -> String {
                 && !t.starts_with("'''")
         })
         .map(|l| l.trim())
-        .collect::<String>()
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn is_test_worthy(d: &DiffAnalysis) -> bool {
@@ -118,7 +120,10 @@ pub fn generate_test_candidates(
         }
 
         let summary = summarizer::summarize(d);
-
+        let target = match &d.symbol {
+            Some(sym) => TestTarget::Symbol(sym.clone()),
+            None => TestTarget::File(d.file.clone()),
+            };
         let candidate = TestCandidate {
             id: format!(
                 "{}::{}",
@@ -129,7 +134,7 @@ pub fn generate_test_candidates(
             diff: d.clone(),
             file: d.file.clone(),
             symbol: d.symbol.clone(),
-            target: TestTarget::File(d.file.clone()),
+            target,
 
             decision,
             risk: summary.risk,
@@ -137,7 +142,6 @@ pub fn generate_test_candidates(
             old_code: Some(delta.old_source.clone()),
             new_code: Some(delta.new_source.clone()),
         };
-
         scored.push((priority(d), candidate));
     }
 

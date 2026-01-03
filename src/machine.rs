@@ -4,6 +4,10 @@
 
 use std::path::{PathBuf};
 use std::sync::atomic::Ordering;
+use crate::testgen::cache::SemanticCache;
+use std::sync::Arc;
+
+
 
 use crate::{
     detectors::{framework::detect_framework, language::detect_language},
@@ -138,14 +142,16 @@ fn execute_agent(state: &mut AgentState) {
         .expect("context snapshot missing");
 
     let llm_backend = state.llm_backend.clone();
+    let semantic_cache = Arc::new(SemanticCache::new());
 
     run_llm_test_flow(
-        state.agent_tx.clone(),
-        state.cancel_requested.clone(),
-        llm_backend,
-        snapshot,
-        candidate,
-        language,
+    state.agent_tx.clone(),
+    state.cancel_requested.clone(),
+    llm_backend,
+    snapshot,
+    candidate,
+    language,
+    semantic_cache.clone(),
     );
 
     transition(state, Phase::Running);

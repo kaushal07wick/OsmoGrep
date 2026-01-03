@@ -12,74 +12,20 @@
 - fn list_changes(state: &mut AgentState)
 - fn view_change(state: &mut AgentState, cmd: &str)
 - fn agent_run(state: &mut AgentState, cmd: &str)
-- fn set_model(state: &mut AgentState, cmd: &str)
-- fn show_model(state: &mut AgentState)
-- fn status_model(state: &mut AgentState)
-- fn status_agent(state: &mut AgentState)
-- fn status_context(state: &mut AgentState)
-- fn status_prompt(state: &mut AgentState)
-- fn status_git(state: &mut AgentState)
-- fn status_system(state: &mut AgentState)
+- fn agent_status(state: &mut AgentState)
 - fn agent_cancel(state: &mut AgentState)
+- fn model_use(state: &mut AgentState, cmd: &str)
+- fn enter_api_key_mode( state: &mut AgentState, provider: Provider, model: &str, )
+- fn model_show(state: &mut AgentState)
 - fn show_test_artifact(state: &mut AgentState)
 - fn close_view(state: &mut AgentState)
 - pub fn update_command_hints(state: &mut AgentState)
 
 **Calls**
-- IndexStatus::Failed
 - Instant::now
-- fs::read_to_string
-- git::current_branch
+- LlmBackend::ollama
 - git::list_branches
-- git::working_tree_dirty
 - slice::from_ref
-
-### src/context/engine.rs
-
-**Functions**
--  pub fn new( repo_root: &'a Path, facts: &'a RepoFacts, _symbols: &'a super::types::SymbolIndex, // intentionally ignored test_roots: &'a [PathBuf], ) -> Self
--  pub fn slice_from_diff(&self, diff: &DiffAnalysis) -> ContextSlice
--  fn build_test_context( &self, src_file: &Path, symbol: Option<&str>, ) -> TestContext
-- fn parse_file( file: &Path, source: &str, ) -> (Vec<SymbolDef>, Vec<Import>)
-- fn walk( node: Node, file: &Path, src: &str, symbols: &mut Vec<SymbolDef>, imports: &mut Vec<Import>, current_class: Option<String>, )
-- fn resolve_symbol( target: Option<&str>, symbols: &[SymbolDef], ) -> SymbolResolution
-- fn find_candidate_tests( test_roots: &[PathBuf], src_file: &Path, ) -> Vec<PathBuf>
-- fn match_symbol_in_tests( files: &[PathBuf], symbol: &str, ) -> Vec<PathBuf>
-- fn symbol_variants(symbol: &str) -> Vec<String>
-- fn default_test_path( repo_root: &Path, src_file: &Path, symbol: Option<&str>, ) -> PathBuf
-
-**Calls**
-- Parser::new
-- PathBuf::from
-- RepoFactsLite::from
-- SymbolResolution::Ambiguous
-- SymbolResolution::Resolved
-- Vec::new
-- WalkDir::new
-- fs::read_to_string
-- python::language
-- rust::language
-
-### src/context/index.rs
-
-**Functions**
-- pub fn spawn_repo_indexer(repo_root: PathBuf) -> IndexHandle
-- fn extract_repo_facts(repo_root: &Path) -> RepoFacts
-- fn detect_code_roots(repo_root: &Path) -> Vec<PathBuf>
-- fn build_symbol_index( repo_root: &Path, code_roots: &[PathBuf], test_roots: &[PathBuf], ) -> SymbolIndex
-- fn index_file( abs_path: &Path, rel_path: &Path, kind: LanguageKind, ) -> Option<FileSymbols>
-- fn walk_node( kind: LanguageKind, node: Node, file: &Path, src: &str, symbols: &mut Vec<SymbolDef>, imports: &mut Vec<Import>, current_class: Option<String>, )
-
-**Calls**
-- HashMap::new
-- IndexHandle::new_indexing
-- Parser::new
-- Vec::new
-- WalkDir::new
-- fs::read_to_string
-- python::language
-- rust::language
-- thread::spawn
 
 ### src/context/mod.rs
 
@@ -87,22 +33,34 @@
 
 **Calls**
 
+### src/context/snapshot.rs
+
+**Functions**
+- pub fn build_context_snapshot( repo_root: &Path, diffs: &[DiffAnalysis], ) -> ContextSnapshot
+- fn parse_file( file: &Path, source: &str, ) -> (Vec<SymbolDef>, Vec<Import>)
+- fn walk_node( kind: LanguageKind, node: Node, file: &Path, src: &str, symbols: &mut Vec<SymbolDef>, imports: &mut Vec<Import>, current_class: Option<String>, )
+- fn resolve_symbol( target: Option<&str>, symbols: &[SymbolDef], ) -> SymbolResolution
+
+**Calls**
+- Parser::new
+- PathBuf::from
+- SymbolResolution::Ambiguous
+- SymbolResolution::Resolved
+- Vec::new
+- fs::read_to_string
+- python::language
+- rust::language
+
 ### src/context/types.rs
 
 **Functions**
--  pub fn from(facts: &RepoFacts) -> Self
--  pub fn new_indexing(repo_root: PathBuf) -> Self
 
 **Calls**
-- Arc::new
-- IndexStatus::Failed
-- RwLock::new
-- Vec::new
 
 ### src/detectors/ast/ast.rs
 
 **Functions**
-- pub fn detect_symbol(file: &str, hunks: &str) -> Option<String>
+- pub fn detect_symbol( source: &str, hunks: &str, file: &str, ) -> Option<String>
 - pub fn extract_symbol_source( source: &str, file: &str, symbol: &str, ) -> Option<String>
 - pub fn parse_source(file: &str, source: &str) -> Option<tree_sitter::Tree>
 - pub fn compute_line_offsets(src: &str) -> Vec<usize>
@@ -116,9 +74,6 @@
 - Parser::new
 - RefCell::new
 - Vec::new
-- fs::read_to_string
-- git::show_head
-- git::show_index
 - tree_sitter_python::language
 - tree_sitter_rust::language
 
@@ -131,19 +86,15 @@
 ### src/detectors/ast/symboldelta.rs
 
 **Functions**
-- pub fn compute_symbol_delta( baseline: DiffBaseline, base_branch: &str, file: &str, symbol: &str, ) -> Option<SymbolDelta>
+- pub fn compute_symbol_delta( old_source: &str, new_source: &str, file: &str, symbol: &str, ) -> Option<SymbolDelta>
 
 **Calls**
-- git::base_commit
-- git::show_file_at
-- git::show_head
-- git::show_index
 
 ### src/detectors/diff_analyzer.rs
 
 **Functions**
 - pub fn analyze_diff() -> Vec<DiffAnalysis>
-- fn analyze_file( base_branch: &str, file: &str, hunks: &str, ) -> DiffAnalysis
+- fn analyze_file( base_branch: &str, file: &str, hunks: &str, ) -> Option<DiffAnalysis>
 - fn split_diff_by_file(diff: &str) -> Vec<(String, String)>
 - fn detect_surface(file: &str, hunks: &str) -> ChangeSurface
 - fn should_analyze(file: &str) -> bool
@@ -152,8 +103,12 @@
 - String::from_utf8_lossy
 - String::new
 - Vec::new
+- git::base_commit
 - git::detect_base_branch
 - git::diff_cached
+- git::show_file_at
+- git::show_head
+- git::show_index
 - mem::take
 
 ### src/detectors/framework.rs
@@ -183,22 +138,6 @@
 
 **Calls**
 
-### src/executor/mod.rs
-
-**Functions**
-
-**Calls**
-
-### src/executor/run.rs
-
-**Functions**
-- pub fn run_single_test(cmd: &[&str]) -> TestResult
-
-**Calls**
-- Command::new
-- String::from_utf8_lossy
-- String::new
-
 ### src/git.rs
 
 **Functions**
@@ -215,6 +154,43 @@
 - Path::new
 - String::from_utf8_lossy
 
+### src/llm/backend.rs
+
+**Functions**
+-  pub fn ollama(model: String) -> Self
+-  pub fn remote(client: LlmClient) -> Self
+-  pub fn run(&self, prompt: LlmPrompt) -> Result<String, String>
+
+**Calls**
+- Ollama::run
+
+### src/llm/client.rs
+
+**Functions**
+-  pub fn new() -> Self
+-  pub fn configure( &self, provider_name: &str, model: String, api_key: String, base_url: Option<String>, ) -> Result<(), String>
+-  pub fn run(&self, prompt: LlmPrompt) -> Result<String, String>
+- fn build_request( cfg: &ProviderConfig, prompt: &LlmPrompt, ) -> (String, Vec<(&'static str, String)>, Value)
+- fn extract_text(provider: &Provider, v: &Value) -> Result<String, String>
+- fn default_config() -> ProviderConfig
+- fn save_config(cfg: &ProviderConfig) -> std::io::Result<()>
+
+**Calls**
+- Arc::new
+- Client::builder
+- Duration::from_secs
+- Mutex::new
+- PathBuf::from
+- Sha256::new
+- String::new
+- dirs::config_dir
+- fs::create_dir_all
+- fs::read_to_string
+- fs::write
+- hex::encode
+- serde_json::from_str
+- serde_json::to_string_pretty
+
 ### src/llm/mod.rs
 
 **Functions**
@@ -225,38 +201,40 @@
 
 **Functions**
 -  pub fn run(prompt: LlmPrompt, model: &str) -> io::Result<String>
+- fn ollama_script_path() -> io::Result<PathBuf>
+- fn python_bin() -> &'static str
+- fn wait_with_timeout( mut child: std::process::Child, timeout: Duration, ) -> io::Result<std::process::Output>
 
 **Calls**
 - Command::new
+- Duration::from_millis
+- Duration::from_secs
 - Error::new
+- Instant::now
 - PathBuf::from
 - Stdio::piped
 - String::from_utf8_lossy
+- thread::sleep
 
 ### src/llm/orchestrator.rs
 
 **Functions**
-- pub fn run_llm_test_flow( tx: Sender<AgentEvent>, cancel_flag: Arc<AtomicBool>, context_index: IndexHandle, candidate: TestCandidate, model: String, )
-- fn debug_context(ctx: &ContextSlice) -> String
+- pub fn run_llm_test_flow( tx: Sender<AgentEvent>, cancel_flag: Arc<AtomicBool>, llm: LlmBackend, snapshot: ContextSnapshot, candidate: TestCandidate, language: Language, semantic_cache: Arc<SemanticCache>, )
+- fn sanitize_llm_output(raw: &str) -> String
 
 **Calls**
 - AgentEvent::Failed
 - AgentEvent::Log
-- ContextEngine::new
-- Duration::from_millis
-- IndexStatus::Failed
-- String::new
-- SymbolResolution::Ambiguous
-- SymbolResolution::Resolved
-- fs::write
-- thread::sleep
+- AgentEvent::TestFinished
+- SemanticKey::from_candidate
+- env::current_dir
 - thread::spawn
 
 ### src/llm/prompt.rs
 
 **Functions**
-- pub fn build_prompt( candidate: &TestCandidate, resolution: &TestResolution, context: &ContextSlice, ) -> LlmPrompt
-- fn user_prompt( c: &TestCandidate, _resolution: &TestResolution, ctx: &ContextSlice, ) -> String
+- pub fn build_prompt( candidate: &TestCandidate, file_ctx: &FileContext, ) -> LlmPrompt
+- fn user_prompt( candidate: &TestCandidate, ctx: &FileContext, ) -> String
 
 **Calls**
 - String::new
@@ -302,7 +280,8 @@
 - fn attach_summaries(state: &mut AgentState)
 
 **Calls**
-- context::spawn_repo_indexer
+- Arc::new
+- SemanticCache::new
 - env::current_dir
 - git::checkout
 - git::create_agent_branch
@@ -341,6 +320,8 @@
 - Event::Mouse
 - Instant::now
 - KeyCode::Char
+- LlmBackend::remote
+- LlmClient::new
 - LogBuffer::new
 - MouseEventKind::Down
 - String::new
@@ -369,33 +350,24 @@
 - VecDeque::with_capacity
 - logger::log
 
+### src/testgen/cache.rs
+
+**Functions**
+-  pub fn from_candidate(c: &TestCandidate) -> Self
+-  pub fn to_cache_key(&self) -> String
+-  pub fn new() -> Self
+
+**Calls**
+- HashMap::new
+- Mutex::new
+- Sha256::new
+- hex::encode
+
 ### src/testgen/candidate.rs
 
 **Functions**
 
 **Calls**
-
-### src/testgen/file.rs
-
-**Functions**
-- pub fn materialize_test( language: Language, candidate: &TestCandidate, resolution: &TestResolution, test_code: &str, ) -> io::Result<PathBuf>
-- fn write_python_test( candidate: &TestCandidate, resolution: &TestResolution, test_code: &str, ) -> io::Result<PathBuf>
-- fn default_python_test_path(c: &TestCandidate) -> PathBuf
-- fn write_rust_test( candidate: &TestCandidate, resolution: &TestResolution, test_code: &str, ) -> io::Result<PathBuf>
-- fn default_rust_test_path(c: &TestCandidate) -> PathBuf
-- fn ensure_parent_dir(path: &Path) -> io::Result<()>
-- fn append_once( path: &Path, content: &str, sentinel: &str, ) -> io::Result<()>
-- fn append_inline_rust_test( path: &Path, test_code: &str, ) -> io::Result<()>
-- fn indent(s: &str, spaces: usize) -> String
-- fn sanitize(file: &str, symbol: &Option<String>) -> String
-
-**Calls**
-- Error::new
-- OpenOptions::new
-- PathBuf::from
-- TestResolution::Ambiguous
-- fs::create_dir_all
-- fs::read_to_string
 
 ### src/testgen/generator.rs
 
@@ -409,11 +381,26 @@
 - pub fn generate_test_candidates( diffs: &[DiffAnalysis], ) -> Vec<TestCandidate>
 
 **Calls**
-- String::new
 - TestTarget::File
+- TestTarget::Symbol
 - Vec::new
-- cmp::Reverse
 - summarizer::summarize
+
+### src/testgen/materialize.rs
+
+**Functions**
+- pub fn materialize_test( repo_root: &Path, language: Language, candidate: &TestCandidate, test_code: &str, ) -> io::Result<PathBuf>
+- fn write_python_test( repo_root: &Path, candidate: &TestCandidate, test_code: &str, ) -> io::Result<PathBuf>
+- fn write_rust_test( repo_root: &Path, candidate: &TestCandidate, test_code: &str, ) -> io::Result<PathBuf>
+- fn find_test_root(repo_root: &Path) -> io::Result<PathBuf>
+- fn ensure_parent_dir(path: &Path) -> io::Result<()>
+- fn sanitize_name(file: &str, symbol: &Option<String>) -> String
+
+**Calls**
+- Error::new
+- File::create
+- Path::new
+- fs::create_dir_all
 
 ### src/testgen/mod.rs
 
@@ -421,16 +408,15 @@
 
 **Calls**
 
-### src/testgen/resolve.rs
+### src/testgen/runner.rs
 
 **Functions**
-- pub fn resolve_test( c: &TestCandidate, ctx: Option<&TestContext>, ) -> TestResolution
-- fn resolve_from_context( c: &TestCandidate, ctx: &TestContext, ) -> TestResolution
+- pub fn run_test(req: TestRunRequest) -> TestResult
 
 **Calls**
-- TestResolution::Ambiguous
-- Vec::new
-- fs::read_to_string
+- Command::new
+- String::from_utf8_lossy
+- String::new
 
 ### src/testgen/summarizer.rs
 
@@ -473,7 +459,9 @@
 - Paragraph::new
 - Rect::default
 - Span::styled
+- String::new
 - Style::default
+- UnicodeWidthStr::width
 - diff::render_side_by_side
 - execution::render_execution
 - panels::render_panel
@@ -547,7 +535,6 @@
 - Block::default
 - Constraint::Length
 - Constraint::Percentage
-- IndexStatus::Failed
 - Layout::default
 - Line::from
 - Paragraph::new
@@ -560,13 +547,12 @@
 ## Global Hotspots
 
 ### Thread creation
-- src/context/index.rs → thread::spawn
 - src/llm/orchestrator.rs → thread::spawn
 
 ### Process execution
-- src/executor/run.rs → Command::new
 - src/git.rs → Command::new
 - src/llm/ollama.rs → Command::new
+- src/testgen/runner.rs → Command::new
 
 ### AgentEvent fan-out
 - src/llm/orchestrator.rs

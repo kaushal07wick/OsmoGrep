@@ -11,9 +11,7 @@ mod testgen;
 mod llm;
 mod context;
 
-use std::{
-    error::Error, io, ops::Neg, sync::{Arc, atomic::AtomicBool}, time::{Duration, Instant}
-};
+use std::{ error::Error, io, sync::{Arc, atomic::AtomicBool}, time::{Duration, Instant} };
 use std::sync::mpsc::channel;
 use crate::{llm::{backend::LlmBackend, client::{LlmClient, Provider}}, logger::log, state::InputMode};
 use crossterm::{

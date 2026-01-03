@@ -5,6 +5,8 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
+use hex;
 
 use crate::llm::prompt::LlmPrompt;
 
@@ -60,7 +62,7 @@ impl LlmClient {
 
         save_config(&guard).map_err(|e| e.to_string())
     }
-    
+
     pub fn current_config(&self) -> ProviderConfig {
         self.cfg
             .lock()
@@ -94,8 +96,24 @@ impl LlmClient {
             return Err(format!("LLM error {}: {}", status, json));
         }
 
+        // Optional: log cached tokens if present
+        if let Some(cached) = json
+            .pointer("/usage/prompt_tokens_details/cached_tokens")
+            .and_then(|v| v.as_u64())
+        {
+            eprintln!(" prompt cache hit: {} tokens", cached);
+        }
+
         extract_text(&cfg.provider, &json)
     }
+}
+
+
+
+fn hash_str(s: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(s.as_bytes());
+    hex::encode(hasher.finalize())
 }
 
 fn build_request(
@@ -109,10 +127,15 @@ fn build_request(
                 .clone()
                 .unwrap_or_else(|| "https://api.openai.com/v1/responses".into());
 
+            // Cache ONLY the static prefix (system prompt)
+            let prompt_cache_key = hash_str(&prompt.system);
+
             let body = serde_json::json!({
                 "model": cfg.model,
                 "instructions": prompt.system,
                 "input": prompt.user,
+                "prompt_cache_key": prompt_cache_key,
+                "prompt_cache_retention": "24h"
             });
 
             (
@@ -176,6 +199,7 @@ fn extract_text(provider: &Provider, v: &Value) -> Result<String, String> {
         }
     }
 }
+
 
 fn default_config() -> ProviderConfig {
     ProviderConfig {

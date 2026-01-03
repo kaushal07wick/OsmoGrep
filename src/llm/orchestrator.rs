@@ -1,3 +1,6 @@
+/// src/llm/orchestrator.rs
+/// 
+
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc::Sender,
@@ -13,6 +16,7 @@ use crate::state::{AgentEvent, LogLevel, TestDecision, TestResult};
 use crate::testgen::candidate::TestCandidate;
 use crate::testgen::materialize::materialize_test;
 use crate::testgen::runner::{run_test, TestRunRequest};
+use crate::testgen::cache::{SemanticCache, SemanticKey};
 
 const MAX_LLM_RETRIES: usize = 3;
 
@@ -23,6 +27,7 @@ pub fn run_llm_test_flow(
     snapshot: ContextSnapshot,
     candidate: TestCandidate,
     language: Language,
+    semantic_cache: Arc<SemanticCache>,
 ) {
     thread::spawn(move || {
         let cancelled = || cancel_flag.load(Ordering::SeqCst);
@@ -48,6 +53,42 @@ pub fn run_llm_test_flow(
                 return;
             }
         };
+
+        // ---- semantic cache lookup ----
+        let semantic_key = SemanticKey::from_candidate(&candidate);
+        let cache_key = semantic_key.to_cache_key();
+
+        if let Some(test_path) = semantic_cache.get(&cache_key) {
+            let request = match language {
+                Language::Python => TestRunRequest::Python { test_path },
+                Language::Rust => TestRunRequest::Rust,
+                _ => {
+                    fail("Unsupported language");
+                    return;
+                }
+            };
+
+            let result = run_test(request);
+
+            match &result {
+                TestResult::Passed => {
+                    let _ = tx.send(AgentEvent::Log(
+                        LogLevel::Success,
+                        "Cached test passed".into(),
+                    ));
+                }
+                TestResult::Failed { .. } => {
+                    let _ = tx.send(AgentEvent::Log(
+                        LogLevel::Error,
+                        "Cached test failed".into(),
+                    ));
+                }
+            }
+
+            let _ = tx.send(AgentEvent::TestFinished(result));
+            let _ = tx.send(AgentEvent::Finished);
+            return;
+        }
 
         let prompt = build_prompt(&candidate, file_ctx);
 
@@ -126,6 +167,14 @@ pub fn run_llm_test_flow(
 
         let result = run_test(request);
         let _ = tx.send(AgentEvent::TestFinished(result.clone()));
+
+        if matches!(result, TestResult::Passed) {
+            semantic_cache.insert(cache_key, test_path.clone());
+            let _ = tx.send(AgentEvent::Log(
+                LogLevel::Success,
+                "Semantic cache updated".into(),
+            ));
+        }
 
         let _ = tx.send(AgentEvent::Finished);
     });
