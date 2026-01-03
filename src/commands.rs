@@ -1,3 +1,4 @@
+use std::hint;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
@@ -10,6 +11,8 @@ use crate::state::{
     AgentState, Focus, LogLevel, Phase, SinglePanelView, InputMode,
 };
 use crate::testgen::generator::generate_test_candidates;
+use crate::testgen::test_suite::{run_full_test_suite, write_test_suite_report};
+
 
 pub fn handle_command(state: &mut AgentState, cmd: &str) {
     state.ui.last_activity = Instant::now();
@@ -31,6 +34,58 @@ pub fn handle_command(state: &mut AgentState, cmd: &str) {
 
         cmd if cmd.starts_with("model use ") => model_use(state, cmd),
         "model show" => model_show(state),
+
+        "run-tests" | "test-suite" => {
+            let repo_root = match std::env::current_dir() {
+                Ok(p) => p,
+                Err(e) => {
+                    log(
+                        state,
+                        LogLevel::Error,
+                        format!("Failed to get repo root: {e}"),
+                    );
+                    return;
+                }
+            };
+
+            match run_full_test_suite(&repo_root, state) {
+                Ok(results) => {
+                    match write_test_suite_report(&repo_root, &results) {
+                        Ok(path) => {
+                            let passed = results.iter().filter(|r| r.passed).count();
+                            let total = results.len();
+
+                            log(
+                                state,
+                                LogLevel::Success,
+                                format!("Test suite finished: {passed}/{total} passed"),
+                            );
+
+                            log(
+                                state,
+                                LogLevel::Info,
+                                format!("Report written to {}", path.display()),
+                            );
+                        }
+                        Err(e) => {
+                            log(
+                                state,
+                                LogLevel::Error,
+                                format!("Failed to write report: {e}"),
+                            );
+                        }
+                    }
+                }
+
+                Err(e) => {
+                    log(
+                        state,
+                        LogLevel::Error,
+                        format!("Test suite failed to run: {e}"),
+                    );
+                }
+            }
+        },
 
         "artifacts test" => show_test_artifact(state),
 
@@ -77,7 +132,7 @@ fn help(state: &mut AgentState) {
     log(state, Info, "  agent run <n>                — generate and run tests for change <n>");
     log(state, Info, "  agent status                 — show agent execution state");
     log(state, Info, "  agent cancel                 — cancel running agent");
-
+    log(state, Info, "  run-tests | test-suite        — run full test suite");
     log(state, Info, "  artifacts test               — show last generated test");
 
     log(state, Info, "  branch new                   — create agent branch");
@@ -357,10 +412,8 @@ pub fn update_command_hints(state: &mut AgentState) {
     }
 
     hint!("inspect", "Analyze git changes and build context");
-
     hint!("changes", "List analyzed changes");
     hint!("changes ", "View diff for change <n>");
-
     hint!("model use ollama ", "Use local Ollama model");
     hint!("model use openai ", "Configure OpenAI model (will prompt for API key)");
     hint!(
@@ -368,20 +421,17 @@ pub fn update_command_hints(state: &mut AgentState) {
         "Configure Anthropic model (will prompt for API key)"
     );
     hint!("model show", "Show active model");
-
     hint!("agent run ", "Generate and run tests for change <n>");
     hint!("agent status", "Show agent execution state");
     hint!("agent cancel", "Cancel running agent");
-
     hint!("artifacts test", "Show last generated test");
-
+    hint!("run-tests", "Run full test suite");
+    hint!("test-suite", "Run full test suite");
     hint!("branch new", "Create agent branch");
     hint!("branch rollback", "Rollback agent branch");
     hint!("branch list", "List git branches");
-
     hint!("clear", "Clear logs");
     hint!("logs clear", "Clear logs");
-
     hint!("close", "Close active view");
     hint!("quit", "Exit Osmogrep");
     hint!("help", "Show help");

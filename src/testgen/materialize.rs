@@ -5,10 +5,6 @@ use std::path::{Path, PathBuf};
 use crate::detectors::language::Language;
 use crate::testgen::candidate::TestCandidate;
 
-/* ============================================================
-   Public entry
-   ============================================================ */
-
 pub fn materialize_test(
     repo_root: &Path,
     language: Language,
@@ -25,10 +21,6 @@ pub fn materialize_test(
     }
 }
 
-/* ============================================================
-   Python
-   ============================================================ */
-
 fn write_python_test(
     repo_root: &Path,
     candidate: &TestCandidate,
@@ -42,10 +34,6 @@ fn write_python_test(
     write_file_atomic(&path, test_code)?;
     Ok(path)
 }
-
-/* ============================================================
-   Rust
-   ============================================================ */
 
 fn write_rust_test(
     repo_root: &Path,
@@ -61,9 +49,6 @@ fn write_rust_test(
     Ok(path)
 }
 
-/* ============================================================
-   Test root resolution
-   ============================================================ */
 
 fn find_test_root(repo_root: &Path) -> io::Result<PathBuf> {
     for name in ["tests", "test"] {
@@ -78,9 +63,6 @@ fn find_test_root(repo_root: &Path) -> io::Result<PathBuf> {
     Ok(root)
 }
 
-/* ============================================================
-   Helpers
-   ============================================================ */
 
 fn ensure_parent_dir(path: &Path) -> io::Result<()> {
     if let Some(parent) = path.parent() {

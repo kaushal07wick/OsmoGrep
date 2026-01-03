@@ -24,6 +24,7 @@
 **Calls**
 - Instant::now
 - LlmBackend::ollama
+- env::current_dir
 - git::list_branches
 - slice::from_ref
 
@@ -220,6 +221,7 @@
 
 **Functions**
 - pub fn run_llm_test_flow( tx: Sender<AgentEvent>, cancel_flag: Arc<AtomicBool>, llm: LlmBackend, snapshot: ContextSnapshot, candidate: TestCandidate, language: Language, semantic_cache: Arc<SemanticCache>, )
+- fn trim_error(s: &str) -> String
 - fn sanitize_llm_output(raw: &str) -> String
 
 **Calls**
@@ -234,6 +236,7 @@
 
 **Functions**
 - pub fn build_prompt( candidate: &TestCandidate, file_ctx: &FileContext, ) -> LlmPrompt
+- pub fn build_prompt_with_feedback( candidate: &TestCandidate, ctx: &FileContext, previous_test: &str, failure_feedback: &str, ) -> LlmPrompt
 - fn user_prompt( candidate: &TestCandidate, ctx: &FileContext, ) -> String
 
 **Calls**
@@ -412,11 +415,17 @@
 
 **Functions**
 - pub fn run_test(req: TestRunRequest) -> TestResult
+- pub fn run_full_test(language: Language) -> TestSuiteResult
+- fn run_full_python_tests() -> TestSuiteResult
+- fn parse_pytest_output(out: &std::process::Output) -> TestSuiteResult
+- fn run_full_rust_tests() -> TestSuiteResult
+- fn parse_cargo_test_output(out: &std::process::Output) -> TestSuiteResult
 
 **Calls**
 - Command::new
 - String::from_utf8_lossy
 - String::new
+- Vec::new
 
 ### src/testgen/summarizer.rs
 
@@ -427,6 +436,18 @@
 - fn infer_risk(d: &DiffAnalysis) -> RiskLevel
 
 **Calls**
+
+### src/testgen/test_suite.rs
+
+**Functions**
+- pub fn run_full_test_suite( repo_root: &Path, state: &AgentState, ) -> io::Result<Vec<TestCaseResult>>
+- pub fn write_test_suite_report( repo_root: &Path, results: &[TestCaseResult], ) -> io::Result<PathBuf>
+
+**Calls**
+- Error::new
+- File::create
+- String::new
+- Vec::new
 
 ### src/ui/diff.rs
 

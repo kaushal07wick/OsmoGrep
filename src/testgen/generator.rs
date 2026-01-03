@@ -114,16 +114,24 @@ pub fn generate_test_candidates(
             None => continue,
         };
 
+        debug_assert!(
+            !delta.new_source.trim().is_empty(),
+            "TestCandidate created without new_code"
+        );
+
         let decision = decide_test(d);
+
         if matches!(decision, TestDecision::No) {
             continue;
         }
 
         let summary = summarizer::summarize(d);
+
         let target = match &d.symbol {
             Some(sym) => TestTarget::Symbol(sym.clone()),
             None => TestTarget::File(d.file.clone()),
             };
+            
         let candidate = TestCandidate {
             id: format!(
                 "{}::{}",

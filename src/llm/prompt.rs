@@ -1,6 +1,7 @@
 // src/llm/prompt.rs
 //
-// Deterministic, contract-first test generation.
+// Deterministic, contract-first test generation with retry feedback support.
+
 use crate::context::types::{FileContext, SymbolResolution};
 use crate::testgen::candidate::TestCandidate;
 
@@ -10,6 +11,7 @@ pub struct LlmPrompt {
     pub user: String,
 }
 
+/// First attempt (no failure feedback)
 pub fn build_prompt(
     candidate: &TestCandidate,
     file_ctx: &FileContext,
@@ -17,6 +19,40 @@ pub fn build_prompt(
     LlmPrompt {
         system: system_prompt(),
         user: user_prompt(candidate, file_ctx),
+    }
+}
+
+/// Retry attempt (includes previous test + execution failure)
+pub fn build_prompt_with_feedback(
+    candidate: &TestCandidate,
+    ctx: &FileContext,
+    previous_test: &str,
+    failure_feedback: &str,
+) -> LlmPrompt {
+    let mut user = user_prompt(candidate, ctx);
+
+    user.push_str("\n\nPrevious generated test:\n");
+    user.push_str(previous_test);
+    user.push('\n');
+
+    user.push_str("\nTest execution FAILED with the following error:\n");
+    user.push_str(failure_feedback);
+    user.push('\n');
+
+    user.push_str(
+        "\nFix the test so that it PASSES on the current implementation.\n\
+         RULES:\n\
+         - Modify ONLY the test code\n\
+         - Do NOT change production code\n\
+         - Preserve the original test intent\n\
+         - Do NOT weaken assertions\n\
+         - Do NOT add conditionals to bypass failure\n\
+         - Output EXACTLY ONE corrected test\n",
+    );
+
+    LlmPrompt {
+        system: system_prompt(),
+        user,
     }
 }
 
@@ -47,12 +83,16 @@ CRITICAL CONSTRAINTS:
 - Do NOT reimplement the production logic inside the test.
 - Prefer observable guarantees: correctness, stability, finite output.
 
+If a previous test and failure are provided:
+- You MUST reason about why the test failed
+- You MUST correct the test accordingly
+- You MUST keep the test strict and meaningful
+
 You are writing a regression-grade test a senior engineer would accept.
 "#
-    .trim()
-    .to_string()
+        .trim()
+        .to_string()
 }
-
 
 fn user_prompt(
     candidate: &TestCandidate,
@@ -88,7 +128,7 @@ fn user_prompt(
         }
     }
 
-    // ---- code context (ONLY when provided) ----
+    // ---- code context ----
     if let Some(old) = &candidate.old_code {
         out.push_str("\nOld code:\n");
         out.push_str(old);
@@ -96,6 +136,11 @@ fn user_prompt(
     }
 
     if let Some(new) = &candidate.new_code {
+        debug_assert!(
+            !new.trim().is_empty(),
+            "TestCandidate created without new_code"
+        );
+
         out.push_str("\nCurrent code:\n");
         out.push_str(new);
         out.push('\n');
@@ -104,13 +149,13 @@ fn user_prompt(
     // ---- task ----
     out.push_str(
         "\nTask:\n\
-        Write ONE test that verifies the correct behavior of the current code.\n\
-        The test must:\n\
-        - Call the real public API\n\
-        - Assert observable runtime behavior\n\
-        - Be correct for edge cases implied by the change\n\
-        - Avoid assumptions not proven by the code\n",
-            );
+         Write ONE test that verifies the correct behavior of the current code.\n\
+         The test must:\n\
+         - Call the real public API\n\
+         - Assert observable runtime behavior\n\
+         - Be correct for edge cases implied by the change\n\
+         - Avoid assumptions not proven by the code\n",
+    );
 
     out
 }
