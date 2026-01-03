@@ -1,7 +1,3 @@
-//! ui/status.rs
-//!
-//! Header + status renderer for Osmogrep.
-
 use sysinfo::System;
 
 use ratatui::{
@@ -12,7 +8,7 @@ use ratatui::{
 };
 
 use crate::llm::backend::LlmBackend;
-use crate::state::{AgentState, Phase};
+use crate::state::{AgentState, Phase, SinglePanelView};
 use crate::ui::helpers::{
     framework_badge,
     language_badge,
@@ -84,7 +80,7 @@ fn render_status_block(
     let mut lines: Vec<Line> = Vec::new();
 
     let mut status_spans = vec![
-        Span::styled(format!("{:<8}", "Status:"), Style::default().fg(Color::DarkGray)),
+        Span::styled("Status:  ", Style::default().fg(Color::DarkGray)),
         Span::styled(
             format!("{sym} {label}"),
             Style::default().fg(phase_color).add_modifier(Modifier::BOLD),
@@ -108,14 +104,14 @@ fn render_status_block(
     let total_gb = sys.total_memory() as f64 / 1024.0 / 1024.0 / 1024.0;
 
     lines.push(Line::from(vec![
-        Span::styled(format!("{:<8}", "RAM:"), Style::default().fg(Color::DarkGray)),
+        Span::styled("RAM:     ", Style::default().fg(Color::DarkGray)),
         Span::styled(
             format!("{:.1} / {:.1} GB", used_gb, total_gb),
             Style::default().fg(Color::Cyan),
         ),
     ]));
 
-    let model_line = match &state.llm_backend {
+    let model = match &state.llm_backend {
         LlmBackend::Ollama { model } => format!("Ollama ({})", model),
         LlmBackend::Remote { client } => {
             let cfg = client.current_config();
@@ -128,23 +124,20 @@ fn render_status_block(
     };
 
     lines.push(Line::from(vec![
-        Span::styled(format!("{:<8}", "Model:"), Style::default().fg(Color::DarkGray)),
-        Span::styled(model_line, Style::default().fg(Color::White)),
+        Span::styled("Model:   ", Style::default().fg(Color::DarkGray)),
+        Span::styled(model, Style::default().fg(Color::White)),
     ]));
 
     if let Some(cur) = &state.lifecycle.current_branch {
         lines.push(Line::from(vec![
-            Span::styled(format!("{:<8}", "Current:"), Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                cur,
-                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
-            ),
+            Span::styled("Current: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(cur, Style::default().fg(Color::Green)),
         ]));
     }
 
     if let Some(agent) = &state.lifecycle.agent_branch {
         lines.push(Line::from(vec![
-            Span::styled(format!("{:<8}", "Agent:"), Style::default().fg(Color::DarkGray)),
+            Span::styled("Agent:   ", Style::default().fg(Color::DarkGray)),
             Span::styled(agent, Style::default().fg(Color::Yellow)),
         ]));
     }
@@ -168,11 +161,48 @@ fn render_context_block(
 ) {
     let mut lines: Vec<Line> = Vec::new();
 
-    lines.push(Line::from(""));
+    let active_diff = state
+        .ui
+        .selected_diff
+        .and_then(|i| state.context.diff_analysis.get(i));
+
+    let active_test = match &state.ui.panel_view {
+        Some(SinglePanelView::TestGenPreview { candidate, .. }) => Some(candidate),
+        _ => None,
+    };
+
+    let (file, symbol, mode) = if let Some(d) = active_diff {
+        (Some(&d.file), d.symbol.as_deref(), "Diff")
+    } else if let Some(c) = active_test {
+        (Some(&c.diff.file), c.diff.symbol.as_deref(), "Test")
+    } else {
+        (None, None, "")
+    };
+
+    if let Some(file) = file {
+        lines.push(Line::from(vec![
+            Span::styled("View:     ", Style::default().fg(Color::DarkGray)),
+            Span::styled(mode, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        ]));
+
+        lines.push(Line::from(vec![
+            Span::styled("File:     ", Style::default().fg(Color::DarkGray)),
+            Span::styled(file, Style::default().fg(Color::White)),
+        ]));
+
+        if let Some(sym) = symbol {
+            lines.push(Line::from(vec![
+                Span::styled("Symbol:   ", Style::default().fg(Color::DarkGray)),
+                Span::styled(sym, Style::default().fg(Color::Yellow)),
+            ]));
+        }
+
+        lines.push(Line::from(""));
+    }
 
     if let Some(snapshot) = &state.context_snapshot {
         lines.push(Line::from(vec![
-            Span::styled(format!("{:<10}", "Context:"), Style::default().fg(Color::DarkGray)),
+            Span::styled("Context:  ", Style::default().fg(Color::DarkGray)),
             Span::styled(
                 format!(" {} file(s) ", snapshot.files.len()),
                 Style::default()
@@ -183,7 +213,7 @@ fn render_context_block(
         ]));
     } else {
         lines.push(Line::from(vec![
-            Span::styled(format!("{:<10}", "Context:"), Style::default().fg(Color::DarkGray)),
+            Span::styled("Context:  ", Style::default().fg(Color::DarkGray)),
             Span::styled(
                 " not built ",
                 Style::default()
@@ -197,7 +227,7 @@ fn render_context_block(
     if let Some(lang) = &state.lifecycle.language {
         let (label, color) = language_badge(&format!("{:?}", lang));
         lines.push(Line::from(vec![
-            Span::styled(format!("{:<10}", "Language:"), Style::default().fg(Color::DarkGray)),
+            Span::styled("Language: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
                 format!(" {label} "),
                 Style::default().fg(Color::Black).bg(color).add_modifier(Modifier::BOLD),
@@ -208,7 +238,7 @@ fn render_context_block(
     if let Some(fw) = &state.lifecycle.framework {
         let (label, color) = framework_badge(&format!("{:?}", fw));
         lines.push(Line::from(vec![
-            Span::styled(format!("{:<10}", "Framework:"), Style::default().fg(Color::DarkGray)),
+            Span::styled("Framework:", Style::default().fg(Color::DarkGray)),
             Span::styled(
                 format!(" {label} "),
                 Style::default().fg(Color::Black).bg(color).add_modifier(Modifier::BOLD),
