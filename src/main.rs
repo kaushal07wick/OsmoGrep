@@ -182,7 +182,7 @@ fn init_state() -> AgentState {
         agent_tx,
         agent_rx,
         cancel_requested: Arc::new(AtomicBool::new(false)),
-        context_index: None,
+        context_snapshot: None,
         ollama_model: "qwen2.5-coder:7b".to_string(),
     }
 }

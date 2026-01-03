@@ -9,8 +9,6 @@
 
 use std::time::Instant;
 use std::sync::atomic::Ordering;
-
-use crate::context::types::IndexStatus;
 use crate::detectors::diff_analyzer::analyze_diff;
 use crate::git;
 use crate::logger::{log, log_diff_analysis};
@@ -206,27 +204,6 @@ fn agent_run(state: &mut AgentState, cmd: &str) {
         }
     };
 
-    // ---- extract index status without holding borrow ----
-    let index_status = match &state.context_index {
-        Some(h) => h.status.read().unwrap().clone(),
-        None => {
-            log(state, LogLevel::Warn, "Repository index not ready.");
-            return;
-        }
-    };
-
-    match index_status {
-        IndexStatus::Ready => {}
-        IndexStatus::Indexing => {
-            log(state, LogLevel::Warn, "Repository index still building.");
-            return;
-        }
-        IndexStatus::Failed(err) => {
-            log(state, LogLevel::Error, err);
-            return;
-        }
-    }
-
     // ---- extract diff before mutation/logging ----
     let diff = state.context.diff_analysis[idx].clone();
     let candidates = generate_test_candidates(std::slice::from_ref(&diff));
@@ -238,6 +215,7 @@ fn agent_run(state: &mut AgentState, cmd: &str) {
 
     state.context.test_candidates = candidates;
     state.lifecycle.phase = Phase::ExecuteAgent;
+
 }
 
 
@@ -308,17 +286,18 @@ fn status_agent(state: &mut AgentState) {
 }
 
 fn status_context(state: &mut AgentState) {
-    match &state.context_index {
-        Some(i) => {
+    match &state.context_snapshot {
+        Some(snapshot) => {
             log(
                 state,
                 LogLevel::Info,
-                format!("Index status: {:?}", i.status.read().unwrap()),
+                format!("Context snapshot: {} file(s)", snapshot.files.len()),
             );
         }
-        None => log(state, LogLevel::Warn, "Context index not initialized."),
+        None => log(state, LogLevel::Info, "Context snapshot not built yet."),
     }
 }
+
 
 fn status_prompt(state: &mut AgentState) {
     match std::fs::read_to_string(".osmogrep_prompt.txt") {

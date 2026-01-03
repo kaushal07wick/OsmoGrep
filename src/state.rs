@@ -4,11 +4,10 @@ use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{Sender, Receiver};
 use std::time::{Instant, Duration};
 
-use crate::context::IndexHandle;
 use crate::detectors::{framework::TestFramework, language::Language};
 use crate::testgen::candidate::TestCandidate;
 use crate::testgen::summarizer::SemanticSummary;
-
+use crate::context::types::ContextSnapshot;
 pub const MAX_LOGS: usize = 1000;
 
 ///events emitted by agent
@@ -218,15 +217,16 @@ pub struct UiState {
 /// root container for the entire agent.
 pub struct AgentState {
     pub lifecycle: LifecycleState,
-    pub context: AgentContext,
+    pub context: AgentContext,              // environment / execution context
     pub ui: UiState,
     pub logs: LogBuffer,
     pub ollama_model: String,
     pub agent_tx: Sender<AgentEvent>,
     pub agent_rx: Receiver<AgentEvent>,
     pub cancel_requested: Arc<AtomicBool>,
-    pub context_index: Option<IndexHandle>,
+    pub context_snapshot: Option<ContextSnapshot>, // decision-time code context
 }
+
 
 impl AgentState {
     pub fn push_char(&mut self, c: char) {

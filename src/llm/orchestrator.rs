@@ -5,18 +5,20 @@ use std::sync::{
 };
 use std::thread;
 
-use crate::context::{index::build_context, types::{ContextSlice, IndexHandle, IndexStatus, SymbolResolution}};
+use crate::context::types::ContextSnapshot;
 use crate::detectors::language::Language;
 use crate::llm::{ollama::Ollama, prompt::build_prompt};
-use crate::state::{AgentEvent, LogLevel, TestDecision};
+use crate::state::{AgentEvent, LogLevel, TestDecision, TestResult};
 use crate::testgen::candidate::TestCandidate;
 use crate::testgen::materialize::materialize_test;
 use crate::testgen::runner::run_test;
 
+const MAX_LLM_RETRIES: usize = 3;
+
 pub fn run_llm_test_flow(
     tx: Sender<AgentEvent>,
     cancel_flag: Arc<AtomicBool>,
-    context_index: IndexHandle,
+    snapshot: ContextSnapshot,
     candidate: TestCandidate,
     language: Language,
     model: String,
@@ -29,135 +31,86 @@ pub fn run_llm_test_flow(
             let _ = tx.send(AgentEvent::Failed(msg.into()));
         };
 
+        // ---- sanity check ----
         if matches!(candidate.decision, TestDecision::No) {
             fail("Change is not test-worthy.");
             return;
         }
 
-        /* ================= CONTEXT ================= */
-
-        let (repo_root, facts, symbols) = loop {
-            if cancelled() {
-                fail("Cancelled while waiting for context index.");
-                return;
-            }
-
-            match context_index.status.read().unwrap().clone() {
-                IndexStatus::Ready => {
-                    let facts = context_index.facts.read().unwrap().clone();
-                    let symbols = context_index.symbols.read().unwrap().clone();
-                    match (facts, symbols) {
-                        (Some(f), Some(s)) => {
-                            break (context_index.repo_root.clone(), f, s)
-                        }
-                        _ => {
-                            fail("Context index incomplete.");
-                            return;
-                        }
-                    }
-                }
-                IndexStatus::Failed(err) => {
-                    fail(&format!("Context indexing failed: {err}"));
-                    return;
-                }
-                IndexStatus::Indexing => {
-                    thread::sleep(std::time::Duration::from_millis(50));
-                }
-            }
-        };
-
-        let ctx_slice = match build_context(
-            &context_index,
-            &candidate.diff,
-        ) {
-            Some(ctx) => ctx,
+        // ---- select file-level context ----
+        let file_ctx = match snapshot
+            .files
+            .iter()
+            .find(|f| f.path == candidate.diff.file)
+        {
+            Some(c) => c,
             None => {
-                fail("Failed to build context slice.");
+                fail("No context found for selected diff file.");
                 return;
             }
         };
 
+        // ---- build prompt ----
+        let prompt = build_prompt(&candidate, file_ctx);
 
-        if ctx_slice.diff_target.file.as_os_str().is_empty() {
-            fail("Diff target could not be resolved to a file.");
-            return;
+        let mut final_code: Option<String> = None;
+        let mut last_error: Option<String> = None;
+
+        // ---- LLM retry loop ----
+        for attempt in 1..=MAX_LLM_RETRIES {
+            if cancelled() {
+                fail("Agent cancelled.");
+                return;
+            }
+
+            let result = {
+                let tx = tx.clone();
+                let model = model.clone();
+                let prompt = prompt.clone();
+
+                thread::spawn(move || {
+                    let _ = tx.send(AgentEvent::Log(
+                        LogLevel::Info,
+                        format!("LLM attempt {attempt}"),
+                    ));
+                    Ollama::run(prompt, &model)
+                })
+                .join()
+            };
+
+            let Ok(Ok(raw)) = result else {
+                last_error = Some("LLM execution failed".into());
+                continue;
+            };
+
+            let cleaned = sanitize_llm_output(&raw);
+
+            if cleaned.trim().is_empty() {
+                last_error = Some("Empty test output".into());
+                continue;
+            }
+
+            final_code = Some(cleaned);
+            break;
         }
 
-        /* ================= CONTEXT DUMP ================= */
-
-        let context_text = debug_context(&ctx_slice);
-        let _ = std::fs::write(".osmogrep_context.txt", &context_text);
-
-        let _ = tx.send(AgentEvent::Log(
-            LogLevel::Info,
-            "Context written to .osmogrep_context.txt".into(),
-        ));
-
-        /* ================= PROMPT ================= */
-
-        let prompt = build_prompt(&candidate, &ctx_slice);
-
-        let prompt_text = format!(
-            "=== SYSTEM PROMPT ===\n{}\n\n=== USER PROMPT ===\n{}",
-            prompt.system, prompt.user
-        );
-
-        let _ = std::fs::write(".osmogrep_prompt.txt", &prompt_text);
-
-        let _ = tx.send(AgentEvent::Log(
-            LogLevel::Info,
-            "Prompt prepared. Calling LLM…".into(),
-        ));
-
-        /* ================= LLM EXECUTION ================= */
-
-        let llm_handle = {
-            let tx = tx.clone();
-            let model = model.clone();
-            let prompt = prompt.clone();
-
-            thread::spawn(move || {
-                let _ = tx.send(AgentEvent::Log(
-                    LogLevel::Info,
-                    "LLM generation started".into(),
-                ));
-
-                let result = Ollama::run(prompt, &model);
-
-                match result {
-                    Ok(text) => {
-                        let _ = tx.send(AgentEvent::Log(
-                            LogLevel::Success,
-                            "LLM generation completed".into(),
-                        ));
-                        Ok(text)
-                    }
-                    Err(e) => {
-                        let _ = tx.send(AgentEvent::Log(
-                            LogLevel::Error,
-                            format!("LLM error: {e}"),
-                        ));
-                        Err(e)
-                    }
-                }
-            })
+        let Some(test_code) = final_code else {
+            fail(&format!(
+                "Failed to generate valid test: {:?}",
+                last_error
+            ));
+            return;
         };
 
-        let generated_test = match llm_handle.join() {
-            Ok(Ok(out)) => out,
-            _ => {
-                fail("LLM execution failed.");
-                return;
-            }
-        };
-
-        /* ================= MATERIALIZE TEST ================= */
+        // ---- write test ----
+        let repo_root =
+            std::env::current_dir().expect("osmogrep must run in repo root");
 
         let test_path = match materialize_test(
             &repo_root,
             language,
             &candidate,
-            &generated_test,
+            &test_code,
         ) {
             Ok(p) => p,
             Err(e) => {
@@ -171,8 +124,7 @@ pub fn run_llm_test_flow(
             format!("Test written to {}", test_path.display()),
         ));
 
-        /* ================= RUN TEST ================= */
-
+        // ---- run test ----
         let cmd: Vec<&str> = match language {
             Language::Python => vec!["pytest", test_path.to_str().unwrap()],
             Language::Rust => vec!["cargo", "test"],
@@ -182,67 +134,33 @@ pub fn run_llm_test_flow(
             }
         };
 
-        match run_test(&cmd) {
-            crate::state::TestResult::Passed => {
-                let _ = tx.send(AgentEvent::TestFinished(
-                    crate::state::TestResult::Passed,
-                ));
-            }
-            crate::state::TestResult::Failed { output } => {
-                let _ = tx.send(AgentEvent::TestFinished(
-                    crate::state::TestResult::Failed { output },
-                ));
+        let result = run_test(&cmd);
+
+        let _ = tx.send(AgentEvent::TestFinished(result.clone()));
+
+        match result {
+            TestResult::Passed | TestResult::Failed { .. } => {
+                let _ = tx.send(AgentEvent::Finished);
             }
         }
-
-        let _ = tx.send(AgentEvent::Finished);
     });
 }
 
-/* ================= CONTEXT DEBUG ================= */
+fn sanitize_llm_output(raw: &str) -> String {
+    let mut s = raw.trim().to_string();
 
-fn debug_context(ctx: &ContextSlice) -> String {
-    let mut s = String::new();
-
-    s.push_str("=== CONTEXT SLICE ===\n\n");
-
-    s.push_str("DIFF TARGET:\n");
-    s.push_str(&format!(
-        "- File: {}\n",
-        ctx.diff_target.file.display()
-    ));
-    if let Some(sym) = &ctx.diff_target.symbol {
-        s.push_str(&format!("- Symbol: {}\n", sym));
-    }
-
-    s.push_str("\nSYMBOL RESOLUTION:\n");
-    match &ctx.symbol_resolution {
-        SymbolResolution::Resolved(sym) => {
-            s.push_str(&format!(
-                "- Resolved: {} (line {})\n",
-                sym.name, sym.line
-            ));
+    if s.starts_with("```") {
+        if let Some(i) = s.find('\n') {
+            s = s[i + 1..].to_string();
         }
-        SymbolResolution::Ambiguous(v) => {
-            s.push_str("- Ambiguous:\n");
-            for s2 in v {
-                s.push_str(&format!("  - {} (line {})\n", s2.name, s2.line));
-            }
-        }
-        SymbolResolution::NotFound => {
-            s.push_str("- Not found\n");
+        if let Some(i) = s.rfind("```") {
+            s = s[..i].to_string();
         }
     }
 
-    s.push_str("\nLOCAL SYMBOLS:\n");
-    for s2 in &ctx.local_symbols {
-        s.push_str(&format!("  - {} (line {})\n", s2.name, s2.line));
+    if s.starts_with("python\n") {
+        s = s.trim_start_matches("python\n").to_string();
     }
 
-    s.push_str("\nIMPORTS:\n");
-    for i in &ctx.imports {
-        s.push_str(&format!("  - {}\n", i.module));
-    }
-
-    s
+    s.trim().to_string()
 }

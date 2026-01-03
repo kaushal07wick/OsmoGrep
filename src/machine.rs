@@ -13,7 +13,7 @@ use crate::{
     logger::log,
     testgen::summarizer::summarize,
 };
-
+use crate::context::snapshot::build_context_snapshot;
 use crate::state::{AgentEvent, AgentState, LogLevel, Phase};
 
 pub fn step(state: &mut AgentState) {
@@ -59,15 +59,6 @@ fn init_repo(state: &mut AgentState) {
     state.lifecycle.language = Some(language);
     state.lifecycle.framework = Some(framework);
 
-    // spawn context indexer ONCE, at Init
-    if state.context_index.is_none() {
-        state.context_index = Some(
-            crate::context::spawn_repo_indexer(repo_root.clone())
-        );
-
-        log(state, LogLevel::Info, "Indexing repository context");
-    }
-
     transition(state, Phase::DetectBase);
 }
 
@@ -107,6 +98,22 @@ fn execute_agent(state: &mut AgentState) {
     let branch = ensure_agent_branch(state);
     checkout_branch(state, &branch);
 
+    let repo_root = match assert_repo_root() {
+        Ok(p) => p,
+        Err(e) => {
+            log(state, LogLevel::Error, e);
+            transition(state, Phase::Idle);
+            return;
+        }
+    };
+
+    let snapshot = build_context_snapshot(
+        &repo_root,
+        &state.context.diff_analysis,
+    );
+
+    state.context_snapshot = Some(snapshot);
+
     let candidate = match state.context.test_candidates.first().cloned() {
         Some(c) => c,
         None => {
@@ -127,12 +134,14 @@ fn execute_agent(state: &mut AgentState) {
 
     log(state, LogLevel::Info, "🤖 Agent started");
 
+    let snapshot = state.context_snapshot.clone().expect("context snapshot missing");
+
     run_llm_test_flow(
         state.agent_tx.clone(),
         state.cancel_requested.clone(),
-        state.context_index.clone().expect("context index missing"),
+        snapshot,
         candidate,
-        language,  
+        language,
         state.ollama_model.clone(),
     );
 

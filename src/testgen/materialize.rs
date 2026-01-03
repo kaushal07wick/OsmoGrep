@@ -39,7 +39,7 @@ fn write_python_test(
     let path = root.join(format!("test_{name}.py"));
 
     ensure_parent_dir(&path)?;
-    append_if_missing(&path, test_code)?;
+    write_file_atomic(&path, test_code)?;
     Ok(path)
 }
 
@@ -57,7 +57,7 @@ fn write_rust_test(
     let path = root.join(format!("{name}.rs"));
 
     ensure_parent_dir(&path)?;
-    append_if_missing(&path, test_code)?;
+    write_file_atomic(&path, test_code)?;
     Ok(path)
 }
 
@@ -89,19 +89,10 @@ fn ensure_parent_dir(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn append_if_missing(path: &Path, content: &str) -> io::Result<()> {
-    let existing = fs::read_to_string(path).unwrap_or_default();
-
-    if existing.contains(content.trim()) {
-        return Ok(());
-    }
-
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
-
-    writeln!(file, "\n{}", content.trim())?;
+fn write_file_atomic(path: &Path, content: &str) -> io::Result<()> {
+    let mut file = fs::File::create(path)?;
+    file.write_all(content.as_bytes())?;
+    file.write_all(b"\n")?;
     Ok(())
 }
 

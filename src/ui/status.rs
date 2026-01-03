@@ -10,8 +10,6 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, BorderType, Paragraph},
 };
-
-use crate::context::types::IndexStatus;
 use crate::state::{AgentState, Phase};
 use crate::ui::helpers::{
     framework_badge,
@@ -193,20 +191,26 @@ fn render_context_block(
 
     // Top padding
     lines.push(Line::from(""));
-
-    if let Some(index) = &state.context_index {
-        let status = index.status.read().unwrap();
-        let (label, color) = match &*status {
-            IndexStatus::Indexing => ("INDEXING", Color::Yellow),
-            IndexStatus::Ready => ("READY", Color::Green),
-            IndexStatus::Failed(_) => ("FAILED", Color::Red),
-        };
-
+    if let Some(snapshot) = &state.context_snapshot {
+    lines.push(Line::from(vec![
+        Span::styled(format!("{:<10}", "Context:"), Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!(" {} file(s) ", snapshot.files.len()),
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]));
+    } else {
         lines.push(Line::from(vec![
-            Span::styled(format!("{:<10}", "Index:"), Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("{:<10}", "Context:"), Style::default().fg(Color::DarkGray)),
             Span::styled(
-                format!(" {label} "),
-                Style::default().fg(Color::Black).bg(color).add_modifier(Modifier::BOLD),
+                " not built ",
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD),
             ),
         ]));
     }
