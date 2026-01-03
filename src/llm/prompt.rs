@@ -1,10 +1,7 @@
 // src/llm/prompt.rs
 //
-// Deterministic, diff-driven prompt construction.
-// No repo-wide context. No guessing.
-
-use crate::context::types::FileContext;
-use crate::context::types::SymbolResolution;
+// Deterministic, contract-first test generation.
+use crate::context::types::{FileContext, SymbolResolution};
 use crate::testgen::candidate::TestCandidate;
 
 #[derive(Debug, Clone)]
@@ -23,47 +20,47 @@ pub fn build_prompt(
     }
 }
 
-/* ============================================================
-   SYSTEM PROMPT
-   ============================================================ */
-
 fn system_prompt() -> String {
     r#"
 You generate ONE unit test.
 
-Rules (MANDATORY):
+STRICT RULES:
 - Output ONLY valid test code.
-- Output EXACTLY one test.
+- Output EXACTLY one test function.
 - Test name MUST start with `test_`.
 - Imports are allowed.
 - No comments, no explanations, no markdown.
-- Do NOT modify production code.
 - Do NOT define helper functions.
+- Do NOT modify production code.
 - Use only public APIs visible from the code.
 
-Behavioral constraints:
-- The test MUST reflect the code change shown.
-- The test MUST fail on the old implementation.
-- The test MUST pass on the new implementation.
-- Do NOT assume behavior not proven by the diff.
-- If behavior is ambiguous, assert the minimal observable guarantee
-  (e.g. no crash, stable output, correct type, finite value).
+BEHAVIORAL RULES:
+- The test MUST reflect the real behavior of the code.
+- The test MUST pass on the current implementation.
+- Do NOT assume behavior not implied by the code.
+
+CRITICAL CONSTRAINTS:
+- If no prior test exists, do NOT assume previous behavior.
+- Do NOT assert exceptions unless the code explicitly introduces them.
+- If the change fixes a crash or dtype issue, assert correctness, not failure.
+- If the function computes a numeric value, compute the expected value independently.
+- Do NOT reimplement the production logic inside the test.
+- Prefer observable guarantees: correctness, stability, finite output.
+
+You are writing a regression-grade test a senior engineer would accept.
 "#
     .trim()
     .to_string()
 }
 
-/* ============================================================
-   USER PROMPT
-   ============================================================ */
 
 fn user_prompt(
-    c: &TestCandidate,
+    candidate: &TestCandidate,
     ctx: &FileContext,
 ) -> String {
     let mut out = String::new();
 
-    // ---- target ----
+    // ---- target location ----
     out.push_str("Target file:\n");
     out.push_str(ctx.path.to_string_lossy().as_ref());
     out.push('\n');
@@ -91,30 +88,29 @@ fn user_prompt(
         }
     }
 
-    // ---- diff context ----
-    if let Some(old) = &c.old_code {
+    // ---- code context (ONLY when provided) ----
+    if let Some(old) = &candidate.old_code {
         out.push_str("\nOld code:\n");
         out.push_str(old);
         out.push('\n');
     }
 
-    if let Some(new) = &c.new_code {
-        out.push_str("\nNew code:\n");
+    if let Some(new) = &candidate.new_code {
+        out.push_str("\nCurrent code:\n");
         out.push_str(new);
         out.push('\n');
     }
 
-    // ---- instruction ----
+    // ---- task ----
     out.push_str(
         "\nTask:\n\
-Write ONE test that captures the real behavioral change.\n\
-The test must:\n\
-- Call the real public API\n\
-- Assert observable runtime behavior\n\
-- Fail on the old code\n\
-- Pass on the new code\n\
-- Avoid assumptions not implied by the diff\n",
-    );
+        Write ONE test that verifies the correct behavior of the current code.\n\
+        The test must:\n\
+        - Call the real public API\n\
+        - Assert observable runtime behavior\n\
+        - Be correct for edge cases implied by the change\n\
+        - Avoid assumptions not proven by the code\n",
+            );
 
     out
 }

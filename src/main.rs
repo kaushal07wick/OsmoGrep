@@ -15,7 +15,7 @@ use std::{
     error::Error, io, ops::Neg, sync::{Arc, atomic::AtomicBool}, time::{Duration, Instant}
 };
 use std::sync::mpsc::channel;
-
+use crate::llm::{backend::LlmBackend, client::LlmClient};
 use crossterm::{
     event::{self, Event, KeyCode, MouseEventKind},
     execute,
@@ -128,7 +128,6 @@ fn drain_agent_events(state: &mut AgentState) {
     }
 }
 
-
 fn init_state() -> AgentState {
     let (agent_tx, agent_rx) = channel::<AgentEvent>();
 
@@ -142,6 +141,7 @@ fn init_state() -> AgentState {
             language: None,
             framework: None,
         },
+
         context: AgentContext {
             diff_analysis: Vec::new(),
             test_candidates: Vec::new(),
@@ -149,6 +149,7 @@ fn init_state() -> AgentState {
             generated_tests_ready: false,
             last_test_result: None,
         },
+
         ui: UiState {
             input: String::new(),
             history: Vec::new(),
@@ -179,14 +180,13 @@ fn init_state() -> AgentState {
             last_draw: Instant::now(),
         },
         logs: LogBuffer::new(),
+        llm_backend: LlmBackend::Remote {client: LlmClient::new(),},
         agent_tx,
         agent_rx,
         cancel_requested: Arc::new(AtomicBool::new(false)),
         context_snapshot: None,
-        ollama_model: "qwen2.5-coder:7b".to_string(),
     }
 }
-
 
 fn handle_event(
     state: &mut AgentState,

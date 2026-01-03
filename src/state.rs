@@ -3,12 +3,13 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{Sender, Receiver};
 use std::time::{Instant, Duration};
-
+use crate::llm::client::LlmClient;
 use crate::detectors::{framework::TestFramework, language::Language};
 use crate::testgen::candidate::TestCandidate;
 use crate::testgen::summarizer::SemanticSummary;
 use crate::context::types::ContextSnapshot;
 pub const MAX_LOGS: usize = 1000;
+use crate::llm::backend::LlmBackend;
 
 ///events emitted by agent
 #[derive(Debug)]
@@ -217,16 +218,15 @@ pub struct UiState {
 /// root container for the entire agent.
 pub struct AgentState {
     pub lifecycle: LifecycleState,
-    pub context: AgentContext,              // environment / execution context
+    pub context: AgentContext,
     pub ui: UiState,
     pub logs: LogBuffer,
-    pub ollama_model: String,
+    pub llm_backend: LlmBackend,
     pub agent_tx: Sender<AgentEvent>,
     pub agent_rx: Receiver<AgentEvent>,
     pub cancel_requested: Arc<AtomicBool>,
-    pub context_snapshot: Option<ContextSnapshot>, // decision-time code context
+    pub context_snapshot: Option<ContextSnapshot>,
 }
-
 
 impl AgentState {
     pub fn push_char(&mut self, c: char) {

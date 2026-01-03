@@ -7,21 +7,22 @@ use std::thread;
 
 use crate::context::types::ContextSnapshot;
 use crate::detectors::language::Language;
-use crate::llm::{ollama::Ollama, prompt::build_prompt};
+use crate::llm::backend::LlmBackend;
+use crate::llm::prompt::build_prompt;
 use crate::state::{AgentEvent, LogLevel, TestDecision, TestResult};
 use crate::testgen::candidate::TestCandidate;
 use crate::testgen::materialize::materialize_test;
-use crate::testgen::runner::run_test;
+use crate::testgen::runner::{run_test, TestRunRequest};
 
 const MAX_LLM_RETRIES: usize = 3;
 
 pub fn run_llm_test_flow(
     tx: Sender<AgentEvent>,
     cancel_flag: Arc<AtomicBool>,
+    llm: LlmBackend,
     snapshot: ContextSnapshot,
     candidate: TestCandidate,
     language: Language,
-    model: String,
 ) {
     thread::spawn(move || {
         let cancelled = || cancel_flag.load(Ordering::SeqCst);
@@ -31,13 +32,11 @@ pub fn run_llm_test_flow(
             let _ = tx.send(AgentEvent::Failed(msg.into()));
         };
 
-        // ---- sanity check ----
         if matches!(candidate.decision, TestDecision::No) {
             fail("Change is not test-worthy.");
             return;
         }
 
-        // ---- select file-level context ----
         let file_ctx = match snapshot
             .files
             .iter()
@@ -50,37 +49,28 @@ pub fn run_llm_test_flow(
             }
         };
 
-        // ---- build prompt ----
         let prompt = build_prompt(&candidate, file_ctx);
 
         let mut final_code: Option<String> = None;
         let mut last_error: Option<String> = None;
 
-        // ---- LLM retry loop ----
         for attempt in 1..=MAX_LLM_RETRIES {
             if cancelled() {
                 fail("Agent cancelled.");
                 return;
             }
 
-            let result = {
-                let tx = tx.clone();
-                let model = model.clone();
-                let prompt = prompt.clone();
+            let _ = tx.send(AgentEvent::Log(
+                LogLevel::Info,
+                format!("LLM attempt {attempt}"),
+            ));
 
-                thread::spawn(move || {
-                    let _ = tx.send(AgentEvent::Log(
-                        LogLevel::Info,
-                        format!("LLM attempt {attempt}"),
-                    ));
-                    Ollama::run(prompt, &model)
-                })
-                .join()
-            };
-
-            let Ok(Ok(raw)) = result else {
-                last_error = Some("LLM execution failed".into());
-                continue;
+            let raw = match llm.run(prompt.clone()) {
+                Ok(s) => s,
+                Err(e) => {
+                    last_error = Some(e);
+                    continue;
+                }
             };
 
             let cleaned = sanitize_llm_output(&raw);
@@ -102,7 +92,6 @@ pub fn run_llm_test_flow(
             return;
         };
 
-        // ---- write test ----
         let repo_root =
             std::env::current_dir().expect("osmogrep must run in repo root");
 
@@ -124,25 +113,21 @@ pub fn run_llm_test_flow(
             format!("Test written to {}", test_path.display()),
         ));
 
-        // ---- run test ----
-        let cmd: Vec<&str> = match language {
-            Language::Python => vec!["pytest", test_path.to_str().unwrap()],
-            Language::Rust => vec!["cargo", "test"],
+        let request = match language {
+            Language::Python => TestRunRequest::Python {
+                test_path: test_path.clone(),
+            },
+            Language::Rust => TestRunRequest::Rust,
             _ => {
                 fail("Unsupported language");
                 return;
             }
         };
 
-        let result = run_test(&cmd);
-
+        let result = run_test(request);
         let _ = tx.send(AgentEvent::TestFinished(result.clone()));
 
-        match result {
-            TestResult::Passed | TestResult::Failed { .. } => {
-                let _ = tx.send(AgentEvent::Finished);
-            }
-        }
+        let _ = tx.send(AgentEvent::Finished);
     });
 }
 

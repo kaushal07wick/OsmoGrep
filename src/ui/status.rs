@@ -10,10 +10,11 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, BorderType, Paragraph},
 };
+
+use crate::llm::backend::LlmBackend;
 use crate::state::{AgentState, Phase};
 use crate::ui::helpers::{
     framework_badge,
-    keyword_style,
     language_badge,
     phase_badge,
     spinner,
@@ -27,8 +28,8 @@ pub fn render_status(
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(6), // ASCII header
-            Constraint::Length(8), // status area
+            Constraint::Length(6),
+            Constraint::Length(8),
         ])
         .split(area);
 
@@ -57,20 +58,19 @@ fn render_header(f: &mut ratatui::Frame, area: Rect) {
     ];
 
     let header = Paragraph::new(
-        HEADER.iter().map(|l| {
-            Line::from(Span::styled(
-                *l,
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ))
-        }).collect::<Vec<_>>(),
+        HEADER.iter()
+            .map(|l| {
+                Line::from(Span::styled(
+                    *l,
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ))
+            })
+            .collect::<Vec<_>>(),
     )
     .alignment(Alignment::Center)
-    .block(
-        Block::default()
-            .border_style(Style::default().fg(Color::DarkGray)),
-    );
+    .block(Block::default().border_style(Style::default().fg(Color::DarkGray)));
 
     f.render_widget(header, area);
 }
@@ -83,7 +83,6 @@ fn render_status_block(
     let (sym, label, phase_color) = phase_badge(&state.lifecycle.phase);
     let mut lines: Vec<Line> = Vec::new();
 
-    // Status
     let mut status_spans = vec![
         Span::styled(format!("{:<8}", "Status:"), Style::default().fg(Color::DarkGray)),
         Span::styled(
@@ -102,29 +101,11 @@ fn render_status_block(
 
     lines.push(Line::from(status_spans));
 
-    // System info
-    // ── System info ───────────────────────────────
     let mut sys = System::new();
     sys.refresh_memory();
 
-    let used_gb =
-        sys.used_memory() as f64 / 1024.0 / 1024.0 / 1024.0;
-    let total_gb =
-        sys.total_memory() as f64 / 1024.0 / 1024.0 / 1024.0;
-
-    let os = {
-        let raw = std::env::consts::OS;
-        let mut c = raw.chars();
-        match c.next() {
-            Some(f) => format!("{}{}", f.to_ascii_uppercase(), c.as_str()),
-            None => raw.to_string(),
-        }
-    };
-
-    lines.push(Line::from(vec![
-        Span::styled(format!("{:<8}", "OS:"), Style::default().fg(Color::DarkGray)),
-        Span::styled(os, Style::default().fg(Color::White)),
-    ]));
+    let used_gb = sys.used_memory() as f64 / 1024.0 / 1024.0 / 1024.0;
+    let total_gb = sys.total_memory() as f64 / 1024.0 / 1024.0 / 1024.0;
 
     lines.push(Line::from(vec![
         Span::styled(format!("{:<8}", "RAM:"), Style::default().fg(Color::DarkGray)),
@@ -134,18 +115,23 @@ fn render_status_block(
         ),
     ]));
 
-    let model = if state.ollama_model.is_empty() {
-        "<default>"
-    } else {
-        &state.ollama_model
+    let model_line = match &state.llm_backend {
+        LlmBackend::Ollama { model } => format!("Ollama ({})", model),
+        LlmBackend::Remote { client } => {
+            let cfg = client.current_config();
+            if cfg.api_key.trim().is_empty() {
+                "Ollama (default)".to_string()
+            } else {
+                format!("Remote ({:?} / {})", cfg.provider, cfg.model)
+            }
+        }
     };
 
     lines.push(Line::from(vec![
         Span::styled(format!("{:<8}", "Model:"), Style::default().fg(Color::DarkGray)),
-        Span::styled(model, Style::default().fg(Color::White)),
+        Span::styled(model_line, Style::default().fg(Color::White)),
     ]));
 
-    // Git state (kept)
     if let Some(cur) = &state.lifecycle.current_branch {
         lines.push(Line::from(vec![
             Span::styled(format!("{:<8}", "Current:"), Style::default().fg(Color::DarkGray)),
@@ -153,13 +139,6 @@ fn render_status_block(
                 cur,
                 Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
             ),
-        ]));
-    }
-
-    if let Some(base) = &state.lifecycle.base_branch {
-        lines.push(Line::from(vec![
-            Span::styled(format!("{:<8}", "Base:"), Style::default().fg(Color::DarkGray)),
-            Span::styled(base, Style::default().fg(Color::Gray)),
         ]));
     }
 
@@ -189,19 +168,19 @@ fn render_context_block(
 ) {
     let mut lines: Vec<Line> = Vec::new();
 
-    // Top padding
     lines.push(Line::from(""));
+
     if let Some(snapshot) = &state.context_snapshot {
-    lines.push(Line::from(vec![
-        Span::styled(format!("{:<10}", "Context:"), Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            format!(" {} file(s) ", snapshot.files.len()),
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        ),
-    ]));
+        lines.push(Line::from(vec![
+            Span::styled(format!("{:<10}", "Context:"), Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!(" {} file(s) ", snapshot.files.len()),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
     } else {
         lines.push(Line::from(vec![
             Span::styled(format!("{:<10}", "Context:"), Style::default().fg(Color::DarkGray)),

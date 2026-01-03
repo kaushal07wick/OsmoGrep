@@ -86,7 +86,6 @@ fn create_agent_branch(state: &mut AgentState) {
     transition(state, Phase::Idle);
 }
 
-
 fn execute_agent(state: &mut AgentState) {
     if state.cancel_requested.load(Ordering::SeqCst) {
         transition(state, Phase::Rollback);
@@ -134,20 +133,25 @@ fn execute_agent(state: &mut AgentState) {
 
     log(state, LogLevel::Info, "🤖 Agent started");
 
-    let snapshot = state.context_snapshot.clone().expect("context snapshot missing");
+    let snapshot = state
+        .context_snapshot
+        .clone()
+        .expect("context snapshot missing");
+
+    // ✅ FIX: use backend, not raw client
+    let llm_backend = state.llm_backend.clone();
 
     run_llm_test_flow(
         state.agent_tx.clone(),
         state.cancel_requested.clone(),
+        llm_backend,
         snapshot,
         candidate,
         language,
-        state.ollama_model.clone(),
     );
 
     transition(state, Phase::Running);
 }
-
 
 fn handle_running(state: &mut AgentState) {
     if state.cancel_requested.load(Ordering::SeqCst) {
