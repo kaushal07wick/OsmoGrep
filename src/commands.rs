@@ -297,6 +297,7 @@ fn show_test_artifact(state: &mut AgentState) {
 
     state.ui.focus = Focus::Execution;
     state.ui.exec_scroll = 0;
+    state.ui.panel_scroll_x = 0
 }
 
 fn close_view(state: &mut AgentState) {
@@ -310,6 +311,7 @@ fn close_view(state: &mut AgentState) {
     if state.ui.panel_view.is_some() {
         state.ui.panel_view = None;
         state.ui.exec_scroll = 0;
+        state.ui.panel_scroll_x = 0;
         closed = true;
     }
 
@@ -324,6 +326,7 @@ fn close_view(state: &mut AgentState) {
 fn clear_logs(state: &mut AgentState) {
     state.logs.clear();
     state.ui.exec_scroll = 0;
+    state.ui.panel_scroll_x = 0;
     state.ui.dirty = true;
 }
 

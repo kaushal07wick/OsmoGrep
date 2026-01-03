@@ -188,23 +188,30 @@ pub fn render_execution(
         state.ui.exec_scroll.min(max_scroll)
     };
 
-    let visible = lines
-        .into_iter()
-        .skip(scroll)
-        .take(height)
-        .collect::<Vec<_>>();
-
+    let visible: Vec<Line> = lines
+    .iter()
+    .cloned()
+    .skip(scroll)
+    .take(height)
+    .collect();
 
     /* ================= RENDER ================= */
-    f.render_widget(
-        Paragraph::new(visible).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(Color::DarkGray))
-                .title("EXECUTION")
-                .title_alignment(Alignment::Center),
-        ),
+       f.render_widget(
+        Paragraph::new(lines)
+            .scroll((
+                scroll as u16,
+                state.ui.panel_scroll_x as u16,
+            ))
+            .wrap(ratatui::widgets::Wrap { trim: false })
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(Color::DarkGray))
+                    .title("EXECUTION")
+                    .title_alignment(Alignment::Center),
+            ),
         area,
     );
 }
+ 

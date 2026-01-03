@@ -104,7 +104,9 @@ fn build_request(
 ) -> (String, Vec<(&'static str, String)>, Value) {
     match cfg.provider {
         Provider::OpenAI => {
-            let url = cfg.base_url.clone()
+            let url = cfg
+                .base_url
+                .clone()
                 .unwrap_or_else(|| "https://api.openai.com/v1/responses".into());
 
             let body = serde_json::json!({
@@ -117,21 +119,24 @@ fn build_request(
                 url,
                 vec![
                     ("Authorization", format!("Bearer {}", cfg.api_key)),
-                    ("Content-Type", "application/json".into()),
                 ],
                 body,
             )
         }
 
         Provider::Anthropic => {
-            let url = cfg.base_url.clone()
+            let url = cfg
+                .base_url
+                .clone()
                 .unwrap_or_else(|| "https://api.anthropic.com/v1/messages".into());
 
             let body = serde_json::json!({
                 "model": cfg.model,
                 "max_tokens": 1024,
                 "system": prompt.system,
-                "messages": [{ "role": "user", "content": prompt.user }]
+                "messages": [
+                    { "role": "user", "content": prompt.user }
+                ]
             });
 
             (
@@ -139,7 +144,6 @@ fn build_request(
                 vec![
                     ("x-api-key", cfg.api_key.clone()),
                     ("anthropic-version", "2023-06-01".into()),
-                    ("Content-Type", "application/json".into()),
                 ],
                 body,
             )

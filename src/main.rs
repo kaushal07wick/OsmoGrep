@@ -15,7 +15,7 @@ use std::{
     error::Error, io, ops::Neg, sync::{Arc, atomic::AtomicBool}, time::{Duration, Instant}
 };
 use std::sync::mpsc::channel;
-use crate::{llm::{backend::LlmBackend, client::{LlmClient, Provider}}, state::InputMode};
+use crate::{llm::{backend::LlmBackend, client::{LlmClient, Provider}}, logger::log, state::InputMode};
 use crossterm::{
     event::{self, Event, KeyCode, MouseEventKind},
     execute,
@@ -230,51 +230,46 @@ fn handle_input_keys(state: &mut AgentState, k: crossterm::event::KeyEvent) {
         }
         KeyCode::Enter => {
             match &state.ui.input_mode {
-                InputMode::Command => {
-                    let cmd = state.commit_input();
-                    handle_command(state, &cmd);
-                    update_command_hints(state);
-                }
-
                 InputMode::ApiKey { provider, model } => {
-                    let api_key = state.ui.input.trim().to_string();
-
-                    if api_key.is_empty() {
-                        state.push_log(LogLevel::Warn, "API key cannot be empty");
-                        return;
-                    }
+                    let api_key = state.ui.input.clone();
 
                     let client = LlmClient::new();
-
-                    let provider_name = match provider {
+                    let provider_str = match provider {
                         Provider::OpenAI => "openai",
                         Provider::Anthropic => "anthropic",
                     };
 
                     match client.configure(
-                        provider_name,
+                        provider_str,
                         model.clone(),
                         api_key,
                         None,
                     ) {
                         Ok(_) => {
-                            state.llm_backend = LlmBackend::Remote { client };
-                            state.push_log(
+                            state.llm_backend = LlmBackend::remote(client);
+                            log(
+                                state,
                                 LogLevel::Success,
-                                format!("{:?} API key set. Using model {}", provider, model),
+                                format!("API key set. Using {} ({})", provider_str, model),
                             );
                         }
                         Err(e) => {
-                            state.push_log(LogLevel::Error, e);
+                            log(state, LogLevel::Error, e);
                         }
                     }
 
+                    // reset input state
                     state.ui.input.clear();
                     state.ui.input_mode = InputMode::Command;
                     state.ui.input_masked = false;
                     state.ui.input_placeholder = None;
-                    state.clear_autocomplete();
-                    state.clear_hint();
+                    state.ui.focus = Focus::Input;
+                }
+
+                InputMode::Command => {
+                    let cmd = state.commit_input();
+                    handle_command(state, &cmd);
+                    update_command_hints(state);
                 }
             }
         }
@@ -331,6 +326,13 @@ fn handle_exec_keys(state: &mut AgentState, k: crossterm::event::KeyEvent) {
             KeyCode::Down => state.ui.panel_scroll = state.ui.panel_scroll.saturating_add(1),
             KeyCode::PageUp => state.ui.panel_scroll = state.ui.panel_scroll.saturating_sub(10),
             KeyCode::PageDown => state.ui.panel_scroll = state.ui.panel_scroll.saturating_add(10),
+            KeyCode::Left => {
+                state.ui.panel_scroll_x = state.ui.panel_scroll_x.saturating_sub(4);
+            }
+            KeyCode::Right => {
+                state.ui.panel_scroll_x = state.ui.panel_scroll_x.saturating_add(4);
+            }
+
             KeyCode::Esc => {
                 state.ui.panel_view = None;
                 state.ui.focus = Focus::Input;
