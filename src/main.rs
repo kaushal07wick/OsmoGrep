@@ -15,7 +15,7 @@ use std::{
     error::Error, io, ops::Neg, sync::{Arc, atomic::AtomicBool}, time::{Duration, Instant}
 };
 use std::sync::mpsc::channel;
-use crate::llm::{backend::LlmBackend, client::LlmClient};
+use crate::{llm::{backend::LlmBackend, client::{LlmClient, Provider}}, state::InputMode};
 use crossterm::{
     event::{self, Event, KeyCode, MouseEventKind},
     execute,
@@ -178,6 +178,9 @@ fn init_state() -> AgentState {
             last_log_len: 0,
             dirty: true,
             last_draw: Instant::now(),
+            input_mode: InputMode::Command,
+            input_masked: false,
+            input_placeholder: None,
         },
         logs: LogBuffer::new(),
         llm_backend: LlmBackend::Remote {client: LlmClient::new(),},
@@ -226,9 +229,54 @@ fn handle_input_keys(state: &mut AgentState, k: crossterm::event::KeyEvent) {
             update_command_hints(state);
         }
         KeyCode::Enter => {
-            let cmd = state.commit_input();
-            handle_command(state, &cmd);
-            update_command_hints(state);
+            match &state.ui.input_mode {
+                InputMode::Command => {
+                    let cmd = state.commit_input();
+                    handle_command(state, &cmd);
+                    update_command_hints(state);
+                }
+
+                InputMode::ApiKey { provider, model } => {
+                    let api_key = state.ui.input.trim().to_string();
+
+                    if api_key.is_empty() {
+                        state.push_log(LogLevel::Warn, "API key cannot be empty");
+                        return;
+                    }
+
+                    let client = LlmClient::new();
+
+                    let provider_name = match provider {
+                        Provider::OpenAI => "openai",
+                        Provider::Anthropic => "anthropic",
+                    };
+
+                    match client.configure(
+                        provider_name,
+                        model.clone(),
+                        api_key,
+                        None,
+                    ) {
+                        Ok(_) => {
+                            state.llm_backend = LlmBackend::Remote { client };
+                            state.push_log(
+                                LogLevel::Success,
+                                format!("{:?} API key set. Using model {}", provider, model),
+                            );
+                        }
+                        Err(e) => {
+                            state.push_log(LogLevel::Error, e);
+                        }
+                    }
+
+                    state.ui.input.clear();
+                    state.ui.input_mode = InputMode::Command;
+                    state.ui.input_masked = false;
+                    state.ui.input_placeholder = None;
+                    state.clear_autocomplete();
+                    state.clear_hint();
+                }
+            }
         }
         KeyCode::Up => {
             state.history_prev();

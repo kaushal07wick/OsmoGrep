@@ -1,6 +1,3 @@
-//! command.rs
-//!
-//! Command interpretation layer.
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
@@ -8,9 +5,9 @@ use crate::detectors::diff_analyzer::analyze_diff;
 use crate::git;
 use crate::logger::{log, log_diff_analysis};
 use crate::llm::backend::LlmBackend;
-use crate::llm::client::LlmClient;
+use crate::llm::client::{LlmClient, Provider};
 use crate::state::{
-    AgentState, Focus, LogLevel, Phase, SinglePanelView,
+    AgentState, Focus, LogLevel, Phase, SinglePanelView, InputMode,
 };
 use crate::testgen::generator::generate_test_candidates;
 
@@ -34,13 +31,6 @@ pub fn handle_command(state: &mut AgentState, cmd: &str) {
 
         cmd if cmd.starts_with("model use ") => model_use(state, cmd),
         "model show" => model_show(state),
-
-        "status" => status_all(state),
-        "status agent" => status_agent(state),
-        "status context" => status_context(state),
-        "status prompt" => status_prompt(state),
-        "status git" => status_git(state),
-        "status system" => status_system(state),
 
         "artifacts test" => show_test_artifact(state),
 
@@ -71,7 +61,6 @@ pub fn handle_command(state: &mut AgentState, cmd: &str) {
     }
 }
 
-
 fn help(state: &mut AgentState) {
     use LogLevel::Info;
 
@@ -81,7 +70,8 @@ fn help(state: &mut AgentState) {
     log(state, Info, "  changes <n>                  — view diff for change <n>");
 
     log(state, Info, "  model use ollama <model>     — use local Ollama model");
-    log(state, Info, "  model use remote <provider> — configure and use remote LLM");
+    log(state, Info, "  model use openai <model>     — configure OpenAI model (prompts for key)");
+    log(state, Info, "  model use anthropic <model>  — configure Anthropic model (prompts for key)");
     log(state, Info, "  model show                  — show active model");
 
     log(state, Info, "  agent run <n>                — generate and run tests for change <n>");
@@ -98,7 +88,6 @@ fn help(state: &mut AgentState) {
     log(state, Info, "  close                        — close active view");
     log(state, Info, "  quit                         — exit osmogrep");
 }
-
 
 fn inspect(state: &mut AgentState) {
     log(state, LogLevel::Info, "Inspecting git changes…");
@@ -133,7 +122,7 @@ fn list_changes(state: &mut AgentState) {
         return;
     }
 
-    let lines: Vec<String> = state
+    let entries: Vec<String> = state
         .context
         .diff_analysis
         .iter()
@@ -148,10 +137,11 @@ fn list_changes(state: &mut AgentState) {
         })
         .collect();
 
-    for line in lines {
+    for line in entries {
         log(state, LogLevel::Info, line);
     }
 }
+
 
 fn view_change(state: &mut AgentState, cmd: &str) {
     let idx = match cmd["changes ".len()..].trim().parse::<usize>() {
@@ -198,7 +188,7 @@ fn agent_run(state: &mut AgentState, cmd: &str) {
 }
 
 fn agent_status(state: &mut AgentState) {
-    status_agent(state);
+    log(state, LogLevel::Info, format!("Phase: {:?}", state.lifecycle.phase));
 }
 
 fn agent_cancel(state: &mut AgentState) {
@@ -212,66 +202,66 @@ fn agent_cancel(state: &mut AgentState) {
     log(state, LogLevel::Warn, "Agent cancellation requested.");
 }
 
-
 fn model_use(state: &mut AgentState, cmd: &str) {
-    let args: Vec<&str> = cmd["model use ".len()..].split_whitespace().collect();
+    let args: Vec<&str> = cmd.split_whitespace().collect();
 
-    if args.is_empty() {
-        log(state, LogLevel::Warn, "Usage: model use <ollama|remote> ...");
-        return;
-    }
+    match args.as_slice() {
+        ["model", "use", "ollama", model] => {
+            state.llm_backend = LlmBackend::ollama(model.to_string());
 
-    match args[0] {
-        "ollama" => model_use_ollama(state, &args),
-        "remote" => model_use_remote(state, &args),
-        _ => log(state, LogLevel::Warn, "Usage: model use <ollama|remote> ..."),
+            state.ui.input.clear();
+            state.ui.input_mode = InputMode::Command;
+            state.ui.input_masked = false;
+            state.ui.input_placeholder = None;
+
+            log(
+                state,
+                LogLevel::Success,
+                format!("Using Ollama model: {}", model),
+            );
+        }
+
+        ["model", "use", "openai", model] => {
+            enter_api_key_mode(state, Provider::OpenAI, model);
+            log(
+                state,
+                LogLevel::Info,
+                format!("Enter OpenAI API key for model {}", model),
+            );
+        }
+
+        ["model", "use", "anthropic", model] => {
+            enter_api_key_mode(state, Provider::Anthropic, model);
+            log(
+                state,
+                LogLevel::Info,
+                format!("Enter Anthropic API key for model {}", model),
+            );
+        }
+
+        _ => {
+            log(
+                state,
+                LogLevel::Warn,
+                "Usage: model use ollama <model> | model use <openai|anthropic> <model>",
+            );
+        }
     }
 }
 
-fn model_use_ollama(state: &mut AgentState, args: &[&str]) {
-    if args.len() != 2 {
-        log(state, LogLevel::Warn, "Usage: model use ollama <model>");
-        return;
-    }
-
-    let model = args[1].to_string();
-    state.llm_backend = LlmBackend::ollama(model.clone());
-
-    log(
-        state,
-        LogLevel::Success,
-        format!("Ollama model activated: {}", model),
-    );
-}
-
-fn model_use_remote(state: &mut AgentState, args: &[&str]) {
-    if args.len() < 4 {
-        log(
-            state,
-            LogLevel::Warn,
-            "Usage: model use remote <openai|anthropic> <model> <key> [url]",
-        );
-        return;
-    }
-
-    let provider = args[1];
-    let model = args[2].to_string();
-    let api_key = args[3].to_string();
-    let base_url = args.get(4).map(|s| s.to_string());
-
-    let client = LlmClient::new();
-    if let Err(e) = client.configure(provider, model.clone(), api_key, base_url) {
-        log(state, LogLevel::Error, e);
-        return;
-    }
-
-    state.llm_backend = LlmBackend::remote(client);
-
-    log(
-        state,
-        LogLevel::Success,
-        format!("Remote model activated: {} ({})", model, provider),
-    );
+fn enter_api_key_mode(
+    state: &mut AgentState,
+    provider: Provider,
+    model: &str,
+) {
+    state.ui.input.clear();
+    state.ui.input_mode = InputMode::ApiKey {
+        provider,
+        model: model.to_string(),
+    };
+    state.ui.input_masked = true;
+    state.ui.input_placeholder = Some("Add API key".into());
+    state.ui.focus = Focus::Input;
 }
 
 fn model_show(state: &mut AgentState) {
@@ -288,67 +278,6 @@ fn model_show(state: &mut AgentState) {
             );
         }
     }
-}
-
-
-fn status_all(state: &mut AgentState) {
-    status_agent(state);
-    status_context(state);
-    status_git(state);
-}
-
-fn status_agent(state: &mut AgentState) {
-    log(state, LogLevel::Info, format!("Phase: {:?}", state.lifecycle.phase));
-    log(
-        state,
-        LogLevel::Info,
-        format!(
-            "Cancel requested: {}",
-            state.cancel_requested.load(Ordering::SeqCst)
-        ),
-    );
-    log(
-        state,
-        LogLevel::Info,
-        format!("Test candidates: {}", state.context.test_candidates.len()),
-    );
-}
-
-fn status_context(state: &mut AgentState) {
-    match &state.context_snapshot {
-        Some(snapshot) => log(
-            state,
-            LogLevel::Info,
-            format!("Context snapshot: {} file(s)", snapshot.files.len()),
-        ),
-        None => log(state, LogLevel::Info, "Context snapshot not built yet."),
-    }
-}
-
-fn status_prompt(state: &mut AgentState) {
-    match std::fs::read_to_string(".osmogrep_prompt.txt") {
-        Ok(p) => {
-            log(state, LogLevel::Info, "Last prompt (first 20 lines):");
-            for line in p.lines().take(20) {
-                log(state, LogLevel::Info, line);
-            }
-        }
-        Err(_) => log(state, LogLevel::Warn, "No prompt artifact found."),
-    }
-}
-
-fn status_git(state: &mut AgentState) {
-    log(state, LogLevel::Info, format!("Branch: {}", git::current_branch()));
-    log(
-        state,
-        LogLevel::Info,
-        format!("Dirty: {}", git::working_tree_dirty()),
-    );
-}
-
-fn status_system(state: &mut AgentState) {
-    log(state, LogLevel::Info, format!("OS: {}", std::env::consts::OS));
-    log(state, LogLevel::Info, format!("Arch: {}", std::env::consts::ARCH));
 }
 
 fn show_test_artifact(state: &mut AgentState) {
@@ -424,35 +353,34 @@ pub fn update_command_hints(state: &mut AgentState) {
         };
     }
 
-    hint!("inspect", "Inspect git changes");
-    hint!("changes", "List detected changes");
-    hint!("changes ", "View change <n>");
+    hint!("inspect", "Analyze git changes and build context");
+
+    hint!("changes", "List analyzed changes");
+    hint!("changes ", "View diff for change <n>");
 
     hint!("model use ollama ", "Use local Ollama model");
-    hint!("model use remote ", "Use remote LLM (OpenAI / Anthropic)");
+    hint!("model use openai ", "Configure OpenAI model (will prompt for API key)");
+    hint!(
+        "model use anthropic ",
+        "Configure Anthropic model (will prompt for API key)"
+    );
     hint!("model show", "Show active model");
 
-    hint!("agent run ", "Run agent on change <n>");
-    hint!("agent status", "Agent status");
+    hint!("agent run ", "Generate and run tests for change <n>");
+    hint!("agent status", "Show agent execution state");
     hint!("agent cancel", "Cancel running agent");
 
-    hint!("status", "Show all status");
-    hint!("status agent", "Agent status");
-    hint!("status context", "Context status");
-    hint!("status prompt", "Prompt status");
-    hint!("status git", "Git status");
-    hint!("status system", "System info");
-
-    hint!("artifacts test", "Show generated test");
+    hint!("artifacts test", "Show last generated test");
 
     hint!("branch new", "Create agent branch");
     hint!("branch rollback", "Rollback agent branch");
-    hint!("branch list", "List branches");
+    hint!("branch list", "List git branches");
 
     hint!("clear", "Clear logs");
     hint!("logs clear", "Clear logs");
+
     hint!("close", "Close active view");
-    hint!("quit", "Quit Osmogrep");
+    hint!("quit", "Exit Osmogrep");
     hint!("help", "Show help");
 
     state.set_hint("Unknown command");

@@ -3,13 +3,22 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{Sender, Receiver};
 use std::time::{Instant, Duration};
-use crate::llm::client::LlmClient;
+use crate::llm::client::{LlmClient, Provider};
 use crate::detectors::{framework::TestFramework, language::Language};
 use crate::testgen::candidate::TestCandidate;
 use crate::testgen::summarizer::SemanticSummary;
 use crate::context::types::ContextSnapshot;
 pub const MAX_LOGS: usize = 1000;
 use crate::llm::backend::LlmBackend;
+
+///input mode
+pub enum InputMode {
+    Command,
+    ApiKey {
+        provider: Provider,
+        model: String,
+    },
+}
 
 ///events emitted by agent
 #[derive(Debug)]
@@ -213,6 +222,9 @@ pub struct UiState {
     pub last_log_len: usize,
     pub dirty: bool,
     pub last_draw: Instant,
+    pub input_mode: InputMode,
+    pub input_masked: bool,
+    pub input_placeholder: Option<String>,
 }
 
 /// root container for the entire agent.

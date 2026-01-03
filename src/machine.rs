@@ -2,19 +2,18 @@
 //!
 //! Agent lifecycle state machine.
 
-use std::path::{Path, PathBuf};
+use std::path::{PathBuf};
 use std::sync::atomic::Ordering;
 
 use crate::{
     detectors::{framework::detect_framework, language::detect_language},
-    testgen::runner::run_test,
     git,
     llm::orchestrator::run_llm_test_flow,
     logger::log,
     testgen::summarizer::summarize,
 };
 use crate::context::snapshot::build_context_snapshot;
-use crate::state::{AgentEvent, AgentState, LogLevel, Phase};
+use crate::state::{AgentState, LogLevel, Phase};
 
 pub fn step(state: &mut AgentState) {
     match state.lifecycle.phase {
@@ -138,7 +137,6 @@ fn execute_agent(state: &mut AgentState) {
         .clone()
         .expect("context snapshot missing");
 
-    // ✅ FIX: use backend, not raw client
     let llm_backend = state.llm_backend.clone();
 
     run_llm_test_flow(
