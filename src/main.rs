@@ -185,7 +185,7 @@ fn init_state() -> AgentState {
         agent_tx,
         agent_rx,
         cancel_requested: Arc::new(AtomicBool::new(false)),
-        context_snapshot: None,
+        full_context_snapshot: None,
     }
 }
 

@@ -9,10 +9,6 @@ use std::time::Instant;
 use crate::detectors::language::Language;
 use crate::state::TestResult;
 
-/* ========================================================================== */
-/*                               PUBLIC TYPES                                  */
-/* ========================================================================== */
-
 #[derive(Debug, Clone)]
 pub enum TestRunRequest {
     Python { test_path: PathBuf },
@@ -47,10 +43,6 @@ pub struct TestSuiteResult {
     /// Full raw stdout + stderr, unparsed.
     pub raw_output: String,
 }
-
-/* ========================================================================== */
-/*                              SINGLE TEST RUN                                */
-/* ========================================================================== */
 
 pub fn run_test(req: TestRunRequest) -> TestResult {
     let output = match req {
@@ -96,10 +88,6 @@ pub fn run_test(req: TestRunRequest) -> TestResult {
         },
     }
 }
-
-/* ========================================================================== */
-/*                              FULL TEST SUITE                                */
-/* ========================================================================== */
 
 pub fn run_full_test_async<F>(language: Language, on_done: F)
 where

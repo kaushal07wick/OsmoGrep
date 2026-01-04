@@ -200,17 +200,76 @@ fn render_context_block(
         lines.push(Line::from(""));
     }
 
-    if let Some(snapshot) = &state.context_snapshot {
+    // ---- FULL CONTEXT SNAPSHOT ----
+    if let Some(snapshot) = &state.full_context_snapshot {
+        // Code context
         lines.push(Line::from(vec![
-            Span::styled("Context:  ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Code ctx: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
-                format!(" {} file(s) ", snapshot.files.len()),
+                format!(" {} file(s) ", snapshot.code.files.len()),
                 Style::default()
                     .fg(Color::Black)
                     .bg(Color::Green)
                     .add_modifier(Modifier::BOLD),
             ),
         ]));
+
+        // Test context
+        let tests = &snapshot.tests;
+
+        lines.push(Line::from(vec![
+            Span::styled("Tests:    ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                if tests.exists { " present " } else { " none " },
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(if tests.exists { Color::Green } else { Color::DarkGray })
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
+
+        if tests.exists {
+            let fw = tests.framework.unwrap_or(crate::context::types::TestFramework::Unknown);
+            let (label, color) = framework_badge(&format!("{:?}", fw));
+
+            lines.push(Line::from(vec![
+                Span::styled("Test fw:  ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format!(" {label} "),
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(color)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]));
+
+
+            if let Some(style) = tests.style {
+                lines.push(Line::from(vec![
+                    Span::styled("Style:    ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        format!(" {:?} ", style),
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Blue)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]));
+            }
+
+            if !tests.helpers.is_empty() {
+                lines.push(Line::from(vec![
+                    Span::styled("Helpers:  ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        format!(" {} ", tests.helpers.len()),
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Magenta)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]));
+            }
+        }
     } else {
         lines.push(Line::from(vec![
             Span::styled("Context:  ", Style::default().fg(Color::DarkGray)),
@@ -228,17 +287,6 @@ fn render_context_block(
         let (label, color) = language_badge(&format!("{:?}", lang));
         lines.push(Line::from(vec![
             Span::styled("Language: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                format!(" {label} "),
-                Style::default().fg(Color::Black).bg(color).add_modifier(Modifier::BOLD),
-            ),
-        ]));
-    }
-
-    if let Some(fw) = &state.lifecycle.framework {
-        let (label, color) = framework_badge(&format!("{:?}", fw));
-        lines.push(Line::from(vec![
-            Span::styled("Framework:", Style::default().fg(Color::DarkGray)),
             Span::styled(
                 format!(" {label} "),
                 Style::default().fg(Color::Black).bg(color).add_modifier(Modifier::BOLD),

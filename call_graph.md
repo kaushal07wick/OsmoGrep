@@ -37,8 +37,9 @@
 ### src/context/snapshot.rs
 
 **Functions**
+- pub fn build_full_context_snapshot( repo_root: &Path, diffs: &[DiffAnalysis], ) -> FullContextSnapshot
 - pub fn build_context_snapshot( repo_root: &Path, diffs: &[DiffAnalysis], ) -> ContextSnapshot
-- fn parse_file( file: &Path, source: &str, ) -> (Vec<SymbolDef>, Vec<Import>)
+- pub fn parse_file( file: &Path, source: &str, ) -> (Vec<SymbolDef>, Vec<Import>)
 - fn walk_node( kind: LanguageKind, node: Node, file: &Path, src: &str, symbols: &mut Vec<SymbolDef>, imports: &mut Vec<Import>, current_class: Option<String>, )
 - fn resolve_symbol( target: Option<&str>, symbols: &[SymbolDef], ) -> SymbolResolution
 
@@ -51,6 +52,22 @@
 - fs::read_to_string
 - python::language
 - rust::language
+
+### src/context/test_snapshot.rs
+
+**Functions**
+- pub fn build_test_context_snapshot(repo_root: &Path) -> TestContextSnapshot
+- fn empty_snapshot(exists: bool, test_roots: Vec<PathBuf>) -> TestContextSnapshot
+- fn collect_test_files_recursive(test_roots: &[PathBuf]) -> Vec<PathBuf>
+- fn collect_py_files(dir: &Path, out: &mut Vec<PathBuf>)
+- fn detect_framework_from_source( source: &str, symbols: &[SymbolDef], ) -> TestFramework
+- fn detect_references(imports: &[Import]) -> Vec<String>
+- fn detect_style( helpers: &[String], references: &[String], symbols: &[SymbolDef], ) -> Option<TestStyle>
+
+**Calls**
+- Vec::new
+- fs::read_dir
+- fs::read_to_string
 
 ### src/context/types.rs
 
@@ -160,7 +177,7 @@
 **Functions**
 -  pub fn ollama(model: String) -> Self
 -  pub fn remote(client: LlmClient) -> Self
--  pub fn run(&self, prompt: LlmPrompt) -> Result<String, String>
+-  pub fn run(&self, prompt: LlmPrompt) -> Result<LlmRunResult, String>
 
 **Calls**
 - Ollama::run
@@ -170,8 +187,8 @@
 **Functions**
 -  pub fn new() -> Self
 -  pub fn configure( &self, provider_name: &str, model: String, api_key: String, base_url: Option<String>, ) -> Result<(), String>
--  pub fn run(&self, prompt: LlmPrompt) -> Result<String, String>
-- fn build_request( cfg: &ProviderConfig, prompt: &LlmPrompt, ) -> (String, Vec<(&'static str, String)>, Value)
+-  pub fn run(&self, prompt: LlmPrompt) -> Result<LlmRunResult, String>
+- fn build_request( cfg: &ProviderConfig, prompt: &LlmPrompt, prompt_hash: &str, ) -> (String, Vec<(&'static str, String)>, Value)
 - fn extract_text(provider: &Provider, v: &Value) -> Result<String, String>
 - fn default_config() -> ProviderConfig
 - fn save_config(cfg: &ProviderConfig) -> std::io::Result<()>
@@ -220,12 +237,13 @@
 ### src/llm/orchestrator.rs
 
 **Functions**
-- pub fn run_llm_test_flow( tx: Sender<AgentEvent>, cancel_flag: Arc<AtomicBool>, llm: LlmBackend, snapshot: ContextSnapshot, candidate: TestCandidate, language: Language, semantic_cache: Arc<SemanticCache>, )
+- pub fn run_llm_test_flow( tx: Sender<AgentEvent>, cancel_flag: Arc<AtomicBool>, llm: LlmBackend, snapshot: FullContextSnapshot, candidate: TestCandidate, language: Language, semantic_cache: Arc<SemanticCache>, )
 - fn trim_error(s: &str) -> String
 - fn sanitize_llm_output(raw: &str) -> String
 
 **Calls**
 - AgentEvent::Failed
+- AgentEvent::GeneratedTest
 - AgentEvent::Log
 - AgentEvent::TestFinished
 - SemanticKey::from_candidate
@@ -235,9 +253,9 @@
 ### src/llm/prompt.rs
 
 **Functions**
-- pub fn build_prompt( candidate: &TestCandidate, file_ctx: &FileContext, ) -> LlmPrompt
-- pub fn build_prompt_with_feedback( candidate: &TestCandidate, ctx: &FileContext, previous_test: &str, failure_feedback: &str, ) -> LlmPrompt
-- fn user_prompt( candidate: &TestCandidate, ctx: &FileContext, ) -> String
+- pub fn build_prompt( candidate: &TestCandidate, file_ctx: &FileContext, test_ctx: &TestContextSnapshot, ) -> LlmPrompt
+- pub fn build_prompt_with_feedback( candidate: &TestCandidate, file_ctx: &FileContext, test_ctx: &TestContextSnapshot, previous_test: &str, failure_feedback: &str, ) -> LlmPrompt
+- fn user_prompt( candidate: &TestCandidate, ctx: &FileContext, test_ctx: &TestContextSnapshot, ) -> String
 
 **Calls**
 - String::new

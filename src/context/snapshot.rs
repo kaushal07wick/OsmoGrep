@@ -1,7 +1,6 @@
 // src/context/snapshot.rs
 //
-// Diff-scoped, synchronous context construction.
-// Walks only the files referenced by the diff.
+// Diff-scoped + repo-level context construction.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -11,9 +10,27 @@ use tree_sitter_python as python;
 use tree_sitter_rust as rust;
 
 use crate::state::DiffAnalysis;
-use crate::context::types::{Import, SymbolDef, SymbolResolution};
-use crate::context::types::{FileContext, ContextSnapshot, LanguageKind};
+use crate::context::types::{
+    Import, SymbolDef, SymbolResolution,
+    FileContext, ContextSnapshot, LanguageKind,
+    FullContextSnapshot,
+};
+use crate::context::test_snapshot::build_test_context_snapshot;
 
+/// Build FULL context snapshot:
+/// - diff-scoped code context
+/// - repo-level test context
+pub fn build_full_context_snapshot(
+    repo_root: &Path,
+    diffs: &[DiffAnalysis],
+) -> FullContextSnapshot {
+    let code = build_context_snapshot(repo_root, diffs);
+    let tests = build_test_context_snapshot(repo_root);
+
+    FullContextSnapshot { code, tests }
+}
+
+/// Existing diff-scoped context builder (unchanged)
 pub fn build_context_snapshot(
     repo_root: &Path,
     diffs: &[DiffAnalysis],
@@ -39,8 +56,8 @@ pub fn build_context_snapshot(
     ContextSnapshot { files }
 }
 
-
-fn parse_file(
+/// Reused by both code + test snapshots
+pub fn parse_file(
     file: &Path,
     source: &str,
 ) -> (Vec<SymbolDef>, Vec<Import>) {

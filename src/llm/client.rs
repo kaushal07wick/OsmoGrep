@@ -10,6 +10,15 @@ use hex;
 
 use crate::llm::prompt::LlmPrompt;
 
+const PROMPT_ABI_VERSION: &str = "v1-testgen-context-aware";
+
+#[derive(Debug, Clone)]
+pub struct LlmRunResult {
+    pub text: String,
+    pub prompt_hash: String,
+    pub cached_tokens: Option<u64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Provider {
     OpenAI,
@@ -24,6 +33,7 @@ pub struct ProviderConfig {
     pub base_url: Option<String>,
 }
 
+
 #[derive(Clone)]
 pub struct LlmClient {
     cfg: Arc<Mutex<ProviderConfig>>,
@@ -32,7 +42,9 @@ pub struct LlmClient {
 impl LlmClient {
     pub fn new() -> Self {
         let cfg = load_config().unwrap_or_else(default_config);
-        Self { cfg: Arc::new(Mutex::new(cfg)) }
+        Self {
+            cfg: Arc::new(Mutex::new(cfg)),
+        }
     }
 
     pub fn configure(
@@ -70,13 +82,14 @@ impl LlmClient {
             .clone()
     }
 
-    pub fn run(&self, prompt: LlmPrompt) -> Result<String, String> {
+    pub fn run(&self, prompt: LlmPrompt) -> Result<LlmRunResult, String> {
         let cfg = {
             let guard = self.cfg.lock().map_err(|_| "Config lock poisoned")?;
             guard.clone()
         };
 
-        let (url, headers, body) = build_request(&cfg, &prompt);
+        let prompt_hash = hash_prompt(&prompt);
+        let (url, headers, body) = build_request(&cfg, &prompt, &prompt_hash);
 
         let client = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(60))
@@ -96,29 +109,38 @@ impl LlmClient {
             return Err(format!("LLM error {}: {}", status, json));
         }
 
-        // Optional: log cached tokens if present
-        if let Some(cached) = json
+        let cached_tokens = json
             .pointer("/usage/prompt_tokens_details/cached_tokens")
             .and_then(|v| v.as_u64())
-        {
-            eprintln!(" prompt cache hit: {} tokens", cached);
-        }
+            .filter(|&n| n > 0);
 
-        extract_text(&cfg.provider, &json)
+        let text = extract_text(&cfg.provider, &json)?;
+
+        Ok(LlmRunResult {
+            text,
+            prompt_hash,
+            cached_tokens,
+        })
     }
 }
 
 
-
-fn hash_str(s: &str) -> String {
+fn hash_prompt(prompt: &LlmPrompt) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(s.as_bytes());
+
+    hasher.update(PROMPT_ABI_VERSION.as_bytes());
+    hasher.update(b"\n--SYSTEM--\n");
+    hasher.update(prompt.system.as_bytes());
+    hasher.update(b"\n--USER--\n");
+    hasher.update(prompt.user.as_bytes());
+
     hex::encode(hasher.finalize())
 }
 
 fn build_request(
     cfg: &ProviderConfig,
     prompt: &LlmPrompt,
+    prompt_hash: &str,
 ) -> (String, Vec<(&'static str, String)>, Value) {
     match cfg.provider {
         Provider::OpenAI => {
@@ -127,22 +149,17 @@ fn build_request(
                 .clone()
                 .unwrap_or_else(|| "https://api.openai.com/v1/responses".into());
 
-            // Cache ONLY the static prefix (system prompt)
-            let prompt_cache_key = hash_str(&prompt.system);
-
             let body = serde_json::json!({
                 "model": cfg.model,
                 "instructions": prompt.system,
                 "input": prompt.user,
-                "prompt_cache_key": prompt_cache_key,
+                "prompt_cache_key": prompt_hash,
                 "prompt_cache_retention": "24h"
             });
 
             (
                 url,
-                vec![
-                    ("Authorization", format!("Bearer {}", cfg.api_key)),
-                ],
+                vec![("Authorization", format!("Bearer {}", cfg.api_key))],
                 body,
             )
         }
@@ -199,7 +216,6 @@ fn extract_text(provider: &Provider, v: &Value) -> Result<String, String> {
         }
     }
 }
-
 
 fn default_config() -> ProviderConfig {
     ProviderConfig {

@@ -7,7 +7,7 @@ use crate::llm::client::{LlmClient, Provider};
 use crate::detectors::{framework::TestFramework, language::Language};
 use crate::testgen::candidate::TestCandidate;
 use crate::testgen::summarizer::SemanticSummary;
-use crate::context::types::ContextSnapshot;
+use crate::context::types::{ContextSnapshot, FullContextSnapshot};
 pub const MAX_LOGS: usize = 1000;
 use crate::llm::backend::LlmBackend;
 
@@ -237,7 +237,7 @@ pub struct AgentState {
     pub agent_tx: Sender<AgentEvent>,
     pub agent_rx: Receiver<AgentEvent>,
     pub cancel_requested: Arc<AtomicBool>,
-    pub context_snapshot: Option<ContextSnapshot>,
+    pub full_context_snapshot: Option<FullContextSnapshot>,
 }
 
 impl AgentState {

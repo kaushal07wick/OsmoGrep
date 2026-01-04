@@ -16,7 +16,7 @@ use crate::{
     logger::log,
     testgen::summarizer::summarize,
 };
-use crate::context::snapshot::build_context_snapshot;
+use crate::context::snapshot::build_full_context_snapshot;
 use crate::state::{AgentState, LogLevel, Phase};
 
 pub fn step(state: &mut AgentState) {
@@ -109,12 +109,12 @@ fn execute_agent(state: &mut AgentState) {
         }
     };
 
-    let snapshot = build_context_snapshot(
+    let snapshot = build_full_context_snapshot(
         &repo_root,
         &state.context.diff_analysis,
     );
 
-    state.context_snapshot = Some(snapshot);
+    state.full_context_snapshot = Some(snapshot);
 
     let candidate = match state.context.test_candidates.first().cloned() {
         Some(c) => c,
@@ -137,25 +137,26 @@ fn execute_agent(state: &mut AgentState) {
     log(state, LogLevel::Info, "🤖 Agent started");
 
     let snapshot = state
-        .context_snapshot
+        .full_context_snapshot
         .clone()
-        .expect("context snapshot missing");
+        .expect("full context snapshot missing");
 
     let llm_backend = state.llm_backend.clone();
     let semantic_cache = Arc::new(SemanticCache::new());
 
     run_llm_test_flow(
-    state.agent_tx.clone(),
-    state.cancel_requested.clone(),
-    llm_backend,
-    snapshot,
-    candidate,
-    language,
-    semantic_cache.clone(),
+        state.agent_tx.clone(),
+        state.cancel_requested.clone(),
+        llm_backend,
+        snapshot,
+        candidate,
+        language,
+        semantic_cache,
     );
 
     transition(state, Phase::Running);
 }
+
 
 fn handle_running(state: &mut AgentState) {
     if state.cancel_requested.load(Ordering::SeqCst) {

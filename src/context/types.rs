@@ -42,3 +42,45 @@ pub enum SymbolResolution {
     Ambiguous(Vec<SymbolDef>),
     NotFound,
 }
+
+#[derive(Debug, Clone)]
+pub struct TestContextSnapshot {
+    pub exists: bool,
+
+    // Where tests live
+    pub test_roots: Vec<PathBuf>,
+
+    // pytest / unittest / rust / unknown
+    pub framework: Option<TestFramework>,
+
+    // equivalence / example / property / edge
+    pub style: Option<TestStyle>,
+
+    // Known helpers (names only)
+    pub helpers: Vec<String>,
+
+    // Reference libs used in tests (torch, jax, numpy, etc)
+    pub references: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestFramework {
+    Pytest,
+    Unittest,
+    Rust,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestStyle {
+    Equivalence,
+    Example,
+    Property,
+    Edge,
+}
+
+#[derive(Debug, Clone)]
+pub struct FullContextSnapshot {
+    pub code: ContextSnapshot,
+    pub tests: TestContextSnapshot,
+}

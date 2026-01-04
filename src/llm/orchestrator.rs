@@ -1,5 +1,3 @@
-// src/llm/orchestrator.rs
-
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc::Sender,
@@ -7,9 +5,10 @@ use std::sync::{
 };
 use std::thread;
 
-use crate::context::types::ContextSnapshot;
+use crate::context::types::FullContextSnapshot;
 use crate::detectors::language::Language;
 use crate::llm::backend::LlmBackend;
+use crate::llm::client::LlmRunResult;
 use crate::llm::prompt::{build_prompt, build_prompt_with_feedback};
 use crate::state::{AgentEvent, LogLevel, TestDecision, TestResult};
 use crate::testgen::candidate::TestCandidate;
@@ -24,25 +23,48 @@ pub fn run_llm_test_flow(
     tx: Sender<AgentEvent>,
     cancel_flag: Arc<AtomicBool>,
     llm: LlmBackend,
-    snapshot: ContextSnapshot,
+    snapshot: FullContextSnapshot,
     candidate: TestCandidate,
     language: Language,
     semantic_cache: Arc<SemanticCache>,
 ) {
     thread::spawn(move || {
-        let cancelled = || cancel_flag.load(Ordering::SeqCst);
-
-        let fail = |msg: &str| {
-            let _ = tx.send(AgentEvent::Log(LogLevel::Error, msg.into()));
-            let _ = tx.send(AgentEvent::Failed(msg.into()));
+        let mut cancelled_once = false;
+        let check_cancel = || {
+            if cancel_flag.load(Ordering::SeqCst) {
+                true
+            } else {
+                false
+            }
         };
 
+        let mut cancel_and_exit = || {
+            if !cancelled_once {
+                cancelled_once = true;
+                let _ = tx.send(AgentEvent::Log(
+                    LogLevel::Warn,
+                    "Agent cancelled.".to_string(),
+                ));
+                let _ = tx.send(AgentEvent::Failed(
+                    "Agent cancelled".to_string(),
+                ));
+            }
+        };
+
+
+        let fail = |msg: &str| {
+            let _ = tx.send(AgentEvent::Log(LogLevel::Error, msg.to_string()));
+            let _ = tx.send(AgentEvent::Failed(msg.to_string()));
+        };
+
+        // ---- eligibility ----
         if matches!(candidate.decision, TestDecision::No) {
             fail("Change is not test-worthy.");
             return;
         }
 
         let file_ctx = match snapshot
+            .code
             .files
             .iter()
             .find(|f| f.path == candidate.diff.file)
@@ -54,7 +76,7 @@ pub fn run_llm_test_flow(
             }
         };
 
-        // ---- semantic cache lookup ----
+        // ---- semantic cache ----
         let semantic_key = SemanticKey::from_candidate(&candidate);
         let cache_key = semantic_key.to_cache_key();
 
@@ -68,6 +90,7 @@ pub fn run_llm_test_flow(
                 }
             };
 
+            let _ = tx.send(AgentEvent::TestStarted);
             let result = run_test(request);
             let _ = tx.send(AgentEvent::TestFinished(result.clone()));
 
@@ -75,62 +98,100 @@ pub fn run_llm_test_flow(
                 TestResult::Passed => {
                     let _ = tx.send(AgentEvent::Log(
                         LogLevel::Success,
-                        "Cached test passed".into(),
+                        "Cached test passed".to_string(),
                     ));
+                    let _ = tx.send(AgentEvent::Finished);
                 }
                 TestResult::Failed { output } => {
-                    let _ = tx.send(AgentEvent::Log(
-                        LogLevel::Error,
-                        "Cached test failed".into(),
-                    ));
-                    let _ = tx.send(AgentEvent::Log(LogLevel::Error, output));
+                    fail(&output);
                 }
             }
-
-            let _ = tx.send(AgentEvent::Finished);
             return;
         }
 
-        // ---- LLM generation with feedback loop ----
+        // ---- LLM retry loop ----
         let mut last_test_code: Option<String> = None;
         let mut last_failure: Option<String> = None;
 
         for attempt in 1..=MAX_LLM_RETRIES {
-            if cancelled() {
-                fail("Agent cancelled.");
+            if check_cancel() {
+                cancel_and_exit();
                 return;
+            }
+
+
+            if attempt > 1 {
+                let _ = tx.send(AgentEvent::Log(
+                    LogLevel::Warn,
+                    "Retrying with feedback".to_string(),
+                ));
             }
 
             let _ = tx.send(AgentEvent::Log(
                 LogLevel::Info,
-                format!("LLM attempt {attempt}"),
+                format!("LLM attempt {attempt}/{MAX_LLM_RETRIES}"),
             ));
+
+            let test_ctx = &snapshot.tests;
 
             let prompt = match (&last_test_code, &last_failure) {
                 (Some(code), Some(err)) => {
-                    build_prompt_with_feedback(&candidate, file_ctx, code, err)
+                    build_prompt_with_feedback(
+                        &candidate,
+                        file_ctx,
+                        test_ctx,
+                        code,
+                        err,
+                    )
                 }
-                _ => build_prompt(&candidate, file_ctx),
+                _ => build_prompt(
+                    &candidate,
+                    file_ctx,
+                    test_ctx,
+                ),
             };
 
-            let raw = match llm.run(prompt) {
-                Ok(s) => s,
+            // ---- LLM RUN ----
+            let llm_result: LlmRunResult = match llm.run(prompt) {
+                Ok(r) => r,
                 Err(e) => {
                     last_failure = Some(e);
                     continue;
                 }
             };
 
-            let test_code = sanitize_llm_output(&raw);
+            if check_cancel() {
+                cancel_and_exit();
+                return;
+            }
+
+
+            if let Some(cached) = llm_result.cached_tokens {
+                let _ = tx.send(AgentEvent::Log(
+                    LogLevel::Info,
+                    format!(
+                        "🟢 LLM cache hit: {} tokens (hash={})",
+                        cached, llm_result.prompt_hash
+                    ),
+                ));
+            }
+
+            let test_code = sanitize_llm_output(&llm_result.text);
             if test_code.is_empty() {
-                last_failure = Some("LLM produced empty output".into());
+                last_failure = Some("LLM produced empty output".to_string());
                 continue;
             }
 
             last_test_code = Some(test_code.clone());
+            let _ = tx.send(AgentEvent::GeneratedTest(test_code.clone()));
 
-            let repo_root =
-                std::env::current_dir().expect("osmogrep must run in repo root");
+            let repo_root = match std::env::current_dir() {
+                Ok(p) => p,
+                Err(e) => {
+                    fail(&format!("Failed to get repo root: {e}"));
+                    return;
+                }
+            };
 
             let test_path = match materialize_test(
                 &repo_root,
@@ -145,10 +206,10 @@ pub fn run_llm_test_flow(
                 }
             };
 
+            let test_path_for_cache = test_path.clone();
+
             let request = match language {
-                Language::Python => TestRunRequest::Python {
-                    test_path: test_path.clone(),
-                },
+                Language::Python => TestRunRequest::Python { test_path },
                 Language::Rust => TestRunRequest::Rust,
                 _ => {
                     fail("Unsupported language");
@@ -156,25 +217,31 @@ pub fn run_llm_test_flow(
                 }
             };
 
+            let _ = tx.send(AgentEvent::TestStarted);
             let result = run_test(request);
             let _ = tx.send(AgentEvent::TestFinished(result.clone()));
 
+            if check_cancel() {
+                cancel_and_exit();
+                return;
+            }
+
+
             match result {
                 TestResult::Passed => {
-                    semantic_cache.insert(cache_key, test_path);
+                    semantic_cache.insert(cache_key, test_path_for_cache);
                     let _ = tx.send(AgentEvent::Log(
                         LogLevel::Success,
-                        "Test passed — cached".into(),
+                        "Test passed — cached".to_string(),
                     ));
                     let _ = tx.send(AgentEvent::Finished);
                     return;
                 }
-
                 TestResult::Failed { output } => {
                     last_failure = Some(trim_error(&output));
                     let _ = tx.send(AgentEvent::Log(
                         LogLevel::Warn,
-                        "Test failed — retrying with feedback".into(),
+                        "Test failed — retrying".to_string(),
                     ));
                 }
             }
