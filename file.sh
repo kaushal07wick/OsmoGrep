@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="src"
-OUT="agents.md"
+OUT="call_graph.md"
 
 {
   echo "# Osmogrep Agent Map"

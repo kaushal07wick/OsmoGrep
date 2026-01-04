@@ -415,17 +415,18 @@
 
 **Functions**
 - pub fn run_test(req: TestRunRequest) -> TestResult
-- pub fn run_full_test(language: Language) -> TestSuiteResult
+- pub fn run_full_test_async<F>(language: Language, on_done: F) where F: FnOnce(TestSuiteResult) + Send + 'static,
 - fn run_full_python_tests() -> TestSuiteResult
-- fn parse_pytest_output(out: &std::process::Output) -> TestSuiteResult
 - fn run_full_rust_tests() -> TestSuiteResult
-- fn parse_cargo_test_output(out: &std::process::Output) -> TestSuiteResult
 
 **Calls**
 - Command::new
+- Instant::now
 - String::from_utf8_lossy
 - String::new
 - Vec::new
+- env::current_dir
+- thread::spawn
 
 ### src/testgen/summarizer.rs
 
@@ -440,14 +441,31 @@
 ### src/testgen/test_suite.rs
 
 **Functions**
-- pub fn run_full_test_suite( repo_root: &Path, state: &AgentState, ) -> io::Result<Vec<TestCaseResult>>
-- pub fn write_test_suite_report( repo_root: &Path, results: &[TestCaseResult], ) -> io::Result<PathBuf>
+- pub fn run_full_test_suite(state: &AgentState, repo_root: PathBuf) -> io::Result<()>
+- fn parse_pytest_output_fully(raw: &str) -> (ParsedSummary, Vec<TestCaseResult>)
+- fn parse_footer_summary_line(line: &str, out: &mut ParsedSummary)
+- fn extract_failed_tests(raw: &str) -> std::collections::HashSet<String>
+- fn extract_failure_spans(raw: &str) -> HashMap<String, FailureSpan>
+- fn extract_durations(raw: &str) -> HashMap<String, f64>
+- fn extract_skips(raw: &str) -> Vec<SkipEntry>
+- fn extract_warnings(raw: &str) -> Vec<WarningEntry>
+- fn extract_verbose_failures(raw: &str) -> Vec<(String, String)>
+- pub fn write_test_suite_report( repo_root: &Path, suite: &TestSuiteResult, ) -> io::Result<PathBuf>
 
 **Calls**
+- AgentEvent::Log
+- BTreeMap::new
 - Error::new
 - File::create
+- HashMap::new
+- HashSet::new
+- ParsedSummary::default
 - String::new
+- SystemTime::now
 - Vec::new
+- fs::create_dir_all
+- fs::write
+- serde_json::to_string_pretty
 
 ### src/ui/diff.rs
 
@@ -569,6 +587,7 @@
 
 ### Thread creation
 - src/llm/orchestrator.rs → thread::spawn
+- src/testgen/runner.rs → thread::spawn
 
 ### Process execution
 - src/git.rs → Command::new
@@ -578,4 +597,5 @@
 ### AgentEvent fan-out
 - src/llm/orchestrator.rs
 - src/main.rs
+- src/testgen/test_suite.rs
 
