@@ -510,6 +510,7 @@
 - Line::from
 - Paragraph::new
 - Rect::default
+- Span::raw
 - Span::styled
 - String::new
 - Style::default
@@ -517,6 +518,7 @@
 - diff::render_side_by_side
 - execution::render_execution
 - panels::render_panel
+- status::render_side_status
 - status::render_status
 
 ### src/ui/execution.rs
@@ -578,19 +580,17 @@
 ### src/ui/status.rs
 
 **Functions**
-- pub fn render_status( f: &mut ratatui::Frame, area: Rect, state: &AgentState, )
+- pub fn render_status( f: &mut ratatui::Frame, area: Rect, _state: &AgentState, )
 - fn render_header(f: &mut ratatui::Frame, area: Rect)
-- fn render_status_block( f: &mut ratatui::Frame, area: Rect, state: &AgentState, )
-- fn render_context_block( f: &mut ratatui::Frame, area: Rect, state: &AgentState, )
+- pub fn render_side_status( f: &mut ratatui::Frame, area: Rect, state: &AgentState, )
 
 **Calls**
 - Block::default
 - Constraint::Length
-- Constraint::Percentage
+- Constraint::Min
 - Layout::default
 - Line::from
 - Paragraph::new
-- Span::raw
 - Span::styled
 - Style::default
 - System::new
