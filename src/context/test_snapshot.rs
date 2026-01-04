@@ -52,9 +52,11 @@ pub fn build_test_context_snapshot(repo_root: &Path) -> TestContextSnapshot {
     let framework = match (saw_unittest, saw_pytest) {
     (true, false) => Some(TestFramework::Unittest),
     (false, true) => Some(TestFramework::Pytest),
-    (true, true) => Some(TestFramework::Unittest), // explicit beats implicit
+    (true, true) => Some(TestFramework::Unittest),
     (false, false) => Some(TestFramework::Pytest), // default
     };
+
+
 
     let helpers = detect_helpers(&all_symbols);
     let references = detect_references(&all_imports);
@@ -114,6 +116,7 @@ fn collect_py_files(dir: &Path, out: &mut Vec<PathBuf>) {
         }
     }
 }
+
 fn detect_framework_from_source(
     source: &str,
     symbols: &[SymbolDef],
@@ -154,28 +157,62 @@ fn detect_framework_from_source(
             saw_pytest = true;
         }
 
-        // unittest-style test methods
+        // unittest-style test classes / methods
         if name.starts_with("Test") {
             saw_unittest = true;
         }
+    }
+
+    // ---------- EXPLICIT PYTEST SIGNAL ----------
+    // conftest.py exists ONLY for pytest and ONLY under test roots
+    if source.contains("pytest") && source.contains("fixture") {
+        saw_pytest = true;
     }
 
     // ---------- DECISION ----------
     match (saw_unittest, saw_pytest) {
         (true, false) => TestFramework::Unittest,
         (false, true) => TestFramework::Pytest,
-        (true, true) => TestFramework::Unittest, // prefer unittest if mixed
+        (true, true) => TestFramework::Unittest, // explicit beats implicit
         _ => TestFramework::Unknown,
     }
 }
 
 
 fn detect_helpers(symbols: &[SymbolDef]) -> Vec<String> {
-    let mut helpers: Vec<String> = symbols
-        .iter()
-        .filter(|s| s.name.starts_with("helper_"))
-        .map(|s| s.name.clone())
-        .collect();
+    let mut helpers = Vec::new();
+
+    for s in symbols {
+        let name = s.name.as_str();
+
+        // --- explicit helper prefixes ---
+        if name.starts_with("helper_")
+            || name.starts_with("fixture_")
+            || name.starts_with("setup_")
+            || name.starts_with("teardown_")
+        {
+            helpers.push(name.to_string());
+            continue;
+        }
+
+        // --- pytest-style fixtures ---
+        if name.starts_with("fixture")
+            || name.ends_with("_fixture")
+        {
+            helpers.push(name.to_string());
+            continue;
+        }
+
+        // --- factory / builder helpers ---
+        if name.starts_with("make_")
+            || name.starts_with("build_")
+            || name.starts_with("create_")
+            || name.starts_with("gen_")
+        {
+            helpers.push(name.to_string());
+            continue;
+        }
+    }
 
     helpers.sort();
     helpers.dedup();

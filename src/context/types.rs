@@ -67,7 +67,6 @@ pub struct TestContextSnapshot {
 pub enum TestFramework {
     Pytest,
     Unittest,
-    Rust,
     Unknown,
 }
 

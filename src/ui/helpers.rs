@@ -2,16 +2,14 @@
 //!
 //! Shared UI helper utilities.
 
+use std::time::Instant;
 
+use crate::context::types::TestFramework;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 use crate::state::{Phase, RiskLevel, TestDecision};
 use crate::state::ChangeSurface;
 
-pub fn spinner(frame: usize) -> &'static str {
-    const FRAMES: [&str; 4] = ["⠋", "⠙", "⠹", "⠸"];
-    FRAMES[frame % FRAMES.len()]
-}
 
 /// Phase badge (symbol, label, color).
 pub fn phase_badge(phase: &Phase) -> (&'static str, &'static str, Color) {
@@ -41,15 +39,45 @@ pub fn language_badge(lang: &str) -> (&'static str, Color) {
     }
 }
 
-/// Test framework badge (emoji label, color).
-pub fn framework_badge(fw: &str) -> (&'static str, Color) {
+
+/// Test framework badge (label, color).
+pub fn framework_badge(fw: &TestFramework) -> (&'static str, Color) {
     match fw {
-        "CargoTest" => ("🦀🧪 Cargo", Color::Cyan),
-        "Pytest" => ("🐍🧪 Pytest", Color::Yellow),
-        "GoTest" => ("🐹🧪 Go test", Color::Blue),
-        "JUnit" => ("☕🧪 JUnit", Color::Red),
-        "None" => ("⚪ No tests", Color::DarkGray),
-        _ => ("❓ Unknown", Color::DarkGray),
+        TestFramework::Pytest => ("Pytest 🧪", Color::Yellow),
+        TestFramework::Unittest => ("Unittest 🧪", Color::Cyan),
+        TestFramework::Unknown => ("Unknown ❓", Color::DarkGray),
+    }
+}
+
+/// current repo finder
+pub fn repo_root_name() -> Option<String> {
+    // try the same logic the machine uses
+    if let Ok(cwd) = std::env::current_dir() {
+        let markers = [".git", "pyproject.toml", "setup.py", "Cargo.toml"];
+
+        let is_root = markers.iter().any(|m| cwd.join(m).exists());
+        if is_root {
+            return cwd.file_name()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_string());
+        }
+    }
+    None
+}
+
+///
+pub fn format_uptime(started_at: Instant) -> String {
+    let secs = started_at.elapsed().as_secs();
+    let h = secs / 3600;
+    let m = (secs % 3600) / 60;
+    let s = secs % 60;
+
+    if h > 0 {
+        format!("{h}h {m}m")
+    } else if m > 0 {
+        format!("{m}m {s}s")
+    } else {
+        format!("{s}s")
     }
 }
 
@@ -62,15 +90,6 @@ pub fn ln(n: usize, color: Color) -> Span<'static> {
     )
 }
 
-/// Color mapping for test decision.
-pub fn decision_color(d: &TestDecision) -> Color {
-    match d {
-        TestDecision::Yes => Color::Red,
-        TestDecision::Conditional => Color::Yellow,
-        TestDecision::No => Color::Green,
-    }
-}
-
 /// Color mapping for risk level.
 pub fn risk_color(r: &RiskLevel) -> Color {
     match r {
@@ -78,6 +97,28 @@ pub fn risk_color(r: &RiskLevel) -> Color {
         RiskLevel::Medium => Color::Yellow,
         RiskLevel::Low => Color::Green,
     }
+}
+
+pub fn running_pulse(start: Option<std::time::Instant>) -> Option<String> {
+    let start = start?;
+    let t = (start.elapsed().as_millis() / 80) as usize;
+
+    // oscillates: 4 → 1 → 4
+    let len = match t % 6 {
+        0 => 4,
+        1 => 3,
+        2 => 2,
+        3 => 1,
+        4 => 2,
+        _ => 3,
+    };
+
+    let mut s = String::with_capacity(4);
+    for i in 0..4 {
+        s.push(if i < len { '■' } else { '·' });
+    }
+
+    Some(s)
 }
 
 /// Used for diff horizontal scrolling.

@@ -61,6 +61,7 @@
 - fn collect_test_files_recursive(test_roots: &[PathBuf]) -> Vec<PathBuf>
 - fn collect_py_files(dir: &Path, out: &mut Vec<PathBuf>)
 - fn detect_framework_from_source( source: &str, symbols: &[SymbolDef], ) -> TestFramework
+- fn detect_helpers(symbols: &[SymbolDef]) -> Vec<String>
 - fn detect_references(imports: &[Import]) -> Vec<String>
 - fn detect_style( helpers: &[String], references: &[String], symbols: &[SymbolDef], ) -> Option<TestStyle>
 
@@ -542,16 +543,20 @@
 **Functions**
 - pub fn phase_badge(phase: &Phase) -> (&'static str, &'static str, Color)
 - pub fn language_badge(lang: &str) -> (&'static str, Color)
-- pub fn framework_badge(fw: &str) -> (&'static str, Color)
+- pub fn framework_badge(fw: &TestFramework) -> (&'static str, Color)
+- pub fn repo_root_name() -> Option<String>
+- pub fn format_uptime(started_at: Instant) -> String
 - pub fn ln(n: usize, color: Color) -> Span<'static>
-- pub fn decision_color(d: &TestDecision) -> Color
 - pub fn risk_color(r: &RiskLevel) -> Color
+- pub fn running_pulse(start: Option<std::time::Instant>) -> Option<String>
 - pub fn hclip(s: &str, x: usize, width: usize) -> &str
 - pub fn surface_color(surface: &ChangeSurface) -> Color
 
 **Calls**
 - Span::styled
+- String::with_capacity
 - Style::default
+- env::current_dir
 
 ### src/ui/mod.rs
 

@@ -208,6 +208,7 @@ fn init_state() -> AgentState {
         full_context_snapshot: None,
         force_reload: false,
         full_test_suite_pending: false,
+        started_at: Instant::now(),
     }
 }
 

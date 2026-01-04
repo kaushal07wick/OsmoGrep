@@ -7,14 +7,19 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
-use crate::context::types::TestFramework;
-use crate::state::{AgentState, SinglePanelView};
+use crate::state::{AgentState};
 use crate::ui::helpers::{
     framework_badge,
     language_badge,
     phase_badge,
-    spinner,
+    repo_root_name,
+    running_pulse,
+    format_uptime
 };
+
+fn app_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
 
 pub fn render_status(
     f: &mut ratatui::Frame,
@@ -35,20 +40,24 @@ fn render_header(f: &mut ratatui::Frame, area: Rect) {
     ];
 
     let header = Paragraph::new(
-        HEADER.iter().map(|l| {
-            Line::from(Span::styled(
-                *l,
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ))
-        }).collect::<Vec<_>>(),
+        HEADER
+            .iter()
+            .map(|l| {
+                Line::from(Span::styled(
+                    *l,
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ))
+            })
+            .collect::<Vec<_>>(),
     )
     .alignment(Alignment::Center);
 
     f.render_widget(header, area);
 }
 
+//render side panel
 pub fn render_side_status(
     f: &mut ratatui::Frame,
     area: Rect,
@@ -68,46 +77,36 @@ pub fn render_side_status(
         .constraints([
             Constraint::Min(1),
             Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
         ])
         .split(inner);
 
     let mut lines: Vec<Line> = Vec::new();
 
-    // ───────── Status / Phase ─────────
-    let (sym, label, color) = phase_badge(&state.lifecycle.phase);
-    let mut phase = vec![
-        Span::styled("Status: ", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            format!("{sym} {label}"),
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
-        ),
-    ];
-
-    if let Some(start) = state.ui.spinner_started_at {
-        let frame = (start.elapsed().as_millis() / 120) as usize;
-        phase.push(Span::raw(" "));
-        phase.push(Span::styled(spinner(frame), Style::default().fg(color)));
-    }
-
-    lines.push(Line::from(phase));
+    // ───────── Status ─────────
+    let (_sym, label, _) = phase_badge(&state.lifecycle.phase);
+    lines.push(Line::from(vec![
+        Span::styled("Status", Style::default().fg(Color::DarkGray)),
+        Span::raw(": "),
+        Span::styled(label, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+    ]));
 
     // ───────── Branches ─────────
     if let Some(cur) = &state.lifecycle.current_branch {
         lines.push(Line::from(vec![
-            Span::styled("Current: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(cur, Style::default().fg(Color::Green)),
+            Span::styled("Current", Style::default().fg(Color::DarkGray)),
+            Span::raw(": "),
+            Span::styled(cur, Style::default().fg(Color::White)),
         ]));
     }
 
     lines.push(Line::from(vec![
-        Span::styled("Agent:   ", Style::default().fg(Color::DarkGray)),
+        Span::styled("Agent", Style::default().fg(Color::DarkGray)),
+        Span::raw(": "),
         Span::styled(
-            state.lifecycle.agent_branch.as_deref().unwrap_or("none"),
-            Style::default().fg(if state.lifecycle.agent_branch.is_some() {
-                Color::Yellow
-            } else {
-                Color::DarkGray
-            }),
+            state.lifecycle.agent_branch.as_deref().unwrap_or("None"),
+            Style::default().fg(Color::White),
         ),
     ]));
 
@@ -116,106 +115,155 @@ pub fn render_side_status(
     sys.refresh_memory();
 
     lines.push(Line::from(vec![
-        Span::styled("RAM:     ", Style::default().fg(Color::DarkGray)),
+        Span::styled("RAM", Style::default().fg(Color::DarkGray)),
+        Span::raw(": "),
         Span::styled(
             format!(
                 "{:.1} / {:.1} GB",
                 sys.used_memory() as f64 / 1024.0 / 1024.0 / 1024.0,
                 sys.total_memory() as f64 / 1024.0 / 1024.0 / 1024.0,
             ),
-            Style::default().fg(Color::Cyan),
+            Style::default().fg(Color::White),
         ),
     ]));
 
     lines.push(Line::from(vec![
-        Span::styled("OS:      ", Style::default().fg(Color::DarkGray)),
-        Span::styled(std::env::consts::OS, Style::default().fg(Color::Magenta)),
+        Span::styled("OS", Style::default().fg(Color::DarkGray)),
+        Span::raw(": "),
+        Span::styled(std::env::consts::OS, Style::default().fg(Color::Gray)),
+    ]));
+        lines.push(Line::from(vec![
+        Span::styled("Uptime", Style::default().fg(Color::DarkGray)),
+        Span::raw(": "),
+        Span::styled(
+            format_uptime(state.started_at),
+            Style::default().fg(Color::Gray),
+        ),
     ]));
 
-    // ───────── Active Inspector (Diff/Test) ─────────
-    if let Some(diff) = state.ui.selected_diff
-        .and_then(|i| state.context.diff_analysis.get(i)) {
 
+    // ───────── Active View ─────────
+    if let Some(diff) = state.ui.selected_diff.and_then(|i| state.context.diff_analysis.get(i)) {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
-            Span::styled("View: ", Style::default().fg(Color::DarkGray)),
-            Span::styled("Diff", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled("View", Style::default().fg(Color::DarkGray)),
+            Span::raw(": "),
+            Span::styled("Diff", Style::default().fg(Color::Cyan)),
         ]));
         lines.push(Line::from(vec![
-            Span::styled("📄 File: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("File", Style::default().fg(Color::DarkGray)),
+            Span::raw(": "),
             Span::styled(&diff.file, Style::default().fg(Color::White)),
         ]));
     }
 
-    if let Some(SinglePanelView::TestGenPreview { candidate, .. }) = &state.ui.panel_view {
+    // ───────── Context Header ─────────
+    if state.full_context_snapshot.is_some() {
         lines.push(Line::from(""));
-        lines.push(Line::from(vec![
-            Span::styled("View: ", Style::default().fg(Color::DarkGray)),
-            Span::styled("Test", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled("📄 File: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(&candidate.diff.file, Style::default().fg(Color::White)),
-        ]));
+        lines.push(Line::from(Span::styled(
+            "Context",
+            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+        )));
     }
 
-    // ───────── CONTEXT (ALWAYS WHEN PRESENT) ─────────
-    lines.push(Line::from(""));
-
+    // ───────── Context ─────────
     if let Some(snapshot) = &state.full_context_snapshot {
         lines.push(Line::from(vec![
-            Span::styled("Code ctx: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Code", Style::default().fg(Color::DarkGray)),
+            Span::raw(": "),
             Span::styled(
-                format!(" {} file(s) ", snapshot.code.files.len()),
-                Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD),
+                format!("{} files", snapshot.code.files.len()),
+                Style::default().fg(Color::White),
             ),
         ]));
 
         let tests = &snapshot.tests;
         lines.push(Line::from(vec![
-            Span::styled("🧪 Tests: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Tests", Style::default().fg(Color::DarkGray)),
+            Span::raw(": "),
             Span::styled(
-                if tests.exists { " present " } else { " none " },
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(if tests.exists { Color::Green } else { Color::DarkGray })
-                    .add_modifier(Modifier::BOLD),
+                if tests.exists { "Present" } else { "None" },
+                Style::default().fg(Color::White),
             ),
         ]));
 
         if tests.exists {
-            let (fw, c) = framework_badge(&format!("{:?}", tests.framework.unwrap_or(TestFramework::Unknown)));
-            lines.push(Line::from(vec![
-                Span::styled("⚙ Framework: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(format!(" {fw} "), Style::default().fg(Color::Black).bg(c).add_modifier(Modifier::BOLD)),
-            ]));
-
-            if let Some(style) = tests.style {
+            if let Some(fw) = tests.framework {
+                let (label, _) = framework_badge(&fw);
                 lines.push(Line::from(vec![
-                    Span::styled("Style: ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(format!(" {:?} ", style), Style::default().fg(Color::Black).bg(Color::Blue).add_modifier(Modifier::BOLD)),
+                    Span::styled("Framework", Style::default().fg(Color::DarkGray)),
+                    Span::raw(": "),
+                    Span::styled(label, Style::default().fg(Color::Cyan)),
+                    Span::raw(" ⚙"),
                 ]));
             }
 
             if !tests.helpers.is_empty() {
                 lines.push(Line::from(vec![
-                    Span::styled("📦 Helpers: ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(format!(" {} ", tests.helpers.len()), Style::default().fg(Color::Black).bg(Color::Magenta).add_modifier(Modifier::BOLD)),
+                    Span::styled("Helpers", Style::default().fg(Color::DarkGray)),
+                    Span::raw(": "),
+                    Span::styled(
+                        format!("{}", tests.helpers.len()),
+                        Style::default().fg(Color::White),
+                    ),
                 ]));
+
+                for h in tests.helpers.iter().take(5) {
+                    lines.push(Line::from(vec![
+                        Span::raw("  • "),
+                        Span::styled(h, Style::default().fg(Color::Gray)),
+                    ]));
+                }
+
+                if tests.helpers.len() > 5 {
+                    lines.push(Line::from(vec![
+                        Span::raw("  … "),
+                        Span::styled(
+                            format!("{} more", tests.helpers.len() - 5),
+                            Style::default().fg(Color::DarkGray),
+                        ),
+                    ]));
+                }
             }
         }
     }
 
     // ───────── Language ─────────
     if let Some(lang) = &state.lifecycle.language {
-        let (label, c) = language_badge(&format!("{:?}", lang));
+        let (label, _) = language_badge(&format!("{:?}", lang));
         lines.push(Line::from(vec![
-            Span::styled("Language: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!(" {label} "), Style::default().fg(Color::Black).bg(c).add_modifier(Modifier::BOLD)),
+            Span::styled("Language", Style::default().fg(Color::DarkGray)),
+            Span::raw(": "),
+            Span::styled(label, Style::default().fg(Color::Cyan)),
         ]));
     }
 
     f.render_widget(Paragraph::new(lines), chunks[0]);
+
+    // ───────── Repo ─────────
+    if let Some(repo) = repo_root_name() {
+        f.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("Repo", Style::default().fg(Color::DarkGray)),
+                Span::raw(": "),
+                Span::styled(format!("~/{}", repo), Style::default().fg(Color::White)),
+            ])),
+            chunks[1],
+        );
+    }
+
+    // ───────── Version ─────────
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("Version", Style::default().fg(Color::DarkGray)),
+            Span::raw(": "),
+            Span::styled(
+                format!("osmogrep {}", app_version()),
+                Style::default().fg(Color::Cyan),
+            ),
+        ])),
+        chunks[2],
+    );
 
     // ───────── Model ─────────
     let model = match &state.llm_backend {
@@ -225,12 +273,18 @@ pub fn render_side_status(
         crate::llm::backend::LlmBackend::Ollama { .. } => "OLLAMA".to_string(),
     };
 
-    f.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            model,
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
-        )))
-        .alignment(Alignment::Center),
-        chunks[1],
-    );
+    let mut spans = vec![
+        Span::styled("Model", Style::default().fg(Color::DarkGray)),
+        Span::raw(": "),
+        Span::styled(model, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+    ];
+
+    if state.lifecycle.phase == crate::state::Phase::Running {
+        if let Some(pulse) = running_pulse(state.ui.spinner_started_at) {
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(pulse, Style::default().fg(Color::Cyan)));
+        }
+    }
+
+    f.render_widget(Paragraph::new(Line::from(spans)), chunks[3]);
 }

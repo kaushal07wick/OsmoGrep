@@ -4,7 +4,6 @@ use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{Sender, Receiver};
 use std::time::{Instant, Duration};
 use crate::llm::client::Provider;
-use crate::context::types::TestFramework;
 use crate::detectors::{language::Language};
 use crate::testgen::candidate::TestCandidate;
 use crate::testgen::summarizer::SemanticSummary;
@@ -232,6 +231,7 @@ pub struct AgentState {
     pub lifecycle: LifecycleState,
     pub context: AgentContext,
     pub ui: UiState,
+    pub started_at: Instant,
     pub logs: LogBuffer,
     pub llm_backend: LlmBackend,
     pub agent_tx: Sender<AgentEvent>,

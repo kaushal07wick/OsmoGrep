@@ -21,7 +21,7 @@ fn parse_change_line(s: &str) -> Option<(String, String, Option<String>)> {
     }
 
     let (idx, rest) = s.split_once("] ")?;
-    let index = format!("{}]", idx.trim_start_matches('['));
+    let index = format!("[{}]", idx.trim_start_matches('['));
 
     let (file, symbol) = match rest.split_once(" :: ") {
         Some((f, sym)) if sym != "<file>" => (f.to_string(), Some(sym.to_string())),
@@ -59,12 +59,15 @@ pub fn render_execution(
         /* ================= DIFF ANALYSIS ================= */
         if log.text == "__DIFF_ANALYSIS__" {
             lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                "Diff Analysis",
-                Style::default()
-                    .fg(Color::Gray)
-                    .add_modifier(Modifier::BOLD),
-            )));
+            lines.push(Line::from(vec![
+                Span::raw(LOG_INDENT),
+                Span::styled(
+                    "Diff Analysis",
+                    Style::default()
+                        .fg(Color::Gray)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]));
             lines.push(Line::from(""));
 
             while diff_idx < state.context.diff_analysis.len() {
@@ -108,15 +111,18 @@ pub fn render_execution(
                     ));
                 }
 
-                lines.push(Line::from(header));
+                let mut row = vec![Span::raw(LOG_INDENT)];
+                    row.extend(header);
+                    lines.push(Line::from(row));
+
 
                 if let Some(summary) = &d.summary {
                     lines.push(Line::from(vec![
-                        Span::raw("     "),
+                        Span::raw(format!("{LOG_INDENT}  ")),
                         Span::styled(
                             format!("↳ {}", summary.behavior),
                             Style::default()
-                                .fg(Color::Gray)
+                                .fg(Color::DarkGray)
                                 .add_modifier(Modifier::ITALIC),
                         ),
                     ]));
@@ -133,12 +139,15 @@ pub fn render_execution(
         if let Some((idx, file, symbol)) = parse_change_line(&log.text) {
             if !changes_heading_shown {
                 lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled(
-                    "Changes",
-                    Style::default()
-                        .fg(Color::Gray)
-                        .add_modifier(Modifier::BOLD),
-                )));
+                lines.push(Line::from(vec![
+                    Span::raw(LOG_INDENT),
+                    Span::styled(
+                        "Changes",
+                        Style::default()
+                            .fg(Color::Gray)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]));
                 lines.push(Line::from(""));
                 changes_heading_shown = true;
             }
@@ -158,7 +167,9 @@ pub fn render_execution(
                 ));
             }
 
-            lines.push(Line::from(spans));
+            let mut row = vec![Span::raw(LOG_INDENT)];
+                row.extend(spans);
+                lines.push(Line::from(row));
             lines.push(Line::from(""));
             continue;
         }

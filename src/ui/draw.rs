@@ -41,7 +41,7 @@ pub fn draw_ui<B: Backend>(
             .direction(Direction::Horizontal)
             .constraints([
                 Constraint::Min(1),     // left (main + command)
-                Constraint::Length(36), // right (agent + context)
+                Constraint::Length(30), // right (agent + context)
             ])
             .split(layout[1]);
 
