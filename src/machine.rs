@@ -88,16 +88,14 @@ fn create_agent_branch(state: &mut AgentState) {
 }
 
 fn execute_agent(state: &mut AgentState) {
-    if state.cancel_requested.load(Ordering::SeqCst) {
-        transition(state, Phase::Rollback);
-        return;
-    }
-
+    // ---- reset cancellation for this run ----
     state.cancel_requested.store(false, Ordering::SeqCst);
 
+    // ---- branch management ----
     let branch = ensure_agent_branch(state);
     checkout_branch(state, &branch);
 
+    // ---- repo root ----
     let repo_root = match assert_repo_root() {
         Ok(p) => p,
         Err(e) => {
@@ -107,14 +105,19 @@ fn execute_agent(state: &mut AgentState) {
         }
     };
 
+    // ---- build full context snapshot ----
     let snapshot = build_full_context_snapshot(
         &repo_root,
         &state.context.diff_analysis,
     );
 
     state.full_context_snapshot = Some(snapshot.clone());
-    state.lifecycle.framework = snapshot.tests.framework;
 
+    // ---- critical wiring ----
+    state.lifecycle.framework = snapshot.tests.framework;
+    // language already set during init_repo
+
+    // ---- select candidate ----
     let candidate = match state.context.test_candidates.first().cloned() {
         Some(c) => c,
         None => {
@@ -124,6 +127,7 @@ fn execute_agent(state: &mut AgentState) {
         }
     };
 
+    // ---- language must exist ----
     let language = match state.lifecycle.language {
         Some(l) => l,
         None => {
@@ -135,10 +139,9 @@ fn execute_agent(state: &mut AgentState) {
 
     log(state, LogLevel::Info, "🤖 Agent started");
 
-    let snapshot = state
-        .full_context_snapshot
-        .clone()
-        .expect("full context snapshot missing");
+    // ---- consume reload flag (one-shot) ----
+    let force_reload = state.force_reload;
+    state.force_reload = false;
 
     let llm_backend = state.llm_backend.clone();
     let semantic_cache = Arc::new(SemanticCache::new());
@@ -151,6 +154,7 @@ fn execute_agent(state: &mut AgentState) {
         candidate,
         language,
         semantic_cache,
+        force_reload,
     );
 
     transition(state, Phase::Running);

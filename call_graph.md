@@ -167,7 +167,7 @@
 **Functions**
 -  pub fn ollama(model: String) -> Self
 -  pub fn remote(client: LlmClient) -> Self
--  pub fn run(&self, prompt: LlmPrompt) -> Result<LlmRunResult, String>
+-  pub fn run( &self, prompt: LlmPrompt, force_reload: bool, ) -> Result<LlmRunResult, String>
 
 **Calls**
 - Ollama::run
@@ -177,8 +177,8 @@
 **Functions**
 -  pub fn new() -> Self
 -  pub fn configure( &self, provider_name: &str, model: String, api_key: String, base_url: Option<String>, ) -> Result<(), String>
--  pub fn run(&self, prompt: LlmPrompt) -> Result<LlmRunResult, String>
-- fn build_request( cfg: &ProviderConfig, prompt: &LlmPrompt, prompt_hash: &str, ) -> (String, Vec<(&'static str, String)>, Value)
+-  pub fn run( &self, prompt: LlmPrompt, force_reload: bool, ) -> Result<LlmRunResult, String>
+- fn build_request( cfg: &ProviderConfig, prompt: &LlmPrompt, prompt_hash: &str, force_reload: bool, ) -> (String, Vec<(&'static str, String)>, Value)
 - fn extract_text(provider: &Provider, v: &Value) -> Result<String, String>
 - fn default_config() -> ProviderConfig
 - fn save_config(cfg: &ProviderConfig) -> std::io::Result<()>
@@ -227,7 +227,7 @@
 ### src/llm/orchestrator.rs
 
 **Functions**
-- pub fn run_llm_test_flow( tx: Sender<AgentEvent>, cancel_flag: Arc<AtomicBool>, llm: LlmBackend, snapshot: FullContextSnapshot, candidate: TestCandidate, language: Language, semantic_cache: Arc<SemanticCache>, )
+- pub fn run_llm_test_flow( tx: Sender<AgentEvent>, cancel_flag: Arc<AtomicBool>, llm: LlmBackend, snapshot: FullContextSnapshot, candidate: TestCandidate, language: Language, semantic_cache: Arc<SemanticCache>, force_reload: bool, )
 - fn trim_error(s: &str) -> String
 - fn sanitize_llm_output(raw: &str) -> String
 

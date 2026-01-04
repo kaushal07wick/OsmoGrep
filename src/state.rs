@@ -239,6 +239,7 @@ pub struct AgentState {
     pub agent_rx: Receiver<AgentEvent>,
     pub cancel_requested: Arc<AtomicBool>,
     pub full_context_snapshot: Option<FullContextSnapshot>,
+    pub force_reload: bool,
 }
 
 impl AgentState {

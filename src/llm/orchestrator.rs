@@ -29,17 +29,16 @@ pub fn run_llm_test_flow(
     candidate: TestCandidate,
     language: Language,
     semantic_cache: Arc<SemanticCache>,
+    force_reload: bool,
 ) {
     thread::spawn(move || {
         let check_cancel = || cancel_flag.load(Ordering::SeqCst);
 
         let cancel_and_exit = || {
             let _ = tx.send(AgentEvent::SpinnerStop);
-            let _ = tx.send(AgentEvent::Log(
-                LogLevel::Warn,
+            let _ = tx.send(AgentEvent::Failed(
                 "Agent cancelled".to_string(),
             ));
-            let _ = tx.send(AgentEvent::Finished);
         };
 
         let fail = |msg: &str| {
@@ -76,40 +75,43 @@ pub fn run_llm_test_flow(
         let semantic_key = SemanticKey::from_candidate(&candidate);
         let cache_key = semantic_key.to_cache_key();
 
-        if let Some(test_path) = semantic_cache.get(&cache_key) {
-            if check_cancel() {
-                cancel_and_exit();
-                return;
-            }
-
-            let request = match language {
-                Language::Python => TestRunRequest::Python { test_path },
-                Language::Rust => TestRunRequest::Rust,
-                _ => {
-                    fail("Unsupported language");
+        if !force_reload {
+            if let Some(test_path) = semantic_cache.get(&cache_key) {
+                if check_cancel() {
+                    cancel_and_exit();
                     return;
                 }
-            };
 
-            let _ = tx.send(AgentEvent::TestStarted);
-            let result = run_test(request);
-            let _ = tx.send(AgentEvent::TestFinished(result.clone()));
+                let request = match language {
+                    Language::Python => TestRunRequest::Python { test_path },
+                    Language::Rust => TestRunRequest::Rust,
+                    _ => {
+                        fail("Unsupported language");
+                        return;
+                    }
+                };
 
-            match result {
-                TestResult::Passed => {
-                    let _ = tx.send(AgentEvent::Log(
-                        LogLevel::Success,
-                        "Cached test passed".to_string(),
-                    ));
-                    let _ = tx.send(AgentEvent::SpinnerStop);
-                    let _ = tx.send(AgentEvent::Finished);
+                let _ = tx.send(AgentEvent::TestStarted);
+                let result = run_test(request);
+                let _ = tx.send(AgentEvent::TestFinished(result.clone()));
+
+                match result {
+                    TestResult::Passed => {
+                        let _ = tx.send(AgentEvent::Log(
+                            LogLevel::Success,
+                            "Cached test passed".to_string(),
+                        ));
+                        let _ = tx.send(AgentEvent::SpinnerStop);
+                        let _ = tx.send(AgentEvent::Finished);
+                    }
+                    TestResult::Failed { output } => {
+                        fail(&output);
+                    }
                 }
-                TestResult::Failed { output } => {
-                    fail(&output);
-                }
+                return;
             }
-            return;
         }
+
 
         // ---- LLM retry loop ----
         let mut last_test_code: Option<String> = None;
@@ -153,7 +155,7 @@ pub fn run_llm_test_flow(
             };
 
             // ---- LLM run ----
-            let llm_result: LlmRunResult = match llm.run(prompt) {
+            let llm_result: LlmRunResult = match llm.run(prompt, force_reload) {
                 Ok(r) => r,
                 Err(e) => {
                     last_failure = Some(e);

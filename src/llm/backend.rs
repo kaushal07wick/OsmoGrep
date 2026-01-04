@@ -17,10 +17,14 @@ impl LlmBackend {
         LlmBackend::Remote { client }
     }
 
-    pub fn run(&self, prompt: LlmPrompt) -> Result<LlmRunResult, String> {
+    pub fn run(
+        &self,
+        prompt: LlmPrompt,
+        force_reload: bool,
+    ) -> Result<LlmRunResult, String> {
         match self {
             LlmBackend::Ollama { model } => {
-                // Ollama has no cache metadata → fabricate minimal result
+                // Ollama has no cache → reload is a no-op
                 let text = Ollama::run(prompt, model)
                     .map_err(|e| e.to_string())?;
 
@@ -32,7 +36,7 @@ impl LlmBackend {
             }
 
             LlmBackend::Remote { client } => {
-                client.run(prompt)
+                client.run(prompt, force_reload)
             }
         }
     }

@@ -82,14 +82,22 @@ impl LlmClient {
             .clone()
     }
 
-    pub fn run(&self, prompt: LlmPrompt) -> Result<LlmRunResult, String> {
+    /// Run an LLM prompt.
+    /// `force_reload = true` disables provider-side prompt caching.
+    pub fn run(
+        &self,
+        prompt: LlmPrompt,
+        force_reload: bool,
+    ) -> Result<LlmRunResult, String> {
         let cfg = {
             let guard = self.cfg.lock().map_err(|_| "Config lock poisoned")?;
             guard.clone()
         };
 
         let prompt_hash = hash_prompt(&prompt);
-        let (url, headers, body) = build_request(&cfg, &prompt, &prompt_hash);
+
+        let (url, headers, body) =
+            build_request(&cfg, &prompt, &prompt_hash, force_reload);
 
         let client = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(60))
@@ -124,7 +132,6 @@ impl LlmClient {
     }
 }
 
-
 fn hash_prompt(prompt: &LlmPrompt) -> String {
     let mut hasher = Sha256::new();
 
@@ -141,6 +148,7 @@ fn build_request(
     cfg: &ProviderConfig,
     prompt: &LlmPrompt,
     prompt_hash: &str,
+    force_reload: bool,
 ) -> (String, Vec<(&'static str, String)>, Value) {
     match cfg.provider {
         Provider::OpenAI => {
@@ -149,13 +157,16 @@ fn build_request(
                 .clone()
                 .unwrap_or_else(|| "https://api.openai.com/v1/responses".into());
 
-            let body = serde_json::json!({
+            let mut body = serde_json::json!({
                 "model": cfg.model,
                 "instructions": prompt.system,
                 "input": prompt.user,
-                "prompt_cache_key": prompt_hash,
-                "prompt_cache_retention": "24h"
             });
+
+            if !force_reload {
+                body["prompt_cache_key"] = prompt_hash.into();
+                body["prompt_cache_retention"] = "24h".into();
+            }
 
             (
                 url,
@@ -190,6 +201,7 @@ fn build_request(
         }
     }
 }
+
 
 fn extract_text(provider: &Provider, v: &Value) -> Result<String, String> {
     match provider {

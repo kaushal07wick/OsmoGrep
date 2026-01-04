@@ -97,7 +97,7 @@ fn help(state: &mut AgentState) {
     log(state, Info, "  model use anthropic <model>  — configure Anthropic model (prompts for key)");
     log(state, Info, "  model show                  — show active model");
 
-    log(state, Info, "  agent run <n>                — generate and run tests for change <n>");
+    log(state, Info, "  agent run <n>                — generate and run tests for change <n> & --reload for bypassing cache");
     log(state, Info, "  agent status                 — show agent execution state");
     log(state, Info, "  agent cancel                 — cancel running agent");
     log(state, Info, "  run-tests | test-suite        — run full test suite");
@@ -190,13 +190,27 @@ fn view_change(state: &mut AgentState, cmd: &str) {
 }
 
 fn agent_run(state: &mut AgentState, cmd: &str) {
-    let idx = match cmd["agent run ".len()..].trim().parse::<usize>() {
+    let parts: Vec<&str> = cmd.split_whitespace().collect();
+
+    // agent run <n> [--reload]
+    if parts.len() < 3 {
+        log(state, LogLevel::Warn, "Usage: agent run <n> [--reload]");
+        return;
+    }
+
+    let idx = match parts[2].parse::<usize>() {
         Ok(i) if i < state.context.diff_analysis.len() => i,
         _ => {
             log(state, LogLevel::Warn, "Invalid change index.");
             return;
         }
     };
+
+    let reload = parts.iter().any(|p| *p == "--reload");
+
+    if reload {
+        log(state, LogLevel::Info, "🔄 Reload requested (bypassing caches)");
+    }
 
     let diff = state.context.diff_analysis[idx].clone();
     let candidates = generate_test_candidates(std::slice::from_ref(&diff));
@@ -207,8 +221,16 @@ fn agent_run(state: &mut AgentState, cmd: &str) {
     }
 
     state.context.test_candidates = candidates;
+    state.context.last_generated_test = None;
+    state.context.generated_tests_ready = false;
+    state.force_reload = reload;
+
+    // force re-entry
+    state.lifecycle.phase = Phase::Idle;
     state.lifecycle.phase = Phase::ExecuteAgent;
+
 }
+
 
 fn agent_status(state: &mut AgentState) {
     log(state, LogLevel::Info, format!("Phase: {:?}", state.lifecycle.phase));
@@ -388,7 +410,7 @@ pub fn update_command_hints(state: &mut AgentState) {
         "Configure Anthropic model (will prompt for API key)"
     );
     hint!("model show", "Show active model");
-    hint!("agent run ", "Generate and run tests for change <n>");
+    hint!("agent run ", "Generate and run tests for change <n> --reload for bypassing cache");
     hint!("agent status", "Show agent execution state");
     hint!("agent cancel", "Cancel running agent");
     hint!("artifacts test", "Show last generated test");

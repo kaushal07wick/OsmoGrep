@@ -186,6 +186,7 @@ fn init_state() -> AgentState {
         agent_rx,
         cancel_requested: Arc::new(AtomicBool::new(false)),
         full_context_snapshot: None,
+        force_reload: false,
     }
 }
 
