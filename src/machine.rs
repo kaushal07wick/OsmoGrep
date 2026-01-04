@@ -50,6 +50,7 @@ fn init_repo(state: &mut AgentState) {
             return;
         }
     };
+    state.repo_root = repo_root.clone();
 
     let current = git::current_branch();
     state.lifecycle.current_branch = Some(current.clone());
@@ -94,16 +95,8 @@ fn execute_agent(state: &mut AgentState) {
     // ---- branch management ----
     let branch = ensure_agent_branch(state);
     checkout_branch(state, &branch);
-
-    // ---- repo root ----
-    let repo_root = match assert_repo_root() {
-        Ok(p) => p,
-        Err(e) => {
-            log(state, LogLevel::Error, e);
-            transition(state, Phase::Idle);
-            return;
-        }
-    };
+    
+    let repo_root = state.repo_root.clone();
 
     // ---- build full context snapshot ----
     let snapshot = build_full_context_snapshot(

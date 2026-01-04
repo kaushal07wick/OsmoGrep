@@ -11,7 +11,7 @@ mod testgen;
 mod llm;
 mod context;
 
-use std::{ error::Error, io, sync::{Arc, atomic::AtomicBool}, time::{Duration, Instant} };
+use std::{ error::Error, io, path::PathBuf, sync::{Arc, atomic::AtomicBool}, time::{Duration, Instant} };
 use std::sync::mpsc::channel;
 use crate::{llm::{backend::LlmBackend, client::{LlmClient, Provider}}, logger::log, state::InputMode, testgen::test_suite::run_full_test_suite};
 use crossterm::{
@@ -124,14 +124,8 @@ fn drain_agent_events(state: &mut AgentState) {
                         "⏳ Running full test suite in 5 seconds…",
                     );
                     std::thread::sleep(std::time::Duration::from_secs(5));
-                    let repo_root = match std::env::current_dir() {
-                        Ok(p) => p,
-                        Err(e) => {
-                            state.push_log(LogLevel::Error, e.to_string());
-                            state.lifecycle.phase = Phase::Idle;
-                            return;
-                        }
-                    };
+                    let repo_root = state.repo_root.clone();
+
                     if let Err(e) = run_full_test_suite(state, repo_root) {
                         state.push_log(LogLevel::Error, e.to_string());
                     }
@@ -209,6 +203,7 @@ fn init_state() -> AgentState {
         force_reload: false,
         full_test_suite_pending: false,
         started_at: Instant::now(),
+        repo_root: PathBuf::new(),
     }
 }
 

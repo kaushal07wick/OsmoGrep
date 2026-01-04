@@ -49,22 +49,6 @@ pub fn framework_badge(fw: &TestFramework) -> (&'static str, Color) {
     }
 }
 
-/// current repo finder
-pub fn repo_root_name() -> Option<String> {
-    // try the same logic the machine uses
-    if let Ok(cwd) = std::env::current_dir() {
-        let markers = [".git", "pyproject.toml", "setup.py", "Cargo.toml"];
-
-        let is_root = markers.iter().any(|m| cwd.join(m).exists());
-        if is_root {
-            return cwd.file_name()
-                .and_then(|s| s.to_str())
-                .map(|s| s.to_string());
-        }
-    }
-    None
-}
-
 ///
 pub fn format_uptime(started_at: Instant) -> String {
     let secs = started_at.elapsed().as_secs();

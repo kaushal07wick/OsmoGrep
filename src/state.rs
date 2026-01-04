@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{Sender, Receiver};
@@ -240,6 +241,7 @@ pub struct AgentState {
     pub full_context_snapshot: Option<FullContextSnapshot>,
     pub force_reload: bool,
     pub full_test_suite_pending:bool,
+    pub repo_root: PathBuf,
 }
 
 impl AgentState {

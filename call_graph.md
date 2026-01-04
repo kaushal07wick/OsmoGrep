@@ -339,10 +339,10 @@
 - LlmClient::new
 - LogBuffer::new
 - MouseEventKind::Down
+- PathBuf::new
 - String::new
 - Terminal::new
 - Vec::new
-- env::current_dir
 - event::poll
 - event::read
 - io::stdout
@@ -544,7 +544,6 @@
 - pub fn phase_badge(phase: &Phase) -> (&'static str, &'static str, Color)
 - pub fn language_badge(lang: &str) -> (&'static str, Color)
 - pub fn framework_badge(fw: &TestFramework) -> (&'static str, Color)
-- pub fn repo_root_name() -> Option<String>
 - pub fn format_uptime(started_at: Instant) -> String
 - pub fn ln(n: usize, color: Color) -> Span<'static>
 - pub fn risk_color(r: &RiskLevel) -> Color
@@ -556,7 +555,6 @@
 - Span::styled
 - String::with_capacity
 - Style::default
-- env::current_dir
 
 ### src/ui/mod.rs
 

@@ -12,7 +12,6 @@ use crate::ui::helpers::{
     framework_badge,
     language_badge,
     phase_badge,
-    repo_root_name,
     running_pulse,
     format_uptime
 };
@@ -241,16 +240,24 @@ pub fn render_side_status(
     f.render_widget(Paragraph::new(lines), chunks[0]);
 
     // ───────── Repo ─────────
-    if let Some(repo) = repo_root_name() {
-        f.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled("Repo", Style::default().fg(Color::DarkGray)),
-                Span::raw(": "),
-                Span::styled(format!("~/{}", repo), Style::default().fg(Color::White)),
-            ])),
-            chunks[1],
-        );
-    }
+    let repo_name = state
+        .repo_root
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("<unknown>");
+
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("Repo", Style::default().fg(Color::DarkGray)),
+            Span::raw(": "),
+            Span::styled(
+                format!("~/{}", repo_name),
+                Style::default().fg(Color::White),
+            ),
+        ])),
+        chunks[1],
+    );
+
 
     // ───────── Version ─────────
     f.render_widget(
