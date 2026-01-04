@@ -40,15 +40,17 @@ pub fn build_prompt_with_feedback(
     user.push('\n');
 
     user.push_str(
-        "\nFix the test so that it PASSES on the current implementation.\n\
-         RULES:\n\
-         - Modify ONLY the test code\n\
-         - Do NOT change production code\n\
-         - Preserve the original test intent\n\
-         - Do NOT weaken assertions\n\
-         - Do NOT add conditionals to bypass failure\n\
-         - Output EXACTLY ONE corrected test\n",
+    "\nFix the test so that it PASSES on the current implementation.\n\
+     RULES:\n\
+     - Modify ONLY the test code\n\
+     - Do NOT change production code\n\
+     - Preserve the original test intent\n\
+     - Do NOT weaken assertions\n\
+     - Do NOT add conditionals to bypass failure\n\
+     - Output EXACTLY ONE corrected test\n\
+     - All imports must appear at the top of the test\n",
     );
+
 
     LlmPrompt {
         system: system_prompt(),
@@ -58,41 +60,39 @@ pub fn build_prompt_with_feedback(
 
 fn system_prompt() -> String {
     r#"
-You generate ONE unit test.
+You generate EXACTLY ONE unit test.
 
-STRICT RULES:
+FORMAT RULES:
 - Output ONLY valid test code.
-- Output EXACTLY one test function.
-- Test name MUST start with `test_`.
+- Output EXACTLY one test function named `test_*`.
 - Imports are allowed.
-- No comments, no explanations, no markdown.
-- Do NOT define helper functions.
+- Do NOT define helper functions, local functions, or lambdas.
+- No comments, no markdown, no explanations.
 - Do NOT modify production code.
-- Use only public APIs visible from the code.
+- Use only public APIs.
 
-BEHAVIORAL RULES:
-- The test MUST reflect the real behavior of the code.
+BEHAVIOR RULES:
 - The test MUST pass on the current implementation.
 - Do NOT assume behavior not implied by the code.
 
-CRITICAL CONSTRAINTS:
-- If no prior test exists, do NOT assume previous behavior.
-- Do NOT assert exceptions unless the code explicitly introduces them.
-- If the change fixes a crash or dtype issue, assert correctness, not failure.
-- If the function computes a numeric value, compute the expected value independently.
-- Do NOT reimplement the production logic inside the test.
-- Prefer observable guarantees: correctness, stability, finite output.
+TEST QUALITY RULES:
+- Assert real, observable behavior.
+- Do NOT compute expected values by calling the function under test.
+- If masking / ignore_index / filtering exists:
+  - Prove ignored elements do NOT affect the result.
+  - Include an assertion that would FAIL if masking were removed.
+- If special values or dtypes are involved:
+  - Use the effective value used in comparisons (after casting or normalization).
+- For numeric results:
+  - Assert correctness AND that an incorrect aggregation differs.
+  - Ensure the result is finite.
 
-If a previous test and failure are provided:
-- You MUST reason about why the test failed
-- You MUST correct the test accordingly
-- You MUST keep the test strict and meaningful
-
-You are writing a regression-grade test a senior engineer would accept.
+Write a strict, regression-grade test a senior engineer would accept.
 "#
-        .trim()
-        .to_string()
+    .trim()
+    .to_string()
 }
+
 
 fn user_prompt(
     candidate: &TestCandidate,
@@ -153,6 +153,7 @@ fn user_prompt(
          The test must:\n\
          - Call the real public API\n\
          - Assert observable runtime behavior\n\
+         - Assert that incorrect or previous behavior does NOT occur\n\
          - Be correct for edge cases implied by the change\n\
          - Avoid assumptions not proven by the code\n",
     );
