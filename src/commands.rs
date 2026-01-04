@@ -1,7 +1,7 @@
 use std::hint;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
-
+use std::sync::mpsc;
 use crate::detectors::diff_analyzer::analyze_diff;
 use crate::git;
 use crate::logger::{log, log_diff_analysis};
@@ -11,6 +11,7 @@ use crate::state::{
     AgentState, Focus, LogLevel, Phase, SinglePanelView, InputMode,
 };
 use crate::testgen::generator::generate_test_candidates;
+use crate::testgen::runner::TestOutcome;
 use crate::testgen::test_suite::{run_full_test_suite, write_test_suite_report};
 
 
@@ -39,50 +40,17 @@ pub fn handle_command(state: &mut AgentState, cmd: &str) {
             let repo_root = match std::env::current_dir() {
                 Ok(p) => p,
                 Err(e) => {
-                    log(
-                        state,
-                        LogLevel::Error,
-                        format!("Failed to get repo root: {e}"),
-                    );
+                    log(state, LogLevel::Error, format!("Failed to get repo root: {e}"));
                     return;
                 }
             };
 
-            match run_full_test_suite(&repo_root, state) {
-                Ok(results) => {
-                    match write_test_suite_report(&repo_root, &results) {
-                        Ok(path) => {
-                            let passed = results.iter().filter(|r| r.passed).count();
-                            let total = results.len();
-
-                            log(
-                                state,
-                                LogLevel::Success,
-                                format!("Test suite finished: {passed}/{total} passed"),
-                            );
-
-                            log(
-                                state,
-                                LogLevel::Info,
-                                format!("Report written to {}", path.display()),
-                            );
-                        }
-                        Err(e) => {
-                            log(
-                                state,
-                                LogLevel::Error,
-                                format!("Failed to write report: {e}"),
-                            );
-                        }
-                    }
+            match run_full_test_suite(state, repo_root) {
+                Ok(_) => {
+                    log(state, LogLevel::Info, "Test suite started".to_string());
                 }
-
                 Err(e) => {
-                    log(
-                        state,
-                        LogLevel::Error,
-                        format!("Test suite failed to run: {e}"),
-                    );
+                    log(state, LogLevel::Error, format!("Failed to start test suite: {e}"));
                 }
             }
         },

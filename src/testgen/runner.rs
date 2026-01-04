@@ -1,27 +1,41 @@
 // src/testgen/runner.rs
-//
-// Executes generated tests with correct environment.
+// executes test commands and returns raw output + timing (no parsing)
 
-use std::process::Command;
 use std::path::PathBuf;
+use std::process::Command;
+use std::time::Instant;
 
-use crate::state::TestResult;
 use crate::detectors::language::Language;
+use crate::state::TestResult;
 
 #[derive(Debug, Clone)]
 pub enum TestRunRequest {
-    Python {
-        test_path: PathBuf,
-    },
+    Python { test_path: PathBuf },
     Rust,
 }
 
-#[derive(Debug)]
-pub struct TestSuiteResult {
-    pub passed: Vec<String>,
-    pub failed: Vec<(String, String)>, // (test_name, output)
+#[derive(Debug, Clone)]
+pub enum TestOutcome {
+    Pass,
+    Fail,
+    Skip,
+    Warning,
 }
 
+#[derive(Debug, Clone)]
+pub struct TestCaseResult {
+    pub file: String,
+    pub name: String,
+    pub outcome: TestOutcome,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TestSuiteResult {
+    pub cases: Vec<TestCaseResult>, // always empty here
+    pub duration_ms: u64,
+    pub raw_output: String,
+}
 
 pub fn run_test(req: TestRunRequest) -> TestResult {
     let output = match req {
@@ -33,17 +47,13 @@ pub fn run_test(req: TestRunRequest) -> TestResult {
                 .env("PYTHONPATH", ".")
                 .output()
         }
-
-        TestRunRequest::Rust => {
-            Command::new("cargo")
-                .arg("test")
-                .output()
-        }
+        TestRunRequest::Rust => Command::new("cargo")
+            .arg("test")
+            .output(),
     };
 
     match output {
         Ok(out) if out.status.success() => TestResult::Passed,
-
         Ok(out) => {
             let stdout = String::from_utf8_lossy(&out.stdout);
             let stderr = String::from_utf8_lossy(&out.stderr);
@@ -61,105 +71,102 @@ pub fn run_test(req: TestRunRequest) -> TestResult {
 
             TestResult::Failed { output: combined }
         }
-
         Err(e) => TestResult::Failed {
             output: e.to_string(),
         },
     }
 }
 
+pub fn run_full_test_async<F>(language: Language, on_done: F)
+where
+    F: FnOnce(TestSuiteResult) + Send + 'static,
+{
+    std::thread::spawn(move || {
+        let suite = match language {
+            Language::Python => run_full_python_tests(),
+            Language::Rust => run_full_rust_tests(),
+            _ => TestSuiteResult {
+                cases: Vec::new(),
+                duration_ms: 0,
+                raw_output: "unsupported language".into(),
+            },
+        };
 
-pub fn run_full_test(language: Language) -> TestSuiteResult {
-    match language {
-        Language::Python => run_full_python_tests(),
-        Language::Rust => run_full_rust_tests(),
-        _ => TestSuiteResult {
-            passed: vec![],
-            failed: vec![(
-                "unsupported-language".into(),
-                "Full test suite not supported for this language".into(),
-            )],
-        },
-    }
+        on_done(suite);
+    });
 }
-
 
 fn run_full_python_tests() -> TestSuiteResult {
+    let start = Instant::now();
+
     let output = Command::new("python")
-    .arg("-m")
-    .arg("pytest")
-    .arg("-v")
-    .arg("-rA")
-    .env("PYTHONPATH", ".")
-    .output();
+        .arg("-m")
+        .arg("pytest")
+        .arg("-vv")
+        .arg("-rA")
+        .arg("--disable-warnings")
+        .env("PYTHONPATH", ".")
+        .output();
+
+    let duration_ms = start.elapsed().as_millis() as u64;
 
     match output {
-        Ok(out) => parse_pytest_output(&out),
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+
+            let raw_output = if stderr.trim().is_empty() {
+                stdout
+            } else {
+                format!("{stdout}\n{stderr}")
+            };
+
+            TestSuiteResult {
+                cases: Vec::new(),
+                duration_ms,
+                raw_output,
+            }
+        }
         Err(e) => TestSuiteResult {
-            passed: vec![],
-            failed: vec![("pytest".into(), e.to_string())],
+            cases: Vec::new(),
+            duration_ms,
+            raw_output: e.to_string(),
         },
     }
-}
-
-fn parse_pytest_output(out: &std::process::Output) -> TestSuiteResult {
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-
-    let mut passed = Vec::new();
-    let mut failed = Vec::new();
-
-    for line in stdout.lines() {
-        let line = line.trim();
-
-        if let Some(name) = line.strip_suffix(" PASSED") {
-            passed.push(name.to_string());
-        } else if let Some(name) = line.strip_suffix(" FAILED") {
-            failed.push((name.to_string(), String::new()));
-        }
-    }
-
-    if !stderr.trim().is_empty() {
-        for (_, output) in failed.iter_mut() {
-            *output = stderr.trim().to_string();
-        }
-    }
-
-    TestSuiteResult { passed, failed }
 }
 
 fn run_full_rust_tests() -> TestSuiteResult {
+    let start = Instant::now();
+
     let output = Command::new("cargo")
         .arg("test")
         .arg("--")
         .arg("--nocapture")
         .output();
 
+    let duration_ms = start.elapsed().as_millis() as u64;
+
     match output {
-        Ok(out) => parse_cargo_test_output(&out),
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+
+            let raw_output = if stderr.trim().is_empty() {
+                stdout
+            } else {
+                format!("{stdout}\n{stderr}")
+            };
+
+            TestSuiteResult {
+                cases: Vec::new(),
+                duration_ms,
+                raw_output,
+            }
+        }
         Err(e) => TestSuiteResult {
-            passed: vec![],
-            failed: vec![("cargo test".into(), e.to_string())],
+            cases: Vec::new(),
+            duration_ms,
+            raw_output: e.to_string(),
         },
     }
 }
-
-fn parse_cargo_test_output(out: &std::process::Output) -> TestSuiteResult {
-    let stdout = String::from_utf8_lossy(&out.stdout);
-
-    let mut passed = Vec::new();
-    let mut failed = Vec::new();
-
-    for line in stdout.lines() {
-        let line = line.trim();
-
-        if line.ends_with(" ... ok") {
-            passed.push(line.to_string());
-        } else if line.ends_with(" ... FAILED") {
-            failed.push((line.to_string(), String::new()));
-        }
-    }
-
-    TestSuiteResult { passed, failed }
-}
-
