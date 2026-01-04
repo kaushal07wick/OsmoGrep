@@ -1,5 +1,6 @@
 // src/testgen/runner.rs
-// executes test commands and returns raw output + timing (no parsing)
+// Executes test commands and returns raw output + timing.
+// No parsing. No interpretation. No intelligence.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -7,6 +8,10 @@ use std::time::Instant;
 
 use crate::detectors::language::Language;
 use crate::state::TestResult;
+
+/* ========================================================================== */
+/*                               PUBLIC TYPES                                  */
+/* ========================================================================== */
 
 #[derive(Debug, Clone)]
 pub enum TestRunRequest {
@@ -32,10 +37,20 @@ pub struct TestCaseResult {
 
 #[derive(Debug, Clone)]
 pub struct TestSuiteResult {
-    pub cases: Vec<TestCaseResult>, // always empty here
+    /// Intentionally empty.
+    /// Parsing and interpretation happen in suite.rs only.
+    pub cases: Vec<TestCaseResult>,
+
+    /// Wall-clock duration of the test run.
     pub duration_ms: u64,
+
+    /// Full raw stdout + stderr, unparsed.
     pub raw_output: String,
 }
+
+/* ========================================================================== */
+/*                              SINGLE TEST RUN                                */
+/* ========================================================================== */
 
 pub fn run_test(req: TestRunRequest) -> TestResult {
     let output = match req {
@@ -44,7 +59,10 @@ pub fn run_test(req: TestRunRequest) -> TestResult {
                 .arg("-m")
                 .arg("pytest")
                 .arg(test_path)
-                .env("PYTHONPATH", ".")
+                .env(
+                    "PYTHONPATH",
+                    std::env::current_dir().unwrap_or_else(|_| ".".into()),
+                )
                 .output()
         }
         TestRunRequest::Rust => Command::new("cargo")
@@ -59,13 +77,15 @@ pub fn run_test(req: TestRunRequest) -> TestResult {
             let stderr = String::from_utf8_lossy(&out.stderr);
 
             let mut combined = String::new();
+
             if !stdout.trim().is_empty() {
+                combined.push_str("=== STDOUT ===\n");
                 combined.push_str(stdout.trim());
+                combined.push('\n');
             }
+
             if !stderr.trim().is_empty() {
-                if !combined.is_empty() {
-                    combined.push('\n');
-                }
+                combined.push_str("=== STDERR ===\n");
                 combined.push_str(stderr.trim());
             }
 
@@ -76,6 +96,10 @@ pub fn run_test(req: TestRunRequest) -> TestResult {
         },
     }
 }
+
+/* ========================================================================== */
+/*                              FULL TEST SUITE                                */
+/* ========================================================================== */
 
 pub fn run_full_test_async<F>(language: Language, on_done: F)
 where
@@ -96,6 +120,7 @@ where
     });
 }
 
+
 fn run_full_python_tests() -> TestSuiteResult {
     let start = Instant::now();
 
@@ -104,19 +129,22 @@ fn run_full_python_tests() -> TestSuiteResult {
         .arg("pytest")
         .arg("-vv")
         .arg("-rA")
-        .arg("--disable-warnings")
-        .env("PYTHONPATH", ".")
+        .arg("--durations=0")
+        .env(
+            "PYTHONPATH",
+            std::env::current_dir().unwrap_or_else(|_| ".".into()),
+        )
         .output();
 
     let duration_ms = start.elapsed().as_millis() as u64;
 
     match output {
         Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let stderr = String::from_utf8_lossy(&out.stderr);
 
             let raw_output = if stderr.trim().is_empty() {
-                stdout
+                stdout.to_string()
             } else {
                 format!("{stdout}\n{stderr}")
             };
@@ -148,14 +176,21 @@ fn run_full_rust_tests() -> TestSuiteResult {
 
     match output {
         Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let stderr = String::from_utf8_lossy(&out.stderr);
 
-            let raw_output = if stderr.trim().is_empty() {
-                stdout
-            } else {
-                format!("{stdout}\n{stderr}")
-            };
+            let mut raw_output = String::new();
+
+            if !stdout.trim().is_empty() {
+                raw_output.push_str("=== STDOUT ===\n");
+                raw_output.push_str(stdout.trim());
+                raw_output.push('\n');
+            }
+
+            if !stderr.trim().is_empty() {
+                raw_output.push_str("=== STDERR ===\n");
+                raw_output.push_str(stderr.trim());
+            }
 
             TestSuiteResult {
                 cases: Vec::new(),
