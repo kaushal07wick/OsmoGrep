@@ -34,7 +34,7 @@ pub fn find_existing_agent() -> Option<String> {
 
     for l in s.lines() {
         let name = l.trim().trim_start_matches('*').trim();
-        if name.starts_with("osmogrep/") {
+        if name.starts_with("osm-auto-") {
             return Some(name.to_string());
         }
     }
@@ -43,13 +43,19 @@ pub fn find_existing_agent() -> Option<String> {
 
 pub fn create_agent_branch() -> String {
     let out = git(&["rev-parse", "--short", "HEAD"]);
-    let hash = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let hash_str = String::from_utf8_lossy(&out.stdout);
+    let hash = hash_str.trim();
 
-    let name = format!("osmogrep/test/manual/{}", hash);
+    let id = u16::from_str_radix(&hash[hash.len() - 3..], 16)
+        .unwrap_or(0);
+
+    let name = format!("osm-auto-{}", id);
 
     git(&["branch", &name]);
     name
 }
+
+
 
 pub fn checkout(branch: &str) {
     git(&["checkout", "-q", branch]);

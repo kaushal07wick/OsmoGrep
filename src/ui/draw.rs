@@ -58,7 +58,7 @@ pub fn draw_ui<B: Backend>(
         exec_rect = layout[1];
 
         let in_api_key_mode = matches!(state.ui.input_mode, InputMode::ApiKey { .. });
-        let prompt = if in_api_key_mode { "key> " } else { "$_ " };
+        let prompt = if in_api_key_mode { "key> " } else { ">_ " };
 
         // -------- Masked / normal input (UTF-8 safe) --------
         let raw_input: String = if in_api_key_mode {

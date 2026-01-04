@@ -161,6 +161,7 @@
 - Command::new
 - Path::new
 - String::from_utf8_lossy
+- u16::from_str_radix
 
 ### src/llm/backend.rs
 

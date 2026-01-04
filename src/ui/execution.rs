@@ -47,6 +47,9 @@ pub fn render_execution(
     let mut diff_idx = 0;
     let mut diff_counter = 0;
     let mut changes_heading_shown = false;
+    const LOG_INDENT: &str = "  ";
+    const LOG_PREFIX: &str = "▸ ";
+
 
     for log in state.logs.iter() {
         let faded =
@@ -167,13 +170,22 @@ pub fn render_execution(
             LogLevel::Warn => Color::Yellow,
             LogLevel::Error => Color::Red,
         };
+        let prefix_color = match log.level {
+            LogLevel::Success => Color::Green,
+            LogLevel::Warn => Color::Yellow,
+            LogLevel::Error => Color::Red,
+            _ => Color::DarkGray,
+        };
+
 
         let color = if faded { Color::DarkGray } else { base_color };
 
-        lines.push(Line::from(Span::styled(
-            &log.text,
-            Style::default().fg(color),
-        )));
+        lines.push(Line::from(vec![
+            Span::raw(LOG_INDENT),
+            Span::styled(LOG_PREFIX, Style::default().fg(prefix_color)),
+            Span::styled(&log.text, Style::default().fg(color)),
+        ]));
+
         lines.push(Line::from(""));
     }
 

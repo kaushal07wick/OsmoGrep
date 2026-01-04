@@ -34,8 +34,8 @@ pub fn render_status(
     let body = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(70),
-            Constraint::Percentage(30),
+            Constraint::Percentage(60),
+            Constraint::Percentage(40),
         ])
         .split(chunks[1]);
 
@@ -161,6 +161,7 @@ fn render_context_block(
 ) {
     let mut lines: Vec<Line> = Vec::new();
 
+    // ---------- ACTIVE VIEW ----------
     let active_diff = state
         .ui
         .selected_diff
@@ -180,8 +181,13 @@ fn render_context_block(
     };
 
     if let Some(file) = file {
+        lines.push(Line::from(Span::styled(
+            "▸ VIEW",
+            Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD),
+        )));
+
         lines.push(Line::from(vec![
-            Span::styled("View:     ", Style::default().fg(Color::DarkGray)),
+            Span::styled("Mode:     ", Style::default().fg(Color::DarkGray)),
             Span::styled(mode, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
         ]));
 
@@ -200,101 +206,95 @@ fn render_context_block(
         lines.push(Line::from(""));
     }
 
-    // ---- FULL CONTEXT SNAPSHOT ----
+    // ---------- CONTEXT SNAPSHOT ----------
     if let Some(snapshot) = &state.full_context_snapshot {
+        lines.push(Line::from(Span::styled(
+            "▸ CONTEXT",
+            Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD),
+        )));
+
         // Code context
         lines.push(Line::from(vec![
-            Span::styled("Code ctx: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("📦 Code:      ", Style::default().fg(Color::DarkGray)),
             Span::styled(
-                format!(" {} file(s) ", snapshot.code.files.len()),
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
+                format!("{} file(s)", snapshot.code.files.len()),
+                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
             ),
         ]));
 
-        // Test context
+        // Tests
         let tests = &snapshot.tests;
 
         lines.push(Line::from(vec![
-            Span::styled("Tests:    ", Style::default().fg(Color::DarkGray)),
+            Span::styled("🧪 Tests:     ", Style::default().fg(Color::DarkGray)),
             Span::styled(
-                if tests.exists { " present " } else { " none " },
+                if tests.exists { "present" } else { "none" },
                 Style::default()
-                    .fg(Color::Black)
-                    .bg(if tests.exists { Color::Green } else { Color::DarkGray })
+                    .fg(if tests.exists { Color::Green } else { Color::DarkGray })
                     .add_modifier(Modifier::BOLD),
             ),
         ]));
 
         if tests.exists {
-            if let Some(fw) = tests.framework {
-                let (label, color) = match fw {
-                    TestFramework::Pytest => ("pytest", Color::Green),
-                    TestFramework::Unittest => ("unittest", Color::Blue),
-                    TestFramework::Rust => ("cargo test", Color::Red),
-                    _ => ("unknown", Color::DarkGray),
-                };
+            // Framework
+            let (fw_label, fw_color, fw_icon) = match tests.framework {
+                Some(TestFramework::Pytest) => ("pytest", Color::Green, "⚙️"),
+                Some(TestFramework::Unittest) => ("unittest", Color::Blue, "⚙️"),
+                Some(TestFramework::Rust) => ("cargo test", Color::Red, "🦀"),
+                _ => ("unknown", Color::DarkGray, "❓"),
+            };
 
-                lines.push(Line::from(vec![
-                    Span::styled("Test fw:  ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(
-                        format!(" {label} "),
-                        Style::default()
-                            .fg(Color::Black)
-                            .bg(color)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]));
-            }
-        
+            lines.push(Line::from(vec![
+                Span::styled("Framework: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format!("{fw_icon} {fw_label}"),
+                    Style::default().fg(fw_color).add_modifier(Modifier::BOLD),
+                ),
+            ]));
+
+            // Style
             if let Some(style) = tests.style {
                 lines.push(Line::from(vec![
-                    Span::styled("Style:    ", Style::default().fg(Color::DarkGray)),
+                    Span::styled("Style:     ", Style::default().fg(Color::DarkGray)),
                     Span::styled(
-                        format!(" {:?} ", style),
-                        Style::default()
-                            .fg(Color::Black)
-                            .bg(Color::Blue)
-                            .add_modifier(Modifier::BOLD),
+                        format!("≈ {:?}", style).to_lowercase(),
+                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
                     ),
                 ]));
             }
 
+            // Helpers
             if !tests.helpers.is_empty() {
                 lines.push(Line::from(vec![
-                    Span::styled("Helpers:  ", Style::default().fg(Color::DarkGray)),
+                    Span::styled("Helpers:   ", Style::default().fg(Color::DarkGray)),
                     Span::styled(
-                        format!(" {} ", tests.helpers.len()),
-                        Style::default()
-                            .fg(Color::Black)
-                            .bg(Color::Magenta)
-                            .add_modifier(Modifier::BOLD),
+                        format!("🧩 {}", tests.helpers.len()),
+                        Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
                     ),
                 ]));
             }
         }
+
+        lines.push(Line::from(""));
     } else {
         lines.push(Line::from(vec![
             Span::styled("Context:  ", Style::default().fg(Color::DarkGray)),
             Span::styled(
-                " not built ",
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::DarkGray)
-                    .add_modifier(Modifier::BOLD),
+                "not built",
+                Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD),
             ),
         ]));
+        lines.push(Line::from(""));
     }
 
+    // ---------- LANGUAGE ----------
     if let Some(lang) = &state.lifecycle.language {
         let (label, color) = language_badge(&format!("{:?}", lang));
         lines.push(Line::from(vec![
             Span::styled("Language: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
-                format!(" {label} "),
-                Style::default().fg(Color::Black).bg(color).add_modifier(Modifier::BOLD),
+                label,
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
             ),
         ]));
     }
