@@ -6,7 +6,7 @@ use std::sync::{
     Arc,
 };
 use std::thread;
-
+use crate::testgen::test_suite::run_full_test_suite;
 use crate::context::types::FullContextSnapshot;
 use crate::detectors::language::Language;
 use crate::llm::backend::LlmBackend;
@@ -101,6 +101,7 @@ pub fn run_llm_test_flow(
                             LogLevel::Success,
                             "Cached test passed".to_string(),
                         ));
+                        
                         let _ = tx.send(AgentEvent::SpinnerStop);
                         let _ = tx.send(AgentEvent::Finished);
                     }

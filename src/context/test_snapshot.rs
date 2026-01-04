@@ -50,9 +50,10 @@ pub fn build_test_context_snapshot(repo_root: &Path) -> TestContextSnapshot {
     }
 
     let framework = match (saw_unittest, saw_pytest) {
-        (true, _) => Some(TestFramework::Unittest),
-        (false, true) => Some(TestFramework::Pytest),
-        _ => None,
+    (true, false) => Some(TestFramework::Unittest),
+    (false, true) => Some(TestFramework::Pytest),
+    (true, true) => Some(TestFramework::Unittest), // explicit beats implicit
+    (false, false) => Some(TestFramework::Pytest), // default
     };
 
     let helpers = detect_helpers(&all_symbols);

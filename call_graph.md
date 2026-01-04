@@ -328,6 +328,7 @@
 - AtomicBool::new
 - CrosstermBackend::new
 - Duration::from_millis
+- Duration::from_secs
 - Event::Key
 - Event::Mouse
 - Instant::now
@@ -339,9 +340,11 @@
 - String::new
 - Terminal::new
 - Vec::new
+- env::current_dir
 - event::poll
 - event::read
 - io::stdout
+- thread::sleep
 - ui::draw_ui
 
 ### src/state.rs

@@ -186,7 +186,6 @@ pub struct LifecycleState {
     pub current_branch: Option<String>,
     pub agent_branch: Option<String>,
     pub language: Option<Language>,
-    pub framework: Option<TestFramework>,
 }
 
 /// execution context holding diff analysis and test artifacts
@@ -240,6 +239,7 @@ pub struct AgentState {
     pub cancel_requested: Arc<AtomicBool>,
     pub full_context_snapshot: Option<FullContextSnapshot>,
     pub force_reload: bool,
+    pub full_test_suite_pending:bool,
 }
 
 impl AgentState {

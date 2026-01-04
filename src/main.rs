@@ -13,7 +13,7 @@ mod context;
 
 use std::{ error::Error, io, sync::{Arc, atomic::AtomicBool}, time::{Duration, Instant} };
 use std::sync::mpsc::channel;
-use crate::{llm::{backend::LlmBackend, client::{LlmClient, Provider}}, logger::log, state::InputMode};
+use crate::{llm::{backend::LlmBackend, client::{LlmClient, Provider}}, logger::log, state::InputMode, testgen::test_suite::run_full_test_suite};
 use crossterm::{
     event::{self, Event, KeyCode, MouseEventKind},
     execute,
@@ -94,6 +94,7 @@ fn drain_agent_events(state: &mut AgentState) {
                 match &result {
                     TestResult::Passed => {
                         state.push_log(LogLevel::Success, "🧪 Test passed");
+                        state.full_test_suite_pending = true;
                         state.ui.panel_view = Some(SinglePanelView::TestResult {
                             output: String::new(),
                             passed: true,
@@ -115,6 +116,26 @@ fn drain_agent_events(state: &mut AgentState) {
 
             AgentEvent::Finished => {
                 state.push_log(LogLevel::Success, " Agent finished");
+                if state.full_test_suite_pending {
+                    state.full_test_suite_pending = false;
+
+                    state.push_log(
+                        LogLevel::Info,
+                        "⏳ Running full test suite in 5 seconds…",
+                    );
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    let repo_root = match std::env::current_dir() {
+                        Ok(p) => p,
+                        Err(e) => {
+                            state.push_log(LogLevel::Error, e.to_string());
+                            state.lifecycle.phase = Phase::Idle;
+                            return;
+                        }
+                    };
+                    if let Err(e) = run_full_test_suite(state, repo_root) {
+                        state.push_log(LogLevel::Error, e.to_string());
+                    }
+                }
                 state.lifecycle.phase = Phase::Idle;
             }
 
@@ -137,7 +158,6 @@ fn init_state() -> AgentState {
             current_branch: None,
             agent_branch: None,
             language: None,
-            framework: None,
         },
 
         context: AgentContext {
@@ -187,6 +207,7 @@ fn init_state() -> AgentState {
         cancel_requested: Arc::new(AtomicBool::new(false)),
         full_context_snapshot: None,
         force_reload: false,
+        full_test_suite_pending: false,
     }
 }
 

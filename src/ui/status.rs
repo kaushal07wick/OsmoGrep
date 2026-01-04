@@ -7,7 +7,7 @@ use ratatui::{
     widgets::{Block, Borders, BorderType, Paragraph},
 };
 
-use crate::llm::backend::LlmBackend;
+use crate::{context::types::TestFramework, llm::backend::LlmBackend};
 use crate::state::{AgentState, Phase, SinglePanelView};
 use crate::ui::helpers::{
     framework_badge,
@@ -229,21 +229,26 @@ fn render_context_block(
         ]));
 
         if tests.exists {
-            let fw = tests.framework.unwrap_or(crate::context::types::TestFramework::Unknown);
-            let (label, color) = framework_badge(&format!("{:?}", fw));
+            if let Some(fw) = tests.framework {
+                let (label, color) = match fw {
+                    TestFramework::Pytest => ("pytest", Color::Green),
+                    TestFramework::Unittest => ("unittest", Color::Blue),
+                    TestFramework::Rust => ("cargo test", Color::Red),
+                    _ => ("unknown", Color::DarkGray),
+                };
 
-            lines.push(Line::from(vec![
-                Span::styled("Test fw:  ", Style::default().fg(Color::DarkGray)),
-                Span::styled(
-                    format!(" {label} "),
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(color)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ]));
-
-
+                lines.push(Line::from(vec![
+                    Span::styled("Test fw:  ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        format!(" {label} "),
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(color)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]));
+            }
+        
             if let Some(style) = tests.style {
                 lines.push(Line::from(vec![
                     Span::styled("Style:    ", Style::default().fg(Color::DarkGray)),

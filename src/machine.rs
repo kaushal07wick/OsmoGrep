@@ -113,10 +113,6 @@ fn execute_agent(state: &mut AgentState) {
 
     state.full_context_snapshot = Some(snapshot.clone());
 
-    // ---- critical wiring ----
-    state.lifecycle.framework = snapshot.tests.framework;
-    // language already set during init_repo
-
     // ---- select candidate ----
     let candidate = match state.context.test_candidates.first().cloned() {
         Some(c) => c,
