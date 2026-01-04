@@ -129,16 +129,6 @@
 - git::show_index
 - mem::take
 
-### src/detectors/framework.rs
-
-**Functions**
-- pub fn detect_framework(root: &Path) -> TestFramework
-- fn package_uses_jest(root: &Path) -> bool
--  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result
-
-**Calls**
-- fs::read_to_string
-
 ### src/detectors/language.rs
 
 **Functions**
@@ -245,6 +235,7 @@
 - AgentEvent::Failed
 - AgentEvent::GeneratedTest
 - AgentEvent::Log
+- AgentEvent::SpinnerStart
 - AgentEvent::TestFinished
 - SemanticKey::from_candidate
 - env::current_dir

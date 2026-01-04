@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 
 use crate::{
-    detectors::{framework::detect_framework, language::detect_language},
+    detectors::{language::detect_language},
     git,
     llm::orchestrator::run_llm_test_flow,
     logger::log,
@@ -57,10 +57,8 @@ fn init_repo(state: &mut AgentState) {
 
     // deterministic detectors
     let language = detect_language(&repo_root);
-    let framework = detect_framework(&repo_root);
 
     state.lifecycle.language = Some(language);
-    state.lifecycle.framework = Some(framework);
 
     transition(state, Phase::DetectBase);
 }
@@ -114,7 +112,8 @@ fn execute_agent(state: &mut AgentState) {
         &state.context.diff_analysis,
     );
 
-    state.full_context_snapshot = Some(snapshot);
+    state.full_context_snapshot = Some(snapshot.clone());
+    state.lifecycle.framework = snapshot.tests.framework;
 
     let candidate = match state.context.test_candidates.first().cloned() {
         Some(c) => c,

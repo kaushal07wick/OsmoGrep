@@ -3,11 +3,12 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{Sender, Receiver};
 use std::time::{Instant, Duration};
-use crate::llm::client::{LlmClient, Provider};
-use crate::detectors::{framework::TestFramework, language::Language};
+use crate::llm::client::Provider;
+use crate::context::types::TestFramework;
+use crate::detectors::{language::Language};
 use crate::testgen::candidate::TestCandidate;
 use crate::testgen::summarizer::SemanticSummary;
-use crate::context::types::{ContextSnapshot, FullContextSnapshot};
+use crate::context::types::FullContextSnapshot;
 pub const MAX_LOGS: usize = 1000;
 use crate::llm::backend::LlmBackend;
 

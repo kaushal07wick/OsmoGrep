@@ -1,3 +1,5 @@
+// src/llm/orchestrator.rs
+
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc::Sender,
@@ -29,30 +31,19 @@ pub fn run_llm_test_flow(
     semantic_cache: Arc<SemanticCache>,
 ) {
     thread::spawn(move || {
-        let mut cancelled_once = false;
-        let check_cancel = || {
-            if cancel_flag.load(Ordering::SeqCst) {
-                true
-            } else {
-                false
-            }
-        };
+        let check_cancel = || cancel_flag.load(Ordering::SeqCst);
 
-        let mut cancel_and_exit = || {
-            if !cancelled_once {
-                cancelled_once = true;
-                let _ = tx.send(AgentEvent::Log(
-                    LogLevel::Warn,
-                    "Agent cancelled.".to_string(),
-                ));
-                let _ = tx.send(AgentEvent::Failed(
-                    "Agent cancelled".to_string(),
-                ));
-            }
+        let cancel_and_exit = || {
+            let _ = tx.send(AgentEvent::SpinnerStop);
+            let _ = tx.send(AgentEvent::Log(
+                LogLevel::Warn,
+                "Agent cancelled".to_string(),
+            ));
+            let _ = tx.send(AgentEvent::Finished);
         };
-
 
         let fail = |msg: &str| {
+            let _ = tx.send(AgentEvent::SpinnerStop);
             let _ = tx.send(AgentEvent::Log(LogLevel::Error, msg.to_string()));
             let _ = tx.send(AgentEvent::Failed(msg.to_string()));
         };
@@ -76,11 +67,21 @@ pub fn run_llm_test_flow(
             }
         };
 
+        // ---- start spinner (once) ----
+        let _ = tx.send(AgentEvent::SpinnerStart(
+            "Generating & running tests…".to_string(),
+        ));
+
         // ---- semantic cache ----
         let semantic_key = SemanticKey::from_candidate(&candidate);
         let cache_key = semantic_key.to_cache_key();
 
         if let Some(test_path) = semantic_cache.get(&cache_key) {
+            if check_cancel() {
+                cancel_and_exit();
+                return;
+            }
+
             let request = match language {
                 Language::Python => TestRunRequest::Python { test_path },
                 Language::Rust => TestRunRequest::Rust,
@@ -100,6 +101,7 @@ pub fn run_llm_test_flow(
                         LogLevel::Success,
                         "Cached test passed".to_string(),
                     ));
+                    let _ = tx.send(AgentEvent::SpinnerStop);
                     let _ = tx.send(AgentEvent::Finished);
                 }
                 TestResult::Failed { output } => {
@@ -118,7 +120,6 @@ pub fn run_llm_test_flow(
                 cancel_and_exit();
                 return;
             }
-
 
             if attempt > 1 {
                 let _ = tx.send(AgentEvent::Log(
@@ -151,7 +152,7 @@ pub fn run_llm_test_flow(
                 ),
             };
 
-            // ---- LLM RUN ----
+            // ---- LLM run ----
             let llm_result: LlmRunResult = match llm.run(prompt) {
                 Ok(r) => r,
                 Err(e) => {
@@ -164,7 +165,6 @@ pub fn run_llm_test_flow(
                 cancel_and_exit();
                 return;
             }
-
 
             if let Some(cached) = llm_result.cached_tokens {
                 let _ = tx.send(AgentEvent::Log(
@@ -226,7 +226,6 @@ pub fn run_llm_test_flow(
                 return;
             }
 
-
             match result {
                 TestResult::Passed => {
                     semantic_cache.insert(cache_key, test_path_for_cache);
@@ -234,15 +233,12 @@ pub fn run_llm_test_flow(
                         LogLevel::Success,
                         "Test passed — cached".to_string(),
                     ));
+                    let _ = tx.send(AgentEvent::SpinnerStop);
                     let _ = tx.send(AgentEvent::Finished);
                     return;
                 }
                 TestResult::Failed { output } => {
                     last_failure = Some(trim_error(&output));
-                    let _ = tx.send(AgentEvent::Log(
-                        LogLevel::Warn,
-                        "Test failed — retrying".to_string(),
-                    ));
                 }
             }
         }

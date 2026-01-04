@@ -120,10 +120,11 @@ fn detect_framework_from_source(
     let mut saw_unittest = false;
     let mut saw_pytest = false;
 
+    // ---------- LINE-BASED SIGNALS ----------
     for line in source.lines() {
         let l = line.trim();
 
-        // ---- unittest import forms ----
+        // unittest imports
         if l.starts_with("import ") && l.contains("unittest") {
             saw_unittest = true;
         }
@@ -132,27 +133,37 @@ fn detect_framework_from_source(
             saw_unittest = true;
         }
 
-        // ---- unittest TestCase usage ----
-        if l.contains("unittest.TestCase") || l.contains("TestCase") && l.contains("unittest") {
-            saw_unittest = true;
-        }
-
-        // ---- pytest signals ----
+        // pytest imports / decorators
         if l.starts_with("import pytest") || l.contains("@pytest.") {
             saw_pytest = true;
         }
     }
 
-    // ---- symbol-based fallback (weak but useful) ----
-    if !saw_unittest && !saw_pytest {
-        if symbols.iter().any(|s| s.name.starts_with("Test")) {
+    // ---------- STRUCTURAL SIGNALS ----------
+    for s in symbols {
+        let name = s.name.as_str();
+
+        // class TestX(unittest.TestCase)
+        if name.contains("Test") && source.contains("TestCase") {
+            saw_unittest = true;
+        }
+
+        // pytest-style test functions
+        if name.starts_with("test_") {
+            saw_pytest = true;
+        }
+
+        // unittest-style test methods
+        if name.starts_with("Test") {
             saw_unittest = true;
         }
     }
 
+    // ---------- DECISION ----------
     match (saw_unittest, saw_pytest) {
-        (true, _) => TestFramework::Unittest,
+        (true, false) => TestFramework::Unittest,
         (false, true) => TestFramework::Pytest,
+        (true, true) => TestFramework::Unittest, // prefer unittest if mixed
         _ => TestFramework::Unknown,
     }
 }
