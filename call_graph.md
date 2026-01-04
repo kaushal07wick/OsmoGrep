@@ -510,7 +510,6 @@
 - Line::from
 - Paragraph::new
 - Rect::default
-- Span::raw
 - Span::styled
 - String::new
 - Style::default
@@ -583,6 +582,7 @@
 - pub fn render_status( f: &mut ratatui::Frame, area: Rect, _state: &AgentState, )
 - fn render_header(f: &mut ratatui::Frame, area: Rect)
 - pub fn render_side_status( f: &mut ratatui::Frame, area: Rect, state: &AgentState, )
+- fn render_context_inspector( f: &mut ratatui::Frame, area: Rect, state: &AgentState, )
 
 **Calls**
 - Block::default

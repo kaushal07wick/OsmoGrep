@@ -10,6 +10,7 @@ use ratatui::{
 };
 
 use unicode_width::UnicodeWidthStr;
+
 use crate::state::{AgentState, Focus, InputMode, Phase};
 use crate::ui::{diff, execution, panels, status};
 
@@ -22,47 +23,40 @@ pub fn draw_ui<B: Backend>(
     let mut exec_rect = Rect::default();
 
     terminal.draw(|f| {
-        let is_running = matches!(
-            state.lifecycle.phase,
-            Phase::ExecuteAgent
-                | Phase::Running
-                | Phase::CreateNewAgent
-                | Phase::Rollback
-        );
-
+        // ───────────────── HEADER + MAIN ─────────────────
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .margin(1)
             .constraints([
                 Constraint::Length(6), // header
-                Constraint::Min(1),    // main content + side panel
+                Constraint::Min(1),    // everything else
             ])
             .split(f.size());
 
+        // Header
         status::render_status(f, layout[0], state);
 
-        // Split main area horizontally: left (main content + command + footer) and right (side panel)
+        // ───────────────── MAIN HORIZONTAL SPLIT ─────────────────
         let main_horizontal = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Min(1),
-                Constraint::Length(28),
+                Constraint::Min(1),     // left (main + command)
+                Constraint::Length(36), // right (agent + context)
             ])
             .split(layout[1]);
 
-        // Left side: main content, command box, and footer
+        // ───────────────── LEFT SIDE (MAIN + COMMAND) ─────────────────
         let left_side = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(1),    // main content area
+                Constraint::Min(1),    // main content
                 Constraint::Length(3), // command box
-                Constraint::Length(1), // footer (ESC + model)
             ])
             .split(main_horizontal[0]);
 
         let main_area = left_side[0];
 
-        // Render main content area
+        // Render main content
         let mut rendered = false;
 
         if panels::render_panel(f, main_area, state) {
@@ -85,10 +79,10 @@ pub fn draw_ui<B: Backend>(
 
         exec_rect = main_area;
 
-        // Right side panel - now extends full height
+        // ───────────────── RIGHT PANEL (FULL HEIGHT) ─────────────────
         status::render_side_status(f, main_horizontal[1], state);
 
-        // ───────── COMMAND BOX ─────────
+        // ───────────────── COMMAND BOX ─────────────────
         let in_api_key_mode = matches!(state.ui.input_mode, InputMode::ApiKey { .. });
         let prompt = if in_api_key_mode { "key> " } else { ">_ " };
 
@@ -97,8 +91,7 @@ pub fn draw_ui<B: Backend>(
             if len == 0 {
                 String::new()
             } else {
-                let frame =
-                    (state.ui.last_activity.elapsed().as_millis() / 120) as usize;
+                let frame = (state.ui.last_activity.elapsed().as_millis() / 120) as usize;
                 let dots = ["•", "••", "•••", "••••"];
                 let anim = dots[frame % dots.len()];
                 if len == 1 {
@@ -168,6 +161,7 @@ pub fn draw_ui<B: Backend>(
         input_rect = left_side[1];
         f.render_widget(input, input_rect);
 
+        // Cursor
         if state.ui.focus == Focus::Input {
             let prompt_w = prompt.len();
             let input_w = UnicodeWidthStr::width(state.ui.input.as_str());
@@ -179,66 +173,6 @@ pub fn draw_ui<B: Backend>(
                 input_rect.y + 1,
             );
         }
-
-        // ───────── FOOTER ROW (left side only) ─────────
-        let footer_layout = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Length(14), // ESC + state
-                Constraint::Min(1),     // model label
-            ])
-            .split(left_side[2]);
-
-        // ESC indicator
-        let esc_line = if is_running {
-            let frame = (state.ui.last_activity.elapsed().as_millis() / 150) % 4;
-            let anim = match frame {
-                0 => "⠁",
-                1 => "⠃",
-                2 => "⠇",
-                _ => "⠧",
-            };
-
-            Line::from(vec![
-                Span::styled(
-                    " ESC ",
-                    Style::default().fg(Color::Black).bg(Color::DarkGray),
-                ),
-                Span::raw(" "),
-                Span::styled(anim, Style::default().fg(Color::Cyan)),
-            ])
-        } else {
-            Line::from(Span::styled(
-                " ESC: to stop",
-                Style::default().fg(Color::Black).bg(Color::DarkGray),
-            ))
-        };
-
-        f.render_widget(
-            Paragraph::new(esc_line).alignment(Alignment::Left),
-            footer_layout[0],
-        );
-
-        // MODEL label (left side only)
-        let model_label = match &state.llm_backend {
-            crate::llm::backend::LlmBackend::Remote { client } => {
-                let cfg = client.current_config();
-                format!("{:?}", cfg.provider).to_uppercase()
-            }
-            crate::llm::backend::LlmBackend::Ollama { .. } => "OLLAMA".to_string(),
-        };
-
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                model_label,
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(ratatui::style::Modifier::BOLD),
-            )))
-            .alignment(Alignment::Right),
-            footer_layout[1],
-        );
-
     })?;
 
     Ok((input_rect, diff_rect, exec_rect))
