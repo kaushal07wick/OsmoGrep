@@ -222,7 +222,6 @@ fn agent_cancel(state: &mut AgentState) {
 
     state.cancel_requested.store(true, Ordering::SeqCst);
     state.ui.active_spinner = Some("Canceling agent…".into());
-    log(state, LogLevel::Warn, "Agent cancellation requested.");
 }
 
 fn model_use(state: &mut AgentState, cmd: &str) {

@@ -159,7 +159,6 @@ fn execute_agent(state: &mut AgentState) {
 
 fn handle_running(state: &mut AgentState) {
     if state.cancel_requested.load(Ordering::SeqCst) {
-        log(state, LogLevel::Warn, "Agent cancelled.");
         return_to_base_branch(state);
         transition(state, Phase::Idle);
         return;
