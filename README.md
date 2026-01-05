@@ -1,111 +1,93 @@
 ![osmogrep](osmogrep.svg)
 
-OsmoGrep is a terminal-native execution agent for validating code changes by
-**running real tests** against real repositories, with strict isolation and
-deterministic behavior.
+## **OsmoGrep**
 
-It is designed to explore a simple question:
+Terminal-native execution agent for validating code changes by **running real tests**, not reviewing diffs.
 
-Can code changes be validated autonomously by executing the code, not by
-reviewing diffs or chatting with the repository?
+Designed to answer one question:
 
-## What OsmoGrep Does
+> Can code changes be validated autonomously by executing the code, safely and deterministically?
 
-OsmoGrep operates locally on a Git repository and provides:
+![OsmoGrep demo](osmogrep.gif)
 
-- Diff-based code inspection
-- AST-backed context extraction
-- AI-generated tests scoped to changes
-- Deterministic test execution
-- Full test suite execution with reports
-- Strict branch isolation (agent branches only)
-- Explicit, inspectable execution logs
+### What Is It?
 
-## Core Capabilities
+| Area           | What OsmoGrep Does             |
+| -------------- | ------------------------------ |
+| **Input**      | Uncommitted git diffs          |
+| **Context**    | AST-based symbols + test graph |
+| **Action**     | Generate and run real tests    |
+| **Isolation**  | Agent branches only            |
+| **Validation** | Single-test or full test suite |
+| **Output**     | Logs, reports, artifacts       |
+| **UI**         | Interactive terminal (TUI)     |
 
-### Diff Inspector
-- Parses git diffs
-- Extracts changed files, symbols, and surfaces
-- Displays risk and behavioral summaries
-- No full-repo search
+### Core Capabilities
 
-### Context Graph
-- AST-based symbol extraction (Python, Rust)
-- File-level and test-level context snapshots
-- Context is built mechanically, not inferred
+| Capability              | Description                                     |
+| ----------------------- | ----------------------------------------------- |
+| **Diff Inspector**      | Parses diffs, extracts files, symbols, and risk |
+| **Context Graph**       | Mechanical AST extraction (Python, Rust)        |
+| **Single-Test Run**     | LLM-generated minimal test with retries         |
+| **Full Test Suite**     | Run repo tests, generate structured report      |
+| **Deterministic Cache** | Semantic cache for passing tests                |
+| **Artifacts**           | Logs, markdown report, JSON index               |
+| **Isolation**           | All execution in agent branches                 |
 
-### Single-Test Execution
-- Generates minimal tests for a specific change
-- Runs only the generated test
-- Retries with feedback on failure
-- Semantic cache for passing tests
+Everything runs in an **explicit agent branch**, under user control.
 
-### Full Test Suite Execution
-- Runs the repository’s real test suite
-- Produces a structured report (logs, failures, metadata)
-- No LLM retries in this mode
-- Used strictly for validation
+Supports:
 
-### Reports & Artifacts
-- Raw test output
-- Structured failure extraction
-- Markdown report
-- JSON index for automation
+* Local models (Ollama)
+* OpenAI-compatible APIs
 
-All artifacts are written to disk and reproducible.
-
-## Execution Model
-
-OsmoGrep never mutates your working branch.
-
-- All automation runs in an agent branch
-- The original branch is preserved
-- No implicit checkouts
-- No implicit commits
-- No hidden file edits
-
-Every action requires an explicit command.
-
-## Terminal UI
-
-- Interactive TUI
-- Diff view
-- Context inspection
-- Execution logs
-- Test progress and results
-- Deterministic, replayable output
-
-## LLM Integration
-
-OsmoGrep supports multiple backends:
-
-- Local models (Ollama)
-- Remote APIs (OpenAI-compatible)
-
-LLMs are used only for:
-- Test generation
-- Feedback-driven retries
-
-They are not used for navigation, search, or freeform reasoning.
-
-## Supported Languages
-
-- Python
-- Rust (partial, expanding)
-
-## Design Constraints (Intentional)
-
-OsmoGrep does **not** do the following:
-
-- No freeform repo search
-- No autonomous code editing
-- No speculative refactors
-- No chat-based agent loop
-
-It is a validation engine, not a general coding assistant.
-
-## Build & Run
+### Installation
 
 ```bash
-cargo build
-cargo run
+curl -fsSL https://raw.githubusercontent.com/kaushal07wick/OsmoGrep/master/install.sh | sh
+```
+
+Run inside any git repository:
+
+```bash
+osmogrep
+```
+## Usage
+
+Write code, and stage your changes via `git add .` then run osmogrep.
+
+### Commands 
+
+`help` - to show all commands
+
+`inspect` - see all the diffs with information
+
+`changes` - show the changes list
+
+`changes <n>` - see the diff in new split panel, with the changes <diff number>
+
+`agent run <n>` - run the agent, it will create a new agent branch, get full context, and write and run tests
+
+`agent run --full` - run the entire test suite, generates a report for the entire test suite
+
+`model use openai/anthropic` - select the model API, enter the key in the command box prompt
+
+`model show` - shows current model
+
+`agent status` - shows agent status (debug command)
+
+`agent cancel` - stops the running agent
+
+`branch list` - shows all the branches in repository
+
+`clear | logs clear` - clears the screen
+
+`close` - closes the test result panel view
+
+`quit` - exit osmogrep
+
+## Licencse
+
+Feel free to use this code.
+
+[MIT License](.LICENSE) 
