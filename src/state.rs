@@ -21,6 +21,7 @@ pub enum InputMode {
     },
 }
 
+
 ///events emitted by agent
 #[derive(Debug)]
 pub enum AgentEvent {
@@ -227,6 +228,22 @@ pub struct UiState {
     pub input_placeholder: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct AgentRunOptions {
+    pub force_reload: bool,
+    pub full_suite: bool,
+    pub unbounded: bool,
+}
+impl Default for AgentRunOptions {
+    fn default() -> Self {
+        Self {
+            force_reload: false,
+            full_suite: false,
+            unbounded: false,
+        }
+    }
+}
+
 /// root container for the entire agent.
 pub struct AgentState {
     pub lifecycle: LifecycleState,
@@ -239,8 +256,7 @@ pub struct AgentState {
     pub agent_rx: Receiver<AgentEvent>,
     pub cancel_requested: Arc<AtomicBool>,
     pub full_context_snapshot: Option<FullContextSnapshot>,
-    pub force_reload: bool,
-    pub full_test_suite_pending:bool,
+    pub run_options: AgentRunOptions,
     pub repo_root: PathBuf,
 }
 

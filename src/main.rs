@@ -13,7 +13,7 @@ mod context;
 
 use std::{ error::Error, io, path::PathBuf, sync::{Arc, atomic::AtomicBool}, time::{Duration, Instant} };
 use std::sync::mpsc::channel;
-use crate::{llm::{backend::LlmBackend, client::{LlmClient, Provider}}, logger::log, state::InputMode, testgen::test_suite::run_full_test_suite};
+use crate::{llm::{backend::LlmBackend, client::{LlmClient, Provider}}, logger::log, state::{AgentRunOptions, InputMode}, testgen::test_suite::run_full_test_suite};
 use crossterm::{
     event::{self, Event, KeyCode, MouseEventKind},
     execute,
@@ -81,7 +81,7 @@ fn drain_agent_events(state: &mut AgentState) {
             AgentEvent::GeneratedTest(code) => {
                 state.context.last_generated_test = Some(code);
                 state.context.generated_tests_ready = true;
-                state.push_log(LogLevel::Success, " Test generated");
+                state.push_log(LogLevel::Success, "Test generated");
             }
 
             AgentEvent::TestStarted => {
@@ -94,7 +94,6 @@ fn drain_agent_events(state: &mut AgentState) {
                 match &result {
                     TestResult::Passed => {
                         state.push_log(LogLevel::Success, "🧪 Test passed");
-                        state.full_test_suite_pending = true;
                         state.ui.panel_view = Some(SinglePanelView::TestResult {
                             output: String::new(),
                             passed: true,
@@ -115,31 +114,18 @@ fn drain_agent_events(state: &mut AgentState) {
             }
 
             AgentEvent::Finished => {
-                state.push_log(LogLevel::Success, " Agent finished");
-                if state.full_test_suite_pending {
-                    state.full_test_suite_pending = false;
-
-                    state.push_log(
-                        LogLevel::Info,
-                        "⏳ Running full test suite in 5 seconds…",
-                    );
-                    std::thread::sleep(std::time::Duration::from_secs(5));
-                    let repo_root = state.repo_root.clone();
-
-                    if let Err(e) = run_full_test_suite(state, repo_root) {
-                        state.push_log(LogLevel::Error, e.to_string());
-                    }
-                }
+                state.push_log(LogLevel::Success, "Agent finished");
                 state.lifecycle.phase = Phase::Idle;
             }
 
             AgentEvent::Failed(err) => {
-                state.push_log(LogLevel::Error, format!(" {}", err));
+                state.push_log(LogLevel::Error, err);
                 state.lifecycle.phase = Phase::Idle;
             }
         }
     }
 }
+
 
 fn init_state() -> AgentState {
     let (agent_tx, agent_rx) = channel::<AgentEvent>();
@@ -200,8 +186,7 @@ fn init_state() -> AgentState {
         agent_rx,
         cancel_requested: Arc::new(AtomicBool::new(false)),
         full_context_snapshot: None,
-        force_reload: false,
-        full_test_suite_pending: false,
+        run_options: AgentRunOptions::default(),
         started_at: Instant::now(),
         repo_root: PathBuf::new(),
     }

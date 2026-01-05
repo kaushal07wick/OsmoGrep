@@ -6,7 +6,6 @@ use std::sync::{
     Arc,
 };
 use std::thread;
-use crate::testgen::test_suite::run_full_test_suite;
 use crate::context::types::FullContextSnapshot;
 use crate::detectors::language::Language;
 use crate::llm::backend::LlmBackend;
@@ -20,6 +19,7 @@ use crate::testgen::cache::{SemanticCache, SemanticKey};
 
 const MAX_LLM_RETRIES: usize = 3;
 const MAX_ERROR_CHARS: usize = 4_000;
+use crate::state::AgentRunOptions;
 
 pub fn run_llm_test_flow(
     tx: Sender<AgentEvent>,
@@ -29,8 +29,8 @@ pub fn run_llm_test_flow(
     candidate: TestCandidate,
     language: Language,
     semantic_cache: Arc<SemanticCache>,
-    force_reload: bool,
-) {
+    run_options: AgentRunOptions,
+){
     thread::spawn(move || {
         let check_cancel = || cancel_flag.load(Ordering::SeqCst);
 
@@ -75,7 +75,7 @@ pub fn run_llm_test_flow(
         let semantic_key = SemanticKey::from_candidate(&candidate);
         let cache_key = semantic_key.to_cache_key();
 
-        if !force_reload {
+        if !run_options.force_reload {
             if let Some(test_path) = semantic_cache.get(&cache_key) {
                 if check_cancel() {
                     cancel_and_exit();
@@ -156,7 +156,7 @@ pub fn run_llm_test_flow(
             };
 
             // ---- LLM run ----
-            let llm_result: LlmRunResult = match llm.run(prompt, force_reload) {
+            let llm_result: LlmRunResult = match llm.run(prompt, run_options.force_reload) {
                 Ok(r) => r,
                 Err(e) => {
                     last_failure = Some(e);

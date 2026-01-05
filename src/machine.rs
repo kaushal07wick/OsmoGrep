@@ -87,7 +87,6 @@ fn create_agent_branch(state: &mut AgentState) {
     log(state, LogLevel::Success, format!("Created agent branch {}", branch));
     transition(state, Phase::Idle);
 }
-
 fn execute_agent(state: &mut AgentState) {
     // ---- reset cancellation for this run ----
     state.cancel_requested.store(false, Ordering::SeqCst);
@@ -95,7 +94,7 @@ fn execute_agent(state: &mut AgentState) {
     // ---- branch management ----
     let branch = ensure_agent_branch(state);
     checkout_branch(state, &branch);
-    
+
     let repo_root = state.repo_root.clone();
 
     // ---- build full context snapshot ----
@@ -128,9 +127,8 @@ fn execute_agent(state: &mut AgentState) {
 
     log(state, LogLevel::Info, "🤖 Agent started");
 
-    // ---- consume reload flag (one-shot) ----
-    let force_reload = state.force_reload;
-    state.force_reload = false;
+    // ---- read run options ----
+    let force_reload = state.run_options.force_reload;
 
     let llm_backend = state.llm_backend.clone();
     let semantic_cache = Arc::new(SemanticCache::new());
@@ -143,7 +141,7 @@ fn execute_agent(state: &mut AgentState) {
         candidate,
         language,
         semantic_cache,
-        force_reload,
+        state.run_options.clone(),
     );
 
     transition(state, Phase::Running);

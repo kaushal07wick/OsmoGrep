@@ -8,12 +8,9 @@ use crate::logger::{log, log_diff_analysis};
 use crate::llm::backend::LlmBackend;
 use crate::llm::client::{LlmClient, Provider};
 use crate::state::{
-    AgentState, Focus, LogLevel, Phase, SinglePanelView, InputMode,
+    AgentRunOptions, AgentState, Focus, InputMode, LogLevel, Phase, SinglePanelView
 };
 use crate::testgen::generator::generate_test_candidates;
-use crate::testgen::runner::TestOutcome;
-use crate::testgen::test_suite::{run_full_test_suite, write_test_suite_report};
-
 
 pub fn handle_command(state: &mut AgentState, cmd: &str) {
     state.ui.last_activity = Instant::now();
@@ -35,26 +32,6 @@ pub fn handle_command(state: &mut AgentState, cmd: &str) {
 
         cmd if cmd.starts_with("model use ") => model_use(state, cmd),
         "model show" => model_show(state),
-
-        "run-tests" | "test-suite" => {
-            let repo_root = match std::env::current_dir() {
-                Ok(p) => p,
-                Err(e) => {
-                    log(state, LogLevel::Error, format!("Failed to get repo root: {e}"));
-                    return;
-                }
-            };
-
-            match run_full_test_suite(state, repo_root) {
-                Ok(_) => {
-                    log(state, LogLevel::Info, "Test suite started".to_string());
-                }
-                Err(e) => {
-                    log(state, LogLevel::Error, format!("Failed to start test suite: {e}"));
-                }
-            }
-        },
-
         "artifacts test" => show_test_artifact(state),
 
         "branch new" => {
@@ -97,10 +74,9 @@ fn help(state: &mut AgentState) {
     log(state, Info, "  model use anthropic <model>  — configure Anthropic model (prompts for key)");
     log(state, Info, "  model show                  — show active model");
 
-    log(state, Info, "  agent run <n>                — generate and run tests for change <n> & --reload for bypassing cache");
+    log(state, Info, "  agent run <n>                —  agent run <diff number> --reload (bypass cache) --full (run full test suite) --unbounded (no limits for retry)");
     log(state, Info, "  agent status                 — show agent execution state");
     log(state, Info, "  agent cancel                 — cancel running agent");
-    log(state, Info, "  run-tests | test-suite        — run full test suite");
     log(state, Info, "  artifacts test               — show last generated test");
 
     log(state, Info, "  branch new                   — create agent branch");
@@ -192,9 +168,13 @@ fn view_change(state: &mut AgentState, cmd: &str) {
 fn agent_run(state: &mut AgentState, cmd: &str) {
     let parts: Vec<&str> = cmd.split_whitespace().collect();
 
-    // agent run <n> [--reload]
+    // agent run <n> [--reload] [--full] [--unbounded]
     if parts.len() < 3 {
-        log(state, LogLevel::Warn, "Usage: agent run <n> [--reload]");
+        log(
+            state,
+            LogLevel::Warn,
+            "Usage: agent run <n> [--reload] [--full] [--unbounded]",
+        );
         return;
     }
 
@@ -206,12 +186,27 @@ fn agent_run(state: &mut AgentState, cmd: &str) {
         }
     };
 
+    // ---- parse flags ----
     let reload = parts.iter().any(|p| *p == "--reload");
+    let full = parts.iter().any(|p| *p == "--full");
+    let unbounded = parts.iter().any(|p| *p == "--unbounded");
 
+    // ---- log intent ----
     if reload {
         log(state, LogLevel::Info, "🔄 Reload requested (bypassing caches)");
     }
+    if full {
+        log(state, LogLevel::Info, "🧪 Full test suite enabled");
+    }
+    if unbounded {
+        log(
+            state,
+            LogLevel::Warn,
+            "⚠ Unbounded mode enabled (LLM usage may be unlimited)",
+        );
+    }
 
+    // ---- generate candidates ----
     let diff = state.context.diff_analysis[idx].clone();
     let candidates = generate_test_candidates(std::slice::from_ref(&diff));
 
@@ -220,15 +215,21 @@ fn agent_run(state: &mut AgentState, cmd: &str) {
         return;
     }
 
+    // ---- update agent context ----
     state.context.test_candidates = candidates;
     state.context.last_generated_test = None;
     state.context.generated_tests_ready = false;
-    state.force_reload = reload;
 
-    // force re-entry
+    // ---- set run options ----
+    state.run_options = AgentRunOptions {
+        force_reload: reload,
+        full_suite: full,
+        unbounded,
+    };
+
+    // ---- trigger agent execution ----
     state.lifecycle.phase = Phase::Idle;
     state.lifecycle.phase = Phase::ExecuteAgent;
-
 }
 
 
@@ -410,12 +411,10 @@ pub fn update_command_hints(state: &mut AgentState) {
         "Configure Anthropic model (will prompt for API key)"
     );
     hint!("model show", "Show active model");
-    hint!("agent run ", "Generate and run tests for change <n> --reload for bypassing cache");
+    hint!("agent run ", "agent run <diff num> --reload (bypass cache) --full (run full tests) --unbounded (no limits)");
     hint!("agent status", "Show agent execution state");
     hint!("agent cancel", "Cancel running agent");
     hint!("artifacts test", "Show last generated test");
-    hint!("run-tests", "Run full test suite");
-    hint!("test-suite", "Run full test suite");
     hint!("branch new", "Create agent branch");
     hint!("branch rollback", "Rollback agent branch");
     hint!("branch list", "List git branches");
