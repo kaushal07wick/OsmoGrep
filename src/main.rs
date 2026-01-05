@@ -137,11 +137,11 @@ fn drain_agent_events(state: &mut AgentState) {
     }
 }
 
-
+//init the osmogrep first
 fn init_state() -> AgentState {
     let (agent_tx, agent_rx) = channel::<AgentEvent>();
 
-    AgentState {
+    let mut state = AgentState {
         lifecycle: LifecycleState {
             phase: Phase::Init,
             base_branch: None,
@@ -150,7 +150,6 @@ fn init_state() -> AgentState {
             agent_branch: None,
             language: None,
         },
-
         context: AgentContext {
             diff_analysis: Vec::new(),
             test_candidates: Vec::new(),
@@ -159,7 +158,6 @@ fn init_state() -> AgentState {
             last_test_result: None,
             last_suite_report: None,
         },
-
         ui: UiState {
             input: String::new(),
             history: Vec::new(),
@@ -167,23 +165,19 @@ fn init_state() -> AgentState {
             hint: None,
             autocomplete: None,
             last_activity: Instant::now(),
-
             selected_diff: None,
             diff_scroll: 0,
             diff_scroll_x: 0,
             in_diff_view: false,
             diff_side_by_side: false,
             focus: Focus::Input,
-
-            exec_scroll: 0,
+            exec_scroll: usize::MAX, // follow tail by default
             active_spinner: None,
             spinner_started_at: None,
             spinner_elapsed: None,
-
             panel_view: None,
             panel_scroll: 0,
             panel_scroll_x: 0,
-
             cached_log_lines: Vec::new(),
             last_log_len: 0,
             dirty: true,
@@ -193,7 +187,9 @@ fn init_state() -> AgentState {
             input_placeholder: None,
         },
         logs: LogBuffer::new(),
-        llm_backend: LlmBackend::Remote {client: LlmClient::new(),},
+        llm_backend: LlmBackend::Remote {
+            client: LlmClient::new(),
+        },
         agent_tx,
         agent_rx,
         cancel_requested: Arc::new(AtomicBool::new(false)),
@@ -201,7 +197,15 @@ fn init_state() -> AgentState {
         run_options: AgentRunOptions::default(),
         started_at: Instant::now(),
         repo_root: PathBuf::new(),
-    }
+    };
+
+    // ---- startup banner (ONCE) ----
+    state.push_log(LogLevel::Info, "");
+    state.push_log(LogLevel::Info, "OsmoGrep v0.1.0");
+    state.push_log(LogLevel::Info, "Run /help to see commands");
+    state.push_log(LogLevel::Info, "");
+
+    state
 }
 
 fn handle_event(
