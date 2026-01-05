@@ -86,8 +86,6 @@ Write code, and stage your changes via `git add .` then run osmogrep.
 
 `quit` - exit osmogrep
 
-## Licencse
+## 📄 License
 
-Feel free to use this code.
-
-[MIT License](.LICENSE) 
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
