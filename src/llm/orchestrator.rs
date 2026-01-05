@@ -1,27 +1,29 @@
-// src/llm/orchestrator.rs
-
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc::Sender,
     Arc,
 };
 use std::thread;
+use std::time::Duration;
+
 use crate::context::types::FullContextSnapshot;
 use crate::detectors::language::Language;
 use crate::llm::backend::LlmBackend;
-use crate::llm::client::LlmRunResult;
 use crate::llm::prompt::{build_prompt, build_prompt_with_feedback};
-use crate::state::{AgentEvent, LogLevel, TestDecision, TestResult};
+use crate::state::{AgentEvent, AgentRunOptions, LogLevel, TestDecision, TestResult};
 use crate::testgen::candidate::TestCandidate;
 use crate::testgen::materialize::materialize_test;
 use crate::testgen::runner::{run_test, TestRunRequest};
+use crate::testgen::test_suite::run_test_suite_and_report;
 use crate::testgen::cache::{SemanticCache, SemanticKey};
 
 const MAX_LLM_RETRIES: usize = 3;
 const MAX_ERROR_CHARS: usize = 4_000;
-use crate::state::AgentRunOptions;
 
-pub fn run_llm_test_flow(
+/// ------------------------------
+/// Single-test repair flow
+/// ------------------------------
+pub fn run_single_test_flow(
     tx: Sender<AgentEvent>,
     cancel_flag: Arc<AtomicBool>,
     llm: LlmBackend,
@@ -30,16 +32,9 @@ pub fn run_llm_test_flow(
     language: Language,
     semantic_cache: Arc<SemanticCache>,
     run_options: AgentRunOptions,
-){
+) {
     thread::spawn(move || {
-        let check_cancel = || cancel_flag.load(Ordering::SeqCst);
-
-        let cancel_and_exit = || {
-            let _ = tx.send(AgentEvent::SpinnerStop);
-            let _ = tx.send(AgentEvent::Failed(
-                "Agent cancelled".to_string(),
-            ));
-        };
+        let cancelled = || cancel_flag.load(Ordering::SeqCst);
 
         let fail = |msg: &str| {
             let _ = tx.send(AgentEvent::SpinnerStop);
@@ -49,7 +44,7 @@ pub fn run_llm_test_flow(
 
         // ---- eligibility ----
         if matches!(candidate.decision, TestDecision::No) {
-            fail("Change is not test-worthy.");
+            fail("Change is not test-worthy");
             return;
         }
 
@@ -57,31 +52,24 @@ pub fn run_llm_test_flow(
             .code
             .files
             .iter()
-            .find(|f| f.path == candidate.diff.file)
+            .find(|f| f.path == candidate.file)
         {
             Some(c) => c,
             None => {
-                fail("No context found for selected diff file.");
+                fail("No context found for selected file");
                 return;
             }
         };
 
-        // ---- start spinner (once) ----
         let _ = tx.send(AgentEvent::SpinnerStart(
-            "Generating & running tests…".to_string(),
+            "Generating & running tests…".into(),
         ));
 
-        // ---- semantic cache ----
-        let semantic_key = SemanticKey::from_candidate(&candidate);
-        let cache_key = semantic_key.to_cache_key();
+        let cache_key = SemanticKey::from_candidate(&candidate).to_cache_key();
 
+        // ---- cache fast path ----
         if !run_options.force_reload {
             if let Some(test_path) = semantic_cache.get(&cache_key) {
-                if check_cancel() {
-                    cancel_and_exit();
-                    return;
-                }
-
                 let request = match language {
                     Language::Python => TestRunRequest::Python { test_path },
                     Language::Rust => TestRunRequest::Rust,
@@ -97,38 +85,28 @@ pub fn run_llm_test_flow(
 
                 match result {
                     TestResult::Passed => {
-                        let _ = tx.send(AgentEvent::Log(
-                            LogLevel::Success,
-                            "Cached test passed".to_string(),
-                        ));
-                        
                         let _ = tx.send(AgentEvent::SpinnerStop);
                         let _ = tx.send(AgentEvent::Finished);
+                        return;
                     }
-                    TestResult::Failed { output } => {
-                        fail(&output);
+                    TestResult::Failed { .. } => {
+                        let _ = tx.send(AgentEvent::Log(
+                            LogLevel::Warn,
+                            "Cached test failed — regenerating via LLM".into(),
+                        ));
                     }
                 }
-                return;
             }
         }
-
 
         // ---- LLM retry loop ----
         let mut last_test_code: Option<String> = None;
         let mut last_failure: Option<String> = None;
 
         for attempt in 1..=MAX_LLM_RETRIES {
-            if check_cancel() {
-                cancel_and_exit();
+            if cancelled() {
+                fail("Agent cancelled");
                 return;
-            }
-
-            if attempt > 1 {
-                let _ = tx.send(AgentEvent::Log(
-                    LogLevel::Warn,
-                    "Retrying with feedback".to_string(),
-                ));
             }
 
             let _ = tx.send(AgentEvent::Log(
@@ -136,27 +114,18 @@ pub fn run_llm_test_flow(
                 format!("LLM attempt {attempt}/{MAX_LLM_RETRIES}"),
             ));
 
-            let test_ctx = &snapshot.tests;
-
             let prompt = match (&last_test_code, &last_failure) {
-                (Some(code), Some(err)) => {
-                    build_prompt_with_feedback(
-                        &candidate,
-                        file_ctx,
-                        test_ctx,
-                        code,
-                        err,
-                    )
-                }
-                _ => build_prompt(
+                (Some(code), Some(err)) => build_prompt_with_feedback(
                     &candidate,
                     file_ctx,
-                    test_ctx,
+                    &snapshot.tests,
+                    code,
+                    err,
                 ),
+                _ => build_prompt(&candidate, file_ctx, &snapshot.tests),
             };
 
-            // ---- LLM run ----
-            let llm_result: LlmRunResult = match llm.run(prompt, run_options.force_reload) {
+            let llm_result = match llm.run(prompt, run_options.force_reload) {
                 Ok(r) => r,
                 Err(e) => {
                     last_failure = Some(e);
@@ -164,24 +133,9 @@ pub fn run_llm_test_flow(
                 }
             };
 
-            if check_cancel() {
-                cancel_and_exit();
-                return;
-            }
-
-            if let Some(cached) = llm_result.cached_tokens {
-                let _ = tx.send(AgentEvent::Log(
-                    LogLevel::Info,
-                    format!(
-                        "🟢 LLM cache hit: {} tokens (hash={})",
-                        cached, llm_result.prompt_hash
-                    ),
-                ));
-            }
-
             let test_code = sanitize_llm_output(&llm_result.text);
             if test_code.is_empty() {
-                last_failure = Some("LLM produced empty output".to_string());
+                last_failure = Some("LLM produced empty output".into());
                 continue;
             }
 
@@ -191,7 +145,7 @@ pub fn run_llm_test_flow(
             let repo_root = match std::env::current_dir() {
                 Ok(p) => p,
                 Err(e) => {
-                    fail(&format!("Failed to get repo root: {e}"));
+                    fail(&format!("Repo root error: {e}"));
                     return;
                 }
             };
@@ -204,7 +158,7 @@ pub fn run_llm_test_flow(
             ) {
                 Ok(p) => p,
                 Err(e) => {
-                    last_failure = Some(format!("Failed to write test: {e}"));
+                    last_failure = Some(e.to_string());
                     continue;
                 }
             };
@@ -224,18 +178,9 @@ pub fn run_llm_test_flow(
             let result = run_test(request);
             let _ = tx.send(AgentEvent::TestFinished(result.clone()));
 
-            if check_cancel() {
-                cancel_and_exit();
-                return;
-            }
-
             match result {
                 TestResult::Passed => {
                     semantic_cache.insert(cache_key, test_path_for_cache);
-                    let _ = tx.send(AgentEvent::Log(
-                        LogLevel::Success,
-                        "Test passed — cached".to_string(),
-                    ));
                     let _ = tx.send(AgentEvent::SpinnerStop);
                     let _ = tx.send(AgentEvent::Finished);
                     return;
@@ -250,6 +195,116 @@ pub fn run_llm_test_flow(
     });
 }
 
+/// ------------------------------
+/// Full-suite orchestration
+/// ------------------------------
+pub fn run_full_suite_flow(
+    tx: Sender<AgentEvent>,
+    cancel_flag: Arc<AtomicBool>,
+    llm: LlmBackend,
+    snapshot: FullContextSnapshot,
+    language: Language,
+    semantic_cache: Arc<SemanticCache>,
+    run_options: AgentRunOptions,
+) {
+    thread::spawn(move || {
+        let repo_root = match std::env::current_dir() {
+            Ok(p) => p,
+            Err(e) => {
+                let _ = tx.send(AgentEvent::Failed(e.to_string()));
+                return;
+            }
+        };
+
+        let _ = tx.send(AgentEvent::SpinnerStart(
+            "Running full test suite…".into(),
+        ));
+
+        let mut rounds = 0;
+
+        loop {
+            if cancel_flag.load(Ordering::SeqCst) {
+                let _ = tx.send(AgentEvent::Failed("Agent cancelled".into()));
+                return;
+            }
+
+            rounds += 1;
+
+            let suite = match run_test_suite_and_report(language, &repo_root) {
+                Ok(s) => s,
+                Err(e) => {
+                    let _ = tx.send(AgentEvent::Failed(e.to_string()));
+                    return;
+                }
+            };
+
+            let _ = tx.send(AgentEvent::TestSuiteReport(
+                suite.report_path.clone(),
+            ));
+
+            let failure_count = suite.failures.len();
+
+            if failure_count == 0 {
+                let _ = tx.send(AgentEvent::Log(
+                    LogLevel::Success,
+                    "✅ Full test suite passed (0 failures)".into(),
+                ));
+
+                let _ = tx.send(AgentEvent::Log(
+                    LogLevel::Info,
+                    format!("📄 Report: {}", suite.report_path.display()),
+                ));
+
+                let _ = tx.send(AgentEvent::SpinnerStop);
+                let _ = tx.send(AgentEvent::Finished);
+                return;
+            }
+
+            let _ = tx.send(AgentEvent::Log(
+                LogLevel::Warn,
+                format!("❌ {} test failure(s) detected", failure_count),
+            ));
+
+            if !run_options.unbounded && rounds > MAX_LLM_RETRIES {
+                let _ = tx.send(AgentEvent::Failed(
+                    "Full-suite repair exhausted retry limit".into(),
+                ));
+                return;
+            }
+
+            let failing = &suite.failures[0];
+
+            let _ = tx.send(AgentEvent::Log(
+                LogLevel::Info,
+                format!("🛠 Fixing {}::{}", failing.file, failing.test),
+            ));
+
+            let candidate = TestCandidate::from_test_failure(
+                failing.file.clone(),
+                failing.test.clone(),
+            );
+
+            run_single_test_flow(
+                tx.clone(),
+                cancel_flag.clone(),
+                llm.clone(),
+                snapshot.clone(),
+                candidate,
+                language,
+                semantic_cache.clone(),
+                run_options.clone(),
+            );
+
+            // TEMPORARY: allow single-test flow to complete
+            // (safe given current state-machine reentry)
+            thread::sleep(Duration::from_millis(800));
+        }
+    });
+}
+
+/// ------------------------------
+/// helpers
+/// ------------------------------
 fn trim_error(s: &str) -> String {
     if s.len() > MAX_ERROR_CHARS {
         s[..MAX_ERROR_CHARS].to_string()

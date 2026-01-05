@@ -1,3 +1,7 @@
+///src/commands.rs
+/// 
+/// command intent and calling
+
 use std::hint;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
@@ -68,21 +72,20 @@ fn help(state: &mut AgentState) {
     log(state, Info, "  inspect                     — analyze git changes and build context");
     log(state, Info, "  changes                     — list analyzed changes");
     log(state, Info, "  changes <n>                  — view diff for change <n>");
-
     log(state, Info, "  model use ollama <model>     — use local Ollama model");
     log(state, Info, "  model use openai <model>     — configure OpenAI model (prompts for key)");
     log(state, Info, "  model use anthropic <model>  — configure Anthropic model (prompts for key)");
     log(state, Info, "  model show                  — show active model");
-
-    log(state, Info, "  agent run <n>                —  agent run <diff number> --reload (bypass cache) --full (run full test suite) --unbounded (no limits for retry)");
+    log(state, Info, "  agent run <n>                — run agent on change <n>");
+    log(state, Info, "                                flags: --reload (bypass cache), --unbounded (no retry limits)");
+    log(state, Info, "  agent run --full             — run full test suite autonomously");
+    log(state, Info, "                                flags: --reload (bypass cache), --unbounded (no retry limits)");
     log(state, Info, "  agent status                 — show agent execution state");
     log(state, Info, "  agent cancel                 — cancel running agent");
     log(state, Info, "  artifacts test               — show last generated test");
-
     log(state, Info, "  branch new                   — create agent branch");
     log(state, Info, "  branch rollback              — rollback agent branch");
     log(state, Info, "  branch list                  — list git branches");
-
     log(state, Info, "  clear | logs clear            — clear logs");
     log(state, Info, "  close                        — close active view");
     log(state, Info, "  quit                         — exit osmogrep");
@@ -168,12 +171,56 @@ fn view_change(state: &mut AgentState, cmd: &str) {
 fn agent_run(state: &mut AgentState, cmd: &str) {
     let parts: Vec<&str> = cmd.split_whitespace().collect();
 
-    // agent run <n> [--reload] [--full] [--unbounded]
+    // ---- parse flags first ----
+    let reload = parts.iter().any(|p| *p == "--reload");
+    let full = parts.iter().any(|p| *p == "--full");
+    let unbounded = parts.iter().any(|p| *p == "--unbounded");
+
+    // ---- log intent ----
+    if reload {
+        log(state, LogLevel::Info, "🔄 Reload requested (bypassing caches)");
+    }
+    if full {
+        log(state, LogLevel::Info, "🧪 Full test suite mode enabled");
+    }
+    if unbounded {
+        log(
+            state,
+            LogLevel::Warn,
+            "⚠ Unbounded mode enabled (LLM usage may be unlimited)",
+        );
+    }
+    if full {
+        // Reject numeric index in full mode
+        if parts.iter().any(|p| p.parse::<usize>().is_ok()) {
+            log(
+                state,
+                LogLevel::Warn,
+                "Usage: agent run --full [--reload] [--unbounded]",
+            );
+            return;
+        }
+
+        state.context.test_candidates.clear();
+        state.context.last_generated_test = None;
+        state.context.generated_tests_ready = false;
+
+        state.run_options = AgentRunOptions {
+            force_reload: reload,
+            full_suite: true,
+            unbounded,
+        };
+
+        state.lifecycle.phase = Phase::Idle;
+        state.lifecycle.phase = Phase::ExecuteAgent;
+        return;
+    }
+
     if parts.len() < 3 {
         log(
             state,
             LogLevel::Warn,
-            "Usage: agent run <n> [--reload] [--full] [--unbounded]",
+            "Usage: agent run <n> [--reload] [--unbounded]",
         );
         return;
     }
@@ -186,27 +233,6 @@ fn agent_run(state: &mut AgentState, cmd: &str) {
         }
     };
 
-    // ---- parse flags ----
-    let reload = parts.iter().any(|p| *p == "--reload");
-    let full = parts.iter().any(|p| *p == "--full");
-    let unbounded = parts.iter().any(|p| *p == "--unbounded");
-
-    // ---- log intent ----
-    if reload {
-        log(state, LogLevel::Info, "🔄 Reload requested (bypassing caches)");
-    }
-    if full {
-        log(state, LogLevel::Info, "🧪 Full test suite enabled");
-    }
-    if unbounded {
-        log(
-            state,
-            LogLevel::Warn,
-            "⚠ Unbounded mode enabled (LLM usage may be unlimited)",
-        );
-    }
-
-    // ---- generate candidates ----
     let diff = state.context.diff_analysis[idx].clone();
     let candidates = generate_test_candidates(std::slice::from_ref(&diff));
 
@@ -215,19 +241,16 @@ fn agent_run(state: &mut AgentState, cmd: &str) {
         return;
     }
 
-    // ---- update agent context ----
     state.context.test_candidates = candidates;
     state.context.last_generated_test = None;
     state.context.generated_tests_ready = false;
 
-    // ---- set run options ----
     state.run_options = AgentRunOptions {
         force_reload: reload,
-        full_suite: full,
+        full_suite: false,
         unbounded,
     };
 
-    // ---- trigger agent execution ----
     state.lifecycle.phase = Phase::Idle;
     state.lifecycle.phase = Phase::ExecuteAgent;
 }
@@ -411,7 +434,14 @@ pub fn update_command_hints(state: &mut AgentState) {
         "Configure Anthropic model (will prompt for API key)"
     );
     hint!("model show", "Show active model");
-    hint!("agent run ", "agent run <diff num> --reload (bypass cache) --full (run full tests) --unbounded (no limits)");
+    hint!(
+        "agent run ",
+        "agent run <n> [--reload] [--unbounded] | agent run --full [--reload] [--unbounded]"
+    );
+    hint!(
+        "agent run --full",
+        "Run full test suite autonomously (no diff index required)"
+    );
     hint!("agent status", "Show agent execution state");
     hint!("agent cancel", "Cancel running agent");
     hint!("artifacts test", "Show last generated test");

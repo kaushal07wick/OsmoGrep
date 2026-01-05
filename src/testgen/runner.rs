@@ -1,4 +1,3 @@
-// src/testgen/runner.rs
 // Executes test commands and returns raw output + timing.
 // No parsing. No interpretation. No intelligence.
 
@@ -34,7 +33,7 @@ pub struct TestCaseResult {
 #[derive(Debug, Clone)]
 pub struct TestSuiteResult {
     /// Intentionally empty.
-    /// Parsing and interpretation happen in suite.rs only.
+    /// Parsing and interpretation happen in test_suite.rs only.
     pub cases: Vec<TestCaseResult>,
 
     /// Wall-clock duration of the test run.
@@ -43,6 +42,10 @@ pub struct TestSuiteResult {
     /// Full raw stdout + stderr, unparsed.
     pub raw_output: String,
 }
+
+//
+// -------- Single test runner --------
+//
 
 pub fn run_test(req: TestRunRequest) -> TestResult {
     let output = match req {
@@ -89,27 +92,25 @@ pub fn run_test(req: TestRunRequest) -> TestResult {
     }
 }
 
-pub fn run_full_test_async<F>(language: Language, on_done: F)
-where
-    F: FnOnce(TestSuiteResult) + Send + 'static,
-{
-    std::thread::spawn(move || {
-        let suite = match language {
-            Language::Python => run_full_python_tests(),
-            Language::Rust => run_full_rust_tests(),
-            _ => TestSuiteResult {
-                cases: Vec::new(),
-                duration_ms: 0,
-                raw_output: "unsupported language".into(),
-            },
-        };
+//
+// -------- Full test suite runner --------
+//
 
-        on_done(suite);
-    });
+/// Runs the entire test suite synchronously and returns raw output.
+/// No parsing, no retries, no threads.
+pub fn run_test_suite(language: Language) -> TestSuiteResult {
+    match language {
+        Language::Python => run_python_test_suite(),
+        Language::Rust => run_rust_test_suite(),
+        _ => TestSuiteResult {
+            cases: Vec::new(),
+            duration_ms: 0,
+            raw_output: "unsupported language".into(),
+        },
+    }
 }
 
-
-fn run_full_python_tests() -> TestSuiteResult {
+fn run_python_test_suite() -> TestSuiteResult {
     let start = Instant::now();
 
     let output = Command::new("python")
@@ -151,7 +152,7 @@ fn run_full_python_tests() -> TestSuiteResult {
     }
 }
 
-fn run_full_rust_tests() -> TestSuiteResult {
+fn run_rust_test_suite() -> TestSuiteResult {
     let start = Instant::now();
 
     let output = Command::new("cargo")

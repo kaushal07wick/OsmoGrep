@@ -13,7 +13,14 @@ mod context;
 
 use std::{ error::Error, io, path::PathBuf, sync::{Arc, atomic::AtomicBool}, time::{Duration, Instant} };
 use std::sync::mpsc::channel;
-use crate::{llm::{backend::LlmBackend, client::{LlmClient, Provider}}, logger::log, state::{AgentRunOptions, InputMode}, testgen::test_suite::run_full_test_suite};
+use crate::{
+    llm::{
+        backend::LlmBackend,
+        client::{LlmClient, Provider},
+    },
+    logger::log,
+    state::{AgentRunOptions, InputMode},
+};
 use crossterm::{
     event::{self, Event, KeyCode, MouseEventKind},
     execute,
@@ -113,6 +120,10 @@ fn drain_agent_events(state: &mut AgentState) {
                 state.ui.panel_scroll = 0;
             }
 
+            AgentEvent::TestSuiteReport(path) => {
+                state.context.last_suite_report = Some(path);
+            }
+
             AgentEvent::Finished => {
                 state.push_log(LogLevel::Success, "Agent finished");
                 state.lifecycle.phase = Phase::Idle;
@@ -146,6 +157,7 @@ fn init_state() -> AgentState {
             last_generated_test: None,
             generated_tests_ready: false,
             last_test_result: None,
+            last_suite_report: None,
         },
 
         ui: UiState {

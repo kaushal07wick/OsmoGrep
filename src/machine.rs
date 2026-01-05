@@ -6,13 +6,10 @@ use std::path::{PathBuf};
 use std::sync::atomic::Ordering;
 use crate::testgen::cache::SemanticCache;
 use std::sync::Arc;
-
-
-
 use crate::{
     detectors::{language::detect_language},
     git,
-    llm::orchestrator::run_llm_test_flow,
+    llm::orchestrator::{run_single_test_flow, run_full_suite_flow},
     logger::log,
     testgen::summarizer::summarize,
 };
@@ -87,35 +84,21 @@ fn create_agent_branch(state: &mut AgentState) {
     log(state, LogLevel::Success, format!("Created agent branch {}", branch));
     transition(state, Phase::Idle);
 }
+
+///execute the agent (calls the orchestrator)
 fn execute_agent(state: &mut AgentState) {
-    // ---- reset cancellation for this run ----
     state.cancel_requested.store(false, Ordering::SeqCst);
 
-    // ---- branch management ----
     let branch = ensure_agent_branch(state);
     checkout_branch(state, &branch);
 
     let repo_root = state.repo_root.clone();
-
-    // ---- build full context snapshot ----
     let snapshot = build_full_context_snapshot(
         &repo_root,
         &state.context.diff_analysis,
     );
-
     state.full_context_snapshot = Some(snapshot.clone());
 
-    // ---- select candidate ----
-    let candidate = match state.context.test_candidates.first().cloned() {
-        Some(c) => c,
-        None => {
-            log(state, LogLevel::Warn, "No test candidate available.");
-            transition(state, Phase::Idle);
-            return;
-        }
-    };
-
-    // ---- language must exist ----
     let language = match state.lifecycle.language {
         Some(l) => l,
         None => {
@@ -125,24 +108,53 @@ fn execute_agent(state: &mut AgentState) {
         }
     };
 
-    log(state, LogLevel::Info, "🤖 Agent started");
+    let run_options = state.run_options.clone();
 
-    // ---- read run options ----
-    let force_reload = state.run_options.force_reload;
+    log(
+        state,
+        LogLevel::Info,
+        if run_options.full_suite {
+            "🤖 Agent started (full test suite mode)"
+        } else {
+            "🤖 Agent started (single test mode)"
+        },
+    );
 
-    let llm_backend = state.llm_backend.clone();
+    let llm = state.llm_backend.clone();
     let semantic_cache = Arc::new(SemanticCache::new());
 
-    run_llm_test_flow(
-        state.agent_tx.clone(),
-        state.cancel_requested.clone(),
-        llm_backend,
-        snapshot,
-        candidate,
-        language,
-        semantic_cache,
-        state.run_options.clone(),
-    );
+    // ---- single orchestration decision ----
+    if run_options.full_suite {
+        run_full_suite_flow(
+            state.agent_tx.clone(),
+            state.cancel_requested.clone(),
+            llm,
+            snapshot,
+            language,
+            semantic_cache,
+            run_options,
+        );
+    } else {
+        let candidate = match state.context.test_candidates.first().cloned() {
+            Some(c) => c,
+            None => {
+                log(state, LogLevel::Warn, "No test candidate available.");
+                transition(state, Phase::Idle);
+                return;
+            }
+        };
+
+        run_single_test_flow(
+            state.agent_tx.clone(),
+            state.cancel_requested.clone(),
+            llm,
+            snapshot,
+            candidate,
+            language,
+            semantic_cache,
+            run_options,
+        );
+    }
 
     transition(state, Phase::Running);
 }

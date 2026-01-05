@@ -7,7 +7,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
-use crate::state::{AgentState};
+use crate::{state::AgentState};
 use crate::ui::helpers::{
     framework_badge,
     language_badge,
@@ -237,6 +237,15 @@ pub fn render_side_status(
         ]));
     }
 
+    // ───────── Test Suite ─────────
+    if state.context.last_suite_report.is_some() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("Test Suite", Style::default().fg(Color::DarkGray)),
+            Span::raw(": "),
+            Span::styled("Report generated", Style::default().fg(Color::Green)),
+        ]));
+    }
     f.render_widget(Paragraph::new(lines), chunks[0]);
 
     // ───────── Repo ─────────
@@ -257,7 +266,6 @@ pub fn render_side_status(
         ])),
         chunks[1],
     );
-
 
     // ───────── Version ─────────
     f.render_widget(

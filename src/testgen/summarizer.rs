@@ -51,6 +51,8 @@ fn behavior_statement(d: &DiffAnalysis) -> String {
 
         ChangeSurface::PureLogic =>
             "Previously valid behavior continues to work as expected".into(),
+        ChangeSurface::Unknown =>
+            "Unknown failure, test full must have made this".into(),
     }
 }
 
@@ -83,7 +85,8 @@ fn infer_risk(d: &DiffAnalysis) -> RiskLevel {
             RiskLevel::Medium,
 
         | ChangeSurface::Cosmetic
-        | ChangeSurface::PureLogic =>
+        | ChangeSurface::PureLogic 
+        | ChangeSurface::Unknown =>
             RiskLevel::Low,
     }
 }

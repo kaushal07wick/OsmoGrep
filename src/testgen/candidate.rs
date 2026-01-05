@@ -27,3 +27,35 @@ pub struct TestCandidate {
     pub old_code: Option<String>,
     pub new_code: Option<String>,
 }
+
+impl TestCandidate {
+    pub fn from_test_failure(
+        file: String,
+        test_name: String,
+    ) -> Self {
+        TestCandidate {
+            id: format!("failure::{}::{}", file, test_name),
+
+            diff: DiffAnalysis {
+                file: file.clone(),
+                symbol: None,
+                surface: crate::state::ChangeSurface::Unknown,
+                delta: None,
+                summary: None,
+            },
+
+            file: file.clone(),
+
+            // symbol intentionally None — resolved later via context lookup
+            symbol: None,
+
+            target: TestTarget::File(file),
+
+            decision: TestDecision::Yes,
+            risk: RiskLevel::High,
+
+            old_code: None,
+            new_code: None,
+        }
+    }
+}

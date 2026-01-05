@@ -6,10 +6,37 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
-use crate::state::{AgentEvent, AgentState, LogLevel};
+use crate::detectors::language::Language;
 use crate::testgen::runner::{
-    run_full_test_async, TestCaseResult, TestOutcome, TestSuiteResult,
+    run_test_suite, TestCaseResult, TestOutcome, TestSuiteResult,
 };
+use std::collections::HashSet;
+
+#[derive(Debug)]
+pub struct TestSuiteExecution {
+    pub passed: bool,
+    pub failures: Vec<TestSuiteFailure>,
+    pub report_path: PathBuf,
+    pub raw_output: String,
+}
+
+impl TestSuiteExecution {
+    pub fn failed_tests(&self) -> &[TestSuiteFailure] {
+        &self.failures
+    }
+
+    pub fn is_clean(&self) -> bool {
+        self.failures.is_empty()
+    }
+}
+
+
+#[derive(Debug)]
+pub struct TestSuiteFailure {
+    pub file: String,
+    pub test: String,
+    pub output: String,
+}
 
 #[derive(Debug, Default)]
 struct ParsedSummary {
@@ -94,44 +121,42 @@ struct IndexFile {
     warnings: Vec<WarningEntry>,
 }
 
-pub fn run_full_test_suite(state: &AgentState, repo_root: PathBuf) -> io::Result<()> {
-    let language = state
-        .lifecycle
-        .language
-        .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "language not detected"))?;
+pub fn run_test_suite_and_report(
+    language: Language,
+    repo_root: &Path,
+) -> io::Result<TestSuiteExecution> {
+    let suite = run_test_suite(language);
 
-    let tx = state.agent_tx.clone();
-
-    run_full_test_async(language, move |suite| {
-        let (summary, _) = parse_pytest_output_fully(&suite.raw_output);
-        let failed = summary.failed > 0;
-
-        let level = if failed { LogLevel::Error } else { LogLevel::Success };
-        let status = if failed { "FAILED" } else { "PASSED" };
-
-        match write_test_suite_report(&repo_root, &suite) {
-            Ok(path) => {
-                let _ = tx.send(AgentEvent::Log(
-                    level,
-                    format!(
-                        "Test suite finished [{}] → artifacts written to {}",
-                        status,
-                        path.display()
-                    ),
-                ));
+    let (summary, cases) = parse_pytest_output_fully(&suite.raw_output);
+    let report_path = write_test_suite_report(repo_root, &suite)?;
+    
+    let mut seen = HashSet::new();
+    let failures = extract_verbose_failures(&suite.raw_output)
+        .into_iter()
+        .filter_map(|(full_name, output)| {
+            if !seen.insert(full_name.clone()) {
+                return None;
             }
-            Err(e) => {
-                let _ = tx.send(AgentEvent::Log(
-                    LogLevel::Error,
-                    format!("Test suite finished [{}] but failed: {e}", status),
-                ));
-            }
-        }
 
-        let _ = tx.send(AgentEvent::Finished);
-    });
+            let (file, test) = full_name
+                .split_once("::")
+                .unwrap_or(("", &full_name));
 
-    Ok(())
+            Some(TestSuiteFailure {
+                file: file.to_string(),
+                test: test.to_string(),
+                output,
+            })
+        })
+        .collect::<Vec<_>>();
+
+
+    Ok(TestSuiteExecution {
+        passed: summary.failed == 0,
+        failures,
+        report_path,
+        raw_output: suite.raw_output,
+    })
 }
 
 fn parse_pytest_output_fully(raw: &str) -> (ParsedSummary, Vec<TestCaseResult>) {

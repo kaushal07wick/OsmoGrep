@@ -9,7 +9,8 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 use crate::state::{Phase, RiskLevel, TestDecision};
 use crate::state::ChangeSurface;
-
+use std::borrow::Cow;
+use std::path::Path;
 
 /// Phase badge (symbol, label, color).
 pub fn phase_badge(phase: &Phase) -> (&'static str, &'static str, Color) {
@@ -139,7 +140,6 @@ pub fn symbol_style() -> Style {
         .add_modifier(Modifier::BOLD)
 }
 
-
 /// Color mapping for diff change surface.
 pub fn surface_color(surface: &ChangeSurface) -> Color {
     match surface {
@@ -151,6 +151,7 @@ pub fn surface_color(surface: &ChangeSurface) -> Color {
         // API / state / error paths → attention
         ChangeSurface::Contract
         | ChangeSurface::State
+        | ChangeSurface::Unknown
         | ChangeSurface::ErrorPath => Color::Red,
     }
 }

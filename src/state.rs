@@ -33,6 +33,7 @@ pub enum AgentEvent {
     TestFinished(TestResult),
     Finished,
     Failed(String),
+    TestSuiteReport(PathBuf),
 }
 
 //results from single test event
@@ -78,6 +79,7 @@ pub enum ChangeSurface {
     ErrorPath,
     State,
     Cosmetic,
+    Unknown,
 }
 
 ///test decision (if test should be generated or not)
@@ -196,6 +198,7 @@ pub struct AgentContext {
     pub last_generated_test: Option<String>,
     pub generated_tests_ready: bool,
     pub last_test_result: Option<TestResult>,
+    pub last_suite_report: Option<PathBuf>,
 }
 
 /// complete UI state.
