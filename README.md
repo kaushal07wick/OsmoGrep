@@ -1,102 +1,111 @@
-
 ![osmogrep](osmogrep.svg)
 
-<p align="left">
-  <img src="https://img.shields.io/badge/status-active-success?style=flat-square" />
-  <img src="https://img.shields.io/badge/interface-terminal--ui-blue?style=flat-square" />
-  <img src="https://img.shields.io/badge/language-rust-orange?style=flat-square" />
-  <img src="https://img.shields.io/badge/human--in--the--loop-required-critical?style=flat-square" />
-  <img src="https://img.shields.io/badge/no%20implicit-git%20mutations-red?style=flat-square" />
-  <img src="https://img.shields.io/badge/branch%20reuse-default-green?style=flat-square" />
-  <img src="https://img.shields.io/badge/build-cargo-orange?style=flat-square" />
-</p>
+OsmoGrep is a terminal-native execution agent for validating code changes by
+**running real tests** against real repositories, with strict isolation and
+deterministic behavior.
 
+It is designed to explore a simple question:
 
-**OsmoGrep** is an interactive, terminal-native **AI E2E execution agent** designed to safely run tests, experiments, and analysis **on uncommitted working trees** without polluting your main branches.
+Can code changes be validated autonomously by executing the code, not by
+reviewing diffs or chatting with the repository?
 
+## What OsmoGrep Does
 
-It gives you a **controlled execution sandbox** inside your own Git repository, with explicit user intent for every destructive action.
+OsmoGrep operates locally on a Git repository and provides:
 
+- Diff-based code inspection
+- AST-backed context extraction
+- AI-generated tests scoped to changes
+- Deterministic test execution
+- Full test suite execution with reports
+- Strict branch isolation (agent branches only)
+- Explicit, inspectable execution logs
 
-## Fundamentals
+## Core Capabilities
 
-OsmoGrep is a **context-first automation tool** for local repositories.
+### Diff Inspector
+- Parses git diffs
+- Extracts changed files, symbols, and surfaces
+- Displays risk and behavioral summaries
+- No full-repo search
 
-It operates under these rules:
+### Context Graph
+- AST-based symbol extraction (Python, Rust)
+- File-level and test-level context snapshots
+- Context is built mechanically, not inferred
 
-* **Context before execution**
-  Language, test framework, branch, and working tree state are detected mechanically before any action.
+### Single-Test Execution
+- Generates minimal tests for a specific change
+- Runs only the generated test
+- Retries with feedback on failure
+- Semantic cache for passing tests
 
-* **No implicit mutations**
-  Nothing is checked out, applied, or executed without an explicit command.
+### Full Test Suite Execution
+- Runs the repository’s real test suite
+- Produces a structured report (logs, failures, metadata)
+- No LLM retries in this mode
+- Used strictly for validation
 
-* **Diff-scoped reasoning**
-  Actions are based on the current diff, not the entire repository.
+### Reports & Artifacts
+- Raw test output
+- Structured failure extraction
+- Markdown report
+- JSON index for automation
 
-* **Isolated execution**
-  Automation runs in agent branches; the original branch remains untouched.
-
-* **Human-controlled flow**
-  OsmoGrep surfaces state and options but does not make irreversible decisions.
-
-It is designed to work safely on **uncommitted code** in active development environments.
-
-
-## Terminal UI
-![osmogrep-tui](osmogrep.png)
-
-* Cursor-aware command input
-* Mouse-focusable command box
-* Explicit execution logs
-* Command History
-* Autocomplete
-* Dynamic Status
-
----
-
-## Commands
-All commands are prefixed with `/`.
-
-| Command     | Action                                       |
-| ----------- | -------------------------------------------- |
-| `/help`     | Show all commands                            |
-| `/exec`     | Checkout agent branch and apply working tree |
-| `/new`      | Create a new agent branch (no checkout)      |
-| `/rollback` | Return to original branch                    |
-| `/quit`     | Exit OsmoGrep                                |
-
-### Input UX
-* `Tab` → autocomplete
-* `↑ / ↓` → history navigation
-* `Enter` → execute command
-* Mouse click → focus input
-
+All artifacts are written to disk and reproducible.
 
 ## Execution Model
 
-**Nothing runs automatically.**
+OsmoGrep never mutates your working branch.
 
-1. OsmoGrep inspects your repo
-2. Your working tree remains untouched
-3. On `/exec`:
+- All automation runs in an agent branch
+- The original branch is preserved
+- No implicit checkouts
+- No implicit commits
+- No hidden file edits
 
-   * Agent branch is checked out
-   * Working tree diff is applied
-   * Tests or automation can run
-4. On `/rollback`:
+Every action requires an explicit command.
 
-   * You return to the original branch
-   * Agent state is cleaned
+## Terminal UI
 
-This guarantees **zero accidental data loss**.
+- Interactive TUI
+- Diff view
+- Context inspection
+- Execution logs
+- Test progress and results
+- Deterministic, replayable output
 
+## LLM Integration
 
+OsmoGrep supports multiple backends:
 
+- Local models (Ollama)
+- Remote APIs (OpenAI-compatible)
+
+LLMs are used only for:
+- Test generation
+- Feedback-driven retries
+
+They are not used for navigation, search, or freeform reasoning.
+
+## Supported Languages
+
+- Python
+- Rust (partial, expanding)
+
+## Design Constraints (Intentional)
+
+OsmoGrep does **not** do the following:
+
+- No freeform repo search
+- No autonomous code editing
+- No speculative refactors
+- No chat-based agent loop
+
+It is a validation engine, not a general coding assistant.
 
 ## Build & Run
+
 ```bash
 cargo build
 cargo run
-```
-
-Run **inside any Git repository**.

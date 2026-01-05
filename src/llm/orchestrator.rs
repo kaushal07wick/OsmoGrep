@@ -4,8 +4,6 @@ use std::sync::{
     Arc,
 };
 use std::thread;
-use std::time::Duration;
-
 use crate::context::types::FullContextSnapshot;
 use crate::detectors::language::Language;
 use crate::llm::backend::LlmBackend;
@@ -20,9 +18,6 @@ use crate::testgen::cache::{SemanticCache, SemanticKey};
 const MAX_LLM_RETRIES: usize = 3;
 const MAX_ERROR_CHARS: usize = 4_000;
 
-/// ------------------------------
-/// Single-test repair flow
-/// ------------------------------
 pub fn run_single_test_flow(
     tx: Sender<AgentEvent>,
     cancel_flag: Arc<AtomicBool>,
@@ -195,17 +190,15 @@ pub fn run_single_test_flow(
     });
 }
 
-/// ------------------------------
-/// Full-suite orchestration
-/// ------------------------------
+/// full testing and reporting only
 pub fn run_full_suite_flow(
     tx: Sender<AgentEvent>,
     cancel_flag: Arc<AtomicBool>,
-    llm: LlmBackend,
-    snapshot: FullContextSnapshot,
+    _llm: LlmBackend,
+    _snapshot: FullContextSnapshot,
     language: Language,
-    semantic_cache: Arc<SemanticCache>,
-    run_options: AgentRunOptions,
+    _semantic_cache: Arc<SemanticCache>,
+    _run_options: AgentRunOptions,
 ) {
     thread::spawn(move || {
         let repo_root = match std::env::current_dir() {
@@ -220,91 +213,55 @@ pub fn run_full_suite_flow(
             "Running full test suite…".into(),
         ));
 
-        let mut rounds = 0;
+        if cancel_flag.load(Ordering::SeqCst) {
+            let _ = tx.send(AgentEvent::Failed("Agent cancelled".into()));
+            return;
+        }
 
-        loop {
-            if cancel_flag.load(Ordering::SeqCst) {
-                let _ = tx.send(AgentEvent::Failed("Agent cancelled".into()));
+        let suite = match run_test_suite_and_report(language, &repo_root) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = tx.send(AgentEvent::Failed(e.to_string()));
                 return;
             }
+        };
 
-            rounds += 1;
+        let _ = tx.send(AgentEvent::TestSuiteReport(
+            suite.report_path.clone(),
+        ));
 
-            let suite = match run_test_suite_and_report(language, &repo_root) {
-                Ok(s) => s,
-                Err(e) => {
-                    let _ = tx.send(AgentEvent::Failed(e.to_string()));
-                    return;
-                }
-            };
+        let _ = tx.send(AgentEvent::Log(
+            LogLevel::Info,
+            format!("📄 Test suite report: {}", suite.report_path.display()),
+        ));
 
-            let _ = tx.send(AgentEvent::TestSuiteReport(
-                suite.report_path.clone(),
+        if suite.failures.is_empty() {
+            let _ = tx.send(AgentEvent::Log(
+                LogLevel::Success,
+                "✅ Full test suite passed (0 failures)".into(),
             ));
-
-            let failure_count = suite.failures.len();
-
-            if failure_count == 0 {
-                let _ = tx.send(AgentEvent::Log(
-                    LogLevel::Success,
-                    "✅ Full test suite passed (0 failures)".into(),
-                ));
-
-                let _ = tx.send(AgentEvent::Log(
-                    LogLevel::Info,
-                    format!("📄 Report: {}", suite.report_path.display()),
-                ));
-
-                let _ = tx.send(AgentEvent::SpinnerStop);
-                let _ = tx.send(AgentEvent::Finished);
-                return;
-            }
-
+        } else {
             let _ = tx.send(AgentEvent::Log(
                 LogLevel::Warn,
-                format!("❌ {} test failure(s) detected", failure_count),
+                format!(
+                    "❌ Full test suite failed ({} failures)",
+                    suite.failures.len()
+                ),
             ));
 
-            if !run_options.unbounded && rounds > MAX_LLM_RETRIES {
-                let _ = tx.send(AgentEvent::Failed(
-                    "Full-suite repair exhausted retry limit".into(),
-                ));
-                return;
-            }
-
-            let failing = &suite.failures[0];
-
+            let first = &suite.failures[0];
             let _ = tx.send(AgentEvent::Log(
-                LogLevel::Info,
-                format!("🛠 Fixing {}::{}", failing.file, failing.test),
+                LogLevel::Warn,
+                format!("First failure: {}::{}", first.file, first.test),
             ));
-
-            let candidate = TestCandidate::from_test_failure(
-                failing.file.clone(),
-                failing.test.clone(),
-            );
-
-            run_single_test_flow(
-                tx.clone(),
-                cancel_flag.clone(),
-                llm.clone(),
-                snapshot.clone(),
-                candidate,
-                language,
-                semantic_cache.clone(),
-                run_options.clone(),
-            );
-
-            // TEMPORARY: allow single-test flow to complete
-            // (safe given current state-machine reentry)
-            thread::sleep(Duration::from_millis(800));
         }
+
+        let _ = tx.send(AgentEvent::SpinnerStop);
+        let _ = tx.send(AgentEvent::Finished);
     });
 }
 
-/// ------------------------------
-/// helpers
-/// ------------------------------
+
 fn trim_error(s: &str) -> String {
     if s.len() > MAX_ERROR_CHARS {
         s[..MAX_ERROR_CHARS].to_string()

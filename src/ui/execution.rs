@@ -58,6 +58,10 @@ pub fn render_execution(
 
         /* ================= DIFF ANALYSIS ================= */
         if log.text == "__DIFF_ANALYSIS__" {
+            // reset per-render state
+            let mut diff_idx = 0usize;
+            let mut diff_counter = 0usize;
+
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
                 Span::raw(LOG_INDENT),
@@ -112,9 +116,8 @@ pub fn render_execution(
                 }
 
                 let mut row = vec![Span::raw(LOG_INDENT)];
-                    row.extend(header);
-                    lines.push(Line::from(row));
-
+                row.extend(header);
+                lines.push(Line::from(row));
 
                 if let Some(summary) = &d.summary {
                     lines.push(Line::from(vec![

@@ -24,7 +24,6 @@
 **Calls**
 - Instant::now
 - LlmBackend::ollama
-- env::current_dir
 - git::list_branches
 - slice::from_ref
 
@@ -229,7 +228,8 @@
 ### src/llm/orchestrator.rs
 
 **Functions**
-- pub fn run_llm_test_flow( tx: Sender<AgentEvent>, cancel_flag: Arc<AtomicBool>, llm: LlmBackend, snapshot: FullContextSnapshot, candidate: TestCandidate, language: Language, semantic_cache: Arc<SemanticCache>, force_reload: bool, )
+- pub fn run_single_test_flow( tx: Sender<AgentEvent>, cancel_flag: Arc<AtomicBool>, llm: LlmBackend, snapshot: FullContextSnapshot, candidate: TestCandidate, language: Language, semantic_cache: Arc<SemanticCache>, run_options: AgentRunOptions, )
+- pub fn run_full_suite_flow( tx: Sender<AgentEvent>, cancel_flag: Arc<AtomicBool>, _llm: LlmBackend, _snapshot: FullContextSnapshot, language: Language, _semantic_cache: Arc<SemanticCache>, _run_options: AgentRunOptions, )
 - fn trim_error(s: &str) -> String
 - fn sanitize_llm_output(raw: &str) -> String
 
@@ -239,6 +239,7 @@
 - AgentEvent::Log
 - AgentEvent::SpinnerStart
 - AgentEvent::TestFinished
+- AgentEvent::TestSuiteReport
 - SemanticKey::from_candidate
 - env::current_dir
 - thread::spawn
@@ -326,11 +327,12 @@
 - AgentEvent::Log
 - AgentEvent::SpinnerStart
 - AgentEvent::TestFinished
+- AgentEvent::TestSuiteReport
+- AgentRunOptions::default
 - Arc::new
 - AtomicBool::new
 - CrosstermBackend::new
 - Duration::from_millis
-- Duration::from_secs
 - Event::Key
 - Event::Mouse
 - Instant::now
@@ -346,7 +348,6 @@
 - event::poll
 - event::read
 - io::stdout
-- thread::sleep
 - ui::draw_ui
 
 ### src/state.rs
@@ -355,6 +356,7 @@
 -  pub fn new() -> Self
 -  pub fn push(&mut self, level: LogLevel, text: impl Into<String>)
 -  pub fn iter(&self) -> impl Iterator<Item = &LogLine>
+-  fn default() -> Self
 -  pub fn history_prev(&mut self)
 -  pub fn history_next(&mut self)
 -  pub fn commit_input(&mut self) -> String
@@ -383,8 +385,10 @@
 ### src/testgen/candidate.rs
 
 **Functions**
+-  pub fn from_test_failure( file: String, test_name: String, ) -> Self
 
 **Calls**
+- TestTarget::File
 
 ### src/testgen/generator.rs
 
@@ -429,9 +433,9 @@
 
 **Functions**
 - pub fn run_test(req: TestRunRequest) -> TestResult
-- pub fn run_full_test_async<F>(language: Language, on_done: F) where F: FnOnce(TestSuiteResult) + Send + 'static,
-- fn run_full_python_tests() -> TestSuiteResult
-- fn run_full_rust_tests() -> TestSuiteResult
+- pub fn run_test_suite(language: Language) -> TestSuiteResult
+- fn run_python_test_suite() -> TestSuiteResult
+- fn run_rust_test_suite() -> TestSuiteResult
 
 **Calls**
 - Command::new
@@ -440,7 +444,6 @@
 - String::new
 - Vec::new
 - env::current_dir
-- thread::spawn
 
 ### src/testgen/summarizer.rs
 
@@ -455,7 +458,8 @@
 ### src/testgen/test_suite.rs
 
 **Functions**
-- pub fn run_full_test_suite(state: &AgentState, repo_root: PathBuf) -> io::Result<()>
+-  pub fn is_clean(&self) -> bool
+- pub fn run_test_suite_and_report( language: Language, repo_root: &Path, ) -> io::Result<TestSuiteExecution>
 - fn parse_pytest_output_fully(raw: &str) -> (ParsedSummary, Vec<TestCaseResult>)
 - fn parse_footer_summary_line(line: &str, out: &mut ParsedSummary)
 - fn extract_failed_tests(raw: &str) -> std::collections::HashSet<String>
@@ -467,7 +471,6 @@
 - pub fn write_test_suite_report( repo_root: &Path, suite: &TestSuiteResult, ) -> io::Result<PathBuf>
 
 **Calls**
-- AgentEvent::Log
 - BTreeMap::new
 - Error::new
 - File::create
@@ -603,7 +606,6 @@
 
 ### Thread creation
 - src/llm/orchestrator.rs → thread::spawn
-- src/testgen/runner.rs → thread::spawn
 
 ### Process execution
 - src/git.rs → Command::new
@@ -613,5 +615,4 @@
 ### AgentEvent fan-out
 - src/llm/orchestrator.rs
 - src/main.rs
-- src/testgen/test_suite.rs
 
