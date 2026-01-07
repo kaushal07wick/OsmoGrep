@@ -109,20 +109,28 @@ pub fn run_test_suite(language: Language) -> TestSuiteResult {
         },
     }
 }
-
 fn run_python_test_suite() -> TestSuiteResult {
     let start = Instant::now();
+    let cwd = std::env::current_dir().unwrap();
 
+    // Merge PYTHONPATH properly
+    let existing_pp = std::env::var("PYTHONPATH").unwrap_or_default();
+    let merged_pp = if existing_pp.is_empty() {
+        cwd.display().to_string()
+    } else {
+        format!("{}:{}", cwd.display(), existing_pp)
+    };
+
+    // run pytest with consistent verbosity + no warning noise
     let output = Command::new("python")
         .arg("-m")
         .arg("pytest")
         .arg("-vv")
         .arg("-rA")
         .arg("--durations=0")
-        .env(
-            "PYTHONPATH",
-            std::env::current_dir().unwrap_or_else(|_| ".".into()),
-        )
+        .arg("--maxfail=0")
+        .arg("--disable-warnings")
+        .env("PYTHONPATH", merged_pp)
         .output();
 
     let duration_ms = start.elapsed().as_millis() as u64;
@@ -132,11 +140,8 @@ fn run_python_test_suite() -> TestSuiteResult {
             let stdout = String::from_utf8_lossy(&out.stdout);
             let stderr = String::from_utf8_lossy(&out.stderr);
 
-            let raw_output = if stderr.trim().is_empty() {
-                stdout.to_string()
-            } else {
-                format!("{stdout}\n{stderr}")
-            };
+            // Merge clean, never drop stderr
+            let raw_output = format!("{}\n{}", stdout, stderr);
 
             TestSuiteResult {
                 cases: Vec::new(),

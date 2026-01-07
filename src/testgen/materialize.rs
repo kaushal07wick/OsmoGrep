@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::detectors::language::Language;
 use crate::testgen::candidate::TestCandidate;
 
+/// Generate a new single-test file for a candidate change
 pub fn materialize_test(
     repo_root: &Path,
     language: Language,
@@ -21,6 +22,34 @@ pub fn materialize_test(
     }
 }
 
+/// Fix an existing failing test file (full-suite flow)
+/// ALWAYS overwrites the original failing file.
+pub fn materialize_full_suite_test(
+    repo_root: &Path,
+    test_path: &Path,
+    new_code: &str,
+) -> io::Result<PathBuf> {
+    let abs = repo_root.join(test_path);
+
+    // If test already exists, overwrite it
+    if abs.exists() {
+        write_file_atomic(&abs, new_code)?;
+        return Ok(abs);
+    }
+
+    // If not, create under tests/
+    let tests_root = find_test_root(repo_root)?;
+    let new_path = tests_root.join(
+        test_path
+            .file_name()
+            .unwrap_or_else(|| "generated_test.py".as_ref()),
+    );
+
+    write_file_atomic(&new_path, new_code)?;
+    Ok(new_path)
+}
+
+/// Python test writer
 fn write_python_test(
     repo_root: &Path,
     candidate: &TestCandidate,
@@ -30,11 +59,11 @@ fn write_python_test(
     let name = sanitize_name(&candidate.file, &candidate.symbol);
     let path = root.join(format!("test_{name}.py"));
 
-    ensure_parent_dir(&path)?;
     write_file_atomic(&path, test_code)?;
     Ok(path)
 }
 
+/// Rust test writer
 fn write_rust_test(
     repo_root: &Path,
     candidate: &TestCandidate,
@@ -44,40 +73,37 @@ fn write_rust_test(
     let name = sanitize_name(&candidate.file, &candidate.symbol);
     let path = root.join(format!("{name}.rs"));
 
-    ensure_parent_dir(&path)?;
     write_file_atomic(&path, test_code)?;
     Ok(path)
 }
 
-
+/// Ensure we have tests root
 fn find_test_root(repo_root: &Path) -> io::Result<PathBuf> {
     for name in ["tests", "test"] {
-        let path = repo_root.join(name);
-        if path.is_dir() {
-            return Ok(path);
+        let p = repo_root.join(name);
+        if p.is_dir() {
+            return Ok(p);
         }
     }
 
-    let root = repo_root.join("tests");
-    fs::create_dir_all(&root)?;
-    Ok(root)
+    // fall back to creating tests/
+    let default = repo_root.join("tests");
+    fs::create_dir_all(&default)?;
+    Ok(default)
 }
 
-
-fn ensure_parent_dir(path: &Path) -> io::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    Ok(())
-}
-
+/// Atomic write with parent creation
 fn write_file_atomic(path: &Path, content: &str) -> io::Result<()> {
-    let mut file = fs::File::create(path)?;
-    file.write_all(content.as_bytes())?;
-    file.write_all(b"\n")?;
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    let mut f = fs::File::create(path)?;
+    f.write_all(content.as_bytes())?;
+    f.write_all(b"\n")?;
     Ok(())
 }
 
+/// Convert arbitrary file + symbol into safe test file name
 fn sanitize_name(file: &str, symbol: &Option<String>) -> String {
     let mut name = Path::new(file)
         .file_stem()
@@ -90,14 +116,7 @@ fn sanitize_name(file: &str, symbol: &Option<String>) -> String {
         name.push_str(sym);
     }
 
-    name = name
-        .chars()
+    name.chars()
         .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
-        .collect();
-
-    if name.chars().next().unwrap_or('_').is_numeric() {
-        format!("test_{name}")
-    } else {
-        name
-    }
+        .collect()
 }

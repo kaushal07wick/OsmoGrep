@@ -1,7 +1,7 @@
 // src/llm/prompt.rs
 //
 // Deterministic, contract-first test generation with retry feedback support.
-
+use crate::context::full_suite_context::FullSuiteContext;
 use crate::context::types::{
     FileContext, SymbolResolution, TestContextSnapshot,
 };
@@ -208,6 +208,72 @@ fn user_prompt(
          - Assert that incorrect or previous behavior does NOT occur\n\
          - Be correct for edge cases implied by the change\n\
          - Avoid assumptions not proven by the code\n",
+    );
+
+    out
+}
+
+/// Build prompt for full-suite failure repair
+pub fn build_full_suite_prompt(ctx: &FullSuiteContext) -> LlmPrompt {
+    LlmPrompt {
+        system: full_suite_system_prompt(),
+        user: full_suite_user_prompt(ctx),
+    }
+}
+
+fn full_suite_system_prompt() -> String {
+    r#"
+You are a test-repair agent.
+
+GOAL:
+Fix the failing test WITHOUT modifying implementation code.
+
+RULES:
+- Output ONLY raw Python code.
+- Output ONLY the full corrected test file.
+- Preserve all imports, structure, classes, fixtures.
+- Keep the same test function names.
+- Correct assertions to reflect real implementation behavior.
+- No markdown. No explanations.
+- No try/except. No skipping. No mocking production code.
+"#
+    .trim()
+    .to_string()
+}
+
+fn full_suite_user_prompt(ctx: &FullSuiteContext) -> String {
+    let mut out = String::new();
+
+    out.push_str("FAILURE TRACEBACK:\n");
+    out.push_str(&ctx.traceback);
+    out.push_str("\n\n");
+
+    out.push_str("FAILING TEST FILE PATH:\n");
+    out.push_str(&ctx.test_path.to_string_lossy());
+    out.push_str("\n\n");
+
+    out.push_str("ORIGINAL TEST SOURCE:\n");
+    out.push_str(&ctx.test_source);
+    out.push_str("\n\n");
+
+    out.push_str("IMPLEMENTATION SOURCE SNIPPET:\n");
+    out.push_str(&ctx.impl_source);
+    out.push_str("\n\n");
+
+    out.push_str("FUNCTION UNDER TEST:\n");
+    out.push_str(&ctx.function_name);
+    out.push_str("\n\n");
+
+    out.push_str(
+        "TASK:\n\
+         Produce ONE corrected full test file.\n\
+         Must:\n\
+         - Maintain same imports\n\
+         - Maintain same class + method names\n\
+         - Maintain same general structure\n\
+         - Correct faulty assertions\n\
+         - Match actual implementation behavior\n\
+         - Output ONLY valid python code\n",
     );
 
     out

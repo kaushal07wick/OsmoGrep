@@ -31,7 +31,7 @@ impl TestSuiteExecution {
 }
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TestSuiteFailure {
     pub file: String,
     pub test: String,
@@ -125,31 +125,17 @@ pub fn run_test_suite_and_report(
     language: Language,
     repo_root: &Path,
 ) -> io::Result<TestSuiteExecution> {
+    // Run pytest
     let suite = run_test_suite(language);
 
-    let (summary, cases) = parse_pytest_output_fully(&suite.raw_output);
+    // Parse summary + structured cases
+    let (summary, _cases) = parse_pytest_output_fully(&suite.raw_output);
+
+    // Write markdown + index
     let report_path = write_test_suite_report(repo_root, &suite)?;
-    
-    let mut seen = HashSet::new();
-    let failures = extract_verbose_failures(&suite.raw_output)
-        .into_iter()
-        .filter_map(|(full_name, output)| {
-            if !seen.insert(full_name.clone()) {
-                return None;
-            }
 
-            let (file, test) = full_name
-                .split_once("::")
-                .unwrap_or(("", &full_name));
-
-            Some(TestSuiteFailure {
-                file: file.to_string(),
-                test: test.to_string(),
-                output,
-            })
-        })
-        .collect::<Vec<_>>();
-
+    // Extract robust failures
+    let failures = extract_failures_robust(&suite.raw_output);
 
     Ok(TestSuiteExecution {
         passed: summary.failed == 0,
@@ -158,6 +144,7 @@ pub fn run_test_suite_and_report(
         raw_output: suite.raw_output,
     })
 }
+
 
 fn parse_pytest_output_fully(raw: &str) -> (ParsedSummary, Vec<TestCaseResult>) {
     let mut summary = ParsedSummary::default();
@@ -423,46 +410,55 @@ fn extract_warnings(raw: &str) -> Vec<WarningEntry> {
 
     warnings
 }
-
-fn extract_verbose_failures(raw: &str) -> Vec<(String, String)> {
+fn extract_failures_robust(raw: &str) -> Vec<TestSuiteFailure> {
     let mut failures = Vec::new();
-    let mut current_test = String::new();
+    let mut map: HashMap<String, String> = HashMap::new(); // name → trace
+    let mut current_name = String::new();
     let mut buf = String::new();
-    let mut in_failures = false;
+    let mut in_verbose = false;
 
-    for line in raw.lines() {
-        // Start of FAILURES section
+    let lines: Vec<&str> = raw.lines().collect();
+    let mut i = 0;
+
+    // -------------------------------------------------------------
+    // PASS 1 — PARSE VERBOSE FAILURES SECTION IF PRESENT
+    // -------------------------------------------------------------
+    while i < lines.len() {
+        let line = lines[i];
+
+        // Start of verbose FAILURES block
         if line.starts_with("====") && line.contains("FAILURES") {
-            in_failures = true;
-            buf.clear();
-            current_test.clear();
+            in_verbose = true;
+            i += 1;
             continue;
         }
 
-        // End of FAILURES section
-        if in_failures && line.starts_with("====") && line.contains("short test summary") {
-            if !buf.trim().is_empty() && !current_test.is_empty() {
-                failures.push((current_test.clone(), buf.clone()));
+        // End of verbose FAILURES block
+        if in_verbose && line.starts_with("====") && line.contains("short test summary") {
+            // flush last
+            if !current_name.is_empty() && !buf.trim().is_empty() {
+                map.insert(current_name.clone(), buf.clone());
             }
             break;
         }
 
-        if in_failures {
-            // New test failure header
+        if in_verbose {
+            // New failure header: "____ test_file::test_name ____"
             if line.starts_with("____") && line.contains("::") {
-                // Save previous test if exists
-                if !buf.trim().is_empty() && !current_test.is_empty() {
-                    failures.push((current_test.clone(), buf.clone()));
+                // flush previous
+                if !current_name.is_empty() && !buf.trim().is_empty() {
+                    map.insert(current_name.clone(), buf.clone());
                 }
-                
-                // Extract test name
-                current_test = line
+
+                buf.clear();
+
+                // Extract name
+                current_name = line
                     .split_whitespace()
                     .find(|s| s.contains("::"))
                     .map(|s| s.trim_matches('_').to_string())
                     .unwrap_or_default();
-                    
-                buf.clear();
+
                 buf.push_str(line);
                 buf.push('\n');
             } else {
@@ -470,10 +466,87 @@ fn extract_verbose_failures(raw: &str) -> Vec<(String, String)> {
                 buf.push('\n');
             }
         }
+
+        i += 1;
+    }
+
+    // -------------------------------------------------------------
+    // PASS 2 — FALLBACK: PARSE SINGLE-FORMAT FAILURES OUTSIDE VERBOSE BLOCK
+    // -------------------------------------------------------------
+    // Look for patterns like:
+    // ____________________ test_func ____________________
+    for (idx, line) in lines.iter().enumerate() {
+        if line.starts_with("___") && line.contains("::") {
+            let name = line
+                .split_whitespace()
+                .find(|s| s.contains("::"))
+                .unwrap_or("")
+                .trim_matches('_')
+                .to_string();
+
+            if !map.contains_key(&name) {
+                // Build traceback chunk until empty or next underline header
+                let mut tb = String::new();
+                for j in idx+1 .. lines.len() {
+                    let ln = lines[j];
+                    if ln.starts_with("___") || ln.starts_with("====") {
+                        break;
+                    }
+                    tb.push_str(ln);
+                    tb.push('\n');
+                }
+                map.insert(name, tb);
+            }
+        }
+    }
+
+    // -------------------------------------------------------------
+    // PASS 3 – SHORT SUMMARY FALLBACK
+    // e.g. "FAILED file.py::test_name - AssertionError"
+    // -------------------------------------------------------------
+    for (idx, line) in lines.iter().enumerate() {
+        if let Some(rest) = line.strip_prefix("FAILED ") {
+            let name = rest
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_string();
+
+            if !map.contains_key(&name) {
+                // Try to find closest traceback region by scanning ahead
+                let mut tb = String::new();
+                for j in idx+1 .. lines.len() {
+                    let ln = lines[j];
+                    if ln.starts_with("FAILED ") || ln.starts_with("=") {
+                        break;
+                    }
+                    if ln.trim().is_empty() {
+                        break;
+                    }
+                    tb.push_str(ln);
+                    tb.push('\n');
+                }
+
+                map.insert(name, tb);
+            }
+        }
+    }
+
+    // -------------------------------------------------------------
+    // BUILD FINAL STRUCTS
+    // -------------------------------------------------------------
+    for (full, output) in map {
+        let (file, test) = full.split_once("::").unwrap_or(("", full.as_str()));
+        failures.push(TestSuiteFailure {
+            file: file.to_string(),
+            test: test.to_string(),
+            output,
+        });
     }
 
     failures
 }
+
 
 pub fn write_test_suite_report(
     repo_root: &Path,
@@ -491,7 +564,6 @@ pub fn write_test_suite_report(
     let durations = extract_durations(&suite.raw_output);
     let skips = extract_skips(&suite.raw_output);
     let warnings = extract_warnings(&suite.raw_output);
-    let verbose_failures = extract_verbose_failures(&suite.raw_output);
 
     let mut by_file: BTreeMap<String, Vec<&TestCaseResult>> = BTreeMap::new();
     for c in &cases {
@@ -526,15 +598,15 @@ pub fn write_test_suite_report(
         "## Test Summary\n**Status:** {}\n",
         if summary.failed > 0 { "❌ FAILED" } else { "✅ PASSED" }
     )?;
-
+    // High-level summary
     writeln!(
         out,
         "- ✅ Passed: {}\n\
-         - ❌ Failed: {}\n\
-         - ⏭ Skipped: {}\n\
-         - ⚠️ Warnings: {}\n\
-         - 🧩 Subtests: {}\n\
-         - ⏱ Duration: {:.2}s\n",
+        - ❌ Failed: {}\n\
+        - ⏭ Skipped: {}\n\
+        - ⚠️ Warnings: {}\n\
+        - 🧩 Subtests: {}\n\
+        - ⏱ Duration: {:.2}s\n",
         summary.passed,
         summary.failed,
         summary.skipped,
@@ -543,21 +615,22 @@ pub fn write_test_suite_report(
         summary.duration_s.unwrap_or(0.0),
     )?;
 
+    // Per-file results header
     writeln!(out, "## Test Results by File\n")?;
 
     for (file, tests) in &by_file {
-        let p = tests.iter().filter(|t| matches!(t.outcome, TestOutcome::Pass)).count();
-        let f = tests.iter().filter(|t| matches!(t.outcome, TestOutcome::Fail)).count();
-        let s = tests.iter().filter(|t| matches!(t.outcome, TestOutcome::Skip)).count();
+        let passed = tests.iter().filter(|t| matches!(t.outcome, TestOutcome::Pass)).count();
+        let failed = tests.iter().filter(|t| matches!(t.outcome, TestOutcome::Fail)).count();
+        let skipped = tests.iter().filter(|t| matches!(t.outcome, TestOutcome::Skip)).count();
 
         writeln!(
             out,
             "### {}\n{} ({} passed, {} failed, {} skipped)\n",
             file,
-            if f > 0 { "❌ FAILED" } else { "✅ PASSED" },
-            p,
-            f,
-            s
+            if failed > 0 { "❌ FAILED" } else { "✅ PASSED" },
+            passed,
+            failed,
+            skipped
         )?;
 
         for t in tests {
@@ -565,23 +638,35 @@ pub fn write_test_suite_report(
                 TestOutcome::Pass => ("✅", "PASS"),
                 TestOutcome::Fail => ("❌", "FAIL"),
                 TestOutcome::Skip => ("⏭", "SKIP"),
-                TestOutcome::Warning => ("⚠️", "WARN"),
+                TestOutcome::Warning => ("⚠️", "WARNING"),
             };
+
             writeln!(out, "- {} **{}** —→ {}", icon, t.name, label)?;
         }
-        writeln!(out)?;
+
+        writeln!(out)?; // blank line
     }
 
-    if !verbose_failures.is_empty() {
-        writeln!(out, "## ❌ Detailed Failure Information\n")?;
-        for (test_name, failure_output) in &verbose_failures {
+    // Detailed traceback output
+    if summary.failed > 0 {
+        writeln!(out, "## Failures\n")?;
+        
+        let mut seen = HashSet::new();
+        let failures: Vec<TestSuiteFailure> = extract_failures_robust(&suite.raw_output)
+            .into_iter()
+            .filter(|f| seen.insert(format!("{}::{}", f.file, f.test)))
+            .collect();
+
+        for failure in &failures {
+            let test_name = format!("{}::{}", failure.file, failure.test);
             writeln!(out, "### {}\n", test_name)?;
-            writeln!(out, "```")?;
-            writeln!(out, "{}", failure_output.trim())?;
+            writeln!(out, "```text")?;
+            writeln!(out, "{}", failure.output.trim())?;
             writeln!(out, "```\n")?;
         }
     }
 
+    // Diagnostics block
     writeln!(out, "## 🔍 Diagnostic Summary (For Automated Analysis)\n")?;
 
     writeln!(out, "### Execution Context")?;
@@ -595,6 +680,7 @@ pub fn write_test_suite_report(
         "- Execution duration: {:.2}s\n",
         summary.duration_s.unwrap_or(0.0)
     )?;
+
 
     writeln!(out, "### Outcome Classification")?;
     writeln!(

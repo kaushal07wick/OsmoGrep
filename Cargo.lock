@@ -1060,6 +1060,7 @@ dependencies = [
  "dirs",
  "hex",
  "ratatui",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

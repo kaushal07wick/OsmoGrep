@@ -1,3 +1,5 @@
+// src/llm/client.rs
+
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -32,7 +34,6 @@ pub struct ProviderConfig {
     pub api_key: String,
     pub base_url: Option<String>,
 }
-
 
 #[derive(Clone)]
 pub struct LlmClient {
@@ -76,28 +77,19 @@ impl LlmClient {
     }
 
     pub fn current_config(&self) -> ProviderConfig {
-        self.cfg
-            .lock()
-            .expect("llm config lock poisoned")
-            .clone()
+        self.cfg.lock().unwrap().clone()
     }
 
-    /// Run an LLM prompt.
-    /// `force_reload = true` disables provider-side prompt caching.
+    /// Execute LLM request
     pub fn run(
         &self,
         prompt: LlmPrompt,
         force_reload: bool,
     ) -> Result<LlmRunResult, String> {
-        let cfg = {
-            let guard = self.cfg.lock().map_err(|_| "Config lock poisoned")?;
-            guard.clone()
-        };
-
+        let cfg = self.cfg.lock().unwrap().clone();
         let prompt_hash = hash_prompt(&prompt);
 
-        let (url, headers, body) =
-            build_request(&cfg, &prompt, &prompt_hash, force_reload);
+        let (url, headers, body) = build_request(&cfg, &prompt, &prompt_hash, force_reload);
 
         let client = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(60))
@@ -119,8 +111,7 @@ impl LlmClient {
 
         let cached_tokens = json
             .pointer("/usage/prompt_tokens_details/cached_tokens")
-            .and_then(|v| v.as_u64())
-            .filter(|&n| n > 0);
+            .and_then(|v| v.as_u64());
 
         let text = extract_text(&cfg.provider, &json)?;
 
@@ -133,15 +124,11 @@ impl LlmClient {
 }
 
 fn hash_prompt(prompt: &LlmPrompt) -> String {
-    let mut hasher = Sha256::new();
-
-    hasher.update(PROMPT_ABI_VERSION.as_bytes());
-    hasher.update(b"\n--SYSTEM--\n");
-    hasher.update(prompt.system.as_bytes());
-    hasher.update(b"\n--USER--\n");
-    hasher.update(prompt.user.as_bytes());
-
-    hex::encode(hasher.finalize())
+    let mut h = Sha256::new();
+    h.update(PROMPT_ABI_VERSION.as_bytes());
+    h.update(&prompt.system.as_bytes());
+    h.update(&prompt.user.as_bytes());
+    hex::encode(h.finalize())
 }
 
 fn build_request(
@@ -201,7 +188,6 @@ fn build_request(
         }
     }
 }
-
 
 fn extract_text(provider: &Provider, v: &Value) -> Result<String, String> {
     match provider {

@@ -5,7 +5,8 @@
 use std::path::{PathBuf};
 use std::sync::atomic::Ordering;
 use crate::testgen::cache::SemanticCache;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use crate::testgen::cache::FullSuiteCache;
 use crate::{
     detectors::{language::detect_language},
     git,
@@ -123,39 +124,39 @@ fn execute_agent(state: &mut AgentState) {
     let llm = state.llm_backend.clone();
     let semantic_cache = Arc::new(SemanticCache::new());
 
-    // ---- single orchestration decision ----
-    if run_options.full_suite {
-        run_full_suite_flow(
-            state.agent_tx.clone(),
-            state.cancel_requested.clone(),
-            llm,
-            snapshot,
-            language,
-            semantic_cache,
-            run_options,
-        );
-    } else {
-        let candidate = match state.context.test_candidates.first().cloned() {
-            Some(c) => c,
-            None => {
-                log(state, LogLevel::Warn, "No test candidate available.");
-                transition(state, Phase::Idle);
-                return;
-            }
-        };
+   // ---- full or single test decision ----
+if run_options.full_suite {
+    let full_cache = Arc::new(Mutex::new(FullSuiteCache::new()));
 
-        run_single_test_flow(
-            state.agent_tx.clone(),
-            state.cancel_requested.clone(),
-            llm,
-            snapshot,
-            candidate,
-            language,
-            semantic_cache,
-            run_options,
-        );
-    }
+    run_full_suite_flow(
+        state.agent_tx.clone(),
+        state.cancel_requested.clone(),
+        llm,
+        language,
+        run_options,
+        full_cache,
+    );
+} else {
+    let candidate = match state.context.test_candidates.first().cloned() {
+        Some(c) => c,
+        None => {
+            log(state, LogLevel::Warn, "No test candidate available.");
+            transition(state, Phase::Idle);
+            return;
+        }
+    };
 
+    run_single_test_flow(
+        state.agent_tx.clone(),
+        state.cancel_requested.clone(),
+        llm,
+        snapshot,
+        candidate,
+        language,
+        semantic_cache,
+        run_options,
+    );
+}
     transition(state, Phase::Running);
 }
 

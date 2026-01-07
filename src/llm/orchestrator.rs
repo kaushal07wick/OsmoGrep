@@ -1,10 +1,8 @@
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    mpsc::Sender,
-    Arc,
+    Arc, Mutex, atomic::{AtomicBool, Ordering}, mpsc::Sender
 };
 use std::thread;
-use crate::context::types::FullContextSnapshot;
+use crate::context::{full_suite_context::FailureInfo, types::FullContextSnapshot};
 use crate::detectors::language::Language;
 use crate::llm::backend::LlmBackend;
 use crate::llm::prompt::{build_prompt, build_prompt_with_feedback};
@@ -14,6 +12,12 @@ use crate::testgen::materialize::materialize_test;
 use crate::testgen::runner::{run_test, TestRunRequest};
 use crate::testgen::test_suite::run_test_suite_and_report;
 use crate::testgen::cache::{SemanticCache, SemanticKey};
+use crate::testgen::cache::{FullSuiteCache, FullSuiteCacheEntry};
+use crate::testgen::materialize::materialize_full_suite_test;
+use crate::context::full_suite_context::{
+    build_full_suite_context,
+};
+use crate::llm::prompt::build_full_suite_prompt;
 
 const MAX_LLM_RETRIES: usize = 3;
 const MAX_ERROR_CHARS: usize = 4_000;
@@ -190,75 +194,238 @@ pub fn run_single_test_flow(
     });
 }
 
-/// full testing and reporting only
+//full test suite healing
+// full test suite healing
 pub fn run_full_suite_flow(
     tx: Sender<AgentEvent>,
     cancel_flag: Arc<AtomicBool>,
-    _llm: LlmBackend,
-    _snapshot: FullContextSnapshot,
+    llm: LlmBackend,
     language: Language,
-    _semantic_cache: Arc<SemanticCache>,
-    _run_options: AgentRunOptions,
+    run_options: AgentRunOptions,
+    full_cache: Arc<Mutex<FullSuiteCache>>,
 ) {
     thread::spawn(move || {
+        let cancelled = || cancel_flag.load(Ordering::SeqCst);
+
+        // REPO ROOT
         let repo_root = match std::env::current_dir() {
             Ok(p) => p,
             Err(e) => {
-                let _ = tx.send(AgentEvent::Failed(e.to_string()));
+                let _ = tx.send(AgentEvent::Failed(format!("repo root error: {}", e)));
                 return;
             }
         };
 
-        let _ = tx.send(AgentEvent::SpinnerStart(
-            "Running full test suite…".into(),
-        ));
+        let _ = tx.send(AgentEvent::SpinnerStart("Running full test suite…".into()));
 
-        if cancel_flag.load(Ordering::SeqCst) {
-            let _ = tx.send(AgentEvent::Failed("Agent cancelled".into()));
-            return;
-        }
-
+        // RUN FULL SUITE
         let suite = match run_test_suite_and_report(language, &repo_root) {
             Ok(s) => s,
             Err(e) => {
-                let _ = tx.send(AgentEvent::Failed(e.to_string()));
+                let _ = tx.send(AgentEvent::Failed(format!("suite run failed: {}", e)));
                 return;
             }
         };
 
-        let _ = tx.send(AgentEvent::TestSuiteReport(
-            suite.report_path.clone(),
-        ));
-
+        // Always show report path
         let _ = tx.send(AgentEvent::Log(
-            LogLevel::Info,
-            format!("📄 Test suite report: {}", suite.report_path.display()),
+            LogLevel::Success,
+            format!("📄 Report generated → {}", suite.report_path.display())
         ));
 
-        if suite.failures.is_empty() {
-            let _ = tx.send(AgentEvent::Log(
-                LogLevel::Success,
-                "✅ Full test suite passed (0 failures)".into(),
-            ));
-        } else {
-            let _ = tx.send(AgentEvent::Log(
-                LogLevel::Warn,
-                format!(
-                    "❌ Full test suite failed ({} failures)",
-                    suite.failures.len()
-                ),
-            ));
-
-            let first = &suite.failures[0];
-            let _ = tx.send(AgentEvent::Log(
-                LogLevel::Warn,
-                format!("First failure: {}::{}", first.file, first.test),
-            ));
+        // Failures detected?
+        let failures = suite.failures.clone();
+        if failures.is_empty() {
+            let _ = tx.send(AgentEvent::Log(LogLevel::Success, "All tests passing ✔".into()));
+            let _ = tx.send(AgentEvent::SpinnerStop);
+            let _ = tx.send(AgentEvent::Finished);
+            return;
         }
 
-        let _ = tx.send(AgentEvent::SpinnerStop);
-        let _ = tx.send(AgentEvent::Finished);
+        let _ = tx.send(AgentEvent::Log(
+            LogLevel::Warn,
+            format!("{} failing tests detected", failures.len())
+        ));
+
+        // PROCESS EACH FAILURE
+        for f in failures {
+            if cancelled() {
+                let _ = tx.send(AgentEvent::Failed("cancelled".into()));
+                return;
+            }
+
+            // Construct failure info
+            let failure = FailureInfo {
+                test_file: f.file.clone(),
+                test_name: format!("{}::{}", f.file, f.test),
+                traceback: f.output.clone(),
+            };
+
+            let cache_key = failure.test_name.clone();
+            let display_name = short_test_name(&cache_key);
+
+            // CACHE FAST-PATH
+            if let Some(entry) = full_cache.lock().unwrap().get(&cache_key) {
+                if entry.passed {
+                    let _ = tx.send(AgentEvent::Log(
+                        LogLevel::Info,
+                        format!("Skipping {} (already fixed)", display_name)
+                    ));
+                    continue;
+                }
+            }
+
+            let _ = tx.send(AgentEvent::Log(
+                LogLevel::Info,
+                format!("Processing test: {}", display_name)
+            ));
+
+            // BUILD CONTEXT
+            let ctx = match build_full_suite_context(&repo_root, &failure) {
+                Some(c) => c,
+                None => {
+                    let _ = tx.send(AgentEvent::Log(
+                        LogLevel::Error,
+                        format!("Context build failed for {}", display_name)
+                    ));
+                    continue;
+                }
+            };
+
+            let mut last_test: Option<String> = None;
+            let mut last_error: Option<String> = None;
+
+            // RETRY LOOP
+            for attempt in 1..=MAX_LLM_RETRIES {
+                if cancelled() {
+                    let _ = tx.send(AgentEvent::Failed("cancelled".into()));
+                    return;
+                }
+
+                // Force reload only after attempt 1
+                let force_flag = if attempt == 1 {
+                    run_options.force_reload
+                } else {
+                    true
+                };
+
+                let _ = tx.send(AgentEvent::Log(
+                    LogLevel::Info,
+                    format!(
+                        "LLM attempt {attempt}/{MAX_LLM_RETRIES} (force_reload={force_flag})"
+                    )
+                ));
+
+                // fresh prompt
+                let mut prompt = build_full_suite_prompt(&ctx);
+
+                // Add feedback on retries
+                if attempt > 1 {
+                    if let (Some(prev), Some(err)) = (&last_test, &last_error) {
+                        prompt.user.push_str("\n# Previous attempt code:\n");
+                        prompt.user.push_str(prev);
+
+                        prompt.user.push_str("\n# Failure output:\n");
+                        prompt.user.push_str(err);
+
+                        prompt.user.push_str("\n# Fix the above issues.\n");
+                    }
+                }
+
+                // LLM CALL
+                let out = match llm.run(prompt.clone(), force_flag) {
+                    Ok(r) => r.text,
+                    Err(e) => {
+                        last_error = Some(e);
+                        continue;
+                    }
+                };
+
+                let cleaned = sanitize_llm_output(&out);
+                last_test = Some(cleaned.clone());
+
+                // WRITE FIXED TEST
+                let write_path = match materialize_full_suite_test(
+                    &repo_root,
+                    &ctx.test_path,
+                    &cleaned
+                ) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        last_error = Some(format!("file write error: {}", e));
+                        continue;
+                    }
+                };
+
+                // RUN ONLY THIS TEST
+                let result = run_test(TestRunRequest::Python {
+                    test_path: write_path.clone(),
+                });
+
+                match result {
+                    TestResult::Passed => {
+                        let _ = tx.send(AgentEvent::Log(
+                            LogLevel::Success,
+                            format!("✅ Fixed: {}", display_name)
+                        ));
+
+                        full_cache.lock().unwrap().insert(FullSuiteCacheEntry {
+                            test_name: cache_key.clone(),
+                            test_path: write_path,
+                            last_generated_test: cleaned,
+                            passed: true,
+                        });
+
+                        break;
+                    }
+                    TestResult::Failed { output } => {
+                        last_error = Some(trim_error(&output));
+
+                        let _ = tx.send(AgentEvent::Log(
+                            LogLevel::Warn,
+                            format!("Retry needed: {}", display_name)
+                        ));
+                    }
+                }
+            }
+        }
+
+        // FINAL FULL SUITE VALIDATION
+        let _ = tx.send(AgentEvent::Log(
+            LogLevel::Info,
+            "Re-running full suite for final validation…".into()
+        ));
+
+        match run_test_suite_and_report(language, &repo_root) {
+            Ok(s) => {
+                if s.passed {
+                    let _ = tx.send(AgentEvent::Log(
+                        LogLevel::Success,
+                        "All tests passing ✔".into()
+                    ));
+                    let _ = tx.send(AgentEvent::SpinnerStop);
+                    let _ = tx.send(AgentEvent::Finished);
+                } else {
+                    let _ = tx.send(AgentEvent::Failed(
+                        format!("{} tests still failing (see report)", s.failures.len())
+                    ));
+                }
+            }
+            Err(e) => {
+                let _ = tx.send(AgentEvent::Failed(format!("final suite error: {}", e)));
+            }
+        }
     });
+}
+
+fn short_test_name(name: &str) -> String {
+    const MAX: usize = 80;
+    if name.len() <= MAX {
+        return name.to_string();
+    }
+    let start = &name[..40];
+    let end = &name[name.len() - 30..];
+    format!("{}..{}", start, end)
 }
 
 
@@ -275,7 +442,7 @@ fn sanitize_llm_output(raw: &str) -> String {
 
     if s.starts_with("```") {
         if let Some(i) = s.find('\n') {
-            s = s[i + 1..].to_string();
+            s = s[i+1..].to_string();
         }
         if let Some(i) = s.rfind("```") {
             s = s[..i].to_string();
