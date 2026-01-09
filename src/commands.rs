@@ -26,13 +26,14 @@ pub fn handle_command(state: &mut AgentState, cmd: &str) {
     "changes" => list_changes(state),
     cmd if cmd.starts_with("changes ") => view_change(state, cmd),
 
-    cmd if cmd.starts_with("agent run --all") => {
+    cmd if cmd.starts_with("agent run") && cmd.contains("--all") => {
         agent_run_all(state, cmd);
     }
 
-    cmd if cmd.starts_with("agent run ") => {
+    cmd if cmd.starts_with("agent run") => {
         agent_run(state, cmd);
     }
+
     "agent status" => agent_status(state),
     "agent cancel" => agent_cancel(state),
 
