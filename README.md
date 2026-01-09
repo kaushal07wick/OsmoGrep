@@ -1,14 +1,10 @@
-# ![osmogrep](osmogrep.svg)
+# ![osmogrep](osmogrep.png)
 
 # **OsmoGrep**
 
 A **terminal-native execution agent** that validates code changes by **running real tests**, not eyeballing diffs.
 
 > **Can your code changes be validated autonomously through safe, deterministic execution?**
-
-![OsmoGrep demo](osmogrep.gif)
-
----
 
 ## Functionality?
 

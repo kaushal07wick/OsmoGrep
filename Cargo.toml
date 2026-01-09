@@ -1,6 +1,6 @@
 [package]
 name = "osmogrep"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 authors = ["Kaushal kaushalc64@gmail.com"]
 description = "AI-assisted test generation + agentic debugging for code diffs"
@@ -9,7 +9,13 @@ repository = "https://github.com/kaushal07wick/OsmoGrep"
 readme = "README.md"
 keywords = ["llm", "agent", "ai", "testing", "developer-tools"]
 categories = ["development-tools", "command-line-utilities"]
-exclude = [".github/", "target/"]
+exclude = [
+    ".github/",
+    "target/",
+    "osmogrep.gif",
+    "osmogrep.svg"
+]
+
 
 [[bin]]
 name = "osmogrep"
