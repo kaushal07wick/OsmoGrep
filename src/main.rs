@@ -141,7 +141,7 @@ fn drain_agent_events(state: &mut AgentState) {
 fn init_state() -> AgentState {
     let (agent_tx, agent_rx) = channel::<AgentEvent>();
 
-    let mut state = AgentState {
+    let state = AgentState {
         lifecycle: LifecycleState {
             phase: Phase::Init,
             base_branch: None,
@@ -199,13 +199,6 @@ fn init_state() -> AgentState {
         started_at: Instant::now(),
         repo_root: PathBuf::new(),
     };
-
-    // ---- startup banner (ONCE) ----
-    state.push_log(LogLevel::Info, "");
-    state.push_log(LogLevel::Info, "OsmoGrep v0.1.0");
-    state.push_log(LogLevel::Info, "Run /help to see commands");
-    state.push_log(LogLevel::Info, "");
-
     state
 }
 
