@@ -1,7 +1,22 @@
 [package]
 name = "osmogrep"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2021"
+authors = ["Kaushal kaushalc64@gmail.com"]
+description = "AI-assisted test generation + agentic debugging for code diffs"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/kaushal07wick/OsmoGrep"
+readme = "README.md"
+keywords = ["llm", "agent", "ai", "testing", "developer-tools"]
+categories = ["development-tools", "command-line-utilities"]
+exclude = [".github/", "target/"]
+
+[[bin]]
+name = "osmogrep"
+path = "src/main.rs"
+
+homepage = "https://github.com/kaushal07wick/OsmoGrep"
+documentation = "https://docs.rs/osmogrep"
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
