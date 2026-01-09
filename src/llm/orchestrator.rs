@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::{
+use std::{path::{Path, PathBuf}, sync::{
     Arc, Mutex, atomic::{AtomicBool, Ordering}, mpsc::Sender
 }};
 use std::thread;
@@ -18,8 +18,8 @@ use crate::context::full_suite_context::{
     build_full_suite_context,
 };
 use crate::llm::prompt::build_full_suite_prompt;
-use crate::git::{git_create_sandbox_worktree, git_compute_patch};
-
+use crate::git::{git_create_sandbox_worktree};
+use std::time::{Instant, SystemTime};
 const MAX_LLM_RETRIES: usize = 3;
 const MAX_ERROR_CHARS: usize = 4_000;
 
@@ -263,7 +263,7 @@ pub fn run_full_suite_flow(
             };
 
             let cache_key = failure.test_name.clone();
-            let display_name = short_test_name(&cache_key);
+            let display_name = short_dir_path(&cache_key);
 
             // CACHE FAST-PATH
             if let Some(entry) = full_cache.lock().unwrap().get(&cache_key) {
@@ -419,7 +419,6 @@ pub fn run_full_suite_flow(
     });
 }
 
-
 pub fn run_parallel_agent_flow(
     tx: Sender<AgentEvent>,
     cancel_flag: Arc<AtomicBool>,
@@ -433,91 +432,130 @@ pub fn run_parallel_agent_flow(
     thread::spawn(move || {
         let cancelled = || cancel_flag.load(Ordering::SeqCst);
         let total = candidates.len();
-        let _ = tx.send(AgentEvent::SpinnerStart(format!("Running {total} subagents…")));
 
-        let results = candidates
-            .into_iter()
+        tx.send(AgentEvent::Log(
+            LogLevel::Info,
+            format!("Agent flow started – {total} subagents scheduled"),
+        )).ok();
+
+        tx.send(AgentEvent::SpinnerStart(
+            format!("Running {total} subagents…"),
+        )).ok();
+
+        // SPAWN SUBAGENTS
+        let handles: Vec<_> = candidates
+            .iter()
+            .cloned()
             .enumerate()
-            .map(|(i, c)| {
-                let tx_clone = tx.clone();
-                let cf = cancel_flag.clone();
-                let llm_clone = llm.clone();
-                let snap = snapshot.clone();
+            .map(|(i, cand)| {
+                let tx2 = tx.clone();
+                let cf2 = cancel_flag.clone();
+                let llm2 = llm.clone();
+                let snap2 = snapshot.clone();
                 let opts = run_options.clone();
-                let root = repo_root.clone();
+                let root2 = repo_root.clone();
 
                 thread::spawn(move || {
                     run_single_subagent(
-                        tx_clone,
-                        cf,
-                        llm_clone,
-                        root,
-                        snap.clone(),  // Arc clone is cheap
-                        c,
-                        language,
-                        opts,
-                        i,
-                        total,
+                        tx2, cf2, llm2, root2, snap2,
+                        cand, language, opts, i, total
                     )
                 })
             })
-            .collect::<Vec<_>>();
+            .collect();
 
-        let mut patches = Vec::new();
+        // COLLECT RESULTS
+        let mut validated_tests: Vec<(TestCandidate, String)> = Vec::new();
 
-        for handle in results {
+        for (i, h) in handles.into_iter().enumerate() {
             if cancelled() { break; }
-            if let Ok((ok, patch_opt)) = handle.join() {
-                if ok {
-                    if let Some(p) = patch_opt {
-                        patches.push(p);
-                    }
+
+            match h.join() {
+                Ok((true, Some(test_code))) => {
+                    let cand = candidates[i].clone();
+                    tx.send(AgentEvent::Log(
+                        LogLevel::Success,
+                        format!("Validated ⇒ {}", short_dir_path(&cand.file)),
+                    )).ok();
+
+                    validated_tests.push((cand, test_code));
+                }
+                Ok((true, None)) => {
+                    tx.send(AgentEvent::Log(
+                        LogLevel::Warn,
+                        "Subagent returned success but no test".into(),
+                    )).ok();
+                }
+                Ok((false, _)) => {
+                    tx.send(AgentEvent::Log(
+                        LogLevel::Warn,
+                        "Subagent failed".into(),
+                    )).ok();
+                }
+                Err(_) => {
+                    tx.send(AgentEvent::Log(
+                        LogLevel::Error,
+                        "Subagent thread panicked".into(),
+                    )).ok();
                 }
             }
         }
 
-        for (i, patch) in patches.iter().enumerate() {
+        // MATERIALIZE TESTS (REAL REPO)
+        for (cand, code) in validated_tests {
             if cancelled() { break; }
 
-            let tmp = std::env::temp_dir().join(format!("_subpatch_{i}.diff"));
-            if std::fs::write(&tmp, patch).is_ok() {
-                let status = std::process::Command::new("git")
-                    .current_dir(&repo_root)
-                    .arg("apply")
-                    .arg(tmp.to_str().unwrap())
-                    .status();
+            tx.send(AgentEvent::Log(
+                LogLevel::Info,
+                t("", &format!("Materializing test → {}", short_dir_path(&cand.file))),
+            )).ok();
 
-                match status {
-                    Ok(s) if s.success() => {
-                        let _ = tx.send(AgentEvent::Log(LogLevel::Success,
-                            format!("Patch {i} applied")));
-                    }
-                    _ => {
-                        let _ = tx.send(AgentEvent::Log(LogLevel::Warn,
-                            format!("Patch {i} conflict, skipping")));
-                    }
+            match materialize_test(&repo_root, language, &cand, &code) {
+                Ok(path) => {
+                    tx.send(AgentEvent::Log(
+                        LogLevel::Success,
+                        t("", &format!("Wrote test {}", path.display())),
+                    )).ok();
+                }
+                Err(e) => {
+                    tx.send(AgentEvent::Log(
+                        LogLevel::Error,
+                        t("", &format!("Failed writing test: {}", e)),
+                    )).ok();
                 }
             }
         }
+
+        // RUN FULL SUITE
+        tx.send(AgentEvent::Log(
+            LogLevel::Info,
+            "Running full test suite…".into(),
+        )).ok();
 
         match run_test_suite_and_report(language, &repo_root) {
             Ok(suite) => {
                 if suite.passed {
-                    let _ = tx.send(AgentEvent::Log(LogLevel::Success,
-                        "All tests passing ✔".into()));
+                    tx.send(AgentEvent::Log(
+                        LogLevel::Success,
+                        "🏁 All tests passing".into(),
+                    )).ok();
                 } else {
-                    let _ = tx.send(AgentEvent::Log(LogLevel::Warn,
-                        format!("{} tests still failing", suite.failures.len())));
+                    tx.send(AgentEvent::Log(
+                        LogLevel::Warn,
+                        format!("{} tests failing", suite.failures.len()),
+                    )).ok();
                 }
             }
             Err(e) => {
-                let _ = tx.send(AgentEvent::Log(LogLevel::Error,
-                    format!("Final suite error: {}", e)));
+                tx.send(AgentEvent::Log(
+                    LogLevel::Error,
+                    format!("Full suite error: {}", e),
+                )).ok();
             }
         }
 
-        let _ = tx.send(AgentEvent::SpinnerStop);
-        let _ = tx.send(AgentEvent::Finished);
+        tx.send(AgentEvent::SpinnerStop).ok();
+        tx.send(AgentEvent::Finished).ok();
     });
 }
 
@@ -535,49 +573,70 @@ fn run_single_subagent(
     total: usize,
 ) -> (bool, Option<String>) {
 
-    let cancelled = || cancel_flag.load(Ordering::SeqCst);
+    let started = Instant::now();
     let prefix = format!("[{}/{}]", index + 1, total);
 
-    let _ = tx.send(AgentEvent::Log(LogLevel::Info,
-        format!("{prefix} Subagent starting ({})", candidate.file)));
+    tx.send(AgentEvent::Log(
+        LogLevel::Info,
+        t(&prefix, &format!("Subagent start for {}", short_dir_path(&candidate.file))),
+    )).ok();
 
+    // SANDBOX WORKTREE
     let sandbox = git_create_sandbox_worktree();
+    tx.send(AgentEvent::Log(
+        LogLevel::Info,
+        t(&prefix, &format!("Sandbox created at {}", sandbox.display())),
+    )).ok();
 
-    let mut last_test: Option<String> = None;
+    let cancelled = || cancel_flag.load(Ordering::SeqCst);
+
+    // CARRY RETRY ERROR & LAST TEST ATTEMPT
+    let mut last_test_code: Option<String> = None;
     let mut last_error: Option<String> = None;
 
     for attempt in 1..=MAX_LLM_RETRIES {
         if cancelled() {
-            let _ = tx.send(AgentEvent::Log(LogLevel::Warn,
-                format!("{prefix} Cancelled")));
+            cleanup_sandbox(&sandbox);
+            tx.send(AgentEvent::Log(LogLevel::Warn, t(&prefix, "Cancelled"))).ok();
             return (false, None);
         }
 
-        let _ = tx.send(AgentEvent::Log(LogLevel::Info,
-            format!("{prefix} LLM attempt {attempt}/{MAX_LLM_RETRIES}")));
+        tx.send(AgentEvent::Log(
+            LogLevel::Info,
+            t(&prefix, &format!("LLM attempt {attempt}/{MAX_LLM_RETRIES}")),
+        )).ok();
 
-        let file_ctx = match snapshot.code.files.iter()
-            .find(|f| f.path == candidate.file)
-        {
+        // FILE CONTEXT
+        let file_ctx = match snapshot.code.files.iter().find(|f| f.path == candidate.file) {
             Some(c) => c,
             None => {
-                let _ = tx.send(AgentEvent::Log(LogLevel::Error,
-                    format!("{prefix} No file context")));
+                cleanup_sandbox(&sandbox);
+                tx.send(AgentEvent::Log(
+                    LogLevel::Error,
+                    t(&prefix, "ERROR: no file context found"),
+                )).ok();
                 return (false, None);
             }
         };
 
-        let prompt = match (&last_test, &last_error) {
-            (Some(code), Some(err)) => build_prompt_with_feedback(
-                &candidate, file_ctx, &snapshot.tests, code, err
-            ),
-            _ => build_prompt(&candidate, file_ctx, &snapshot.tests),
+        // ENRICH CANDIDATE WITH EXISTING new_code
+        let mut enriched = candidate.clone();
+        if enriched.new_code.is_none() {
+            enriched.new_code = candidate.old_code.clone();
+        }
+
+        // BUILD PROMPT
+        let prompt = if let (Some(prev), Some(err)) = (&last_test_code, &last_error) {
+            build_prompt_with_feedback(&enriched, file_ctx, &snapshot.tests, prev, err)
+        } else {
+            build_prompt(&enriched, file_ctx, &snapshot.tests)
         };
 
+        // LLM EXECUTION
         let out = match llm.run(prompt, run_options.force_reload && attempt == 1) {
             Ok(r) => r.text,
             Err(e) => {
-                last_error = Some(e.clone());
+                last_error = Some(e);
                 continue;
             }
         };
@@ -588,8 +647,9 @@ fn run_single_subagent(
             continue;
         }
 
-        last_test = Some(cleaned.clone());
+        last_test_code = Some(cleaned.clone());
 
+        // MATERIALIZE IN SANDBOX ONLY
         let test_path = match materialize_test(&sandbox, language, &candidate, &cleaned) {
             Ok(p) => p,
             Err(e) => {
@@ -598,36 +658,48 @@ fn run_single_subagent(
             }
         };
 
+        // RUN TEST IN SANDBOX
         let req = match language {
-        Language::Python => TestRunRequest::Python { test_path },
-        Language::Rust => TestRunRequest::Rust,
-        Language::Unknown => {
-            let _ = tx.send(AgentEvent::Log(
-                LogLevel::Error,
-                format!("{prefix} Unsupported language"),
-            ));
-            return (false, None);
-        }
-    };
+            Language::Python => TestRunRequest::Python { test_path },
+            Language::Rust => TestRunRequest::Rust,
+            _ => return (false, None),
+        };
 
-
-        let result = run_test(req);
-
-        match result {
+        match run_test(req) {
             TestResult::Passed => {
-                let _ = tx.send(AgentEvent::Log(LogLevel::Success,
-                    format!("{prefix} Test passed")));
-                let patch = git_compute_patch(&sandbox);
-                return (true, Some(patch));
+                cleanup_sandbox(&sandbox);
+
+                let elapsed = started.elapsed().as_secs_f32();
+
+                tx.send(AgentEvent::Log(
+                    LogLevel::Success,
+                    t(&prefix, &format!("Test passed in sandbox ({elapsed:.2}s)")),
+                )).ok();
+
+                // Return ONLY the cleaned test code
+                return (true, Some(cleaned));
             }
+
             TestResult::Failed { output } => {
                 last_error = Some(trim_error(&output));
             }
         }
     }
 
-    let _ = tx.send(AgentEvent::Log(LogLevel::Error,
-        format!("{prefix} Exhausted retries")));
+    // ALL RETRIES FAILED
+    cleanup_sandbox(&sandbox);
+
+    tx.send(AgentEvent::Log(
+        LogLevel::Error,
+        t(&prefix, "Exhausted retries"),
+    )).ok();
+
+    if let Some(err) = last_error {
+        tx.send(AgentEvent::Log(
+            LogLevel::Warn,
+            t(&prefix, &format!("Final error: {}", err)),
+        )).ok();
+    }
 
     (false, None)
 }
@@ -660,12 +732,46 @@ fn sanitize_llm_output(raw: &str) -> String {
     s.trim().to_string()
 }
 
-fn short_test_name(name: &str) -> String {
-    const MAX: usize = 80;
-    if name.len() <= MAX {
-        return name.to_string();
+pub fn short_dir_path(path: &str) -> String {
+    let p = std::path::Path::new(path);
+
+    // Extract only components (dir1, dir2, file)
+    let components: Vec<_> = p.components().collect();
+    if components.len() <= 2 {
+        return path.to_string(); // nothing to compress
     }
-    let start = &name[..40];
-    let end = &name[name.len() - 30..];
-    format!("{}..{}", start, end)
+
+    // Extract the last filename
+    let file = match p.file_name().and_then(|s| s.to_str()) {
+        Some(f) => f,
+        None => path,
+    };
+
+    // Extract first directory (root)
+    let first = match components[0].as_os_str().to_str() {
+        Some(s) => s,
+        None => path,
+    };
+
+    // Format: root/…/filename.py
+    format!("{}/…/{}", first, file)
+}
+
+
+fn timestamp() -> String {
+    static START: std::sync::OnceLock<SystemTime> = std::sync::OnceLock::new();
+    let start = START.get_or_init(SystemTime::now);
+
+    let elapsed = start.elapsed().unwrap_or_default();
+    let secs = elapsed.as_secs_f32();
+    format!("[{:.1}s]", secs)
+}
+
+fn t(prefix: &str, msg: &str) -> String {
+    format!("{} {} {}", timestamp(), prefix, msg)
+}
+
+
+fn cleanup_sandbox(path: &Path) {
+    let _ = std::fs::remove_dir_all(path);
 }

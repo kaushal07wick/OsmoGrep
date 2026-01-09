@@ -8,8 +8,11 @@ use ratatui::{
     widgets::{Block, Paragraph},
     Terminal,
 };
+use std::sync::OnceLock;
 
-use crate::state::{AgentState, Focus, InputMode};
+static FIRST_RENDER_AT: OnceLock<std::time::Instant> = OnceLock::new();
+
+use crate::{state::{AgentState, Focus, InputMode}};
 use crate::ui::{diff, execution, panels, status};
 
 
@@ -17,9 +20,7 @@ pub const PRIMARY_GREEN: Color  = Color::Rgb(0, 220, 140);
 pub const PRIMARY_WHITE: Color  = Color::Rgb(235, 235, 235);
 
 
-/* ==========================================================
-   ASCII HEADER (NO GENERIC)
-========================================================== */
+// header
 pub fn render_header(f: &mut ratatui::Frame, area: Rect) {
     const HEADER: [&str; 6] = [
         " █████╗  ██████╗███╗   ███╗ █████╗  ██████╗ ██████╗ ███████╗██████╗ ",
@@ -46,9 +47,7 @@ pub fn render_header(f: &mut ratatui::Frame, area: Rect) {
 }
 
 
-/* ==========================================================
-   COMMAND INPUT LINE (NO FAKE CURSOR)
-========================================================== */
+// command input line
 fn render_command_input_line(state: &AgentState, prompt: &str) -> Line<'static> {
     let mut spans = vec![
         Span::styled(prompt.to_string(), Style::default().fg(PRIMARY_WHITE)),
@@ -74,18 +73,13 @@ fn render_command_input_line(state: &AgentState, prompt: &str) -> Line<'static> 
 }
 
 
-/* ==========================================================
-   REAL TERMINAL CURSOR POSITION
-========================================================== */
+// cursor positioning
 fn cursor_position(input_rect: Rect, state: &AgentState, prompt_len: usize) -> (u16, u16) {
     let visible = state.ui.input.chars().count() as u16;
     (input_rect.x + prompt_len as u16 + visible, input_rect.y)
 }
 
-
-/* ==========================================================
-   UNIFIED COMMAND BOX (LANDING + AGENT MODE)
-========================================================== */
+// unfied command box
 fn render_unified_command_box(
     f: &mut ratatui::Frame,
     area: Rect,
@@ -116,17 +110,57 @@ fn render_unified_command_box(
         area,
     );
 
-    // GREEN BORDER
-    let border = Rect {
-        x: area.x,
-        y: area.y,
-        width: 1,
-        height: area.height,
+    // initialize first render timestamp
+    let first = *FIRST_RENDER_AT.get_or_init(std::time::Instant::now);
+
+    // only animate for first 3 seconds after UI starts rendering
+    let anim_active = first.elapsed().as_millis() < 3000;
+
+    // cleanup: height of border
+    let h = area.height as usize;
+
+    // compute frame index using app uptime
+    let t = (first.elapsed().as_millis() / 80) as usize;
+
+    // pulsating train length
+    let len = match t % 6 {
+        0 => 4,
+        1 => 3,
+        2 => 2,
+        3 => 1,
+        4 => 2,
+        _ => 3,
     };
-    f.render_widget(
-        Block::default().style(Style::default().bg(PRIMARY_GREEN)),
-        border,
-    );
+
+    // vertical travel distance
+    let travel = h.saturating_sub(len).max(1);
+    let cycle = travel * 2;
+    let idx = t % cycle;
+    let head = if idx < travel { idx } else { cycle - idx };
+
+    if anim_active {
+        for i in 0..h {
+            let is_train = i >= head && i < head + len;
+
+            let cell = Rect {
+                x: area.x,
+                y: area.y + i as u16,
+                width: 1,
+                height: 1,
+            };
+
+            let color = if is_train { PRIMARY_GREEN } else { Color::Rgb(30, 30, 30) };
+
+            f.render_widget(Block::default().style(Style::default().bg(color)), cell);
+        }
+    } else {
+        // static border after animation
+        f.render_widget(
+            Block::default().style(Style::default().bg(PRIMARY_GREEN)),
+            Rect { x: area.x, y: area.y, width: 1, height: area.height },
+        );
+    }
+
 
     // TOP PAD
     f.render_widget(Paragraph::new(" "), top_pad);
@@ -199,10 +233,6 @@ fn render_unified_command_box(
     f.render_widget(Paragraph::new(" "), bottom_pad);
 }
 
-
-/* ==========================================================
-   MAIN DRAW FUNCTION
-========================================================== */
 pub fn draw_ui<B: Backend>(
     terminal: &mut Terminal<B>,
     state: &AgentState,
@@ -214,10 +244,6 @@ pub fn draw_ui<B: Backend>(
 
     terminal.draw(|f| {
         let area = f.size();
-
-        /* ---------------------------------------------
-           LANDING SCREEN
-        --------------------------------------------- */
         if !state.ui.first_command_done {
             let landing = Layout::default()
                 .direction(Direction::Vertical)
@@ -305,10 +331,6 @@ pub fn draw_ui<B: Backend>(
             return;
         }
 
-        /* ---------------------------------------------
-        AGENT MODE
-        --------------------------------------------- */
-
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .margin(1)
@@ -337,10 +359,6 @@ pub fn draw_ui<B: Backend>(
         let main_area = left_side[0];
 
         let mut rendered = false;
-
-        /* ---------------------------------------------
-        DIFF VIEW (SAFE ACCESS)
-        --------------------------------------------- */
         if let Some(idx) = state.ui.selected_diff {
             if idx < state.context.diff_analysis.len() {
                 if let Some(delta) = &state.context.diff_analysis[idx].delta {
@@ -351,22 +369,21 @@ pub fn draw_ui<B: Backend>(
             }
         }
 
-        /* ---------------------------------------------
-        EXECUTION PANEL + SPACING FIX
-        --------------------------------------------- */
         if !rendered {
             if !panels::render_panel(f, main_area, state) {
 
                 // Add safe margin around execution similar to sidebar
+                // Perfectly align execution with right side panel
                 let exec_padded = Rect {
-                    x: main_area.x + 1,                     // left padding
-                    y: main_area.y + 1,                     // top padding
-                    width: main_area.width.saturating_sub(2), // right padding
-                    height: main_area.height.saturating_sub(2), // bottom padding
+                    x: main_area.x,
+                    y: main_area.y,
+                    width: main_area.width,
+                    height: main_area.height,
                 };
 
                 execution::render_execution(f, exec_padded, state);
                 exec_rect = exec_padded;
+
             } else {
                 exec_rect = main_area;
             }
@@ -374,18 +391,8 @@ pub fn draw_ui<B: Backend>(
             exec_rect = main_area;
         }
 
-        /* ---------------------------------------------
-        RIGHT SIDEBAR
-        --------------------------------------------- */
         status::render_side_status(f, main_horizontal[1], state);
-
-        /* ---------------------------------------------
-        COMMAND BOX (UNIFIED)
-        --------------------------------------------- */
         render_unified_command_box(f, left_side[1], state, ">_ ", &mut input_rect);
-
-
-
     })?;
 
     Ok((input_rect, diff_rect, exec_rect))

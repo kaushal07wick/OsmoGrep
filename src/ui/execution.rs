@@ -61,10 +61,6 @@ pub fn render_execution(
 
     let mut changes_heading_shown = false;
 
-
-    /* ------------------------------------------------------
-       BUILD LOG LINES
-    ------------------------------------------------------ */
     for log in state.logs.iter() {
         let faded = matches!(log.level, LogLevel::Warn | LogLevel::Error)
             && now.duration_since(log.at) > fade_after;
@@ -135,7 +131,7 @@ pub fn render_execution(
 
             if let Some(sym) = symbol {
                 s.push(Span::raw(" :: "));
-                s.push(Span::styled(sym, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)));
+                s.push(Span::styled(sym, Style::default().fg(Color::Green).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)));
             }
 
             lines.push(Line::from(
@@ -166,10 +162,6 @@ pub fn render_execution(
         lines.push(Line::default());
     }
 
-
-    /* ------------------------------------------------------
-       SCROLLING
-    ------------------------------------------------------ */
     let content_len = lines.len();
     let max_scroll = content_len.saturating_sub(height);
 
@@ -179,10 +171,6 @@ pub fn render_execution(
         state.ui.exec_scroll.min(max_scroll)
     };
 
-
-    /* ------------------------------------------------------
-       FINAL RENDER
-    ------------------------------------------------------ */
     f.render_widget(
         Paragraph::new(lines)
             .scroll((scroll as u16, 0))

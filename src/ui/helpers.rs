@@ -84,21 +84,30 @@ pub fn risk_color(r: &RiskLevel) -> Color {
 
 pub fn running_pulse(start: Option<std::time::Instant>) -> Option<String> {
     let start = start?;
-    let t = (start.elapsed().as_millis() / 80) as usize;
+    let t = (start.elapsed().as_millis() / 120) as usize;
 
-    // oscillates: 4 → 1 → 4
-    let len = match t % 6 {
-        0 => 4,
-        1 => 3,
+    // snake head position in a 2D loop mapped to 1D
+    let pos = match t % 6 {
+        0 => 0,
+        1 => 1,
         2 => 2,
-        3 => 1,
+        3 => 3,
         4 => 2,
-        _ => 3,
+        _ => 1,
     };
+
+    // length 2 snake: head + tail
+    let tail = if pos == 0 { 3 } else { pos - 1 };
 
     let mut s = String::with_capacity(4);
     for i in 0..4 {
-        s.push(if i < len { '■' } else { '·' });
+        if i == pos {
+            s.push('■'); // head
+        } else if i == tail {
+            s.push('▪'); // tail (lighter)
+        } else {
+            s.push('·'); // empty
+        }
     }
 
     Some(s)

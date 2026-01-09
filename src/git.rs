@@ -136,29 +136,6 @@ pub fn show_index(path: &str) -> Option<String> {
     }
 }
 
-pub fn base_commit(base_branch: &str) -> Option<String> {
-    let out = Command::new("git")
-        .args(["merge-base", base_branch, "HEAD"])
-        .output()
-        .ok()?;
-
-    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if s.is_empty() { None } else { Some(s) }
-}
-
-pub fn show_file_at(commit: &str, path: &str) -> Option<String> {
-    let out = Command::new("git")
-        .args(["show", &format!("{}:{}", commit, path)])
-        .output()
-        .ok()?;
-
-    if out.status.success() {
-        Some(String::from_utf8_lossy(&out.stdout).to_string())
-    } else {
-        None
-    }
-}
-
 // Create an isolated sandbox worktree for a sub-agent
 pub fn git_create_sandbox_worktree() -> PathBuf {
     let uuid = Uuid::new_v4().to_string();
@@ -166,14 +143,17 @@ pub fn git_create_sandbox_worktree() -> PathBuf {
 
     std::fs::create_dir_all(&sandbox).expect("failed to create sandbox directory");
 
-    // Create an isolated worktree based on HEAD
-    let status = std::process::Command::new("git")
+    // Fully capture and silence git output
+    let output = std::process::Command::new("git")
         .args(["worktree", "add", sandbox.to_str().unwrap(), "HEAD"])
-        .status()
+        .stdout(std::process::Stdio::piped())   // capture stdout
+        .stderr(std::process::Stdio::piped())   // capture stderr
+        .output()
         .expect("git worktree failed");
 
-    if !status.success() {
-        panic!("git worktree could not be created");
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        panic!("git worktree error: {}", err);
     }
 
     sandbox
@@ -184,6 +164,8 @@ pub fn git_compute_patch(sandbox: &Path) -> String {
     let output = std::process::Command::new("git")
         .current_dir(sandbox)
         .args(["diff"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())  // ignore warnings
         .output()
         .expect("git diff failed");
 
