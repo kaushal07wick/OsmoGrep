@@ -19,7 +19,7 @@ use crate::context::full_suite_context::{
 };
 use crate::llm::prompt::build_full_suite_prompt;
 use crate::git::{git_create_sandbox_worktree};
-use std::time::{Instant, SystemTime};
+use std::time::{SystemTime};
 const MAX_LLM_RETRIES: usize = 3;
 const MAX_ERROR_CHARS: usize = 4_000;
 
@@ -437,120 +437,84 @@ pub fn run_parallel_agent_flow(
             LogLevel::Info,
             format!("Agent flow started – {total} subagents scheduled"),
         )).ok();
-
         tx.send(AgentEvent::SpinnerStart(
             format!("Running {total} subagents…"),
         )).ok();
 
-        // SPAWN SUBAGENTS
-        let handles: Vec<_> = candidates
-            .iter()
-            .cloned()
-            .enumerate()
-            .map(|(i, cand)| {
-                let tx2 = tx.clone();
-                let cf2 = cancel_flag.clone();
-                let llm2 = llm.clone();
-                let snap2 = snapshot.clone();
-                let opts = run_options.clone();
-                let root2 = repo_root.clone();
+        // spawn subagents
+        let handles: Vec<_> = candidates.iter().cloned().enumerate().map(|(i, cand)| {
+            let tx2 = tx.clone();
+            let cf2 = cancel_flag.clone();
+            let llm2 = llm.clone();
+            let snap2 = snapshot.clone();
+            let opts = run_options.clone();
+            let root2 = repo_root.clone();
 
-                thread::spawn(move || {
-                    run_single_subagent(
-                        tx2, cf2, llm2, root2, snap2,
-                        cand, language, opts, i, total
-                    )
-                })
+            thread::spawn(move || {
+                run_single_subagent(
+                    tx2, cf2, llm2, root2, snap2,
+                    cand, language, opts, i, total
+                )
             })
-            .collect();
+        }).collect();
 
-        // COLLECT RESULTS
         let mut validated_tests: Vec<(TestCandidate, String)> = Vec::new();
 
         for (i, h) in handles.into_iter().enumerate() {
-            if cancelled() { break; }
+            if cancelled() {
+                tx.send(AgentEvent::Log(LogLevel::Warn, " 🟥 Cancel received — stopping subagents".into())).ok();
+                break;
+            }
 
             match h.join() {
                 Ok((true, Some(test_code))) => {
                     let cand = candidates[i].clone();
-                    tx.send(AgentEvent::Log(
-                        LogLevel::Success,
-                        format!("Validated ⇒ {}", short_dir_path(&cand.file)),
-                    )).ok();
-
                     validated_tests.push((cand, test_code));
                 }
-                Ok((true, None)) => {
-                    tx.send(AgentEvent::Log(
-                        LogLevel::Warn,
-                        "Subagent returned success but no test".into(),
-                    )).ok();
-                }
-                Ok((false, _)) => {
-                    tx.send(AgentEvent::Log(
-                        LogLevel::Warn,
-                        "Subagent failed".into(),
-                    )).ok();
-                }
-                Err(_) => {
-                    tx.send(AgentEvent::Log(
-                        LogLevel::Error,
-                        "Subagent thread panicked".into(),
-                    )).ok();
-                }
+                _ => {} // ignore failures
             }
         }
 
-        // MATERIALIZE TESTS (REAL REPO)
-        for (cand, code) in validated_tests {
-            if cancelled() { break; }
+        if cancelled() {
+            tx.send(AgentEvent::SpinnerStop).ok();
+            tx.send(AgentEvent::Failed("parallel run cancelled".into())).ok();
+            return;
+        }
 
-            tx.send(AgentEvent::Log(
-                LogLevel::Info,
-                t("", &format!("Materializing test → {}", short_dir_path(&cand.file))),
-            )).ok();
+        // materialize validated tests
+        for (cand, code) in validated_tests {
+            if cancelled() { 
+                tx.send(AgentEvent::Failed("cancelled".into())).ok();
+                return;
+            }
 
             match materialize_test(&repo_root, language, &cand, &code) {
-                Ok(path) => {
-                    tx.send(AgentEvent::Log(
-                        LogLevel::Success,
-                        t("", &format!("Wrote test {}", path.display())),
-                    )).ok();
-                }
-                Err(e) => {
-                    tx.send(AgentEvent::Log(
-                        LogLevel::Error,
-                        t("", &format!("Failed writing test: {}", e)),
-                    )).ok();
-                }
-            }
+                Ok(path) => tx.send(AgentEvent::Log(
+                    LogLevel::Success,
+                    format!("Wrote test {}", path.display()),
+                )).ok(),
+                Err(e) => tx.send(AgentEvent::Log(
+                    LogLevel::Error,
+                    format!("Failed writing test: {}", e),
+                )).ok()
+            };
         }
 
-        // RUN FULL SUITE
-        tx.send(AgentEvent::Log(
-            LogLevel::Info,
-            "Running full test suite…".into(),
-        )).ok();
+        if cancelled() {
+            tx.send(AgentEvent::Failed("cancelled".into())).ok();
+            return;
+        }
 
+        // final test suite run
         match run_test_suite_and_report(language, &repo_root) {
+            Ok(suite) if suite.passed => {
+                tx.send(AgentEvent::Log(LogLevel::Success, "All tests passing".into())).ok();
+            }
             Ok(suite) => {
-                if suite.passed {
-                    tx.send(AgentEvent::Log(
-                        LogLevel::Success,
-                        "🏁 All tests passing".into(),
-                    )).ok();
-                } else {
-                    tx.send(AgentEvent::Log(
-                        LogLevel::Warn,
-                        format!("{} tests failing", suite.failures.len()),
-                    )).ok();
-                }
+                tx.send(AgentEvent::Log(LogLevel::Warn, format!("{} failing", suite.failures.len()))).ok();
             }
             Err(e) => {
-                tx.send(AgentEvent::Log(
-                    LogLevel::Error,
-                    format!("Full suite error: {}", e),
-                )).ok();
+                tx.send(AgentEvent::Log(LogLevel::Error, format!("suite error: {}", e))).ok();
             }
         }
 
@@ -573,83 +537,84 @@ fn run_single_subagent(
     total: usize,
 ) -> (bool, Option<String>) {
 
-    let started = Instant::now();
     let prefix = format!("[{}/{}]", index + 1, total);
 
-    tx.send(AgentEvent::Log(
-        LogLevel::Info,
-        t(&prefix, &format!("Subagent start for {}", short_dir_path(&candidate.file))),
-    )).ok();
-
-    // SANDBOX WORKTREE
     let sandbox = git_create_sandbox_worktree();
+    let cancelled = || cancel_flag.load(Ordering::SeqCst);
+
     tx.send(AgentEvent::Log(
         LogLevel::Info,
         t(&prefix, &format!("Sandbox created at {}", sandbox.display())),
     )).ok();
 
-    let cancelled = || cancel_flag.load(Ordering::SeqCst);
-
-    // CARRY RETRY ERROR & LAST TEST ATTEMPT
     let mut last_test_code: Option<String> = None;
     let mut last_error: Option<String> = None;
 
     for attempt in 1..=MAX_LLM_RETRIES {
+
         if cancelled() {
             cleanup_sandbox(&sandbox);
             tx.send(AgentEvent::Log(LogLevel::Warn, t(&prefix, "Cancelled"))).ok();
             return (false, None);
         }
-
-        tx.send(AgentEvent::Log(
-            LogLevel::Info,
-            t(&prefix, &format!("LLM attempt {attempt}/{MAX_LLM_RETRIES}")),
-        )).ok();
-
-        // FILE CONTEXT
         let file_ctx = match snapshot.code.files.iter().find(|f| f.path == candidate.file) {
             Some(c) => c,
             None => {
                 cleanup_sandbox(&sandbox);
                 tx.send(AgentEvent::Log(
                     LogLevel::Error,
-                    t(&prefix, "ERROR: no file context found"),
+                    t(&prefix, "No file context found"),
                 )).ok();
                 return (false, None);
             }
         };
 
-        // ENRICH CANDIDATE WITH EXISTING new_code
-        let mut enriched = candidate.clone();
-        if enriched.new_code.is_none() {
-            enriched.new_code = candidate.old_code.clone();
+        let prompt = match (&last_test_code, &last_error) {
+            (Some(prev), Some(err)) =>
+                build_prompt_with_feedback(&candidate, file_ctx, &snapshot.tests, prev, err),
+            _ =>
+                build_prompt(&candidate, file_ctx, &snapshot.tests),
+        };
+
+        tx.send(AgentEvent::Log(
+            LogLevel::Info,
+            t(&prefix, &format!("LLM attempt {attempt}/{MAX_LLM_RETRIES}")),
+        )).ok();
+
+        let force_flag = if attempt == 1 {
+            run_options.force_reload
+        } else {
+            true // retries always bypass cache
+        };
+
+        let llm_out_opt = llm.run_with_cancel(
+            prompt,
+            cancel_flag.clone(),
+            force_flag,
+        );
+
+        if llm_out_opt.is_none() {
+            cleanup_sandbox(&sandbox);
+            tx.send(AgentEvent::Log(LogLevel::Warn, t(&prefix, "Cancelled"))).ok();
+            return (false, None);
         }
 
-        // BUILD PROMPT
-        let prompt = if let (Some(prev), Some(err)) = (&last_test_code, &last_error) {
-            build_prompt_with_feedback(&enriched, file_ctx, &snapshot.tests, prev, err)
-        } else {
-            build_prompt(&enriched, file_ctx, &snapshot.tests)
-        };
+        let llm_out = llm_out_opt.unwrap(); 
 
-        // LLM EXECUTION
-        let out = match llm.run(prompt, run_options.force_reload && attempt == 1) {
-            Ok(r) => r.text,
-            Err(e) => {
-                last_error = Some(e);
-                continue;
-            }
-        };
+        let out_raw = llm_out.text;
+        let cleaned = sanitize_llm_output(&out_raw);
 
-        let cleaned = sanitize_llm_output(&out);
         if cleaned.is_empty() {
-            last_error = Some("empty llm output".into());
+            last_error = Some("LLM produced empty output".into());
             continue;
         }
 
         last_test_code = Some(cleaned.clone());
 
-        // MATERIALIZE IN SANDBOX ONLY
+        if cancelled() {
+            cleanup_sandbox(&sandbox);
+            return (false, None);
+        }
         let test_path = match materialize_test(&sandbox, language, &candidate, &cleaned) {
             Ok(p) => p,
             Err(e) => {
@@ -658,40 +623,56 @@ fn run_single_subagent(
             }
         };
 
-        // RUN TEST IN SANDBOX
+        if cancelled() {
+            cleanup_sandbox(&sandbox);
+            return (false, None);
+        }
+
         let req = match language {
-            Language::Python => TestRunRequest::Python { test_path },
+            Language::Python => TestRunRequest::Python { test_path: test_path.clone() },
             Language::Rust => TestRunRequest::Rust,
-            _ => return (false, None),
+            _ => {
+                cleanup_sandbox(&sandbox);
+                return (false, None);
+            }
         };
 
-        match run_test(req) {
+        let result_opt = run_test_with_cancel(req, cancel_flag.clone());
+
+        if result_opt.is_none() {
+            cleanup_sandbox(&sandbox);
+            return (false, None);
+        }
+
+        let result = result_opt.unwrap();
+
+        match result {
             TestResult::Passed => {
                 cleanup_sandbox(&sandbox);
 
-                let elapsed = started.elapsed().as_secs_f32();
-
                 tx.send(AgentEvent::Log(
                     LogLevel::Success,
-                    t(&prefix, &format!("Test passed in sandbox ({elapsed:.2}s)")),
+                    t(&prefix, "Test passed in sandbox"),
                 )).ok();
 
-                // Return ONLY the cleaned test code
                 return (true, Some(cleaned));
             }
 
             TestResult::Failed { output } => {
                 last_error = Some(trim_error(&output));
+                // continue loop to retry
             }
         }
     }
 
-    // ALL RETRIES FAILED
+    // ---------------------------------------------------------
+    // ALL ATTEMPTS FAILED
+    // ---------------------------------------------------------
     cleanup_sandbox(&sandbox);
 
     tx.send(AgentEvent::Log(
         LogLevel::Error,
-        t(&prefix, "Exhausted retries"),
+        t(&prefix, "Exhausted LLM retries"),
     )).ok();
 
     if let Some(err) = last_error {
@@ -757,7 +738,6 @@ pub fn short_dir_path(path: &str) -> String {
     format!("{}/…/{}", first, file)
 }
 
-
 fn timestamp() -> String {
     static START: std::sync::OnceLock<SystemTime> = std::sync::OnceLock::new();
     let start = START.get_or_init(SystemTime::now);
@@ -771,7 +751,29 @@ fn t(prefix: &str, msg: &str) -> String {
     format!("{} {} {}", timestamp(), prefix, msg)
 }
 
-
 fn cleanup_sandbox(path: &Path) {
     let _ = std::fs::remove_dir_all(path);
+}
+
+fn run_test_with_cancel(
+    req: TestRunRequest,
+    cancel_flag: Arc<AtomicBool>,
+) -> Option<TestResult> {
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    // Spawn the test run in a separate thread
+    thread::spawn(move || {
+        let _ = tx.send(run_test(req));
+    });
+
+    // Poll until the test finishes or cancellation is triggered
+    loop {
+        if cancel_flag.load(Ordering::SeqCst) {
+            return None;
+        }
+        if let Ok(r) = rx.try_recv() {
+            return Some(r);
+        }
+        thread::sleep(std::time::Duration::from_millis(30));
+    }
 }

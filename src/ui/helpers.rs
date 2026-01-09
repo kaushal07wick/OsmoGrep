@@ -14,7 +14,7 @@ use crate::state::ChangeSurface;
 pub fn phase_badge(phase: &Phase) -> (&'static str, &'static str, Color) {
     match phase {
         Phase::Idle => ("●", "Idle", Color::Yellow),
-        Phase::ExecuteAgent => ("▶", "Running", Color::Cyan),
+        Phase::ExecuteAgent => ("▶", "Running", Color::Green),
         Phase::CreateNewAgent => ("＋", "Creating", Color::Blue),
         Phase::Running => ("⏳", "Running", Color::Green),
         Phase::Rollback => ("↩", "Rollback", Color::Magenta),

@@ -53,25 +53,24 @@ fn render_command_input_line(state: &AgentState, prompt: &str) -> Line<'static> 
         Span::styled(prompt.to_string(), Style::default().fg(PRIMARY_WHITE)),
     ];
 
-    if matches!(state.ui.input_mode, InputMode::ApiKey { .. }) {
-        let len = state.ui.input.len();
-        if len > 0 {
-            let frame = (state.ui.last_activity.elapsed().as_millis() / 120) as usize;
-            let anim = ["•", "••", "•••", "••••"][frame % 4];
-            let obscured = if len == 1 {
-                anim.to_string()
-            } else {
-                format!("{}{}", "•".repeat(len - 1), anim)
-            };
-            spans.push(Span::styled(obscured, Style::default().fg(PRIMARY_WHITE)));
+    let input = state.ui.input.clone();
+    spans.push(Span::styled(input.clone(), Style::default().fg(PRIMARY_WHITE)));
+
+    // GHOST / INLINE AUTOCOMPLETE
+    if let Some(ac) = &state.ui.autocomplete {
+        if ac.starts_with(&input) && ac.len() > input.len() {
+            let suffix = &ac[input.len()..];
+            spans.push(Span::styled(
+                suffix.to_string(),
+                Style::default()
+                    .fg(Color::Rgb(100, 100, 100))
+                    .add_modifier(Modifier::ITALIC)
+            ));
         }
-    } else if !state.ui.input.is_empty() {
-        spans.push(Span::styled(state.ui.input.clone(), Style::default().fg(PRIMARY_WHITE)));
     }
 
     Line::from(spans)
 }
-
 
 // cursor positioning
 fn cursor_position(input_rect: Rect, state: &AgentState, prompt_len: usize) -> (u16, u16) {

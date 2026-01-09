@@ -83,7 +83,7 @@ pub fn render_execution(
 
                 if let Some(sym) = &d.symbol {
                     s.push(Span::raw(" :: "));
-                    s.push(Span::styled(sym, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)));
+                    s.push(Span::styled(sym, Style::default().fg(Color::Green).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)));
                 }
 
                 s.push(Span::raw(" | "));

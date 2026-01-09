@@ -47,9 +47,9 @@ fn render_testgen_panel(
 
     /* ---------- HEADER ---------- */
     lines.push(Line::from(Span::styled(
-        "🤖 GENERATED TEST",
+        "🟩 GENERATED TEST",
         Style::default()
-            .fg(Color::Cyan)
+            .fg(Color::Green)
             .add_modifier(Modifier::BOLD),
     )));
     lines.push(Line::from(""));

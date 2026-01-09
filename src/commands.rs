@@ -453,50 +453,73 @@ pub fn update_command_hints(state: &mut AgentState) {
     state.clear_hint();
     state.clear_autocomplete();
 
-    if input.is_empty() {
+    let trimmed = input.trim();
+
+    if trimmed.is_empty() {
         state.set_hint("Type `help` to see available commands");
         return;
     }
 
-    macro_rules! hint {
-        ($cmd:expr, $desc:expr) => {
-            if $cmd.starts_with(&input) {
-                state.set_autocomplete($cmd);
-                state.set_hint($desc);
-                return;
-            }
-        };
+    // Ordered by priority: specific → general → generic
+    let commands: &[(&str, &str)] = &[
+        // inspection
+        ("inspect", "Analyze git changes and build context"),
+        ("changes", "List analyzed changes"),
+        ("changes ", "View diff for change <n>"),
+
+        // model configuration
+        ("model use ollama ", "Use local Ollama model"),
+        ("model use openai ", "Configure OpenAI model (will prompt for API key)"),
+        ("model use anthropic ", "Configure Anthropic model (will prompt for API key)"),
+        ("model show", "Show active model"),
+
+        // ---- AGENT RUN COMMANDS (parallel, full, indexed) ----
+        // Parallel all
+        ("agent run --all --reload", "Run ALL diffs in parallel (forced reload)"),
+        ("agent run --all", "Run ALL diffs in parallel"),
+
+        // Full-suite
+        ("agent run --full --reload", "Run full test suite (forced reload)"),
+        ("agent run --full", "Run full test suite autonomously"),
+
+        // Indexed
+        ("agent run <n> --reload", "Run agent on change <n> (forced reload)"),
+        ("agent run ", "agent run <n> [--reload] [--unbounded]"),
+
+        // misc
+        ("agent status", "Show agent execution state"),
+        ("agent cancel", "Cancel running agent"),
+
+        ("artifacts test", "Show last generated test"),
+
+        ("branch new", "Create agent branch"),
+        ("branch rollback", "Rollback agent branch"),
+        ("branch list", "List git branches"),
+
+        ("clear", "Clear logs"),
+        ("logs clear", "Clear logs"),
+        ("close", "Close active view"),
+
+        ("quit", "Exit Osmogrep"),
+        ("help", "Show help"),
+    ];
+
+    // Stage 1: autocomplete (command starts with what user typed)
+    for (cmd, desc) in commands {
+        if cmd.starts_with(trimmed) {
+            state.set_autocomplete(cmd.to_string());
+            state.set_hint(*desc);
+            return;
+        }
     }
 
-    hint!("inspect", "Analyze git changes and build context");
-    hint!("changes", "List analyzed changes");
-    hint!("changes ", "View diff for change <n>");
-    hint!("model use ollama ", "Use local Ollama model");
-    hint!("model use openai ", "Configure OpenAI model (will prompt for API key)");
-    hint!(
-        "model use anthropic ",
-        "Configure Anthropic model (will prompt for API key)"
-    );
-    hint!("model show", "Show active model");
-    hint!(
-        "agent run ",
-        "agent run <n> [--reload] [--unbounded] | agent run --full [--reload] [--unbounded]"
-    );
-    hint!(
-        "agent run --full",
-        "Run full test suite autonomously (no diff index required)"
-    );
-    hint!("agent status", "Show agent execution state");
-    hint!("agent cancel", "Cancel running agent");
-    hint!("artifacts test", "Show last generated test");
-    hint!("branch new", "Create agent branch");
-    hint!("branch rollback", "Rollback agent branch");
-    hint!("branch list", "List git branches");
-    hint!("clear", "Clear logs");
-    hint!("logs clear", "Clear logs");
-    hint!("close", "Close active view");
-    hint!("quit", "Exit Osmogrep");
-    hint!("help", "Show help");
+    // Stage 2: hint only (user typed part of a known command)
+    for (cmd, desc) in commands {
+        if trimmed.starts_with(cmd) {
+            state.set_hint(*desc);
+            return;
+        }
+    }
 
     state.set_hint("Unknown command");
 }

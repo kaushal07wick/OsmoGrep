@@ -304,11 +304,19 @@ fn handle_input_keys(state: &mut AgentState, k: crossterm::event::KeyEvent) {
             update_command_hints(state);
         }
         KeyCode::Tab => {
-            if let Some(ac) = state.ui.autocomplete.clone() {
-                state.ui.input = ac;
+            if let Some(ac) = &state.ui.autocomplete {
+                if ac.starts_with(&state.ui.input) {
+                    // only append the missing suffix
+                    let suffix = &ac[state.ui.input.len()..];
+                    state.ui.input.push_str(suffix);
+                } else {
+                    // fallback: autocomplete replaces
+                    state.ui.input = ac.clone();
+                }
                 update_command_hints(state);
             }
         }
+
         KeyCode::Esc => {
             state.ui.input.clear();
             state.clear_hint();

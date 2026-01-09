@@ -122,9 +122,9 @@ fn execute_agent(state: &mut AgentState) {
         state,
         LogLevel::Info,
         if run_options.full_suite {
-            "🤖 Agent started (full test suite mode)"
+            " 🟩 Agent started (full test suite mode)"
         } else {
-            "🤖 Agent started (single test mode)"
+            "🟩 Agent started (single test mode)"
         },
     );
 
@@ -199,7 +199,7 @@ fn execute_parallel_agent(state: &mut AgentState) {
     let tx = state.agent_tx.clone();
     let cancel_flag = state.cancel_requested.clone();
 
-    log(state, LogLevel::Info, "🤖 Agent started (parallel multi-diff mode)");
+    log(state, LogLevel::Info, "🟩 Agent started (parallel multi-diff mode)");
 
     let candidates = state.context.test_candidates.clone();
     if candidates.is_empty() {
