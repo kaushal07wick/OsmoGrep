@@ -6,6 +6,7 @@ A **terminal-native execution agent** that validates code changes by **running r
 
 > **Can your code changes be validated autonomously through safe, deterministic execution?**
 
+![osmogrep-wrking](osmogrep.gif)
 ## Functionality?
 
 | Area           | What OsmoGrep Does                           |
@@ -43,9 +44,19 @@ Designed for real engineering workflows—not toy demos.
 
 ## Installation
 
+### from crates.io
+
+```bash
+cargo install osmogrep
+```
+
+### Install latest from github
+
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kaushal07wick/OsmoGrep/master/install.sh | sh
 ```
+
 
 Then run inside **any git repository**:
 
