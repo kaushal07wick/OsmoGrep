@@ -1,22 +1,16 @@
-//! ui/diff.rs
-//!
-//! Side-by-side diff renderer
+//! ui/diff.rs — clean, spaced side-by-side diff view
 
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Paragraph},
 };
 
 use similar::{ChangeTag, TextDiff};
 
 use crate::state::{AgentState, Focus, SymbolDelta};
 use crate::ui::helpers::{hclip, ln};
-
-fn bar(color: Color) -> Span<'static> {
-    Span::styled(" ▌ ", Style::default().fg(color))
-}
 
 fn empty_pad() -> Span<'static> {
     Span::raw("   ")
@@ -28,69 +22,121 @@ pub fn render_side_by_side(
     delta: &SymbolDelta,
     state: &AgentState,
 ) {
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(area);
-
-    let gutter = 5;
-    let width = chunks[0]
-        .width
-        .saturating_sub(gutter + 1) as usize;
-    let height = area.height.saturating_sub(2) as usize;
-
-    let diff = TextDiff::from_lines(
-        &delta.old_source,
-        &delta.new_source,
+    /* Background */
+    f.render_widget(
+        Block::default().style(Style::default().bg(Color::Rgb(28, 28, 28))),
+        area,
     );
 
-    let changes: Vec<_> = diff.iter_all_changes().collect();
-    let total = changes.len();
+    /* Outer padding: top + bottom + left + right */
+    let padded = Rect {
+        x: area.x + 1,
+        y: area.y + 1,
+        width: area.width.saturating_sub(2),
+        height: area.height.saturating_sub(3), // ↓ extra bottom gap
+    };
 
-    let max_scroll = total.saturating_sub(height);
+    /* Titles (OLD / NEW) */
+    let title_row = Rect {
+        x: padded.x,
+        y: padded.y,
+        width: padded.width,
+        height: 1,
+    };
+
+    let title_split = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(title_row);
+
+    let title_style = if state.ui.focus == Focus::Diff {
+        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Rgb(150, 150, 150))
+    };
+
+    f.render_widget(
+        Paragraph::new("OLD").alignment(Alignment::Center).style(title_style),
+        title_split[0],
+    );
+
+    f.render_widget(
+        Paragraph::new("NEW").alignment(Alignment::Center).style(title_style),
+        title_split[1],
+    );
+
+    /* Content region under titles */
+    let body = Rect {
+        x: padded.x,
+        y: padded.y + 1,
+        width: padded.width,
+        height: padded.height.saturating_sub(1),
+    };
+
+    /* Natural column spacing */
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(50),
+            Constraint::Percentage(50),
+        ])
+        .split(body);
+
+    let left_col = Rect {
+        x: cols[0].x,
+        y: cols[0].y,
+        width: cols[0].width.saturating_sub(1),
+        height: cols[0].height,
+    };
+
+    let right_col = Rect {
+        x: cols[1].x + 1,
+        y: cols[1].y,
+        width: cols[1].width.saturating_sub(1),
+        height: cols[1].height,
+    };
+
+    /* Prepare diff */
+    let diff = TextDiff::from_lines(&delta.old_source, &delta.new_source);
+    let entries: Vec<_> = diff.iter_all_changes().collect();
+
+    let max_scroll = entries.len().saturating_sub(left_col.height as usize);
     let start = state.ui.diff_scroll.min(max_scroll);
-    let end = (start + height).min(total);
+    let end = (start + left_col.height as usize).min(entries.len());
 
     let mut old_ln = 1usize;
     let mut new_ln = 1usize;
 
-    for change in &changes[..start] {
+    for change in &entries[..start] {
         match change.tag() {
-            ChangeTag::Equal => {
-                old_ln += 1;
-                new_ln += 1;
-            }
+            ChangeTag::Equal => { old_ln += 1; new_ln += 1; }
             ChangeTag::Delete => old_ln += 1,
             ChangeTag::Insert => new_ln += 1,
         }
     }
 
-    let mut left: Vec<Line> = Vec::with_capacity(end - start);
-    let mut right: Vec<Line> = Vec::with_capacity(end - start);
+    let mut out_left = Vec::new();
+    let mut out_right = Vec::new();
 
-    for change in &changes[start..end] {
+    /* Build visible lines */
+    for change in &entries[start..end] {
         match change.tag() {
             ChangeTag::Equal => {
-                let text = hclip(
-                    change.value(),
-                    state.ui.diff_scroll_x,
-                    width,
-                );
+                let t_left = hclip(change.value(), state.ui.diff_scroll_x, left_col.width as usize);
+                let t_right = hclip(change.value(), state.ui.diff_scroll_x, right_col.width as usize);
 
-                let dim = Style::default()
-                    .fg(Color::DarkGray)
-                    .add_modifier(Modifier::DIM);
+                let style = Style::default().fg(Color::Rgb(220, 220, 220));
 
-                left.push(Line::from(vec![
-                    bar(Color::DarkGray),
-                    ln(old_ln, Color::DarkGray),
-                    Span::styled(text.clone(), dim),
+                out_left.push(Line::from(vec![
+                    ln(old_ln, Color::Rgb(130,130,130)),
+                    Span::raw("  "),
+                    Span::styled(t_left, style),
                 ]));
 
-                right.push(Line::from(vec![
-                    bar(Color::DarkGray),
-                    ln(new_ln, Color::DarkGray),
-                    Span::styled(text, dim),
+                out_right.push(Line::from(vec![
+                    ln(new_ln, Color::Rgb(130,130,130)),
+                    Span::raw("  "),
+                    Span::styled(t_right, style),
                 ]));
 
                 old_ln += 1;
@@ -98,42 +144,28 @@ pub fn render_side_by_side(
             }
 
             ChangeTag::Delete => {
-                let text = hclip(
-                    change.value(),
-                    state.ui.diff_scroll_x,
-                    width,
-                );
+                let t = hclip(change.value(), state.ui.diff_scroll_x, left_col.width as usize);
 
-                left.push(Line::from(vec![
-                    bar(Color::Red),
+                out_left.push(Line::from(vec![
                     ln(old_ln, Color::Red),
-                    Span::styled(
-                        text,
-                        Style::default().fg(Color::Red),
-                    ),
+                    Span::raw("  "),
+                    Span::styled(t, Style::default().fg(Color::Red)),
                 ]));
 
-                right.push(Line::from(vec![empty_pad()]));
+                out_right.push(Line::from(empty_pad()));
 
                 old_ln += 1;
             }
 
             ChangeTag::Insert => {
-                let text = hclip(
-                    change.value(),
-                    state.ui.diff_scroll_x,
-                    width,
-                );
+                let t = hclip(change.value(), state.ui.diff_scroll_x, right_col.width as usize);
 
-                left.push(Line::from(vec![empty_pad()]));
+                out_left.push(Line::from(empty_pad()));
 
-                right.push(Line::from(vec![
-                    bar(Color::Green),
+                out_right.push(Line::from(vec![
                     ln(new_ln, Color::Green),
-                    Span::styled(
-                        text,
-                        Style::default().fg(Color::Green),
-                    ),
+                    Span::raw("  "),
+                    Span::styled(t, Style::default().fg(Color::Green)),
                 ]));
 
                 new_ln += 1;
@@ -141,29 +173,14 @@ pub fn render_side_by_side(
         }
     }
 
-    let title_style = if state.ui.focus == Focus::Diff {
-        Style::default().fg(Color::Yellow)
-    } else {
-        Style::default()
-    };
-
+    /* Render panels */
     f.render_widget(
-        Paragraph::new(left).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(Span::styled("OLD", title_style))
-                .title_alignment(Alignment::Center),
-        ),
-        chunks[0],
+        Paragraph::new(out_left).style(Style::default().bg(Color::Rgb(28,28,28))),
+        left_col,
     );
 
     f.render_widget(
-        Paragraph::new(right).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(Span::styled("NEW", title_style))
-                .title_alignment(Alignment::Center),
-        ),
-        chunks[1],
+        Paragraph::new(out_right).style(Style::default().bg(Color::Rgb(28,28,28))),
+        right_col,
     );
 }
