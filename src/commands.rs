@@ -2,15 +2,13 @@
 /// 
 /// command intent and calling
 
-use std::hint;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
-use std::sync::mpsc;
 use crate::detectors::diff_analyzer::analyze_diff;
 use crate::git;
 use crate::logger::{log, log_diff_analysis};
 use crate::llm::backend::LlmBackend;
-use crate::llm::client::{LlmClient, Provider};
+use crate::llm::client::Provider;
 use crate::state::{
     AgentRunOptions, AgentState, Focus, InputMode, LogLevel, Phase, SinglePanelView
 };
@@ -22,47 +20,54 @@ pub fn handle_command(state: &mut AgentState, cmd: &str) {
     state.clear_autocomplete();
 
     match cmd {
-        "help" => help(state),
+    "help" => help(state),
 
-        "inspect" => inspect(state),
-        "changes" => list_changes(state),
-        cmd if cmd.starts_with("changes ") => view_change(state, cmd),
+    "inspect" => inspect(state),
+    "changes" => list_changes(state),
+    cmd if cmd.starts_with("changes ") => view_change(state, cmd),
 
-        cmd if cmd.starts_with("agent run ") => agent_run(state, cmd),
-        "agent status" => agent_status(state),
-        "agent cancel" => agent_cancel(state),
-
-        "clear" | "logs clear" => clear_logs(state),
-
-        cmd if cmd.starts_with("model use ") => model_use(state, cmd),
-        "model show" => model_show(state),
-        "artifacts test" => show_test_artifact(state),
-
-        "branch new" => {
-            log(state, LogLevel::Info, "Creating agent branch…");
-            state.lifecycle.phase = Phase::CreateNewAgent;
-        }
-
-        "branch rollback" => {
-            log(state, LogLevel::Warn, "Rolling back agent branch…");
-            state.lifecycle.phase = Phase::Rollback;
-        }
-
-        "branch list" => {
-            for b in git::list_branches() {
-                log(state, LogLevel::Info, b);
-            }
-        }
-
-        "close" => close_view(state),
-        "quit" => {
-            log(state, LogLevel::Info, "Exiting Osmogrep.");
-            state.lifecycle.phase = Phase::Done;
-        }
-
-        "" => {}
-        _ => log(state, LogLevel::Warn, "Unknown command. Type `help`."),
+    cmd if cmd.starts_with("agent run --all") => {
+        agent_run_all(state, cmd);
     }
+
+    cmd if cmd.starts_with("agent run ") => {
+        agent_run(state, cmd);
+    }
+    "agent status" => agent_status(state),
+    "agent cancel" => agent_cancel(state),
+
+    "clear" | "logs clear" => clear_logs(state),
+
+    cmd if cmd.starts_with("model use ") => model_use(state, cmd),
+    "model show" => model_show(state),
+    "artifacts test" => show_test_artifact(state),
+
+    "branch new" => {
+        log(state, LogLevel::Info, "Creating agent branch…");
+        state.lifecycle.phase = Phase::CreateNewAgent;
+    }
+
+    "branch rollback" => {
+        log(state, LogLevel::Warn, "Rolling back agent branch…");
+        state.lifecycle.phase = Phase::Rollback;
+    }
+
+    "branch list" => {
+        for b in git::list_branches() {
+            log(state, LogLevel::Info, b);
+        }
+    }
+
+    "close" => close_view(state),
+    "quit" => {
+        log(state, LogLevel::Info, "Exiting Osmogrep.");
+        state.lifecycle.phase = Phase::Done;
+    }
+
+    "" => {}
+    _ => log(state, LogLevel::Warn, "Unknown command. Type `help`."),
+    }
+
 }
 
 fn help(state: &mut AgentState) {
@@ -255,6 +260,45 @@ fn agent_run(state: &mut AgentState, cmd: &str) {
     state.lifecycle.phase = Phase::ExecuteAgent;
 }
 
+fn agent_run_all(state: &mut AgentState, cmd: &str) {
+    let reload = cmd.contains("--reload");
+    let unbounded = cmd.contains("--unbounded");
+
+    if state.context.diff_analysis.is_empty() {
+        log(state, LogLevel::Warn, "No diffs available. Run `inspect` first.");
+        return;
+    }
+
+    log(
+        state,
+        LogLevel::Info,
+        format!("Running ALL diffs ({} diffs)…", state.context.diff_analysis.len())
+    );
+
+    // generate candidates for ALL diffs together
+    let candidates = generate_test_candidates(&state.context.diff_analysis);
+
+    if candidates.is_empty() {
+        log(state, LogLevel::Warn, "No test candidates from diffs.");
+        return;
+    }
+
+    // store into state for orchestrator
+    state.context.test_candidates = candidates;
+    state.context.last_generated_test = None;
+    state.context.generated_tests_ready = false;
+
+    // set run options
+    state.run_options = AgentRunOptions {
+        force_reload: reload,
+        full_suite: false,   // <-- important
+        unbounded,
+    };
+
+    // place machine into parallel execution mode
+    state.lifecycle.phase = Phase::Idle;
+    state.lifecycle.phase = Phase::ExecuteParallelAgent;
+}
 
 fn agent_status(state: &mut AgentState) {
     log(state, LogLevel::Info, format!("Phase: {:?}", state.lifecycle.phase));

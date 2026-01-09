@@ -31,45 +31,43 @@ pub fn summarize(diff: &DiffAnalysis) -> SemanticSummary {
     }
 }
 
-
 fn behavior_statement(d: &DiffAnalysis) -> String {
     match d.surface {
         ChangeSurface::Branching =>
-            "Behavior remains correct across all logical branches".into(),
+            "All control-flow paths are expected to produce consistent outputs for the same inputs".into(),
 
         ChangeSurface::Contract =>
-            "Public API behavior remains backward compatible".into(),
+            "The external API contract is preserved, including inputs, outputs, and side-effects".into(),
 
         ChangeSurface::ErrorPath =>
-            "Errors are raised and handled predictably".into(),
+            "Error conditions produce stable, deterministic, and documented failure modes".into(),
 
         ChangeSurface::State =>
-            "State transitions remain valid across operations".into(),
+            "Internal state transitions remain consistent and preserve invariants across operations".into(),
 
         ChangeSurface::Cosmetic =>
-            "Non-functional changes do not affect execution".into(),
+            "No functional behavior changes; execution semantics remain identical".into(),
 
         ChangeSurface::PureLogic =>
-            "Previously valid behavior continues to work as expected".into(),
+            "Logical expressions maintain equivalent evaluation results for all valid inputs".into(),
+
         ChangeSurface::Unknown =>
-            "Unknown failure, test full must have made this".into(),
+            "Behavioral impact cannot be classified; full-suite validation required".into(),
     }
 }
-
-
 fn failure_statement(d: &DiffAnalysis) -> String {
     match d.surface {
         ChangeSurface::Contract =>
-            "Callers may observe breaking API behavior".into(),
+            "External callers may receive different outputs, experience signature incompatibility, or encounter altered side-effects".into(),
 
         ChangeSurface::ErrorPath =>
-            "Unhandled errors may surface at runtime".into(),
+            "Execution may raise unintended exceptions or fail to raise expected errors under invalid conditions".into(),
 
         ChangeSurface::State =>
-            "Invalid state transitions may break flows".into(),
+            "State corruption or inconsistent transitions may occur, leading to nondeterministic behavior".into(),
 
         _ =>
-            "Unexpected regression in existing behavior".into(),
+            "Core logic may produce incorrect results or regress from previously validated behavior".into(),
     }
 }
 

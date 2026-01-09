@@ -78,7 +78,7 @@ pub enum TestStyle {
     Edge,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct FullContextSnapshot {
     pub code: ContextSnapshot,
     pub tests: TestContextSnapshot,

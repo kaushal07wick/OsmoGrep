@@ -4,6 +4,8 @@
 //! All git-related functionality lives here.
 
 use std::process::{Command};
+use std::path::{Path, PathBuf};
+use uuid::Uuid;
 
 fn git(args: &[&str]) -> std::process::Output {
     Command::new("git")
@@ -108,7 +110,6 @@ pub fn diff_cached() -> Vec<u8> {
     git(&["diff", "--cached"]).stdout
 }
 
-
 pub fn show_head(path: &str) -> Option<String> {
     let out = Command::new("git")
         .args(["show", &format!("HEAD:{}", path)])
@@ -156,4 +157,35 @@ pub fn show_file_at(commit: &str, path: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+// Create an isolated sandbox worktree for a sub-agent
+pub fn git_create_sandbox_worktree() -> PathBuf {
+    let uuid = Uuid::new_v4().to_string();
+    let sandbox = std::env::temp_dir().join("agent_sandbox").join(uuid);
+
+    std::fs::create_dir_all(&sandbox).expect("failed to create sandbox directory");
+
+    // Create an isolated worktree based on HEAD
+    let status = std::process::Command::new("git")
+        .args(["worktree", "add", sandbox.to_str().unwrap(), "HEAD"])
+        .status()
+        .expect("git worktree failed");
+
+    if !status.success() {
+        panic!("git worktree could not be created");
+    }
+
+    sandbox
+}
+
+// Compute patch/diff inside sandbox
+pub fn git_compute_patch(sandbox: &Path) -> String {
+    let output = std::process::Command::new("git")
+        .current_dir(sandbox)
+        .args(["diff"])
+        .output()
+        .expect("git diff failed");
+
+    String::from_utf8_lossy(&output.stdout).to_string()
 }

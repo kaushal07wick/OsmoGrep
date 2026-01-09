@@ -50,6 +50,7 @@ pub enum Phase {
     DetectBase,
     Idle,
     ExecuteAgent,
+    ExecuteParallelAgent,
     Running,
     CreateNewAgent,
     Rollback,
@@ -71,7 +72,7 @@ pub enum DiffBaseline {
 }
 
 ///classification of semantic surface
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum ChangeSurface {
     PureLogic,
     Branching,
@@ -259,7 +260,7 @@ pub struct AgentState {
     pub agent_tx: Sender<AgentEvent>,
     pub agent_rx: Receiver<AgentEvent>,
     pub cancel_requested: Arc<AtomicBool>,
-    pub full_context_snapshot: Option<FullContextSnapshot>,
+    pub full_context_snapshot: Option<Arc<FullContextSnapshot>>,
     pub run_options: AgentRunOptions,
     pub repo_root: PathBuf,
 }

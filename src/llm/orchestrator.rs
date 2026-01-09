@@ -1,6 +1,6 @@
-use std::sync::{
+use std::{path::PathBuf, sync::{
     Arc, Mutex, atomic::{AtomicBool, Ordering}, mpsc::Sender
-};
+}};
 use std::thread;
 use crate::context::{full_suite_context::FailureInfo, types::FullContextSnapshot};
 use crate::detectors::language::Language;
@@ -18,6 +18,7 @@ use crate::context::full_suite_context::{
     build_full_suite_context,
 };
 use crate::llm::prompt::build_full_suite_prompt;
+use crate::git::{git_create_sandbox_worktree, git_compute_patch};
 
 const MAX_LLM_RETRIES: usize = 3;
 const MAX_ERROR_CHARS: usize = 4_000;
@@ -26,7 +27,7 @@ pub fn run_single_test_flow(
     tx: Sender<AgentEvent>,
     cancel_flag: Arc<AtomicBool>,
     llm: LlmBackend,
-    snapshot: FullContextSnapshot,
+    snapshot: Arc<FullContextSnapshot>,
     candidate: TestCandidate,
     language: Language,
     semantic_cache: Arc<SemanticCache>,
@@ -418,14 +419,217 @@ pub fn run_full_suite_flow(
     });
 }
 
-fn short_test_name(name: &str) -> String {
-    const MAX: usize = 80;
-    if name.len() <= MAX {
-        return name.to_string();
+
+pub fn run_parallel_agent_flow(
+    tx: Sender<AgentEvent>,
+    cancel_flag: Arc<AtomicBool>,
+    llm: LlmBackend,
+    repo_root: PathBuf,
+    snapshot: Arc<FullContextSnapshot>,
+    candidates: Vec<TestCandidate>,
+    language: Language,
+    run_options: AgentRunOptions,
+) {
+    thread::spawn(move || {
+        let cancelled = || cancel_flag.load(Ordering::SeqCst);
+        let total = candidates.len();
+        let _ = tx.send(AgentEvent::SpinnerStart(format!("Running {total} subagents…")));
+
+        let results = candidates
+            .into_iter()
+            .enumerate()
+            .map(|(i, c)| {
+                let tx_clone = tx.clone();
+                let cf = cancel_flag.clone();
+                let llm_clone = llm.clone();
+                let snap = snapshot.clone();
+                let opts = run_options.clone();
+                let root = repo_root.clone();
+
+                thread::spawn(move || {
+                    run_single_subagent(
+                        tx_clone,
+                        cf,
+                        llm_clone,
+                        root,
+                        snap.clone(),  // Arc clone is cheap
+                        c,
+                        language,
+                        opts,
+                        i,
+                        total,
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let mut patches = Vec::new();
+
+        for handle in results {
+            if cancelled() { break; }
+            if let Ok((ok, patch_opt)) = handle.join() {
+                if ok {
+                    if let Some(p) = patch_opt {
+                        patches.push(p);
+                    }
+                }
+            }
+        }
+
+        for (i, patch) in patches.iter().enumerate() {
+            if cancelled() { break; }
+
+            let tmp = std::env::temp_dir().join(format!("_subpatch_{i}.diff"));
+            if std::fs::write(&tmp, patch).is_ok() {
+                let status = std::process::Command::new("git")
+                    .current_dir(&repo_root)
+                    .arg("apply")
+                    .arg(tmp.to_str().unwrap())
+                    .status();
+
+                match status {
+                    Ok(s) if s.success() => {
+                        let _ = tx.send(AgentEvent::Log(LogLevel::Success,
+                            format!("Patch {i} applied")));
+                    }
+                    _ => {
+                        let _ = tx.send(AgentEvent::Log(LogLevel::Warn,
+                            format!("Patch {i} conflict, skipping")));
+                    }
+                }
+            }
+        }
+
+        match run_test_suite_and_report(language, &repo_root) {
+            Ok(suite) => {
+                if suite.passed {
+                    let _ = tx.send(AgentEvent::Log(LogLevel::Success,
+                        "All tests passing ✔".into()));
+                } else {
+                    let _ = tx.send(AgentEvent::Log(LogLevel::Warn,
+                        format!("{} tests still failing", suite.failures.len())));
+                }
+            }
+            Err(e) => {
+                let _ = tx.send(AgentEvent::Log(LogLevel::Error,
+                    format!("Final suite error: {}", e)));
+            }
+        }
+
+        let _ = tx.send(AgentEvent::SpinnerStop);
+        let _ = tx.send(AgentEvent::Finished);
+    });
+}
+
+
+fn run_single_subagent(
+    tx: Sender<AgentEvent>,
+    cancel_flag: Arc<AtomicBool>,
+    llm: LlmBackend,
+    repo_root: PathBuf,
+    snapshot: Arc<FullContextSnapshot>,
+    candidate: TestCandidate,
+    language: Language,
+    run_options: AgentRunOptions,
+    index: usize,
+    total: usize,
+) -> (bool, Option<String>) {
+
+    let cancelled = || cancel_flag.load(Ordering::SeqCst);
+    let prefix = format!("[{}/{}]", index + 1, total);
+
+    let _ = tx.send(AgentEvent::Log(LogLevel::Info,
+        format!("{prefix} Subagent starting ({})", candidate.file)));
+
+    let sandbox = git_create_sandbox_worktree();
+
+    let mut last_test: Option<String> = None;
+    let mut last_error: Option<String> = None;
+
+    for attempt in 1..=MAX_LLM_RETRIES {
+        if cancelled() {
+            let _ = tx.send(AgentEvent::Log(LogLevel::Warn,
+                format!("{prefix} Cancelled")));
+            return (false, None);
+        }
+
+        let _ = tx.send(AgentEvent::Log(LogLevel::Info,
+            format!("{prefix} LLM attempt {attempt}/{MAX_LLM_RETRIES}")));
+
+        let file_ctx = match snapshot.code.files.iter()
+            .find(|f| f.path == candidate.file)
+        {
+            Some(c) => c,
+            None => {
+                let _ = tx.send(AgentEvent::Log(LogLevel::Error,
+                    format!("{prefix} No file context")));
+                return (false, None);
+            }
+        };
+
+        let prompt = match (&last_test, &last_error) {
+            (Some(code), Some(err)) => build_prompt_with_feedback(
+                &candidate, file_ctx, &snapshot.tests, code, err
+            ),
+            _ => build_prompt(&candidate, file_ctx, &snapshot.tests),
+        };
+
+        let out = match llm.run(prompt, run_options.force_reload && attempt == 1) {
+            Ok(r) => r.text,
+            Err(e) => {
+                last_error = Some(e.clone());
+                continue;
+            }
+        };
+
+        let cleaned = sanitize_llm_output(&out);
+        if cleaned.is_empty() {
+            last_error = Some("empty llm output".into());
+            continue;
+        }
+
+        last_test = Some(cleaned.clone());
+
+        let test_path = match materialize_test(&sandbox, language, &candidate, &cleaned) {
+            Ok(p) => p,
+            Err(e) => {
+                last_error = Some(e.to_string());
+                continue;
+            }
+        };
+
+        let req = match language {
+        Language::Python => TestRunRequest::Python { test_path },
+        Language::Rust => TestRunRequest::Rust,
+        Language::Unknown => {
+            let _ = tx.send(AgentEvent::Log(
+                LogLevel::Error,
+                format!("{prefix} Unsupported language"),
+            ));
+            return (false, None);
+        }
+    };
+
+
+        let result = run_test(req);
+
+        match result {
+            TestResult::Passed => {
+                let _ = tx.send(AgentEvent::Log(LogLevel::Success,
+                    format!("{prefix} Test passed")));
+                let patch = git_compute_patch(&sandbox);
+                return (true, Some(patch));
+            }
+            TestResult::Failed { output } => {
+                last_error = Some(trim_error(&output));
+            }
+        }
     }
-    let start = &name[..40];
-    let end = &name[name.len() - 30..];
-    format!("{}..{}", start, end)
+
+    let _ = tx.send(AgentEvent::Log(LogLevel::Error,
+        format!("{prefix} Exhausted retries")));
+
+    (false, None)
 }
 
 
@@ -454,4 +658,14 @@ fn sanitize_llm_output(raw: &str) -> String {
     }
 
     s.trim().to_string()
+}
+
+fn short_test_name(name: &str) -> String {
+    const MAX: usize = 80;
+    if name.len() <= MAX {
+        return name.to_string();
+    }
+    let start = &name[..40];
+    let end = &name[name.len() - 30..];
+    format!("{}..{}", start, end)
 }

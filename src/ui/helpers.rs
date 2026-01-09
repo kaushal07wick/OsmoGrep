@@ -7,10 +7,8 @@ use std::time::Instant;
 use crate::context::types::TestFramework;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
-use crate::state::{Phase, RiskLevel, TestDecision};
+use crate::state::{Phase, RiskLevel};
 use crate::state::ChangeSurface;
-use std::borrow::Cow;
-use std::path::Path;
 
 /// Phase badge (symbol, label, color).
 pub fn phase_badge(phase: &Phase) -> (&'static str, &'static str, Color) {

@@ -4,6 +4,7 @@
 
 use std::path::{PathBuf};
 use std::sync::atomic::Ordering;
+use crate::llm::orchestrator::run_parallel_agent_flow;
 use crate::testgen::cache::SemanticCache;
 use std::sync::{Arc, Mutex};
 use crate::testgen::cache::FullSuiteCache;
@@ -26,6 +27,10 @@ pub fn step(state: &mut AgentState) {
         Phase::Idle => attach_summaries(state),
 
         Phase::ExecuteAgent => execute_agent(state),
+
+        // NEW PHASE HERE
+        Phase::ExecuteParallelAgent => execute_parallel_agent(state),
+
         Phase::Running => handle_running(state),
         Phase::Rollback => rollback_agent(state),
 
@@ -86,7 +91,6 @@ fn create_agent_branch(state: &mut AgentState) {
     transition(state, Phase::Idle);
 }
 
-///execute the agent (calls the orchestrator)
 fn execute_agent(state: &mut AgentState) {
     state.cancel_requested.store(false, Ordering::SeqCst);
 
@@ -94,10 +98,13 @@ fn execute_agent(state: &mut AgentState) {
     checkout_branch(state, &branch);
 
     let repo_root = state.repo_root.clone();
+
+    // snapshot now Arc<FullContextSnapshot>
     let snapshot = build_full_context_snapshot(
         &repo_root,
         &state.context.diff_analysis,
     );
+
     state.full_context_snapshot = Some(snapshot.clone());
 
     let language = match state.lifecycle.language {
@@ -124,39 +131,95 @@ fn execute_agent(state: &mut AgentState) {
     let llm = state.llm_backend.clone();
     let semantic_cache = Arc::new(SemanticCache::new());
 
-   // ---- full or single test decision ----
-if run_options.full_suite {
-    let full_cache = Arc::new(Mutex::new(FullSuiteCache::new()));
+    if run_options.full_suite {
+        let full_cache = Arc::new(Mutex::new(FullSuiteCache::new()));
 
-    run_full_suite_flow(
-        state.agent_tx.clone(),
-        state.cancel_requested.clone(),
-        llm,
-        language,
-        run_options,
-        full_cache,
+        run_full_suite_flow(
+            state.agent_tx.clone(),
+            state.cancel_requested.clone(),
+            llm,
+            language,
+            run_options,
+            full_cache,
+        );
+    } else {
+        let candidate = match state.context.test_candidates.first().cloned() {
+            Some(c) => c,
+            None => {
+                log(state, LogLevel::Warn, "No test candidate available.");
+                transition(state, Phase::Idle);
+                return;
+            }
+        };
+
+        run_single_test_flow(
+            state.agent_tx.clone(),
+            state.cancel_requested.clone(),
+            llm,
+            snapshot,
+            candidate,
+            language,
+            semantic_cache,
+            run_options,
+        );
+    }
+
+    transition(state, Phase::Running);
+}
+
+
+// sub-agent parallel fixing
+fn execute_parallel_agent(state: &mut AgentState) {
+    state.cancel_requested.store(false, Ordering::SeqCst);
+
+    let branch = ensure_agent_branch(state);
+    checkout_branch(state, &branch);
+
+    let repo_root = state.repo_root.clone();
+
+    // FIX: snapshot is Arc
+    let snapshot = build_full_context_snapshot(
+        &repo_root,
+        &state.context.diff_analysis,
     );
-} else {
-    let candidate = match state.context.test_candidates.first().cloned() {
-        Some(c) => c,
+
+    state.full_context_snapshot = Some(snapshot.clone());
+
+    let language = match state.lifecycle.language {
+        Some(l) => l,
         None => {
-            log(state, LogLevel::Warn, "No test candidate available.");
+            log(state, LogLevel::Error, "Language not detected.");
             transition(state, Phase::Idle);
             return;
         }
     };
 
-    run_single_test_flow(
-        state.agent_tx.clone(),
-        state.cancel_requested.clone(),
+    let run_options = state.run_options.clone();
+    let llm = state.llm_backend.clone();
+    let tx = state.agent_tx.clone();
+    let cancel_flag = state.cancel_requested.clone();
+
+    log(state, LogLevel::Info, "🤖 Agent started (parallel multi-diff mode)");
+
+    let candidates = state.context.test_candidates.clone();
+    if candidates.is_empty() {
+        log(state, LogLevel::Warn, "No test candidates for parallel run.");
+        transition(state, Phase::Idle);
+        return;
+    }
+
+    // FIX: correct call with Arc snapshot & repo_root provided
+    run_parallel_agent_flow(
+        tx,
+        cancel_flag,
         llm,
+        repo_root,
         snapshot,
-        candidate,
+        candidates,
         language,
-        semantic_cache,
         run_options,
     );
-}
+
     transition(state, Phase::Running);
 }
 

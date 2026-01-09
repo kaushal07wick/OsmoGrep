@@ -1,9 +1,8 @@
 // src/context/snapshot.rs
-//
-// Diff-scoped + repo-level context construction.
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use tree_sitter::{Node, Parser};
 use tree_sitter_python as python;
@@ -17,20 +16,21 @@ use crate::context::types::{
 };
 use crate::context::test_snapshot::build_test_context_snapshot;
 
-/// Build FULL context snapshot:
-/// - diff-scoped code context
-/// - repo-level test context
+/// Build FULL context snapshot (wrapped in Arc)
 pub fn build_full_context_snapshot(
     repo_root: &Path,
     diffs: &[DiffAnalysis],
-) -> FullContextSnapshot {
+) -> Arc<FullContextSnapshot> {
     let code = build_context_snapshot(repo_root, diffs);
     let tests = build_test_context_snapshot(repo_root);
 
-    FullContextSnapshot { code, tests }
+    Arc::new(FullContextSnapshot {
+        code,
+        tests,
+    })
 }
 
-/// Existing diff-scoped context builder (unchanged)
+/// Build diff-scoped context
 pub fn build_context_snapshot(
     repo_root: &Path,
     diffs: &[DiffAnalysis],
@@ -56,7 +56,7 @@ pub fn build_context_snapshot(
     ContextSnapshot { files }
 }
 
-/// Reused by both code + test snapshots
+/// Parse file into symbol + import context
 pub fn parse_file(
     file: &Path,
     source: &str,
@@ -94,6 +94,7 @@ pub fn parse_file(
     (symbols, imports)
 }
 
+/// Tree sitter walk
 fn walk_node(
     kind: LanguageKind,
     node: Node,
@@ -104,11 +105,11 @@ fn walk_node(
     current_class: Option<String>,
 ) {
     match (kind, node.kind()) {
-        // ---------- Python ----------
         (LanguageKind::Python, "class_definition") => {
             if let Some(n) = node.child_by_field_name("name") {
                 if let Ok(cls) = n.utf8_text(src.as_bytes()) {
                     let cls = cls.to_string();
+
                     symbols.push(SymbolDef {
                         name: cls.clone(),
                         file: file.to_path_buf(),
@@ -142,7 +143,6 @@ fn walk_node(
             }
         }
 
-        // ---------- Rust ----------
         (LanguageKind::Rust, "function_item")
         | (LanguageKind::Rust, "struct_item")
         | (LanguageKind::Rust, "enum_item") => {
@@ -157,7 +157,6 @@ fn walk_node(
             }
         }
 
-        // ---------- Imports ----------
         (LanguageKind::Python, "import_statement")
         | (LanguageKind::Python, "import_from_statement")
         | (LanguageKind::Rust, "use_declaration") => {
@@ -179,6 +178,7 @@ fn walk_node(
     }
 }
 
+/// Resolve target symbol from list
 fn resolve_symbol(
     target: Option<&str>,
     symbols: &[SymbolDef],

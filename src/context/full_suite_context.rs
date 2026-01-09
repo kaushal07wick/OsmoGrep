@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 use regex::Regex;
 
-use crate::detectors::ast::ast::parse_source;
+use crate::context::ast::{parse_source};
+
 
 #[derive(Debug, Clone)]
 pub struct FailureInfo {
