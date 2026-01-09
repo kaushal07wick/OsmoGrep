@@ -185,6 +185,7 @@ fn init_state() -> AgentState {
             input_mode: InputMode::Command,
             input_masked: false,
             input_placeholder: None,
+            first_command_done:false,
         },
         logs: LogBuffer::new(),
         llm_backend: LlmBackend::Remote {
@@ -284,9 +285,20 @@ fn handle_input_keys(state: &mut AgentState, k: crossterm::event::KeyEvent) {
                 }
 
                 InputMode::Command => {
+                    // First command = leave landing screen
+                    if !state.ui.first_command_done {
+                        if !state.ui.input.trim().is_empty() {
+                            state.ui.first_command_done = true;
+                        }
+                    }
+
+                    // Execute command normally
                     let cmd = state.commit_input();
                     handle_command(state, &cmd);
                     update_command_hints(state);
+
+                    // clear input box after execution
+                    state.ui.input.clear();
                 }
             }
         }

@@ -3,73 +3,335 @@ use std::io;
 use ratatui::{
     backend::Backend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
+    style::{Color, Style, Modifier},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Paragraph},
+    widgets::{Block, Borders, BorderType, Paragraph},
     Terminal,
 };
 
-use unicode_width::UnicodeWidthStr;
-
-use crate::state::{AgentState, Focus, InputMode, Phase};
+use crate::state::{AgentState, Focus, InputMode};
 use crate::ui::{diff, execution, panels, status};
 
+
+pub const PRIMARY_GREEN: Color  = Color::Rgb(0, 220, 140);
+pub const PRIMARY_WHITE: Color  = Color::Rgb(235, 235, 235);
+
+/// ascii header
+pub fn render_header(f: &mut ratatui::Frame, area: Rect) {
+    const HEADER: [&str; 6] = [
+        " █████╗  ██████╗███╗   ███╗ █████╗  ██████╗ ██████╗ ███████╗██████╗ ",
+        "██╔══██╗██╔════╝████╗ ████║██╔══██╗██╔════╝ ██╔══██╗██╔════╝██╔══██╗",
+        "██║  ██║╚█████╗ ██╔████╔██║██║  ██║██║  ██╗ ██████╔╝█████╗  ██████╔╝",
+        "██║  ██║ ╚═══██╗██║╚██╔╝██║██║  ██║██║  ╚██╗██╔══██╗██╔══╝  ██╔═══╝ ",
+        "╚█████╔╝██████╔╝██║ ╚═╝ ██║╚█████╔╝╚██████╔╝██║  ██║███████╗██║     ",
+        " ╚════╝ ╚═════╝ ╚═╝     ╚═╝ ╚════╝  ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝     ",
+    ];
+
+    let header = Paragraph::new(
+        HEADER
+            .iter()
+            .map(|l| {
+                Line::from(Span::styled(
+                    *l,
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ))
+            })
+            .collect::<Vec<_>>(),
+    )
+    .alignment(Alignment::Center);
+
+    f.render_widget(header, area);
+}
+
+
+//command input line
+fn render_command_input_line(state: &AgentState, prompt: &str) -> Line<'static> {
+    let mut spans = vec![
+        Span::styled(prompt.to_string(), Style::default().fg(PRIMARY_WHITE)),
+    ];
+
+    let in_api = matches!(state.ui.input_mode, InputMode::ApiKey { .. });
+
+    if in_api {
+        let len = state.ui.input.len();
+        if len == 0 {
+            spans.push(Span::styled("█", Style::default().fg(PRIMARY_WHITE)));
+        } else {
+            let frame = (state.ui.last_activity.elapsed().as_millis() / 120) as usize;
+            let anim = ["•","••","•••","••••"][frame % 4];
+            let obscured = if len == 1 { anim.to_string() } else {
+                format!("{}{}", "•".repeat(len - 1), anim)
+            };
+            spans.push(Span::styled(obscured, Style::default().fg(PRIMARY_WHITE)));
+        }
+    } else {
+        if state.ui.input.is_empty() {
+            spans.push(Span::styled("█", Style::default().fg(PRIMARY_WHITE)));
+        } else {
+            spans.push(Span::styled(state.ui.input.clone(), Style::default().fg(PRIMARY_WHITE)));
+            spans.push(Span::styled("█", Style::default().fg(PRIMARY_WHITE)));
+        }
+    }
+
+    Line::from(spans)
+}
+
+
+/// cursor position
+fn cursor_position(input_rect: Rect, state: &AgentState, prompt_len: usize) -> (u16, u16) {
+    let visible = state.ui.input.chars().count() as u16;
+    let cx = input_rect.x + prompt_len as u16 + visible;
+    let cy = input_rect.y;
+    (cx, cy)
+}
+
+
+/// main draw function
 pub fn draw_ui<B: Backend>(
     terminal: &mut Terminal<B>,
     state: &AgentState,
-) -> io::Result<(Rect, Rect, Rect)> {
+) -> io::Result<(Rect, Rect, Rect)>
+{
     let mut input_rect = Rect::default();
     let mut diff_rect = Rect::default();
     let mut exec_rect = Rect::default();
 
     terminal.draw(|f| {
-        // ───────────────── HEADER + MAIN ─────────────────
+        let area = f.size();
+
+        // landing screen
+        if !state.ui.first_command_done {
+
+            let landing = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Percentage(30),  // top padding
+                    Constraint::Length(6),       // header
+                    Constraint::Length(1),       // space
+                    Constraint::Length(5),       // command box (3 rows)
+                    Constraint::Length(2),       // hints below
+                    Constraint::Min(1),          // flexible space
+                    Constraint::Length(1),       // footer
+                ])
+                .split(area);
+
+            // header
+            render_header(f, landing[1]);
+
+            let box_horizontal = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(15),
+                    Constraint::Percentage(70),
+                    Constraint::Percentage(15),
+                ])
+                .split(landing[3]);
+
+            let box_area = box_horizontal[1];
+
+            /* Create 5 rows inside the box */
+            let rows = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1), // top padding
+                    Constraint::Length(1), // input row
+                    Constraint::Length(1), // spacer row
+                    Constraint::Length(1), // model row
+                    Constraint::Length(1), // bottom padding
+                ])
+                .split(box_area);
+
+            let top_pad    = rows[0];
+            let input_row  = rows[1];
+            let spacer_row = rows[2];
+            let model_row  = rows[3];
+            let bottom_pad = rows[4];
+
+            /* 1. DRAW FULL BACKGROUND FIRST */
+            f.render_widget(
+                Block::default().style(Style::default().bg(Color::Rgb(30,30,30))),
+                box_area,
+            );
+
+            /* 2. DRAW FULL GREEN ACCENT BORDER (Continuous Height) */
+            let border_rect = Rect {
+                x: box_area.x,
+                y: box_area.y,
+                width: 1,
+                height: box_area.height,
+            };
+
+            f.render_widget(
+                Block::default()
+                    .borders(Borders::NONE)
+                    .style(Style::default().bg(PRIMARY_GREEN)),
+                border_rect,
+            );
+
+            /* 3. RENDER CONTENT ON TOP (Remove .bg() from Paragraphs to prevent "breaking" the border) */
+
+            // ROW 2: INPUT
+            let input_area = Rect {
+                x: input_row.x + 2,
+                y: input_row.y,
+                width: input_row.width.saturating_sub(2),
+                height: 1,
+            };
+
+            let prompt = ">_ ";
+            let mut spans = vec![Span::styled(prompt, Style::default().fg(PRIMARY_WHITE))];
+
+            if !state.ui.input.is_empty() {
+                spans.push(Span::styled(state.ui.input.clone(), Style::default().fg(PRIMARY_WHITE)));
+            }
+
+            f.render_widget(
+                Paragraph::new(Line::from(spans)), // Background removed
+                input_area,
+            );
+
+            input_rect = input_area;
+            if state.ui.focus == Focus::Input {
+                let (cx, cy) = cursor_position(input_rect, state, prompt.len());
+                f.set_cursor(cx, cy);
+            }
+
+            // ROW 4: MODEL
+            let model_area = Rect {
+                x: model_row.x + 2,
+                y: model_row.y,
+                width: model_row.width.saturating_sub(2),
+                height: 1,
+            };
+
+            let model_name = match &state.llm_backend {
+                crate::llm::backend::LlmBackend::Remote { client } =>
+                    format!("{:?}", client.current_config().provider),
+                crate::llm::backend::LlmBackend::Ollama { .. } =>
+                    "Ollama".to_string(),
+            };
+
+            f.render_widget(
+                Paragraph::new(
+                    Line::from(vec![
+                        Span::styled(model_name, Style::default().fg(PRIMARY_WHITE).add_modifier(Modifier::BOLD)),
+                    ])
+                ), // Background removed
+                model_area,
+            );
+
+            /* ---------------------------------------------
+               HINTS BELOW COMMAND BOX
+            --------------------------------------------- */
+
+            let hints_area = landing[4];
+            
+            let hints_horizontal = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(15),
+                    Constraint::Percentage(70),
+                    Constraint::Percentage(15),
+                ])
+                .split(hints_area);
+
+            let hints = Paragraph::new(
+                Line::from(vec![
+                    Span::styled("[enter]", Style::default().fg(PRIMARY_GREEN)),
+                    Span::styled(" run", Style::default().fg(Color::Rgb(100, 100, 100))),
+                    Span::raw("      "),
+                    Span::styled("[esc]", Style::default().fg(PRIMARY_GREEN)),
+                    Span::styled(" interrupt", Style::default().fg(Color::Rgb(100, 100, 100))),
+                ])
+            )
+            .alignment(Alignment::Center);
+
+            f.render_widget(hints, hints_horizontal[1]);
+
+            /* ---------------------------------------------
+               FOOTER: PATH LEFT, VERSION RIGHT
+            --------------------------------------------- */
+
+            let repo = state.repo_root.file_name().and_then(|s| s.to_str()).unwrap_or("repo");
+            let branch = state.lifecycle.current_branch.as_deref().unwrap_or("main");
+
+            let footer_cols = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(50),
+                    Constraint::Percentage(50),
+                ])
+                .split(landing[6]);
+
+            f.render_widget(
+                Paragraph::new(
+                    Line::from(vec![
+                        Span::styled(format!("~/{}", repo), Style::default().fg(Color::Rgb(80, 80, 80))),
+                        Span::styled(":", Style::default().fg(Color::Rgb(80, 80, 80))),
+                        Span::styled(branch, Style::default().fg(Color::Rgb(80, 80, 80))),
+                    ])
+                )
+                .alignment(Alignment::Left),
+                footer_cols[0],
+            );
+
+            f.render_widget(
+                Paragraph::new(
+                    Line::from(vec![
+                        Span::styled(format!("v{}", env!("CARGO_PKG_VERSION")), Style::default().fg(Color::Rgb(80, 80, 80))),
+                    ])
+                )
+                .alignment(Alignment::Right),
+                footer_cols[1],
+            );
+
+            diff_rect = Rect::new(0, 0, 0, 0);
+            exec_rect = Rect::new(0, 0, 0, 0);
+            return;
+        }
+
+        /* =====================================================
+           AGENT MODE (AFTER FIRST COMMAND)
+        ===================================================== */
+
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .margin(1)
             .constraints([
-                Constraint::Length(6), // header
-                Constraint::Min(1),    // everything else
+                Constraint::Length(1),
+                Constraint::Min(1),
             ])
-            .split(f.size());
+            .split(area);
 
-        // Header
-        status::render_status(f, layout[0], state);
-
-        // ───────────────── MAIN HORIZONTAL SPLIT ─────────────────
         let main_horizontal = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Min(1),     // left (main + command)
-                Constraint::Length(30), // right (agent + context)
+                Constraint::Min(1),
+                Constraint::Length(30),
             ])
             .split(layout[1]);
 
-        // ───────────────── LEFT SIDE (MAIN + COMMAND) ─────────────────
         let left_side = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(1),    // main content
-                Constraint::Length(3), // command box
+                Constraint::Min(1),
+                Constraint::Length(3),
             ])
             .split(main_horizontal[0]);
 
         let main_area = left_side[0];
 
-        // Render main content
         let mut rendered = false;
 
         if panels::render_panel(f, main_area, state) {
             rendered = true;
-        }
-
-        if !rendered {
-            if let Some(idx) = state.ui.selected_diff {
-                if let Some(delta) = &state.context.diff_analysis[idx].delta {
-                    diff::render_side_by_side(f, main_area, delta, state);
-                    diff_rect = main_area;
-                    rendered = true;
-                }
+        } else if let Some(idx) = state.ui.selected_diff {
+            if let Some(delta) = &state.context.diff_analysis[idx].delta {
+                diff::render_side_by_side(f, main_area, delta, state);
+                diff_rect = main_area;
+                rendered = true;
             }
         }
 
@@ -79,99 +341,29 @@ pub fn draw_ui<B: Backend>(
 
         exec_rect = main_area;
 
-        // ───────────────── RIGHT PANEL (FULL HEIGHT) ─────────────────
         status::render_side_status(f, main_horizontal[1], state);
 
-        // ───────────────── COMMAND BOX ─────────────────
-        let in_api_key_mode = matches!(state.ui.input_mode, InputMode::ApiKey { .. });
-        let prompt = if in_api_key_mode { "key> " } else { ">_ " };
+        /* ---------------- COMMAND BOX ---------------- */
 
-        let raw_input = if in_api_key_mode {
-            let len = state.ui.input.chars().count();
-            if len == 0 {
-                String::new()
-            } else {
-                let frame = (state.ui.last_activity.elapsed().as_millis() / 120) as usize;
-                let dots = ["•", "••", "•••", "••••"];
-                let anim = dots[frame % dots.len()];
-                if len == 1 {
-                    anim.to_string()
-                } else {
-                    format!("{}{}", "•".repeat(len - 1), anim)
-                }
-            }
-        } else {
-            state.ui.input.clone()
-        };
+        let prompt = ">_ ";
+        let input_line = render_command_input_line(state, prompt);
 
-        let max_width = left_side[1]
-            .width
-            .saturating_sub(prompt.len() as u16 + 2) as usize;
-
-        let visible_input = {
-            let width = UnicodeWidthStr::width(raw_input.as_str());
-            if width <= max_width {
-                raw_input
-            } else {
-                raw_input
-                    .chars()
-                    .rev()
-                    .scan(0, |w, c| {
-                        *w += UnicodeWidthStr::width(c.to_string().as_str());
-                        (*w <= max_width).then_some(c)
-                    })
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .rev()
-                    .collect()
-            }
-        };
-
-        let mut spans = vec![Span::styled(prompt, Style::default().fg(Color::Cyan))];
-
-        if visible_input.is_empty() {
-            if let Some(ph) = &state.ui.input_placeholder {
-                spans.push(Span::styled(ph, Style::default().fg(Color::DarkGray)));
-            }
-        } else {
-            spans.push(Span::styled(visible_input, Style::default().fg(Color::White)));
-        }
-
-        if !in_api_key_mode {
-            if let Some(ac) = &state.ui.autocomplete {
-                if ac.starts_with(&state.ui.input) {
-                    let suffix: String =
-                        ac.chars().skip(state.ui.input.chars().count()).collect();
-                    if !suffix.is_empty() {
-                        spans.push(Span::styled(suffix, Style::default().fg(Color::Gray)));
-                    }
-                }
-            }
-        }
-
-        let input = Paragraph::new(Line::from(spans)).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(Color::DarkGray))
-                .title("COMMAND")
-                .title_alignment(Alignment::Center),
-        );
-
-        input_rect = left_side[1];
-        f.render_widget(input, input_rect);
-
-        // Cursor
-        if state.ui.focus == Focus::Input {
-            let prompt_w = prompt.len();
-            let input_w = UnicodeWidthStr::width(state.ui.input.as_str());
-            let max_visible =
-                input_rect.width.saturating_sub(prompt_w as u16 + 2) as usize;
-
-            f.set_cursor(
-                input_rect.x + prompt_w as u16 + input_w.min(max_visible) as u16,
-                input_rect.y + 1,
+        let cmd_box = Paragraph::new(input_line)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(PRIMARY_WHITE))
+                    .title("COMMAND")
+                    .title_alignment(Alignment::Center),
             );
+
+        f.render_widget(cmd_box, left_side[1]);
+        input_rect = left_side[1];
+
+        if state.ui.focus == Focus::Input {
+            let (cx, cy) = cursor_position(input_rect, state, prompt.len());
+            f.set_cursor(cx, cy);
         }
     })?;
 

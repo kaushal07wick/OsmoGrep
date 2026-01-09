@@ -229,6 +229,7 @@ pub struct UiState {
     pub input_mode: InputMode,
     pub input_masked: bool,
     pub input_placeholder: Option<String>,
+    pub first_command_done: bool,
 }
 
 #[derive(Debug, Clone)]

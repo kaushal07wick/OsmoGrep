@@ -7,56 +7,90 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
-use crate::{state::AgentState};
+use crate::state::AgentState;
 use crate::ui::helpers::{
     framework_badge,
     language_badge,
     phase_badge,
     running_pulse,
-    format_uptime
+    format_uptime,
 };
 
 fn app_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
+/* ==========================================================
+   TOP STATUS BAR (WITHOUT HEADER)
+   ========================================================== */
+
 pub fn render_status(
     f: &mut ratatui::Frame,
     area: Rect,
-    _state: &AgentState,
+    state: &AgentState,
 ) {
-    render_header(f, area);
+    // Header is removed — only render top metadata row
+
+    let layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Min(1),
+            Constraint::Length(20),
+            Constraint::Length(12),
+        ])
+        .split(area);
+
+    // -------- Left chunk: Repo + Branch --------
+    let repo = state.repo_root
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("<repo>");
+
+    let branch = state.lifecycle.current_branch.as_deref().unwrap_or("main");
+
+    let left = Paragraph::new(
+        Line::from(vec![
+            Span::styled("Repo ", Style::default().fg(Color::DarkGray)),
+            Span::styled(repo, Style::default().fg(Color::White)),
+            Span::raw("   "),
+            Span::styled("Branch ", Style::default().fg(Color::DarkGray)),
+            Span::styled(branch, Style::default().fg(Color::White)),
+        ])
+    );
+
+    f.render_widget(left, layout[0]);
+
+    // -------- Middle chunk: Phase badge --------
+    let (_sym, phase_label, _) = phase_badge(&state.lifecycle.phase);
+
+    let mid = Paragraph::new(
+        Line::from(vec![
+            Span::styled("Status ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                phase_label,
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            ),
+        ])
+    ).alignment(Alignment::Center);
+
+    f.render_widget(mid, layout[1]);
+
+    // -------- Right chunk: Version --------
+    let ver = Paragraph::new(
+        Line::from(vec![
+            Span::styled("v", Style::default().fg(Color::DarkGray)),
+            Span::styled(app_version(), Style::default().fg(Color::White)),
+        ])
+    ).alignment(Alignment::Right);
+
+    f.render_widget(ver, layout[2]);
 }
 
-fn render_header(f: &mut ratatui::Frame, area: Rect) {
-    const HEADER: [&str; 6] = [
-        "░█████╗░░██████╗███╗░░░███╗░█████╗░░██████╗░██████╗░███████╗██████╗░",
-        "██╔══██╗██╔════╝████╗░████║██╔══██╗██╔════╝░██╔══██╗██╔════╝██╔══██╗",
-        "██║░░██║╚█████╗░██╔████╔██║██║░░██║██║░░██╗░██████╔╝█████╗░░██████╔╝",
-        "██║░░██║░╚═══██╗██║╚██╔╝██║██║░░██║██║░░╚██╗██╔══██╗██╔══╝░░██╔═══╝░",
-        "╚█████╔╝██████╔╝██║░╚═╝░██║╚█████╔╝╚██████╔╝██║░░██║███████╗██║░░░░░",
-        "░╚════╝░╚═════╝░╚═╝░░░░░╚═╝░╚════╝░░╚═════╝░╚═╝░░╚═╝╚══════╝╚═╝░░░░░",
-    ];
 
-    let header = Paragraph::new(
-        HEADER
-            .iter()
-            .map(|l| {
-                Line::from(Span::styled(
-                    *l,
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ))
-            })
-            .collect::<Vec<_>>(),
-    )
-    .alignment(Alignment::Center);
+/* ==========================================================
+   RIGHT SIDEBAR PANEL
+   ========================================================== */
 
-    f.render_widget(header, area);
-}
-
-//render side panel
 pub fn render_side_status(
     f: &mut ratatui::Frame,
     area: Rect,
@@ -83,7 +117,7 @@ pub fn render_side_status(
 
     let mut lines: Vec<Line> = Vec::new();
 
-    // ───────── Status ─────────
+    /* ---------------- STATUS ---------------- */
     let (_sym, label, _) = phase_badge(&state.lifecycle.phase);
     lines.push(Line::from(vec![
         Span::styled("Status", Style::default().fg(Color::DarkGray)),
@@ -91,7 +125,7 @@ pub fn render_side_status(
         Span::styled(label, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
     ]));
 
-    // ───────── Branches ─────────
+    /* ---------------- BRANCHES ---------------- */
     if let Some(cur) = &state.lifecycle.current_branch {
         lines.push(Line::from(vec![
             Span::styled("Current", Style::default().fg(Color::DarkGray)),
@@ -109,7 +143,7 @@ pub fn render_side_status(
         ),
     ]));
 
-    // ───────── System ─────────
+    /* ---------------- SYSTEM MEMORY ---------------- */
     let mut sys = System::new();
     sys.refresh_memory();
 
@@ -118,20 +152,16 @@ pub fn render_side_status(
         Span::raw(": "),
         Span::styled(
             format!(
-                "{:.1} / {:.1} GB",
-                sys.used_memory() as f64 / 1024.0 / 1024.0 / 1024.0,
-                sys.total_memory() as f64 / 1024.0 / 1024.0 / 1024.0,
+                "{:.1}/{:.1} GB",
+                sys.used_memory() as f64 / 1_073_741_824.0,
+                sys.total_memory() as f64 / 1_073_741_824.0,
             ),
             Style::default().fg(Color::White),
         ),
     ]));
 
+    /* ---------------- UPTIME ---------------- */
     lines.push(Line::from(vec![
-        Span::styled("OS", Style::default().fg(Color::DarkGray)),
-        Span::raw(": "),
-        Span::styled(std::env::consts::OS, Style::default().fg(Color::Gray)),
-    ]));
-        lines.push(Line::from(vec![
         Span::styled("Uptime", Style::default().fg(Color::DarkGray)),
         Span::raw(": "),
         Span::styled(
@@ -140,8 +170,7 @@ pub fn render_side_status(
         ),
     ]));
 
-
-    // ───────── Active View ─────────
+    /* ---------------- ACTIVE DIFF ---------------- */
     if let Some(diff) = state.ui.selected_diff.and_then(|i| state.context.diff_analysis.get(i)) {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
@@ -156,7 +185,7 @@ pub fn render_side_status(
         ]));
     }
 
-    // ───────── Context Header ─────────
+    /* ---------------- CONTEXT SNAPSHOT ---------------- */
     if state.full_context_snapshot.is_some() {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
@@ -165,7 +194,6 @@ pub fn render_side_status(
         )));
     }
 
-    // ───────── Context ─────────
     if let Some(snapshot) = &state.full_context_snapshot {
         lines.push(Line::from(vec![
             Span::styled("Code", Style::default().fg(Color::DarkGray)),
@@ -227,7 +255,7 @@ pub fn render_side_status(
         }
     }
 
-    // ───────── Language ─────────
+    /* ---------------- LANGUAGE ---------------- */
     if let Some(lang) = &state.lifecycle.language {
         let (label, _) = language_badge(&format!("{:?}", lang));
         lines.push(Line::from(vec![
@@ -237,7 +265,7 @@ pub fn render_side_status(
         ]));
     }
 
-    // ───────── Test Suite ─────────
+    /* ---------------- TEST SUITE ---------------- */
     if state.context.last_suite_report.is_some() {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
@@ -246,28 +274,22 @@ pub fn render_side_status(
             Span::styled("Report generated", Style::default().fg(Color::Green)),
         ]));
     }
+
     f.render_widget(Paragraph::new(lines), chunks[0]);
 
-    // ───────── Repo ─────────
-    let repo_name = state
-        .repo_root
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("<unknown>");
+    /* ---------------- REPO ---------------- */
+    let repo_name = state.repo_root.file_name().and_then(|s| s.to_str()).unwrap_or("<unknown>");
 
     f.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled("Repo", Style::default().fg(Color::DarkGray)),
             Span::raw(": "),
-            Span::styled(
-                format!("~/{}", repo_name),
-                Style::default().fg(Color::White),
-            ),
+            Span::styled(format!("~/{}", repo_name), Style::default().fg(Color::White)),
         ])),
         chunks[1],
     );
 
-    // ───────── Version ─────────
+    /* ---------------- VERSION ---------------- */
     f.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled("Version", Style::default().fg(Color::DarkGray)),
@@ -280,12 +302,12 @@ pub fn render_side_status(
         chunks[2],
     );
 
-    // ───────── Model ─────────
+    /* ---------------- MODEL ---------------- */
     let model = match &state.llm_backend {
-        crate::llm::backend::LlmBackend::Remote { client } => {
-            format!("{:?}", client.current_config().provider).to_uppercase()
-        }
-        crate::llm::backend::LlmBackend::Ollama { .. } => "OLLAMA".to_string(),
+        crate::llm::backend::LlmBackend::Remote { client } =>
+            format!("{:?}", client.current_config().provider).to_uppercase(),
+        crate::llm::backend::LlmBackend::Ollama { .. } =>
+            "OLLAMA".to_string(),
     };
 
     let mut spans = vec![
