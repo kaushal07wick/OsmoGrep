@@ -72,8 +72,6 @@ pub fn build_test_context_snapshot(repo_root: &Path) -> TestContextSnapshot {
     }
 }
 
-/// ---------- helpers ----------
-
 fn empty_snapshot(exists: bool, test_roots: Vec<PathBuf>) -> TestContextSnapshot {
     TestContextSnapshot {
         exists,
@@ -94,7 +92,6 @@ fn detect_test_roots(repo_root: &Path) -> Vec<PathBuf> {
 }
 
 /// Recursively collect ALL python files under test roots.
-/// Do not rely on naming alone.
 fn collect_test_files_recursive(test_roots: &[PathBuf]) -> Vec<PathBuf> {
     let mut files = Vec::new();
     for root in test_roots {

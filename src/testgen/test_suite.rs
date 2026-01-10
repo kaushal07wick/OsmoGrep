@@ -18,7 +18,10 @@ pub struct TestSuiteExecution {
     pub failures: Vec<TestSuiteFailure>,
     pub report_path: PathBuf,
     pub raw_output: String,
+    pub cases: Vec<TestCaseResult>,
+    pub duration_ms: u64,
 }
+
 
 impl TestSuiteExecution {
     pub fn failed_tests(&self) -> &[TestSuiteFailure] {
@@ -125,13 +128,20 @@ pub fn run_test_suite_and_report(
     language: Language,
     repo_root: &Path,
 ) -> io::Result<TestSuiteExecution> {
-    // Run pytest
+    // Run the raw suite — this already measures time and returns cases
     let suite = run_test_suite(language);
 
-    // Parse summary + structured cases
-    let (summary, _cases) = parse_pytest_output_fully(&suite.raw_output);
+    // Parse summary + structured cases from output
+    let (summary, parsed_cases) = parse_pytest_output_fully(&suite.raw_output);
 
-    // Write markdown + index
+    // Use parsed_cases if available, otherwise fallback to run_test_suite cases
+    let cases = if !parsed_cases.is_empty() {
+        parsed_cases
+    } else {
+        suite.cases.clone()
+    };
+
+    // Write markdown index/report
     let report_path = write_test_suite_report(repo_root, &suite)?;
 
     // Extract robust failures
@@ -142,8 +152,13 @@ pub fn run_test_suite_and_report(
         failures,
         report_path,
         raw_output: suite.raw_output,
+
+        // NEW fields exposed
+        cases,
+        duration_ms: suite.duration_ms,
     })
 }
+
 
 
 fn parse_pytest_output_fully(raw: &str) -> (ParsedSummary, Vec<TestCaseResult>) {
@@ -420,9 +435,6 @@ fn extract_failures_robust(raw: &str) -> Vec<TestSuiteFailure> {
     let lines: Vec<&str> = raw.lines().collect();
     let mut i = 0;
 
-    // -------------------------------------------------------------
-    // PASS 1 — PARSE VERBOSE FAILURES SECTION IF PRESENT
-    // -------------------------------------------------------------
     while i < lines.len() {
         let line = lines[i];
 
@@ -470,11 +482,6 @@ fn extract_failures_robust(raw: &str) -> Vec<TestSuiteFailure> {
         i += 1;
     }
 
-    // -------------------------------------------------------------
-    // PASS 2 — FALLBACK: PARSE SINGLE-FORMAT FAILURES OUTSIDE VERBOSE BLOCK
-    // -------------------------------------------------------------
-    // Look for patterns like:
-    // ____________________ test_func ____________________
     for (idx, line) in lines.iter().enumerate() {
         if line.starts_with("___") && line.contains("::") {
             let name = line
@@ -500,10 +507,6 @@ fn extract_failures_robust(raw: &str) -> Vec<TestSuiteFailure> {
         }
     }
 
-    // -------------------------------------------------------------
-    // PASS 3 – SHORT SUMMARY FALLBACK
-    // e.g. "FAILED file.py::test_name - AssertionError"
-    // -------------------------------------------------------------
     for (idx, line) in lines.iter().enumerate() {
         if let Some(rest) = line.strip_prefix("FAILED ") {
             let name = rest
@@ -532,9 +535,6 @@ fn extract_failures_robust(raw: &str) -> Vec<TestSuiteFailure> {
         }
     }
 
-    // -------------------------------------------------------------
-    // BUILD FINAL STRUCTS
-    // -------------------------------------------------------------
     for (full, output) in map {
         let (file, test) = full.split_once("::").unwrap_or(("", full.as_str()));
         failures.push(TestSuiteFailure {

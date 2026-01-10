@@ -214,7 +214,6 @@ fn agent_run(state: &mut AgentState, cmd: &str) {
         state.run_options = AgentRunOptions {
             force_reload: reload,
             full_suite: true,
-            unbounded,
         };
 
         state.lifecycle.phase = Phase::Idle;
@@ -254,7 +253,6 @@ fn agent_run(state: &mut AgentState, cmd: &str) {
     state.run_options = AgentRunOptions {
         force_reload: reload,
         full_suite: false,
-        unbounded,
     };
 
     state.lifecycle.phase = Phase::Idle;
@@ -263,8 +261,6 @@ fn agent_run(state: &mut AgentState, cmd: &str) {
 
 fn agent_run_all(state: &mut AgentState, cmd: &str) {
     let reload = cmd.contains("--reload");
-    let unbounded = cmd.contains("--unbounded");
-
     if state.context.diff_analysis.is_empty() {
         log(state, LogLevel::Warn, "No diffs available. Run `inspect` first.");
         return;
@@ -293,7 +289,6 @@ fn agent_run_all(state: &mut AgentState, cmd: &str) {
     state.run_options = AgentRunOptions {
         force_reload: reload,
         full_suite: false,   // <-- important
-        unbounded,
     };
 
     // place machine into parallel execution mode

@@ -23,7 +23,6 @@ pub fn materialize_test(
 }
 
 /// Fix an existing failing test file (full-suite flow)
-/// ALWAYS overwrites the original failing file.
 pub fn materialize_full_suite_test(
     repo_root: &Path,
     test_path: &Path,

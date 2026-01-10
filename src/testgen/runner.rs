@@ -1,5 +1,4 @@
 // Executes test commands and returns raw output + timing.
-// No parsing. No interpretation. No intelligence.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -32,20 +31,10 @@ pub struct TestCaseResult {
 
 #[derive(Debug, Clone)]
 pub struct TestSuiteResult {
-    /// Intentionally empty.
-    /// Parsing and interpretation happen in test_suite.rs only.
     pub cases: Vec<TestCaseResult>,
-
-    /// Wall-clock duration of the test run.
     pub duration_ms: u64,
-
-    /// Full raw stdout + stderr, unparsed.
     pub raw_output: String,
 }
-
-//
-// -------- Single test runner --------
-//
 
 pub fn run_test(req: TestRunRequest) -> TestResult {
     let output = match req {
@@ -92,12 +81,8 @@ pub fn run_test(req: TestRunRequest) -> TestResult {
     }
 }
 
-//
-// -------- Full test suite runner --------
-//
 
 /// Runs the entire test suite synchronously and returns raw output.
-/// No parsing, no retries, no threads.
 pub fn run_test_suite(language: Language) -> TestSuiteResult {
     match language {
         Language::Python => run_python_test_suite(),

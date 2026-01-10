@@ -6,10 +6,6 @@ use crate::state::{ChangeSurface, DiffAnalysis, TestDecision};
 use crate::testgen::candidate::{TestCandidate, TestTarget};
 use crate::testgen::summarizer;
 
-/* ============================================================
-   Helpers
-   ============================================================ */
-
 fn normalize_source(file: &str, src: &str) -> String {
     if file.ends_with(".rs") {
         normalize_rust(src)
@@ -94,10 +90,6 @@ fn priority(d: &DiffAnalysis) -> u8 {
 
     score
 }
-
-/* ============================================================
-   Public API
-   ============================================================ */
 
 pub fn generate_test_candidates(
     diffs: &[DiffAnalysis],

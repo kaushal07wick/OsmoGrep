@@ -64,13 +64,6 @@ pub struct SymbolDelta {
     pub new_source: String,
 }
 
-///baseline when computing diffs
-#[derive(Debug, Clone, Copy)]
-pub enum DiffBaseline {
-    BaseBranch, // base → HEAD / index
-    Staged,     // HEAD → index
-}
-
 ///classification of semantic surface
 #[derive(Debug, Clone, Copy)]
 pub enum ChangeSurface {
@@ -237,14 +230,12 @@ pub struct UiState {
 pub struct AgentRunOptions {
     pub force_reload: bool,
     pub full_suite: bool,
-    pub unbounded: bool,
 }
 impl Default for AgentRunOptions {
     fn default() -> Self {
         Self {
             force_reload: false,
             full_suite: false,
-            unbounded: false,
         }
     }
 }
@@ -338,23 +329,11 @@ impl AgentState {
         crate::logger::log(self, level, text);
     }
 
-    pub fn on_logs_appended(&mut self) {
-        if self.ui.exec_scroll == usize::MAX {
-            self.ui.exec_scroll = usize::MAX;
-        }
-    }
-
     pub fn start_spinner(&mut self, text: impl Into<String>) {
         let now = Instant::now();
         self.ui.active_spinner = Some(text.into());
         self.ui.spinner_started_at = Some(now);
         self.ui.spinner_elapsed = Some(Duration::from_secs(0));
-    }
-
-    pub fn update_spinner(&mut self) {
-        if let Some(start) = self.ui.spinner_started_at {
-            self.ui.spinner_elapsed = Some(start.elapsed());
-        }
     }
 
     pub fn stop_spinner(&mut self) {

@@ -114,16 +114,28 @@ pub fn run_single_test_flow(
                 format!("LLM attempt {attempt}/{MAX_LLM_RETRIES}"),
             ));
 
+            let retry_candidate = if attempt >= 2 {
+                Some(TestCandidate::from_test_failure(
+                    candidate.file.clone(),
+                    candidate.id.clone(), // or method name extracted from failure
+                ))
+            } else {
+                None
+            };
+
+            let effective_candidate = retry_candidate.as_ref().unwrap_or(&candidate);
+
             let prompt = match (&last_test_code, &last_failure) {
                 (Some(code), Some(err)) => build_prompt_with_feedback(
-                    &candidate,
+                    effective_candidate,
                     file_ctx,
                     &snapshot.tests,
                     code,
                     err,
                 ),
-                _ => build_prompt(&candidate, file_ctx, &snapshot.tests),
+                _ => build_prompt(effective_candidate, file_ctx, &snapshot.tests),
             };
+
 
             let llm_result = match llm.run(prompt, run_options.force_reload) {
                 Ok(r) => r,
@@ -196,7 +208,6 @@ pub fn run_single_test_flow(
 }
 
 //full test suite healing
-// full test suite healing
 pub fn run_full_suite_flow(
     tx: Sender<AgentEvent>,
     cancel_flag: Arc<AtomicBool>,
@@ -219,8 +230,7 @@ pub fn run_full_suite_flow(
 
         let _ = tx.send(AgentEvent::SpinnerStart("Running full test suite…".into()));
 
-        // RUN FULL SUITE
-        let suite = match run_test_suite_and_report(language, &repo_root) {
+        let suite_exec = match run_test_suite_and_report(language, &repo_root) {
             Ok(s) => s,
             Err(e) => {
                 let _ = tx.send(AgentEvent::Failed(format!("suite run failed: {}", e)));
@@ -228,14 +238,27 @@ pub fn run_full_suite_flow(
             }
         };
 
+        // clear timing info
+        let _ = tx.send(AgentEvent::Log(
+            LogLevel::Info,
+            format!("⏱ Full suite duration: {} ms", suite_exec.duration_ms),
+        ));
+
+        // number of failed tests
+        let failed_count = suite_exec.failures.len();
+
+        let _ = tx.send(AgentEvent::Log(
+            LogLevel::Warn,
+            format!("🟥 Detected {} failing tests", failed_count),
+        ));
         // Always show report path
         let _ = tx.send(AgentEvent::Log(
             LogLevel::Success,
-            format!("📄 Report generated → {}", suite.report_path.display())
+            format!("📄 Report generated → {}", suite_exec.report_path.display())
         ));
 
         // Failures detected?
-        let failures = suite.failures.clone();
+        let failures = suite_exec.failures.clone();
         if failures.is_empty() {
             let _ = tx.send(AgentEvent::Log(LogLevel::Success, "All tests passing ✔".into()));
             let _ = tx.send(AgentEvent::SpinnerStop);
