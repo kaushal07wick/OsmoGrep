@@ -12,6 +12,7 @@
 - fn list_changes(state: &mut AgentState)
 - fn view_change(state: &mut AgentState, cmd: &str)
 - fn agent_run(state: &mut AgentState, cmd: &str)
+- fn agent_run_all(state: &mut AgentState, cmd: &str)
 - fn agent_status(state: &mut AgentState)
 - fn agent_cancel(state: &mut AgentState)
 - fn model_use(state: &mut AgentState, cmd: &str)
@@ -27,6 +28,35 @@
 - git::list_branches
 - slice::from_ref
 
+### src/context/ast.rs
+
+**Functions**
+- pub fn extract_functions_and_methods(src: &str) -> (Vec<String>, Vec<(String, String)>)
+
+**Calls**
+- Parser::new
+- Vec::new
+- tree_sitter_python::language
+
+### src/context/full_suite_context.rs
+
+**Functions**
+- fn extract_test_body(src: &str, method: &str) -> Option<String>
+- fn find_called_function(block: &str) -> Option<String>
+- fn search_for_function(repo_root: &Path, fn_name: &str) -> Option<PathBuf>
+- fn extract_impl_function(path: &Path, fn_name: &str) -> Option<String>
+- pub fn build_full_suite_context( repo_root: &Path, failure: &FailureInfo, ) -> Option<FullSuiteContext>
+
+**Calls**
+- BufReader::new
+- File::open
+- PathBuf::new
+- Regex::new
+- Vec::new
+- WalkDir::new
+- fs::read_to_string
+- regex::escape
+
 ### src/context/mod.rs
 
 **Functions**
@@ -36,13 +66,14 @@
 ### src/context/snapshot.rs
 
 **Functions**
-- pub fn build_full_context_snapshot( repo_root: &Path, diffs: &[DiffAnalysis], ) -> FullContextSnapshot
+- pub fn build_full_context_snapshot( repo_root: &Path, diffs: &[DiffAnalysis], ) -> Arc<FullContextSnapshot>
 - pub fn build_context_snapshot( repo_root: &Path, diffs: &[DiffAnalysis], ) -> ContextSnapshot
 - pub fn parse_file( file: &Path, source: &str, ) -> (Vec<SymbolDef>, Vec<Import>)
 - fn walk_node( kind: LanguageKind, node: Node, file: &Path, src: &str, symbols: &mut Vec<SymbolDef>, imports: &mut Vec<Import>, current_class: Option<String>, )
 - fn resolve_symbol( target: Option<&str>, symbols: &[SymbolDef], ) -> SymbolResolution
 
 **Calls**
+- Arc::new
 - Parser::new
 - PathBuf::from
 - SymbolResolution::Ambiguous
@@ -75,65 +106,31 @@
 
 **Calls**
 
-### src/detectors/ast/ast.rs
-
-**Functions**
-- pub fn detect_symbol( source: &str, hunks: &str, file: &str, ) -> Option<String>
-- pub fn extract_symbol_source( source: &str, file: &str, symbol: &str, ) -> Option<String>
-- pub fn parse_source(file: &str, source: &str) -> Option<tree_sitter::Tree>
-- pub fn compute_line_offsets(src: &str) -> Vec<usize>
-- pub fn changed_byte_ranges( hunks: &str, offsets: &[usize], ) -> Vec<(usize, usize)>
-- pub fn parse_hunk_header(line: &str) -> Option<(usize, usize)>
-- fn collect_enclosing_symbols( node: Node, source: &str, start: usize, end: usize, best: &mut Option<(usize, String)>, )
-- fn symbol_name(node: Node, source: &str) -> Option<String>
-- pub fn find_symbol_node<'a>( node: Node<'a>, source: &str, symbol: &str, ) -> Option<Node<'a>>
-
-**Calls**
-- Parser::new
-- RefCell::new
-- Vec::new
-- tree_sitter_python::language
-- tree_sitter_rust::language
-
-### src/detectors/ast/mod.rs
-
-**Functions**
-
-**Calls**
-
-### src/detectors/ast/symboldelta.rs
-
-**Functions**
-- pub fn compute_symbol_delta( old_source: &str, new_source: &str, file: &str, symbol: &str, ) -> Option<SymbolDelta>
-
-**Calls**
-
 ### src/detectors/diff_analyzer.rs
 
 **Functions**
 - pub fn analyze_diff() -> Vec<DiffAnalysis>
-- fn analyze_file( base_branch: &str, file: &str, hunks: &str, ) -> Option<DiffAnalysis>
-- fn split_diff_by_file(diff: &str) -> Vec<(String, String)>
-- fn detect_surface(file: &str, hunks: &str) -> ChangeSurface
-- fn should_analyze(file: &str) -> bool
+- fn split_diff_by_file(diff: &str) -> Vec<FileDiff>
+- fn extract_function_diffs(file: &FileDiff) -> Vec<DiffAnalysis>
+- fn detect_functions_for_hunk(lines: &[&str], hunk: &str) -> Vec<String>
+- fn extract_changed_new_lines(hunk: &str) -> Vec<usize>
+- fn nearest_def(lines: &[&str], mut idx: usize) -> Option<String>
+- fn extract_full_function(lines: &[&str], func: &str) -> Option<String>
+- fn detect_surface(_file: &str, code: &str) -> ChangeSurface
 
 **Calls**
+- HashSet::new
 - String::from_utf8_lossy
-- String::new
 - Vec::new
-- git::base_commit
-- git::detect_base_branch
 - git::diff_cached
-- git::show_file_at
 - git::show_head
 - git::show_index
-- mem::take
 
 ### src/detectors/language.rs
 
 **Functions**
 - pub fn detect_language(root: &Path) -> Language
-- fn dominant_language( py: usize, js: usize, ts: usize, rs: usize, go: usize, java: usize, ) -> Language
+- fn dominant_language( py: usize, rs: usize, ) -> Language
 - fn is_ignored(path: &Path) -> bool
 -  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result
 
@@ -154,13 +151,17 @@
 - pub fn detect_base_branch() -> String
 - pub fn show_head(path: &str) -> Option<String>
 - pub fn show_index(path: &str) -> Option<String>
-- pub fn base_commit(base_branch: &str) -> Option<String>
-- pub fn show_file_at(commit: &str, path: &str) -> Option<String>
+- pub fn git_create_sandbox_worktree() -> PathBuf
 
 **Calls**
 - Command::new
 - Path::new
+- Stdio::null
+- Stdio::piped
 - String::from_utf8_lossy
+- Uuid::new_v4
+- env::temp_dir
+- fs::create_dir_all
 - u16::from_str_radix
 
 ### src/llm/backend.rs
@@ -169,9 +170,14 @@
 -  pub fn ollama(model: String) -> Self
 -  pub fn remote(client: LlmClient) -> Self
 -  pub fn run( &self, prompt: LlmPrompt, force_reload: bool, ) -> Result<LlmRunResult, String>
+-  pub fn run_with_cancel( &self, prompt: LlmPrompt, cancel_flag: Arc<AtomicBool>, force_reload: bool, ) -> Option<LlmRunResult>
 
 **Calls**
+- Duration::from_millis
 - Ollama::run
+- mpsc::channel
+- thread::sleep
+- thread::spawn
 
 ### src/llm/client.rs
 
@@ -228,10 +234,16 @@
 ### src/llm/orchestrator.rs
 
 **Functions**
-- pub fn run_single_test_flow( tx: Sender<AgentEvent>, cancel_flag: Arc<AtomicBool>, llm: LlmBackend, snapshot: FullContextSnapshot, candidate: TestCandidate, language: Language, semantic_cache: Arc<SemanticCache>, run_options: AgentRunOptions, )
-- pub fn run_full_suite_flow( tx: Sender<AgentEvent>, cancel_flag: Arc<AtomicBool>, _llm: LlmBackend, _snapshot: FullContextSnapshot, language: Language, _semantic_cache: Arc<SemanticCache>, _run_options: AgentRunOptions, )
+- pub fn run_single_test_flow( tx: Sender<AgentEvent>, cancel_flag: Arc<AtomicBool>, llm: LlmBackend, snapshot: Arc<FullContextSnapshot>, candidate: TestCandidate, language: Language, semantic_cache: Arc<SemanticCache>, run_options: AgentRunOptions, )
+- pub fn run_full_suite_flow( tx: Sender<AgentEvent>, cancel_flag: Arc<AtomicBool>, llm: LlmBackend, language: Language, run_options: AgentRunOptions, full_cache: Arc<Mutex<FullSuiteCache>>, )
+- pub fn run_parallel_agent_flow( tx: Sender<AgentEvent>, cancel_flag: Arc<AtomicBool>, llm: LlmBackend, repo_root: PathBuf, snapshot: Arc<FullContextSnapshot>, candidates: Vec<TestCandidate>, language: Language, run_options: AgentRunOptions, )
+- fn run_single_subagent( tx: Sender<AgentEvent>, cancel_flag: Arc<AtomicBool>, llm: LlmBackend, repo_root: PathBuf, snapshot: Arc<FullContextSnapshot>, candidate: TestCandidate, language: Language, run_options: AgentRunOptions, index: usize, total: usize, ) -> (bool, Option<String>)
 - fn trim_error(s: &str) -> String
 - fn sanitize_llm_output(raw: &str) -> String
+- pub fn short_dir_path(path: &str) -> String
+- fn timestamp() -> String
+- fn t(prefix: &str, msg: &str) -> String
+- fn run_test_with_cancel( req: TestRunRequest, cancel_flag: Arc<AtomicBool>, ) -> Option<TestResult>
 
 **Calls**
 - AgentEvent::Failed
@@ -239,9 +251,16 @@
 - AgentEvent::Log
 - AgentEvent::SpinnerStart
 - AgentEvent::TestFinished
-- AgentEvent::TestSuiteReport
+- Duration::from_millis
+- OnceLock::new
+- Path::new
 - SemanticKey::from_candidate
+- TestCandidate::from_test_failure
+- Vec::new
 - env::current_dir
+- fs::remove_dir_all
+- mpsc::channel
+- thread::sleep
 - thread::spawn
 
 ### src/llm/prompt.rs
@@ -250,6 +269,7 @@
 - pub fn build_prompt( candidate: &TestCandidate, file_ctx: &FileContext, test_ctx: &TestContextSnapshot, ) -> LlmPrompt
 - pub fn build_prompt_with_feedback( candidate: &TestCandidate, file_ctx: &FileContext, test_ctx: &TestContextSnapshot, previous_test: &str, failure_feedback: &str, ) -> LlmPrompt
 - fn user_prompt( candidate: &TestCandidate, ctx: &FileContext, test_ctx: &TestContextSnapshot, ) -> String
+- pub fn build_full_suite_prompt(ctx: &FullSuiteContext) -> LlmPrompt
 
 **Calls**
 - String::new
@@ -287,6 +307,7 @@
 - fn detect_base_branch(state: &mut AgentState)
 - fn create_agent_branch(state: &mut AgentState)
 - fn execute_agent(state: &mut AgentState)
+- fn execute_parallel_agent(state: &mut AgentState)
 - fn handle_running(state: &mut AgentState)
 - fn rollback_agent(state: &mut AgentState)
 - fn ensure_agent_branch(state: &mut AgentState) -> String
@@ -296,6 +317,8 @@
 
 **Calls**
 - Arc::new
+- FullSuiteCache::new
+- Mutex::new
 - SemanticCache::new
 - env::current_dir
 - git::checkout
@@ -360,8 +383,6 @@
 -  pub fn history_prev(&mut self)
 -  pub fn history_next(&mut self)
 -  pub fn commit_input(&mut self) -> String
--  pub fn on_logs_appended(&mut self)
--  pub fn update_spinner(&mut self)
 
 **Calls**
 - Duration::from_secs
@@ -375,8 +396,11 @@
 -  pub fn from_candidate(c: &TestCandidate) -> Self
 -  pub fn to_cache_key(&self) -> String
 -  pub fn new() -> Self
+- fn hash_str(s: &str) -> String
+-  pub fn new() -> Self
 
 **Calls**
+- Arc::new
 - HashMap::new
 - Mutex::new
 - Sha256::new
@@ -411,10 +435,11 @@
 
 **Functions**
 - pub fn materialize_test( repo_root: &Path, language: Language, candidate: &TestCandidate, test_code: &str, ) -> io::Result<PathBuf>
+- pub fn materialize_full_suite_test( repo_root: &Path, test_path: &Path, new_code: &str, ) -> io::Result<PathBuf>
 - fn write_python_test( repo_root: &Path, candidate: &TestCandidate, test_code: &str, ) -> io::Result<PathBuf>
 - fn write_rust_test( repo_root: &Path, candidate: &TestCandidate, test_code: &str, ) -> io::Result<PathBuf>
 - fn find_test_root(repo_root: &Path) -> io::Result<PathBuf>
-- fn ensure_parent_dir(path: &Path) -> io::Result<()>
+- fn write_file_atomic(path: &Path, content: &str) -> io::Result<()>
 - fn sanitize_name(file: &str, symbol: &Option<String>) -> String
 
 **Calls**
@@ -444,6 +469,7 @@
 - String::new
 - Vec::new
 - env::current_dir
+- env::var
 
 ### src/testgen/summarizer.rs
 
@@ -467,7 +493,7 @@
 - fn extract_durations(raw: &str) -> HashMap<String, f64>
 - fn extract_skips(raw: &str) -> Vec<SkipEntry>
 - fn extract_warnings(raw: &str) -> Vec<WarningEntry>
-- fn extract_verbose_failures(raw: &str) -> Vec<(String, String)>
+- fn extract_failures_robust(raw: &str) -> Vec<TestSuiteFailure>
 - pub fn write_test_suite_report( repo_root: &Path, suite: &TestSuiteResult, ) -> io::Result<PathBuf>
 
 **Calls**
@@ -491,6 +517,7 @@
 
 **Calls**
 - Block::default
+- Color::Rgb
 - Constraint::Percentage
 - Layout::default
 - Line::from
@@ -499,30 +526,34 @@
 - Span::styled
 - Style::default
 - TextDiff::from_lines
-- Vec::with_capacity
+- Vec::new
 
 ### src/ui/draw.rs
 
 **Functions**
+- pub fn render_header(f: &mut ratatui::Frame, area: Rect)
+- fn render_command_input_line(state: &AgentState, prompt: &str) -> Line<'static>
+- fn render_unified_command_box( f: &mut ratatui::Frame, area: Rect, state: &AgentState, prompt: &str, output_input_rect: &mut Rect, )
 - pub fn draw_ui<B: Backend>( terminal: &mut Terminal<B>, state: &AgentState, ) -> io::Result<(Rect, Rect, Rect)>
 
 **Calls**
 - Block::default
+- Color::Rgb
 - Constraint::Length
 - Constraint::Min
+- Constraint::Percentage
 - Layout::default
 - Line::from
+- OnceLock::new
 - Paragraph::new
 - Rect::default
+- Span::raw
 - Span::styled
-- String::new
 - Style::default
-- UnicodeWidthStr::width
 - diff::render_side_by_side
 - execution::render_execution
 - panels::render_panel
 - status::render_side_status
-- status::render_status
 
 ### src/ui/execution.rs
 
@@ -532,14 +563,17 @@
 
 **Calls**
 - Block::default
+- Color::Rgb
 - Duration::from_secs
 - Instant::now
+- Line::default
 - Line::from
 - Paragraph::new
 - Span::raw
 - Span::styled
 - Style::default
 - Vec::new
+- iter::once
 
 ### src/ui/helpers.rs
 
@@ -585,26 +619,26 @@
 ### src/ui/status.rs
 
 **Functions**
-- pub fn render_status( f: &mut ratatui::Frame, area: Rect, _state: &AgentState, )
-- fn render_header(f: &mut ratatui::Frame, area: Rect)
 - pub fn render_side_status( f: &mut ratatui::Frame, area: Rect, state: &AgentState, )
 
 **Calls**
 - Block::default
+- Color::Rgb
 - Constraint::Length
 - Constraint::Min
 - Layout::default
+- Line::default
 - Line::from
 - Paragraph::new
 - Span::raw
 - Span::styled
 - Style::default
 - System::new
-- Vec::new
 
 ## Global Hotspots
 
 ### Thread creation
+- src/llm/backend.rs → thread::spawn
 - src/llm/orchestrator.rs → thread::spawn
 
 ### Process execution
