@@ -143,6 +143,32 @@
 
 **Calls**
 
+### src/diagnose.rs
+
+**Functions**
+- fn ensure_agent_branch(state: &mut AgentState) -> bool
+- fn create_sandbox(state: &mut AgentState) -> Option<PathBuf>
+- fn ensure_env(state: &mut AgentState, root: &Path) -> bool
+- fn install_requirements(state: &mut AgentState, root: &Path) -> bool
+- fn install_pyproject(state: &mut AgentState, root: &Path) -> bool
+- fn parse_readme_llm(state: &mut AgentState, text: &str) -> Option<Value>
+- fn parse_readme(state: &mut AgentState, root: &Path) -> Option<Value>
+- fn run_usage_cmds(state: &mut AgentState, root: &Path, parsed: &Value) -> Option<String>
+- fn parse_error(state: &mut AgentState, stderr: &str) -> Option<Value>
+- fn attempt_fix(state: &mut AgentState, root: &Path, stderr: &str) -> bool
+- fn add_import(root: &Path, imp: &str) -> bool
+- fn apply_patch(root: &Path, diff: &str) -> bool
+- fn sanitize_json(raw: &str) -> Option<&str>
+- fn run_pip(state: &mut AgentState, pip: &Path, root: &Path, args: &[&str]) -> bool
+- pub fn main_pipeline(state: &mut AgentState)
+
+**Calls**
+- Command::new
+- String::from_utf8_lossy
+- fs::read_dir
+- fs::read_to_string
+- fs::write
+
 ### src/git.rs
 
 **Functions**
@@ -593,6 +619,23 @@
 - String::with_capacity
 - Style::default
 
+### src/ui/main_ui.rs
+
+**Functions**
+- pub fn handle_event( state: &mut AgentState, event: impl Into<Event>, input_rect: Rect, diff_rect: Rect, exec_rect: Rect, )
+- pub fn handle_key(state: &mut AgentState, k: KeyEvent)
+- pub fn handle_input_keys(state: &mut AgentState, k: KeyEvent)
+- pub fn handle_diff_keys(state: &mut AgentState, k: KeyEvent)
+- pub fn handle_exec_keys(state: &mut AgentState, k: KeyEvent)
+- pub fn handle_mouse( state: &mut AgentState, m: MouseEvent, input_rect: Rect, diff_rect: Rect, exec_rect: Rect, )
+
+**Calls**
+- Event::Key
+- Event::Mouse
+- KeyCode::Char
+- LlmClient::new
+- MouseEventKind::Down
+
 ### src/ui/mod.rs
 
 **Functions**
@@ -642,6 +685,7 @@
 - src/llm/orchestrator.rs → thread::spawn
 
 ### Process execution
+- src/diagnose.rs → Command::new
 - src/git.rs → Command::new
 - src/llm/ollama.rs → Command::new
 - src/testgen/runner.rs → Command::new
