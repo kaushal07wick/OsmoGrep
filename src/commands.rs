@@ -1,521 +1,129 @@
-///src/commands.rs
-/// 
-/// command intent and calling
+// src/commands.rs
+//
+// Slash-command dispatcher only.
+// No git. No agent orchestration. No testgen.
 
-use std::sync::atomic::Ordering;
 use std::time::Instant;
-use crate::detectors::diff_analyzer::analyze_diff;
-use crate::git;
-use crate::logger::{log, log_diff_analysis};
-use crate::llm::backend::LlmBackend;
-use crate::llm::client::Provider;
-use crate::state::{
-    AgentRunOptions, AgentState, Focus, InputMode, LogLevel, Phase, SinglePanelView
-};
-use crate::testgen::generator::generate_test_candidates;
 
-pub fn handle_command(state: &mut AgentState, cmd: &str) {
+use crate::logger::log;
+use crate::state::{
+    AgentState,
+    InputMode,
+    LogLevel,
+};
+
+pub fn handle_command(state: &mut AgentState, raw: &str) {
     state.ui.last_activity = Instant::now();
     state.clear_hint();
     state.clear_autocomplete();
 
+    let cmd = raw.trim();
+
     match cmd {
-    "help" => help(state),
+        "/help" => help(state),
+        "/clear" => clear_logs(state),
 
-    "inspect" => inspect(state),
-    "changes" => list_changes(state),
-    cmd if cmd.starts_with("changes ") => view_change(state, cmd),
+        "/exit" => exit_app(state),
+        "/quit" | "/q" => quit_agent(state),
 
-    cmd if cmd.starts_with("agent run") && cmd.contains("--all") => {
-        agent_run_all(state, cmd);
-    }
+        "/key" => enter_api_key_mode(state),
 
-    cmd if cmd.starts_with("agent run") => {
-        agent_run(state, cmd);
-    }
+        "" => {}
 
-    "agent status" => agent_status(state),
-    "agent cancel" => agent_cancel(state),
-
-    "clear" | "logs clear" => clear_logs(state),
-
-    cmd if cmd.starts_with("model use ") => model_use(state, cmd),
-    "model show" => model_show(state),
-    "artifacts test" => show_test_artifact(state),
-
-    "branch new" => {
-        log(state, LogLevel::Info, "Creating agent branch…");
-        state.lifecycle.phase = Phase::CreateNewAgent;
-    }
-
-    "branch rollback" => {
-        log(state, LogLevel::Warn, "Rolling back agent branch…");
-        state.lifecycle.phase = Phase::Rollback;
-    }
-
-    "branch list" => {
-        for b in git::list_branches() {
-            log(state, LogLevel::Info, b);
+        _ => {
+            log(
+                state,
+                LogLevel::Warn,
+                "Unknown command. Type /help",
+            );
         }
     }
-
-    "close" => close_view(state),
-    "quit" => {
-        log(state, LogLevel::Info, "Exiting Osmogrep.");
-        state.lifecycle.phase = Phase::Done;
-    }
-
-    "" => {}
-    _ => log(state, LogLevel::Warn, "Unknown command. Type `help`."),
-    }
-
 }
+
 
 fn help(state: &mut AgentState) {
     use LogLevel::Info;
 
-    log(state, Info, "Commands:");
-    log(state, Info, "  inspect                     — analyze git changes and build context");
-    log(state, Info, "  changes                     — list analyzed changes");
-    log(state, Info, "  changes <n>                  — view diff for change <n>");
-    log(state, Info, "  model use ollama <model>     — use local Ollama model");
-    log(state, Info, "  model use openai <model>     — configure OpenAI model (prompts for key)");
-    log(state, Info, "  model use anthropic <model>  — configure Anthropic model (prompts for key)");
-    log(state, Info, "  model show                  — show active model");
-    log(state, Info, "  agent run <n>                — run agent on change <n>");
-    log(state, Info, "                                flags: --reload (bypass cache), --unbounded (no retry limits)");
-    log(state, Info, "  agent run --full             — run full test suite autonomously");
-    log(state, Info, "                                flags: --reload (bypass cache), --unbounded (no retry limits)");
-    log(state, Info, "  agent status                 — show agent execution state");
-    log(state, Info, "  agent cancel                 — cancel running agent");
-    log(state, Info, "  artifacts test               — show last generated test");
-    log(state, Info, "  branch new                   — create agent branch");
-    log(state, Info, "  branch rollback              — rollback agent branch");
-    log(state, Info, "  branch list                  — list git branches");
-    log(state, Info, "  clear | logs clear            — clear logs");
-    log(state, Info, "  close                        — close active view");
-    log(state, Info, "  quit                         — exit osmogrep");
-}
-
-fn inspect(state: &mut AgentState) {
-    log(state, LogLevel::Info, "Inspecting git changes…");
-
-    state.context.diff_analysis = analyze_diff();
-    state.context.test_candidates.clear();
-    state.context.last_generated_test = None;
-    state.context.generated_tests_ready = false;
-
-    reset_diff_view(state);
-
-    if state.context.diff_analysis.is_empty() {
-        log(state, LogLevel::Success, "No relevant changes detected.");
-    } else {
-        log(
-            state,
-            LogLevel::Success,
-            format!(
-                "Inspection complete: {} change(s) analyzed.",
-                state.context.diff_analysis.len()
-            ),
-        );
-        log_diff_analysis(state);
-    }
-
-    state.lifecycle.phase = Phase::Idle;
-}
-
-fn list_changes(state: &mut AgentState) {
-    if state.context.diff_analysis.is_empty() {
-        log(state, LogLevel::Warn, "No analysis data available. Run `inspect`.");
-        return;
-    }
-
-    let entries: Vec<String> = state
-        .context
-        .diff_analysis
-        .iter()
-        .enumerate()
-        .map(|(i, d)| {
-            let label = match (&d.symbol, &d.delta) {
-                (Some(sym), _) => format!("{} :: {}", d.file, sym),
-                (None, Some(_)) => format!("{} :: <file>", d.file),
-                _ => d.file.clone(),
-            };
-            format!("[{}] {}", i, label)
-        })
-        .collect();
-
-    for line in entries {
-        log(state, LogLevel::Info, line);
-    }
-}
-
-
-fn view_change(state: &mut AgentState, cmd: &str) {
-    let idx = match cmd["changes ".len()..].trim().parse::<usize>() {
-        Ok(i) if i < state.context.diff_analysis.len() => i,
-        _ => {
-            log(state, LogLevel::Warn, "Invalid change index.");
-            return;
-        }
-    };
-
-    let diff = &state.context.diff_analysis[idx];
-    if diff.delta.is_none() {
-        log(state, LogLevel::Warn, "Selected change has no code delta.");
-        return;
-    }
-
-    state.ui.selected_diff = Some(idx);
-    state.ui.in_diff_view = true;
-    state.ui.diff_scroll = 0;
-    state.ui.diff_scroll_x = 0;
-
-    log(state, LogLevel::Info, format!("Opened change [{}]", idx));
-}
-
-fn agent_run(state: &mut AgentState, cmd: &str) {
-    let parts: Vec<&str> = cmd.split_whitespace().collect();
-
-    // ---- parse flags first ----
-    let reload = parts.iter().any(|p| *p == "--reload");
-    let full = parts.iter().any(|p| *p == "--full");
-    let unbounded = parts.iter().any(|p| *p == "--unbounded");
-
-    // ---- log intent ----
-    if reload {
-        log(state, LogLevel::Info, "🔄 Reload requested (bypassing caches)");
-    }
-    if full {
-        log(state, LogLevel::Info, "🧪 Full test suite mode enabled");
-    }
-    if unbounded {
-        log(
-            state,
-            LogLevel::Warn,
-            "⚠ Unbounded mode enabled (LLM usage may be unlimited)",
-        );
-    }
-    if full {
-        // Reject numeric index in full mode
-        if parts.iter().any(|p| p.parse::<usize>().is_ok()) {
-            log(
-                state,
-                LogLevel::Warn,
-                "Usage: agent run --full [--reload] [--unbounded]",
-            );
-            return;
-        }
-
-        state.context.test_candidates.clear();
-        state.context.last_generated_test = None;
-        state.context.generated_tests_ready = false;
-
-        state.run_options = AgentRunOptions {
-            force_reload: reload,
-            full_suite: true,
-        };
-
-        state.lifecycle.phase = Phase::Idle;
-        state.lifecycle.phase = Phase::ExecuteAgent;
-        return;
-    }
-
-    if parts.len() < 3 {
-        log(
-            state,
-            LogLevel::Warn,
-            "Usage: agent run <n> [--reload] [--unbounded]",
-        );
-        return;
-    }
-
-    let idx = match parts[2].parse::<usize>() {
-        Ok(i) if i < state.context.diff_analysis.len() => i,
-        _ => {
-            log(state, LogLevel::Warn, "Invalid change index.");
-            return;
-        }
-    };
-
-    let diff = state.context.diff_analysis[idx].clone();
-    let candidates = generate_test_candidates(std::slice::from_ref(&diff));
-
-    if candidates.is_empty() {
-        log(state, LogLevel::Warn, "No test candidates generated.");
-        return;
-    }
-
-    state.context.test_candidates = candidates;
-    state.context.last_generated_test = None;
-    state.context.generated_tests_ready = false;
-
-    state.run_options = AgentRunOptions {
-        force_reload: reload,
-        full_suite: false,
-    };
-
-    state.lifecycle.phase = Phase::Idle;
-    state.lifecycle.phase = Phase::ExecuteAgent;
-}
-
-fn agent_run_all(state: &mut AgentState, cmd: &str) {
-    let reload = cmd.contains("--reload");
-    if state.context.diff_analysis.is_empty() {
-        log(state, LogLevel::Warn, "No diffs available. Run `inspect` first.");
-        return;
-    }
-
-    log(
-        state,
-        LogLevel::Info,
-        format!("Running ALL diffs ({} diffs)…", state.context.diff_analysis.len())
-    );
-
-    // generate candidates for ALL diffs together
-    let candidates = generate_test_candidates(&state.context.diff_analysis);
-
-    if candidates.is_empty() {
-        log(state, LogLevel::Warn, "No test candidates from diffs.");
-        return;
-    }
-
-    // store into state for orchestrator
-    state.context.test_candidates = candidates;
-    state.context.last_generated_test = None;
-    state.context.generated_tests_ready = false;
-
-    // set run options
-    state.run_options = AgentRunOptions {
-        force_reload: reload,
-        full_suite: false,   // <-- important
-    };
-
-    // place machine into parallel execution mode
-    state.lifecycle.phase = Phase::Idle;
-    state.lifecycle.phase = Phase::ExecuteParallelAgent;
-}
-
-fn agent_status(state: &mut AgentState) {
-    log(state, LogLevel::Info, format!("Phase: {:?}", state.lifecycle.phase));
-}
-
-fn agent_cancel(state: &mut AgentState) {
-    if state.lifecycle.phase != Phase::Running {
-        log(state, LogLevel::Warn, "No agent is currently running.");
-        return;
-    }
-
-    state.cancel_requested.store(true, Ordering::SeqCst);
-    state.ui.active_spinner = Some("Canceling agent…".into());
-}
-
-fn model_use(state: &mut AgentState, cmd: &str) {
-    let args: Vec<&str> = cmd.split_whitespace().collect();
-
-    match args.as_slice() {
-        ["model", "use", "ollama", model] => {
-            state.llm_backend = LlmBackend::ollama(model.to_string());
-
-            state.ui.input.clear();
-            state.ui.input_mode = InputMode::Command;
-            state.ui.input_masked = false;
-            state.ui.input_placeholder = None;
-
-            log(
-                state,
-                LogLevel::Success,
-                format!("Using Ollama model: {}", model),
-            );
-        }
-
-        ["model", "use", "openai", model] => {
-            enter_api_key_mode(state, Provider::OpenAI, model);
-            log(
-                state,
-                LogLevel::Info,
-                format!("Enter OpenAI API key for model {}", model),
-            );
-        }
-
-        ["model", "use", "anthropic", model] => {
-            enter_api_key_mode(state, Provider::Anthropic, model);
-            log(
-                state,
-                LogLevel::Info,
-                format!("Enter Anthropic API key for model {}", model),
-            );
-        }
-
-        _ => {
-            log(
-                state,
-                LogLevel::Warn,
-                "Usage: model use ollama <model> | model use <openai|anthropic> <model>",
-            );
-        }
-    }
-}
-
-fn enter_api_key_mode(
-    state: &mut AgentState,
-    provider: Provider,
-    model: &str,
-) {
-    state.ui.input.clear();
-    state.ui.input_mode = InputMode::ApiKey {
-        provider,
-        model: model.to_string(),
-    };
-    state.ui.input_masked = true;
-    state.ui.input_placeholder = Some("Add API key".into());
-    state.ui.focus = Focus::Input;
-}
-
-fn model_show(state: &mut AgentState) {
-    match &state.llm_backend {
-        LlmBackend::Ollama { model } => {
-            log(state, LogLevel::Info, format!("Active model: Ollama ({})", model));
-        }
-        LlmBackend::Remote { client } => {
-            let cfg = client.current_config();
-            log(
-                state,
-                LogLevel::Info,
-                format!("Active model: Remote ({:?} / {})", cfg.provider, cfg.model),
-            );
-        }
-    }
-}
-
-fn show_test_artifact(state: &mut AgentState) {
-    let Some(code) = state.context.last_generated_test.clone() else {
-        log(state, LogLevel::Warn, "No generated test available.");
-        return;
-    };
-
-    let Some(candidate) = state.context.test_candidates.first().cloned() else {
-        return;
-    };
-
-    state.ui.panel_view = Some(SinglePanelView::TestGenPreview {
-        candidate,
-        generated_test: Some(code),
-    });
-
-    state.ui.focus = Focus::Execution;
-    state.ui.exec_scroll = 0;
-    state.ui.panel_scroll_x = 0
-}
-
-fn close_view(state: &mut AgentState) {
-    let mut closed = false;
-
-    if state.ui.in_diff_view {
-        reset_diff_view(state);
-        closed = true;
-    }
-
-    if state.ui.panel_view.is_some() {
-        state.ui.panel_view = None;
-        state.ui.exec_scroll = 0;
-        state.ui.panel_scroll_x = 0;
-        closed = true;
-    }
-
-    if closed {
-        state.ui.focus = Focus::Input;
-        log(state, LogLevel::Info, "Closed view.");
-    } else {
-        log(state, LogLevel::Warn, "No active view to close.");
-    }
+    log(state, Info, "Available commands:");
+    log(state, Info, "  /help        Show this help");
+    log(state, Info, "  /clear       Clear logs");
+    log(state, Info, "  /key         Set OpenAI API key");
+    log(state, Info, "  /quit | /q   Stop agent execution");
+    log(state, Info, "  /exit        Exit Osmogrep");
+    log(state, Info, "");
+    log(state, Info, "Anything else is sent to the agent.");
+    log(state, Info, "!<cmd> runs a shell command directly.");
 }
 
 fn clear_logs(state: &mut AgentState) {
     state.logs.clear();
-    state.ui.exec_scroll = 0;
-    state.ui.panel_scroll_x = 0;
-    state.ui.dirty = true;
+    state.ui.exec_scroll = usize::MAX;
+
+    log(state, LogLevel::Info, "Logs cleared.");
 }
 
-fn reset_diff_view(state: &mut AgentState) {
-    state.ui.in_diff_view = false;
-    state.ui.selected_diff = None;
-    state.ui.diff_scroll = 0;
+fn exit_app(state: &mut AgentState) {
+    log(state, LogLevel::Info, "Exiting Osmogrep.");
+    state.ui.should_exit = true;
+}
+
+fn quit_agent(state: &mut AgentState) {
+    log(state, LogLevel::Info, "Stopping agent execution.");
+    state.stop_spinner();
+    state.ui.exec_scroll = usize::MAX;
+}
+
+fn enter_api_key_mode(state: &mut AgentState) {
+    state.ui.input.clear();
+    state.ui.input_mode = InputMode::ApiKey;
+    state.ui.input_masked = true;
+    state.ui.input_placeholder = Some("Enter OpenAI API key".into());
+
+    log(
+        state,
+        LogLevel::Info,
+        "Enter your OpenAI API key and press Enter.",
+    );
 }
 
 pub fn update_command_hints(state: &mut AgentState) {
-    let input = state.ui.input.clone();
+    let input = state.ui.input.trim().to_string();
+
     state.clear_hint();
     state.clear_autocomplete();
 
-    let trimmed = input.trim();
-
-    if trimmed.is_empty() {
-        state.set_hint("Type `help` to see available commands");
+    if input.starts_with('!') || !input.starts_with('/') {
         return;
     }
 
-    // Ordered by priority: specific → general → generic
+    if input == "/" {
+        state.set_hint("Type /help to see available commands");
+        return;
+    }
+
     let commands: &[(&str, &str)] = &[
-        // inspection
-        ("inspect", "Analyze git changes and build context"),
-        ("changes", "List analyzed changes"),
-        ("changes ", "View diff for change <n>"),
-
-        // model configuration
-        ("model use ollama ", "Use local Ollama model"),
-        ("model use openai ", "Configure OpenAI model (will prompt for API key)"),
-        ("model use anthropic ", "Configure Anthropic model (will prompt for API key)"),
-        ("model show", "Show active model"),
-
-        // ---- AGENT RUN COMMANDS (parallel, full, indexed) ----
-        // Parallel all
-        ("agent run --all --reload", "Run ALL diffs in parallel (forced reload)"),
-        ("agent run --all", "Run ALL diffs in parallel"),
-
-        // Full-suite
-        ("agent run --full --reload", "Run full test suite (forced reload)"),
-        ("agent run --full", "Run full test suite autonomously"),
-
-        // Indexed
-        ("agent run <n> --reload", "Run agent on change <n> (forced reload)"),
-        ("agent run ", "agent run <n> [--reload] [--unbounded]"),
-
-        // misc
-        ("agent status", "Show agent execution state"),
-        ("agent cancel", "Cancel running agent"),
-
-        ("artifacts test", "Show last generated test"),
-
-        ("branch new", "Create agent branch"),
-        ("branch rollback", "Rollback agent branch"),
-        ("branch list", "List git branches"),
-
-        ("clear", "Clear logs"),
-        ("logs clear", "Clear logs"),
-        ("close", "Close active view"),
-
-        ("quit", "Exit Osmogrep"),
-        ("help", "Show help"),
+        ("/help", "Show available commands"),
+        ("/clear", "Clear logs"),
+        ("/key", "Set OpenAI API key"),
+        ("/quit", "Stop agent execution"),
+        ("/q", "Stop agent execution"),
+        ("/exit", "Exit Osmogrep"),
     ];
 
-    // Stage 1: autocomplete (command starts with what user typed)
     for (cmd, desc) in commands {
-        if cmd.starts_with(trimmed) {
-            state.set_autocomplete(cmd.to_string());
+        if cmd.starts_with(&input) {
+            state.set_autocomplete((*cmd).to_string());
             state.set_hint(*desc);
             return;
         }
     }
 
-    // Stage 2: hint only (user typed part of a known command)
     for (cmd, desc) in commands {
-        if trimmed.starts_with(cmd) {
+        if input.starts_with(cmd) {
             state.set_hint(*desc);
             return;
         }
     }
 
-    state.set_hint("Unknown command");
+    state.set_hint("Unknown command. Type /help");
 }

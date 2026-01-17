@@ -4,400 +4,86 @@
 
 ## Files
 
+### src/agent.rs
+
+**Functions**
+- fn save_config(cfg: &Config) -> std::io::Result<()>
+-  pub fn new() -> Self
+-  pub fn set_api_key(&mut self, key: String)
+-  pub fn spawn( &self, repo_root: PathBuf, user_text: String, tx: Sender<AgentEvent>, )
+-  fn run( &self, _repo_root: PathBuf, user_text: &str, tx: &Sender<AgentEvent>, ) -> Result<(), String>
+-  fn call_openai( &self, api_key: &str, input: &Value, ) -> Result<Value, String>
+
+**Calls**
+- AgentEvent::Error
+- AgentEvent::OutputText
+- Command::new
+- PathBuf::from
+- Stdio::piped
+- String::new
+- ToolRegistry::new
+- Value::Array
+- Value::String
+- dirs::config_dir
+- env::var
+- fs::create_dir_all
+- fs::read_to_string
+- fs::write
+- serde_json::from_str
+- serde_json::to_string
+- thread::spawn
+- toml::from_str
+- toml::to_string
+
 ### src/commands.rs
 
 **Functions**
-- pub fn handle_command(state: &mut AgentState, cmd: &str)
-- fn inspect(state: &mut AgentState)
-- fn list_changes(state: &mut AgentState)
-- fn view_change(state: &mut AgentState, cmd: &str)
-- fn agent_run(state: &mut AgentState, cmd: &str)
-- fn agent_run_all(state: &mut AgentState, cmd: &str)
-- fn agent_status(state: &mut AgentState)
-- fn agent_cancel(state: &mut AgentState)
-- fn model_use(state: &mut AgentState, cmd: &str)
-- fn enter_api_key_mode( state: &mut AgentState, provider: Provider, model: &str, )
-- fn model_show(state: &mut AgentState)
-- fn show_test_artifact(state: &mut AgentState)
-- fn close_view(state: &mut AgentState)
+- pub fn handle_command(state: &mut AgentState, raw: &str)
 - pub fn update_command_hints(state: &mut AgentState)
 
 **Calls**
 - Instant::now
-- LlmBackend::ollama
-- git::list_branches
-- slice::from_ref
-
-### src/context/ast.rs
-
-**Functions**
-- pub fn extract_functions_and_methods(src: &str) -> (Vec<String>, Vec<(String, String)>)
-
-**Calls**
-- Parser::new
-- Vec::new
-- tree_sitter_python::language
-
-### src/context/full_suite_context.rs
-
-**Functions**
-- fn extract_test_body(src: &str, method: &str) -> Option<String>
-- fn find_called_function(block: &str) -> Option<String>
-- fn search_for_function(repo_root: &Path, fn_name: &str) -> Option<PathBuf>
-- fn extract_impl_function(path: &Path, fn_name: &str) -> Option<String>
-- pub fn build_full_suite_context( repo_root: &Path, failure: &FailureInfo, ) -> Option<FullSuiteContext>
-
-**Calls**
-- BufReader::new
-- File::open
-- PathBuf::new
-- Regex::new
-- Vec::new
-- WalkDir::new
-- fs::read_to_string
-- regex::escape
-
-### src/context/mod.rs
-
-**Functions**
-
-**Calls**
-
-### src/context/snapshot.rs
-
-**Functions**
-- pub fn build_full_context_snapshot( repo_root: &Path, diffs: &[DiffAnalysis], ) -> Arc<FullContextSnapshot>
-- pub fn build_context_snapshot( repo_root: &Path, diffs: &[DiffAnalysis], ) -> ContextSnapshot
-- pub fn parse_file( file: &Path, source: &str, ) -> (Vec<SymbolDef>, Vec<Import>)
-- fn walk_node( kind: LanguageKind, node: Node, file: &Path, src: &str, symbols: &mut Vec<SymbolDef>, imports: &mut Vec<Import>, current_class: Option<String>, )
-- fn resolve_symbol( target: Option<&str>, symbols: &[SymbolDef], ) -> SymbolResolution
-
-**Calls**
-- Arc::new
-- Parser::new
-- PathBuf::from
-- SymbolResolution::Ambiguous
-- SymbolResolution::Resolved
-- Vec::new
-- fs::read_to_string
-- python::language
-- rust::language
-
-### src/context/test_snapshot.rs
-
-**Functions**
-- pub fn build_test_context_snapshot(repo_root: &Path) -> TestContextSnapshot
-- fn empty_snapshot(exists: bool, test_roots: Vec<PathBuf>) -> TestContextSnapshot
-- fn collect_test_files_recursive(test_roots: &[PathBuf]) -> Vec<PathBuf>
-- fn collect_py_files(dir: &Path, out: &mut Vec<PathBuf>)
-- fn detect_framework_from_source( source: &str, symbols: &[SymbolDef], ) -> TestFramework
-- fn detect_helpers(symbols: &[SymbolDef]) -> Vec<String>
-- fn detect_references(imports: &[Import]) -> Vec<String>
-- fn detect_style( helpers: &[String], references: &[String], symbols: &[SymbolDef], ) -> Option<TestStyle>
-
-**Calls**
-- Vec::new
-- fs::read_dir
-- fs::read_to_string
-
-### src/context/types.rs
-
-**Functions**
-
-**Calls**
-
-### src/detectors/diff_analyzer.rs
-
-**Functions**
-- pub fn analyze_diff() -> Vec<DiffAnalysis>
-- fn split_diff_by_file(diff: &str) -> Vec<FileDiff>
-- fn extract_function_diffs(file: &FileDiff) -> Vec<DiffAnalysis>
-- fn detect_functions_for_hunk(lines: &[&str], hunk: &str) -> Vec<String>
-- fn extract_changed_new_lines(hunk: &str) -> Vec<usize>
-- fn nearest_def(lines: &[&str], mut idx: usize) -> Option<String>
-- fn extract_full_function(lines: &[&str], func: &str) -> Option<String>
-- fn detect_surface(_file: &str, code: &str) -> ChangeSurface
-
-**Calls**
-- HashSet::new
-- String::from_utf8_lossy
-- Vec::new
-- git::diff_cached
-- git::show_head
-- git::show_index
-
-### src/detectors/language.rs
-
-**Functions**
-- pub fn detect_language(root: &Path) -> Language
-- fn dominant_language( py: usize, rs: usize, ) -> Language
-- fn is_ignored(path: &Path) -> bool
--  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result
-
-**Calls**
-- WalkDir::new
-
-### src/detectors/mod.rs
-
-**Functions**
-
-**Calls**
-
-### src/diagnose.rs
-
-**Functions**
-- fn ensure_agent_branch(state: &mut AgentState) -> bool
-- fn create_sandbox(state: &mut AgentState) -> Option<PathBuf>
-- fn ensure_env(state: &mut AgentState, root: &Path) -> bool
-- fn install_requirements(state: &mut AgentState, root: &Path) -> bool
-- fn install_pyproject(state: &mut AgentState, root: &Path) -> bool
-- fn parse_readme_llm(state: &mut AgentState, text: &str) -> Option<Value>
-- fn parse_readme(state: &mut AgentState, root: &Path) -> Option<Value>
-- fn run_usage_cmds(state: &mut AgentState, root: &Path, parsed: &Value) -> Option<String>
-- fn parse_error(state: &mut AgentState, stderr: &str) -> Option<Value>
-- fn attempt_fix(state: &mut AgentState, root: &Path, stderr: &str) -> bool
-- fn add_import(root: &Path, imp: &str) -> bool
-- fn apply_patch(root: &Path, diff: &str) -> bool
-- fn sanitize_json(raw: &str) -> Option<&str>
-- fn run_pip(state: &mut AgentState, pip: &Path, root: &Path, args: &[&str]) -> bool
-- pub fn main_pipeline(state: &mut AgentState)
-
-**Calls**
-- Command::new
-- String::from_utf8_lossy
-- fs::read_dir
-- fs::read_to_string
-- fs::write
-
-### src/git.rs
-
-**Functions**
-- pub fn find_existing_agent() -> Option<String>
-- pub fn create_agent_branch() -> String
-- pub fn detect_base_branch() -> String
-- pub fn show_head(path: &str) -> Option<String>
-- pub fn show_index(path: &str) -> Option<String>
-- pub fn git_create_sandbox_worktree() -> PathBuf
-
-**Calls**
-- Command::new
-- Path::new
-- Stdio::null
-- Stdio::piped
-- String::from_utf8_lossy
-- Uuid::new_v4
-- env::temp_dir
-- fs::create_dir_all
-- u16::from_str_radix
-
-### src/llm/backend.rs
-
-**Functions**
--  pub fn ollama(model: String) -> Self
--  pub fn remote(client: LlmClient) -> Self
--  pub fn run( &self, prompt: LlmPrompt, force_reload: bool, ) -> Result<LlmRunResult, String>
--  pub fn run_with_cancel( &self, prompt: LlmPrompt, cancel_flag: Arc<AtomicBool>, force_reload: bool, ) -> Option<LlmRunResult>
-
-**Calls**
-- Duration::from_millis
-- Ollama::run
-- mpsc::channel
-- thread::sleep
-- thread::spawn
-
-### src/llm/client.rs
-
-**Functions**
--  pub fn new() -> Self
--  pub fn configure( &self, provider_name: &str, model: String, api_key: String, base_url: Option<String>, ) -> Result<(), String>
--  pub fn run( &self, prompt: LlmPrompt, force_reload: bool, ) -> Result<LlmRunResult, String>
-- fn build_request( cfg: &ProviderConfig, prompt: &LlmPrompt, prompt_hash: &str, force_reload: bool, ) -> (String, Vec<(&'static str, String)>, Value)
-- fn extract_text(provider: &Provider, v: &Value) -> Result<String, String>
-- fn default_config() -> ProviderConfig
-- fn save_config(cfg: &ProviderConfig) -> std::io::Result<()>
-
-**Calls**
-- Arc::new
-- Client::builder
-- Duration::from_secs
-- Mutex::new
-- PathBuf::from
-- Sha256::new
-- String::new
-- dirs::config_dir
-- fs::create_dir_all
-- fs::read_to_string
-- fs::write
-- hex::encode
-- serde_json::from_str
-- serde_json::to_string_pretty
-
-### src/llm/mod.rs
-
-**Functions**
-
-**Calls**
-
-### src/llm/ollama.rs
-
-**Functions**
--  pub fn run(prompt: LlmPrompt, model: &str) -> io::Result<String>
-- fn ollama_script_path() -> io::Result<PathBuf>
-- fn python_bin() -> &'static str
-- fn wait_with_timeout( mut child: std::process::Child, timeout: Duration, ) -> io::Result<std::process::Output>
-
-**Calls**
-- Command::new
-- Duration::from_millis
-- Duration::from_secs
-- Error::new
-- Instant::now
-- PathBuf::from
-- Stdio::piped
-- String::from_utf8_lossy
-- thread::sleep
-
-### src/llm/orchestrator.rs
-
-**Functions**
-- pub fn run_single_test_flow( tx: Sender<AgentEvent>, cancel_flag: Arc<AtomicBool>, llm: LlmBackend, snapshot: Arc<FullContextSnapshot>, candidate: TestCandidate, language: Language, semantic_cache: Arc<SemanticCache>, run_options: AgentRunOptions, )
-- pub fn run_full_suite_flow( tx: Sender<AgentEvent>, cancel_flag: Arc<AtomicBool>, llm: LlmBackend, language: Language, run_options: AgentRunOptions, full_cache: Arc<Mutex<FullSuiteCache>>, )
-- pub fn run_parallel_agent_flow( tx: Sender<AgentEvent>, cancel_flag: Arc<AtomicBool>, llm: LlmBackend, repo_root: PathBuf, snapshot: Arc<FullContextSnapshot>, candidates: Vec<TestCandidate>, language: Language, run_options: AgentRunOptions, )
-- fn run_single_subagent( tx: Sender<AgentEvent>, cancel_flag: Arc<AtomicBool>, llm: LlmBackend, repo_root: PathBuf, snapshot: Arc<FullContextSnapshot>, candidate: TestCandidate, language: Language, run_options: AgentRunOptions, index: usize, total: usize, ) -> (bool, Option<String>)
-- fn trim_error(s: &str) -> String
-- fn sanitize_llm_output(raw: &str) -> String
-- pub fn short_dir_path(path: &str) -> String
-- fn timestamp() -> String
-- fn t(prefix: &str, msg: &str) -> String
-- fn run_test_with_cancel( req: TestRunRequest, cancel_flag: Arc<AtomicBool>, ) -> Option<TestResult>
-
-**Calls**
-- AgentEvent::Failed
-- AgentEvent::GeneratedTest
-- AgentEvent::Log
-- AgentEvent::SpinnerStart
-- AgentEvent::TestFinished
-- Duration::from_millis
-- OnceLock::new
-- Path::new
-- SemanticKey::from_candidate
-- TestCandidate::from_test_failure
-- Vec::new
-- env::current_dir
-- fs::remove_dir_all
-- mpsc::channel
-- thread::sleep
-- thread::spawn
-
-### src/llm/prompt.rs
-
-**Functions**
-- pub fn build_prompt( candidate: &TestCandidate, file_ctx: &FileContext, test_ctx: &TestContextSnapshot, ) -> LlmPrompt
-- pub fn build_prompt_with_feedback( candidate: &TestCandidate, file_ctx: &FileContext, test_ctx: &TestContextSnapshot, previous_test: &str, failure_feedback: &str, ) -> LlmPrompt
-- fn user_prompt( candidate: &TestCandidate, ctx: &FileContext, test_ctx: &TestContextSnapshot, ) -> String
-- pub fn build_full_suite_prompt(ctx: &FullSuiteContext) -> LlmPrompt
-
-**Calls**
-- String::new
-- SymbolResolution::Ambiguous
-- SymbolResolution::Resolved
-
-### src/llm_py/ollama.py
-
-**Functions**
-- def main()
-
-**Calls**
-- environ.get
-- prompt.strip
-- stderr.write
-- stdin.read
-- stdout.write
-- subprocess.run
-- sys.exit
 
 ### src/logger.rs
 
 **Functions**
 - pub fn log( state: &mut AgentState, level: LogLevel, msg: impl Into<String>, )
-- pub fn log_diff_analysis(state: &mut AgentState)
--  fn as_str(&self) -> &'static str
+- pub fn log_user_input( state: &mut AgentState, input: impl Into<String>, )
+- pub fn log_tool_call( state: &mut AgentState, tool: impl Into<String>, args: impl Into<String>, )
+- pub fn log_tool_result( state: &mut AgentState, msg: impl Into<String>, )
+- pub fn log_agent_output( state: &mut AgentState, text: &str, )
 
 **Calls**
-
-### src/machine.rs
-
-**Functions**
-- pub fn step(state: &mut AgentState)
-- fn init_repo(state: &mut AgentState)
-- fn detect_base_branch(state: &mut AgentState)
-- fn create_agent_branch(state: &mut AgentState)
-- fn execute_agent(state: &mut AgentState)
-- fn execute_parallel_agent(state: &mut AgentState)
-- fn handle_running(state: &mut AgentState)
-- fn rollback_agent(state: &mut AgentState)
-- fn ensure_agent_branch(state: &mut AgentState) -> String
-- fn return_to_base_branch(state: &mut AgentState)
-- fn assert_repo_root() -> Result<PathBuf, String>
-- fn attach_summaries(state: &mut AgentState)
-
-**Calls**
-- Arc::new
-- FullSuiteCache::new
-- Mutex::new
-- SemanticCache::new
-- env::current_dir
-- git::checkout
-- git::create_agent_branch
-- git::current_branch
-- git::delete_branch
-- git::detect_base_branch
-- git::find_existing_agent
-- git::is_git_repo
-- git::working_tree_dirty
 
 ### src/main.rs
 
 **Functions**
+- fn run_shell(state: &mut AgentState, cmd: &str)
 - fn main() -> Result<(), Box<dyn Error>>
-- fn drain_agent_events(state: &mut AgentState)
 - fn init_state() -> AgentState
-- fn handle_event( state: &mut AgentState, event: impl Into<Event>, input_rect: ratatui::layout::Rect, diff_rect: ratatui::layout::Rect, exec_rect: ratatui::layout::Rect, )
-- fn handle_key(state: &mut AgentState, k: crossterm::event::KeyEvent)
-- fn handle_input_keys(state: &mut AgentState, k: crossterm::event::KeyEvent)
-- fn handle_diff_keys(state: &mut AgentState, k: crossterm::event::KeyEvent)
-- fn handle_exec_keys(state: &mut AgentState, k: crossterm::event::KeyEvent)
-- fn handle_mouse( state: &mut AgentState, m: crossterm::event::MouseEvent, input_rect: ratatui::layout::Rect, diff_rect: ratatui::layout::Rect, exec_rect: ratatui::layout::Rect, )
 - fn teardown_terminal( terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, ) -> Result<(), Box<dyn Error>>
 
 **Calls**
-- AgentEvent::Failed
-- AgentEvent::GeneratedTest
-- AgentEvent::Log
-- AgentEvent::SpinnerStart
-- AgentEvent::TestFinished
-- AgentEvent::TestSuiteReport
-- AgentRunOptions::default
-- Arc::new
-- AtomicBool::new
+- Agent::new
+- AgentEvent::Error
+- AgentEvent::OutputText
+- Command::new
 - CrosstermBackend::new
 - Duration::from_millis
-- Event::Key
-- Event::Mouse
 - Instant::now
-- KeyCode::Char
-- LlmBackend::remote
-- LlmClient::new
 - LogBuffer::new
-- MouseEventKind::Down
-- PathBuf::new
+- Rect::default
+- String::from_utf8_lossy
 - String::new
 - Terminal::new
 - Vec::new
+- commands::handle_command
+- commands::update_command_hints
+- env::current_dir
 - event::poll
 - event::read
 - io::stdout
-- ui::draw_ui
+- mpsc::channel
 
 ### src/state.rs
 
@@ -405,236 +91,100 @@
 -  pub fn new() -> Self
 -  pub fn push(&mut self, level: LogLevel, text: impl Into<String>)
 -  pub fn iter(&self) -> impl Iterator<Item = &LogLine>
--  fn default() -> Self
 -  pub fn history_prev(&mut self)
 -  pub fn history_next(&mut self)
 -  pub fn commit_input(&mut self) -> String
 
 **Calls**
-- Duration::from_secs
 - Instant::now
 - VecDeque::with_capacity
 - logger::log
 
-### src/testgen/cache.rs
+### src/tools/edit.rs
 
 **Functions**
--  pub fn from_candidate(c: &TestCandidate) -> Self
--  pub fn to_cache_key(&self) -> String
--  pub fn new() -> Self
-- fn hash_str(s: &str) -> String
--  pub fn new() -> Self
+-  fn schema(&self) -> Value
+-  fn call(&self, args: Value) -> ToolResult
 
 **Calls**
-- Arc::new
-- HashMap::new
-- Mutex::new
-- Sha256::new
-- hex::encode
+- fs::read_to_string
+- fs::write
 
-### src/testgen/candidate.rs
+### src/tools/glob.rs
 
 **Functions**
--  pub fn from_test_failure( file: String, test_name: String, ) -> Self
+-  fn schema(&self) -> Value
+-  fn call(&self, args: Value) -> ToolResult
 
 **Calls**
-- TestTarget::File
-
-### src/testgen/generator.rs
-
-**Functions**
-- fn normalize_source(file: &str, src: &str) -> String
-- fn normalize_rust(src: &str) -> String
-- fn normalize_python(src: &str) -> String
-- fn is_test_worthy(d: &DiffAnalysis) -> bool
-- fn decide_test(d: &DiffAnalysis) -> TestDecision
-- fn priority(d: &DiffAnalysis) -> u8
-- pub fn generate_test_candidates( diffs: &[DiffAnalysis], ) -> Vec<TestCandidate>
-
-**Calls**
-- TestTarget::File
-- TestTarget::Symbol
 - Vec::new
-- summarizer::summarize
+- WalkDir::new
 
-### src/testgen/materialize.rs
+### src/tools/mod.rs
 
 **Functions**
-- pub fn materialize_test( repo_root: &Path, language: Language, candidate: &TestCandidate, test_code: &str, ) -> io::Result<PathBuf>
-- pub fn materialize_full_suite_test( repo_root: &Path, test_path: &Path, new_code: &str, ) -> io::Result<PathBuf>
-- fn write_python_test( repo_root: &Path, candidate: &TestCandidate, test_code: &str, ) -> io::Result<PathBuf>
-- fn write_rust_test( repo_root: &Path, candidate: &TestCandidate, test_code: &str, ) -> io::Result<PathBuf>
-- fn find_test_root(repo_root: &Path) -> io::Result<PathBuf>
-- fn write_file_atomic(path: &Path, content: &str) -> io::Result<()>
-- fn sanitize_name(file: &str, symbol: &Option<String>) -> String
+-  fn call(&self, args: Value) -> ToolResult; } pub struct ToolRegistry
+-  pub fn new() -> Self
+-  pub fn call(&self, name: &str, args: Value) -> ToolResult
 
 **Calls**
-- Error::new
-- File::create
-- Path::new
-- fs::create_dir_all
+- Box::new
+- HashMap::new
 
-### src/testgen/mod.rs
+### src/tools/read.rs
 
 **Functions**
+-  fn schema(&self) -> Value
+-  fn call(&self, args: Value) -> ToolResult
 
 **Calls**
+- fs::read_to_string
 
-### src/testgen/runner.rs
+### src/tools/search.rs
 
 **Functions**
-- pub fn run_test(req: TestRunRequest) -> TestResult
-- pub fn run_test_suite(language: Language) -> TestSuiteResult
-- fn run_python_test_suite() -> TestSuiteResult
-- fn run_rust_test_suite() -> TestSuiteResult
+-  fn schema(&self) -> Value
+-  fn call(&self, args: Value) -> ToolResult
+
+**Calls**
+- BufReader::new
+- Command::new
+- File::open
+- String::from_utf8_lossy
+- Vec::new
+- WalkDir::new
+
+### src/tools/shell.rs
+
+**Functions**
+-  fn schema(&self) -> Value
+-  fn call(&self, args: Value) -> ToolResult
 
 **Calls**
 - Command::new
-- Instant::now
 - String::from_utf8_lossy
-- String::new
-- Vec::new
-- env::current_dir
-- env::var
 
-### src/testgen/summarizer.rs
+### src/tools/write.rs
 
 **Functions**
-- pub fn summarize(diff: &DiffAnalysis) -> SemanticSummary
-- fn behavior_statement(d: &DiffAnalysis) -> String
-- fn failure_statement(d: &DiffAnalysis) -> String
-- fn infer_risk(d: &DiffAnalysis) -> RiskLevel
+-  fn schema(&self) -> Value
+-  fn call(&self, args: Value) -> ToolResult
 
 **Calls**
-
-### src/testgen/test_suite.rs
-
-**Functions**
--  pub fn is_clean(&self) -> bool
-- pub fn run_test_suite_and_report( language: Language, repo_root: &Path, ) -> io::Result<TestSuiteExecution>
-- fn parse_pytest_output_fully(raw: &str) -> (ParsedSummary, Vec<TestCaseResult>)
-- fn parse_footer_summary_line(line: &str, out: &mut ParsedSummary)
-- fn extract_failed_tests(raw: &str) -> std::collections::HashSet<String>
-- fn extract_failure_spans(raw: &str) -> HashMap<String, FailureSpan>
-- fn extract_durations(raw: &str) -> HashMap<String, f64>
-- fn extract_skips(raw: &str) -> Vec<SkipEntry>
-- fn extract_warnings(raw: &str) -> Vec<WarningEntry>
-- fn extract_failures_robust(raw: &str) -> Vec<TestSuiteFailure>
-- pub fn write_test_suite_report( repo_root: &Path, suite: &TestSuiteResult, ) -> io::Result<PathBuf>
-
-**Calls**
-- BTreeMap::new
-- Error::new
-- File::create
-- HashMap::new
-- HashSet::new
-- ParsedSummary::default
-- String::new
-- SystemTime::now
-- Vec::new
-- fs::create_dir_all
 - fs::write
-- serde_json::to_string_pretty
-
-### src/ui/diff.rs
-
-**Functions**
-- pub fn render_side_by_side( f: &mut ratatui::Frame, area: Rect, delta: &SymbolDelta, state: &AgentState, )
-
-**Calls**
-- Block::default
-- Color::Rgb
-- Constraint::Percentage
-- Layout::default
-- Line::from
-- Paragraph::new
-- Span::raw
-- Span::styled
-- Style::default
-- TextDiff::from_lines
-- Vec::new
-
-### src/ui/draw.rs
-
-**Functions**
-- pub fn render_header(f: &mut ratatui::Frame, area: Rect)
-- fn render_command_input_line(state: &AgentState, prompt: &str) -> Line<'static>
-- fn render_unified_command_box( f: &mut ratatui::Frame, area: Rect, state: &AgentState, prompt: &str, output_input_rect: &mut Rect, )
-- pub fn draw_ui<B: Backend>( terminal: &mut Terminal<B>, state: &AgentState, ) -> io::Result<(Rect, Rect, Rect)>
-
-**Calls**
-- Block::default
-- Color::Rgb
-- Constraint::Length
-- Constraint::Min
-- Constraint::Percentage
-- Layout::default
-- Line::from
-- OnceLock::new
-- Paragraph::new
-- Rect::default
-- Span::raw
-- Span::styled
-- Style::default
-- diff::render_side_by_side
-- execution::render_execution
-- panels::render_panel
-- status::render_side_status
-
-### src/ui/execution.rs
-
-**Functions**
-- fn parse_change_line(s: &str) -> Option<(String, String, Option<String>)>
-- pub fn render_execution( f: &mut ratatui::Frame, area: Rect, state: &AgentState, )
-
-**Calls**
-- Block::default
-- Color::Rgb
-- Duration::from_secs
-- Instant::now
-- Line::default
-- Line::from
-- Paragraph::new
-- Span::raw
-- Span::styled
-- Style::default
-- Vec::new
-- iter::once
-
-### src/ui/helpers.rs
-
-**Functions**
-- pub fn phase_badge(phase: &Phase) -> (&'static str, &'static str, Color)
-- pub fn language_badge(lang: &str) -> (&'static str, Color)
-- pub fn framework_badge(fw: &TestFramework) -> (&'static str, Color)
-- pub fn format_uptime(started_at: Instant) -> String
-- pub fn ln(n: usize, color: Color) -> Span<'static>
-- pub fn risk_color(r: &RiskLevel) -> Color
-- pub fn running_pulse(start: Option<std::time::Instant>) -> Option<String>
-- pub fn hclip(s: &str, x: usize, width: usize) -> &str
-- pub fn surface_color(surface: &ChangeSurface) -> Color
-
-**Calls**
-- Span::styled
-- String::with_capacity
-- Style::default
 
 ### src/ui/main_ui.rs
 
 **Functions**
-- pub fn handle_event( state: &mut AgentState, event: impl Into<Event>, input_rect: Rect, diff_rect: Rect, exec_rect: Rect, )
-- pub fn handle_key(state: &mut AgentState, k: KeyEvent)
-- pub fn handle_input_keys(state: &mut AgentState, k: KeyEvent)
-- pub fn handle_diff_keys(state: &mut AgentState, k: KeyEvent)
-- pub fn handle_exec_keys(state: &mut AgentState, k: KeyEvent)
-- pub fn handle_mouse( state: &mut AgentState, m: MouseEvent, input_rect: Rect, diff_rect: Rect, exec_rect: Rect, )
+- fn parse_input(raw: &str) -> InputMode
+- pub fn handle_event( state: &mut AgentState, event: impl Into<Event>, _input_rect: Rect, _diff_rect: Rect, _exec_rect: Rect, )
+- fn handle_key(state: &mut AgentState, k: KeyEvent)
+- fn handle_mouse(state: &mut AgentState, m: MouseEvent)
 
 **Calls**
 - Event::Key
 - Event::Mouse
 - KeyCode::Char
-- LlmClient::new
-- MouseEventKind::Down
 
 ### src/ui/mod.rs
 
@@ -642,27 +192,16 @@
 
 **Calls**
 
-### src/ui/panels.rs
+### src/ui/tui.rs
 
 **Functions**
-- pub fn render_panel( f: &mut ratatui::Frame, area: Rect, state: &AgentState, ) -> bool
-- fn render_testgen_panel( f: &mut ratatui::Frame, area: Rect, state: &AgentState, candidate: &crate::testgen::candidate::TestCandidate, generated_test: &Option<String>, )
-- fn render_test_result_panel( f: &mut ratatui::Frame, area: Rect, state: &AgentState, output: &str, passed: bool, )
-- fn render_scrollable_block( f: &mut ratatui::Frame, area: Rect, scroll: usize, lines: Vec<Line>, title: &str, )
-
-**Calls**
-- Block::default
-- Line::from
-- Paragraph::new
-- Span::raw
-- Span::styled
-- Style::default
-- Vec::new
-
-### src/ui/status.rs
-
-**Functions**
-- pub fn render_side_status( f: &mut ratatui::Frame, area: Rect, state: &AgentState, )
+- pub fn draw_ui<B: Backend>( terminal: &mut Terminal<B>, state: &AgentState, ) -> io::Result<(Rect, Rect, Rect)>
+- fn render_header(f: &mut ratatui::Frame, area: Rect)
+- fn render_execution( f: &mut ratatui::Frame, area: Rect, state: &AgentState, )
+- fn render_input( f: &mut ratatui::Frame, area: Rect, state: &AgentState, )
+- fn render_status( f: &mut ratatui::Frame, area: Rect, state: &AgentState, )
+- fn render_command_box_line(text: &str, with_prefix: bool) -> Line
+- fn running_pulse(start: Option<Instant>) -> Option<String>
 
 **Calls**
 - Block::default
@@ -670,27 +209,27 @@
 - Constraint::Length
 - Constraint::Min
 - Layout::default
-- Line::default
 - Line::from
 - Paragraph::new
+- Rect::default
 - Span::raw
 - Span::styled
+- String::with_capacity
 - Style::default
-- System::new
+- Vec::new
 
 ## Global Hotspots
 
 ### Thread creation
-- src/llm/backend.rs → thread::spawn
-- src/llm/orchestrator.rs → thread::spawn
+- src/agent.rs → thread::spawn
 
 ### Process execution
-- src/diagnose.rs → Command::new
-- src/git.rs → Command::new
-- src/llm/ollama.rs → Command::new
-- src/testgen/runner.rs → Command::new
+- src/agent.rs → Command::new
+- src/main.rs → Command::new
+- src/tools/search.rs → Command::new
+- src/tools/shell.rs → Command::new
 
 ### AgentEvent fan-out
-- src/llm/orchestrator.rs
+- src/agent.rs
 - src/main.rs
 

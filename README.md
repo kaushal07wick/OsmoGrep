@@ -1,15 +1,15 @@
-# ![osmogrep](osmogrep.png)
+# ![opencode](opencode.png)
 
-# **OsmoGrep**
+# **opencode**
 
 A **terminal-native execution agent** that validates code changes by **running real tests**, not eyeballing diffs.
 
 > **Can your code changes be validated autonomously through safe, deterministic execution?**
 
-![osmogrep-wrking](osmogrep.gif)
+![opencode-working](opencode.gif)
 ## Functionality?
 
-| Area           | What OsmoGrep Does                           |
+| Area           | What opencode Does                           |
 | -------------- | -------------------------------------------- |
 | **Input**      | Uncommitted git diffs                        |
 | **Context**    | AST-based symbol extraction + test graph     |
@@ -47,21 +47,21 @@ Designed for real engineering workflows—not toy demos.
 ### from crates.io
 
 ```bash
-cargo install osmogrep
+cargo install opencode
 ```
 
 ### Install latest from github
 
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kaushal07wick/OsmoGrep/master/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/kaushal07wick/opencode/master/install.sh | sh
 ```
 
 
 Then run inside **any git repository**:
 
 ```bash
-osmogrep
+opencode
 ```
 
 ## Usage
@@ -69,7 +69,7 @@ osmogrep
 Write code → `git add .` → run:
 
 ```bash
-osmogrep
+opencode
 ```
 
 The agent inspects your diff, builds context, and executes in a sandbox branch.
@@ -93,7 +93,7 @@ The agent inspects your diff, builds context, and executes in a sandbox branch.
 | `branch list`                        | List available git branches                  |
 | `clear` / `logs clear`               | Clear logs                                   |
 | `close`                              | Close result panel                           |
-| `quit`                               | Exit OsmoGrep                                |
+| `quit`                               | Exit opencode                                |
 
 
 ## License

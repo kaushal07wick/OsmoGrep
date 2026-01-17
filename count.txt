@@ -1,0 +1,61 @@
+kaushal@pegasus:~/OsmoGrep$ ./count.sh
+     2 src/detectors/mod.rs
+    90 src/detectors/language.rs
+   223 src/detectors/diff_analyzer.rs
+   521 src/commands.rs
+    27 src/llm_py/ollama.py
+   344 src/state.rs
+   321 src/machine.rs
+   435 src/diagnose.rs
+   479 src/main.rs
+   173 src/git.rs
+   245 src/llm/client.rs
+     4 src/llm/mod.rs
+   802 src/llm/orchestrator.rs
+    81 src/llm/backend.rs
+   279 src/llm/prompt.rs
+    96 src/llm/ollama.rs
+     4 src/context/mod.rs
+    56 src/context/ast.rs
+   208 src/context/full_suite_context.rs
+   258 src/context/test_snapshot.rs
+    85 src/context/types.rs
+   201 src/context/snapshot.rs
+     8 src/ui/mod.rs
+   272 src/ui/status.rs
+   186 src/ui/diff.rs
+   398 src/ui/draw.rs
+   176 src/ui/helpers.rs
+   182 src/ui/execution.rs
+   179 src/ui/panels.rs
+   225 src/ui/main_ui.rs
+    31 src/logger.rs
+    90 src/testgen/summarizer.rs
+     6 src/testgen/mod.rs
+   809 src/testgen/test_suite.rs
+   121 src/testgen/materialize.rs
+   186 src/testgen/runner.rs
+   151 src/testgen/generator.rs
+   118 src/testgen/cache.rs
+    61 src/testgen/candidate.rs
+  8133 total
+
+
+after refactoring
+  129 src/commands.rs
+  182 src/state.rs
+   59 src/tools/edit.rs
+   63 src/tools/mod.rs
+   47 src/tools/shell.rs
+  112 src/tools/search.rs
+   50 src/tools/write.rs
+   67 src/tools/read.rs
+   89 src/tools/glob.rs
+  269 src/agent.rs
+  242 src/main.rs
+    2 src/ui/mod.rs
+  258 src/ui/tui.rs
+  140 src/ui/main_ui.rs
+   69 src/logger.rs
+ 1778 total
+ 

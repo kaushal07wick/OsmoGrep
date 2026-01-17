@@ -1,131 +1,18 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use std::sync::mpsc::{Sender, Receiver};
-use std::time::{Instant, Duration};
-use crate::llm::client::Provider;
-use crate::detectors::{language::Language};
-use crate::testgen::candidate::TestCandidate;
-use crate::testgen::summarizer::SemanticSummary;
-use crate::context::types::FullContextSnapshot;
+use std::time::{Instant};
+
 pub const MAX_LOGS: usize = 1000;
-use crate::llm::backend::LlmBackend;
 
-///input mode
-pub enum InputMode {
-    Command,
-    ApiKey {
-        provider: Provider,
-        model: String,
-    },
-}
-
-
-///events emitted by agent
-#[derive(Debug)]
-pub enum AgentEvent {
-    Log(LogLevel, String),
-    SpinnerStart(String),
-    SpinnerStop,
-    GeneratedTest(String),
-    TestStarted,
-    TestFinished(TestResult),
-    Finished,
-    Failed(String),
-    TestSuiteReport(PathBuf),
-}
-
-//results from single test event
-#[derive(Debug, Clone)]
-pub enum TestResult {
-    Passed,
-    Failed { output: String },
-}
-
-///agent phase (lifecycle)
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Phase {
-    Init,
-    DetectBase,
-    Idle,
-    ExecuteAgent,
-    ExecuteParallelAgent,
-    Running,
-    CreateNewAgent,
-    Rollback,
-    Done,
-}
-
-///source level change for a symbol (code)
-#[derive(Debug, Clone)]
-pub struct SymbolDelta {
-    pub old_source: String,
-    pub new_source: String,
-}
-
-///classification of semantic surface
-#[derive(Debug, Clone, Copy)]
-pub enum ChangeSurface {
-    PureLogic,
-    Branching,
-    Contract,
-    ErrorPath,
-    State,
-    Cosmetic,
-    Unknown,
-}
-
-///test decision (if test should be generated or not)
-#[derive(Debug, Clone)]
-pub enum TestDecision {
-    Yes,
-    No,
-    Conditional,
-}
-
-///estimated risk level of change
-#[derive(Debug, Clone)]
-pub enum RiskLevel {
-    Low,
-    Medium,
-    High,
-}
-
-///analysis of single changed file
-#[derive(Debug, Clone)]
-pub struct DiffAnalysis {
-    pub file: String,
-    pub symbol: Option<String>,
-    pub surface: ChangeSurface,
-    pub delta: Option<SymbolDelta>,
-    pub summary: Option<SemanticSummary>,
-}
-
-
-/// UI focus area
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Focus {
-    Input,
-    Diff,
-    Execution,
+pub enum InputMode {
+    AgentText, 
+    Shell,     
+    Command,   
+    ApiKey,   
 }
 
-// UI panel view state
-#[derive(Clone, Debug)]
-pub enum SinglePanelView {
-    TestGenPreview {
-        candidate: TestCandidate,
-        generated_test: Option<String>,
-    },
-    TestResult {
-        output: String,
-        passed: bool,
-    },
-}
-
-/// security level for log entries
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LogLevel {
     Info,
     Success,
@@ -175,84 +62,37 @@ impl LogBuffer {
         self.logs.iter()
     }
 }
-/// mutable state tracking the agent lifecylce
-pub struct LifecycleState {
-    pub phase: Phase,
-    pub base_branch: Option<String>,
-    pub original_branch: Option<String>,
-    pub current_branch: Option<String>,
-    pub agent_branch: Option<String>,
-    pub language: Option<Language>,
-}
 
-/// execution context holding diff analysis and test artifacts
-pub struct AgentContext {
-    pub diff_analysis: Vec<DiffAnalysis>,
-    pub test_candidates: Vec<TestCandidate>,
-    pub last_generated_test: Option<String>,
-    pub generated_tests_ready: bool,
-    pub last_test_result: Option<TestResult>,
-    pub last_suite_report: Option<PathBuf>,
-}
-
-/// complete UI state.
 pub struct UiState {
+    // input
     pub input: String,
-    pub history: Vec<String>,
-    pub history_index: Option<usize>,
-    pub hint: Option<String>,
-    pub autocomplete: Option<String>,
-    pub last_activity: Instant,
-    pub selected_diff: Option<usize>,
-    pub diff_scroll: usize,
-    pub diff_scroll_x: usize,
-    pub in_diff_view: bool,
-    pub diff_side_by_side: bool,
-    pub focus: Focus,
-    pub exec_scroll: usize,
-    pub active_spinner: Option<String>,
-    pub spinner_started_at: Option<Instant>,
-    pub spinner_elapsed: Option<Duration>,
-    pub panel_view: Option<SinglePanelView>,
-    pub panel_scroll: usize,
-    pub panel_scroll_x: usize,
-    pub cached_log_lines: Vec<ratatui::text::Line<'static>>,
-    pub last_log_len: usize,
-    pub dirty: bool,
-    pub last_draw: Instant,
     pub input_mode: InputMode,
     pub input_masked: bool,
     pub input_placeholder: Option<String>,
-    pub first_command_done: bool,
+
+    pub execution_pending: bool,
+    pub should_exit: bool,
+
+
+    pub history: Vec<String>,
+    pub history_index: Option<usize>,
+
+    pub hint: Option<String>,
+    pub autocomplete: Option<String>,
+
+    pub last_activity: Instant,
+
+    pub exec_scroll: usize,
+
+    pub active_spinner: Option<String>,
+    pub spinner_started_at: Option<Instant>,
 }
 
-#[derive(Debug, Clone)]
-pub struct AgentRunOptions {
-    pub force_reload: bool,
-    pub full_suite: bool,
-}
-impl Default for AgentRunOptions {
-    fn default() -> Self {
-        Self {
-            force_reload: false,
-            full_suite: false,
-        }
-    }
-}
-
-/// root container for the entire agent.
 pub struct AgentState {
-    pub lifecycle: LifecycleState,
-    pub context: AgentContext,
     pub ui: UiState,
-    pub started_at: Instant,
     pub logs: LogBuffer,
-    pub llm_backend: LlmBackend,
-    pub agent_tx: Sender<AgentEvent>,
-    pub agent_rx: Receiver<AgentEvent>,
-    pub cancel_requested: Arc<AtomicBool>,
-    pub full_context_snapshot: Option<Arc<FullContextSnapshot>>,
-    pub run_options: AgentRunOptions,
+
+    pub started_at: Instant,
     pub repo_root: PathBuf,
 }
 
@@ -295,10 +135,11 @@ impl AgentState {
     }
 
     pub fn commit_input(&mut self) -> String {
-        let cmd = self.ui.input.trim().to_string();
+        let raw = self.ui.input.clone();
+        let trimmed = raw.trim();
 
-        if !cmd.is_empty() {
-            self.ui.history.push(cmd.clone());
+        if !trimmed.is_empty() {
+            self.ui.history.push(trimmed.to_string());
         }
 
         self.ui.input.clear();
@@ -306,7 +147,7 @@ impl AgentState {
         self.ui.hint = None;
         self.ui.autocomplete = None;
 
-        cmd
+        raw
     }
 
     pub fn set_hint(&mut self, hint: impl Into<String>) {
@@ -330,15 +171,12 @@ impl AgentState {
     }
 
     pub fn start_spinner(&mut self, text: impl Into<String>) {
-        let now = Instant::now();
         self.ui.active_spinner = Some(text.into());
-        self.ui.spinner_started_at = Some(now);
-        self.ui.spinner_elapsed = Some(Duration::from_secs(0));
+        self.ui.spinner_started_at = Some(Instant::now());
     }
 
     pub fn stop_spinner(&mut self) {
         self.ui.active_spinner = None;
         self.ui.spinner_started_at = None;
-        self.ui.spinner_elapsed = None;
     }
 }
