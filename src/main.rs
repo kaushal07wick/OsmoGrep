@@ -36,6 +36,17 @@ use crate::{
     state::{AgentState, InputMode, LogLevel},
     ui::{main_ui::handle_event, tui::draw_ui},
 };
+use clap::Parser;
+
+#[derive(Parser)]
+#[command(
+    name = "osmogrep",
+    version,
+    about = "A lightweight Rust-based TUI AI execution agent"
+)]
+struct Cli {
+    // no flags yet — this is intentional
+}
 
 fn run_shell(state: &mut AgentState, cmd: &str) {
     log_tool_call(state, "shell", cmd);
@@ -56,6 +67,7 @@ fn run_shell(state: &mut AgentState, cmd: &str) {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let _cli = Cli::parse();
     setup_terminal()?;
 
     let backend = CrosstermBackend::new(io::stdout());

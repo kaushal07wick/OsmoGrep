@@ -1,24 +1,25 @@
-use std::{io, process::Command, time::Instant};
+use std::{io};
 
 use ratatui::{
     backend::Backend,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Rect},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Paragraph, Wrap},
-    Terminal,
+    Terminal, Frame,
 };
 
 use crate::{
     logger::parse_user_input_log,
     state::{AgentState, InputMode},
 };
+use crate::ui::helper::{render_static_command_line, running_pulse, git_branch, calculate_input_lines};
+const TOP_PADDING: u16 = 1;
 
 const FG_MAIN: Color = Color::Rgb(220, 220, 220);
 const FG_DIM: Color = Color::Rgb(170, 170, 170);
 const FG_MUTED: Color = Color::Rgb(120, 120, 120);
-
-const PROMPT: &str = "> ";
+const PROMPT: &str = ">_ ";
 
 const LOGO: [&str; 7] = [
     " ██████  ███████ ███    ███  ██████   ██████  ██████  ███████ ██████  ",
@@ -30,6 +31,7 @@ const LOGO: [&str; 7] = [
     "                                                                      ",
 ];
 
+
 pub fn draw_ui<B: Backend>(
     terminal: &mut Terminal<B>,
     state: &AgentState,
@@ -40,32 +42,67 @@ pub fn draw_ui<B: Backend>(
     terminal.draw(|f| {
         let area = f.size();
 
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(1),
-                Constraint::Length(LOGO.len() as u16 + 2),
-                Constraint::Min(5),     // execution
-                Constraint::Length(3), // command box
-                Constraint::Length(1), // status bar
-            ])
-            .split(area);
+        let padded_area = Rect {
+            x: area.x,
+            y: area.y + TOP_PADDING,
+            width: area.width,
+            height: area.height.saturating_sub(TOP_PADDING),
+        };
 
-        render_header(f, chunks[1], state);
-        render_execution(f, chunks[2], state);
-        render_input_box(f, chunks[3], state);
-        render_status_bar(f, chunks[4], state);
+        let header_height = 1 + LOGO.len() as u16 + 2;
+        let status_height = 1;
 
-        exec_rect = chunks[2];
-        input_rect = chunks[3];
+        let input_width = padded_area.width.saturating_sub(4) as usize;
+        let input_lines =
+            calculate_input_lines(&state.ui.input, input_width, PROMPT.len());
+
+        let max_content_lines = 3;
+        let visible_lines = input_lines.min(max_content_lines);
+        let cmd_height = (visible_lines + 2) as u16;
+
+        let header_rect = Rect {
+            x: padded_area.x,
+            y: padded_area.y,
+            width: padded_area.width,
+            height: header_height,
+        };
+
+        let status_rect = Rect {
+            x: padded_area.x,
+            y: padded_area.y + padded_area.height - status_height,
+            width: padded_area.width,
+            height: status_height,
+        };
+
+        let cmd_rect = Rect {
+            x: padded_area.x,
+            y: status_rect.y.saturating_sub(cmd_height),
+            width: padded_area.width,
+            height: cmd_height,
+        };
+
+        let exec_rect_calc = Rect {
+            x: padded_area.x,
+            y: header_rect.y + header_rect.height,
+            width: padded_area.width,
+            height: cmd_rect
+                .y
+                .saturating_sub(header_rect.y + header_rect.height),
+        };
+
+        render_header(f, header_rect, state);
+        render_execution(f, exec_rect_calc, state);
+        render_input_box(f, cmd_rect, state);
+        render_status_bar(f, status_rect, state);
+
+        exec_rect = exec_rect_calc;
+        input_rect = cmd_rect;
     })?;
 
     Ok((input_rect, Rect::default(), exec_rect))
 }
 
-/* ---------------- Header ---------------- */
-
-fn render_header(f: &mut ratatui::Frame, area: Rect, state: &AgentState) {
+fn render_header(f: &mut Frame, area: Rect, state: &AgentState) {
     let mut lines: Vec<Line> = LOGO
         .iter()
         .map(|l| Line::from(Span::styled(*l, Style::default().fg(FG_MAIN))))
@@ -90,9 +127,7 @@ fn render_header(f: &mut ratatui::Frame, area: Rect, state: &AgentState) {
     );
 }
 
-/* ---------------- Execution ---------------- */
-
-fn render_execution(f: &mut ratatui::Frame, area: Rect, state: &AgentState) {
+fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
     let padded = Rect {
         x: area.x + 2,
         y: area.y + 1,
@@ -140,11 +175,7 @@ fn render_execution(f: &mut ratatui::Frame, area: Rect, state: &AgentState) {
 
     if state.ui.diff_active && !state.ui.diff_snapshot.is_empty() {
         lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "Changes",
-            Style::default().fg(FG_MAIN),
-        )));
-
+        lines.push(Line::from(Span::styled("Changes", Style::default().fg(FG_MAIN))));
         for diff in &state.ui.diff_snapshot {
             lines.extend(crate::ui::diff::render_diff(diff, padded.width));
         }
@@ -165,54 +196,91 @@ fn render_execution(f: &mut ratatui::Frame, area: Rect, state: &AgentState) {
     );
 }
 
-/* ---------------- Command Box ---------------- */
+fn render_input_box(f: &mut Frame, area: Rect, state: &AgentState) {
+    if area.height < 3 {
+        return;
+    }
 
-fn render_input_box(f: &mut ratatui::Frame, area: Rect, state: &AgentState) {
-    let inner = Rect {
-        x: area.x + 2,
-        y: area.y,
-        width: area.width.saturating_sub(4),
-        height: area.height,
-    };
+    let inner_width = area.width as usize;
+    let text_width = inner_width.saturating_sub(PROMPT.len()).max(1);
 
-    let input = if matches!(state.ui.input_mode, InputMode::ApiKey) {
+    let raw = if matches!(state.ui.input_mode, InputMode::ApiKey) {
         "•".repeat(state.ui.input.len())
     } else {
         state.ui.input.clone()
     };
 
-    let top = Line::from(Span::styled(
-        "─".repeat(inner.width as usize),
-        Style::default().fg(Color::White),
-    ));
+    // Split into visual lines (handle wrapping)
+    let mut visual = Vec::new();
+    if raw.is_empty() {
+        visual.push(String::new());
+    } else {
+        for line in raw.lines() {
+            if line.is_empty() {
+                visual.push(String::new());
+            } else {
+                let mut start = 0;
+                while start < line.len() {
+                    let end = (start + text_width).min(line.len());
+                    visual.push(line[start..end].to_string());
+                    start = end;
+                }
+            }
+        }
+    }
 
-    let middle = Line::from(vec![
-        Span::styled(PROMPT, Style::default().fg(Color::White)),
-        Span::styled(input, Style::default().fg(Color::White)),
-    ]);
+    let total_lines = visual.len();
+    let max_visible = (area.height - 2) as usize; // -2 for borders
+    let visible_lines = total_lines.min(max_visible);
+    let hidden_lines = total_lines.saturating_sub(max_visible);
 
-    let bottom = Line::from(Span::styled(
-        "─".repeat(inner.width as usize),
-        Style::default().fg(Color::White),
-    ));
+    let mut out = Vec::new();
 
-    let lines = vec![top, middle, bottom];
+    // Top border
+    out.push(Line::from("─".repeat(inner_width)));
 
-    f.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: false }),
-        inner,
-    );
+    // Show visible lines
+    for (i, line) in visual.iter().take(visible_lines).enumerate() {
+        if i == 0 {
+            // First line with prompt
+            let mut spans = vec![
+                Span::styled(PROMPT, Style::default().fg(Color::White)),
+                Span::styled(line, Style::default().fg(Color::White)),
+            ];
+            
+            // Add badge on first line if there are hidden lines
+            if hidden_lines > 0 {
+                spans.push(Span::raw(" "));
+                spans.push(Span::styled(
+                    format!("[pasted {} lines]", total_lines),
+                    Style::default().fg(Color::Yellow),
+                ));
+            }
+            
+            out.push(Line::from(spans));
+        } else {
+            // Continuation lines (no prompt)
+            out.push(Line::from(Span::styled(
+                line,
+                Style::default().fg(Color::White),
+            )));
+        }
+    }
 
-    let cursor_x =
-        inner.x + PROMPT.len() as u16 + state.ui.input.len() as u16;
-    let cursor_y = inner.y + 1;
+    // Bottom border
+    out.push(Line::from("─".repeat(inner_width)));
+
+    f.render_widget(Paragraph::new(out).wrap(Wrap { trim: false }), area);
+
+    // Cursor position: at end of first visible line (after prompt)
+    let first_line_len = visual.get(0).map(|s| s.len()).unwrap_or(0);
+    let cursor_x = area.x + PROMPT.len() as u16 + first_line_len as u16;
+    let cursor_y = area.y + 1;
 
     f.set_cursor(cursor_x, cursor_y);
 }
 
-/* ---------------- Status Bar ---------------- */
-
-fn render_status_bar(f: &mut ratatui::Frame, area: Rect, state: &AgentState) {
+fn render_status_bar(f: &mut Frame, area: Rect, state: &AgentState) {
     let spinner = running_pulse(state.ui.spinner_started_at)
         .unwrap_or_else(|| "····".into());
 
@@ -224,75 +292,20 @@ fn render_status_bar(f: &mut ratatui::Frame, area: Rect, state: &AgentState) {
 
     let right = vec![
         Span::styled("[esc]", Style::default().fg(FG_MAIN)),
-        Span::raw(" quit  "),
+        Span::styled(" quit  ", Style::default().fg(FG_MUTED)),
         Span::styled("[enter]", Style::default().fg(FG_MAIN)),
-        Span::raw(" run"),
+        Span::styled(" run", Style::default().fg(FG_MUTED)),
     ];
 
-    let left_w: usize = left.iter().map(|s| s.content.len()).sum();
-    let right_w: usize = right.iter().map(|s| s.content.len()).sum();
+    let lw: usize = left.iter().map(|s| s.content.len()).sum();
+    let rw: usize = right.iter().map(|s| s.content.len()).sum();
 
-    let space = area
-        .width
-        .saturating_sub((left_w + right_w) as u16)
-        .max(1) as usize;
+    let gap = area.width.saturating_sub((lw + rw) as u16).max(1) as usize;
 
     let mut spans = Vec::new();
     spans.extend(left);
-    spans.push(Span::raw(" ".repeat(space)));
+    spans.push(Span::raw(" ".repeat(gap)));
     spans.extend(right);
 
-    f.render_widget(
-        Paragraph::new(Line::from(spans)),
-        area,
-    );
-}
-
-/* ---------------- Helpers ---------------- */
-
-fn render_static_command_line(text: &str) -> Line {
-    Line::from(vec![
-        Span::styled("│ ", Style::default().fg(FG_MAIN)),
-        Span::styled(text, Style::default().fg(FG_MAIN)),
-    ])
-}
-
-fn running_pulse(start: Option<Instant>) -> Option<String> {
-    let start = start?;
-    let t = (start.elapsed().as_millis() / 120) as usize;
-
-    let pos = match t % 6 {
-        0 => 0,
-        1 => 1,
-        2 => 2,
-        3 => 3,
-        4 => 2,
-        _ => 1,
-    };
-
-    let tail = if pos == 0 { 3 } else { pos - 1 };
-
-    let mut s = String::with_capacity(4);
-    for i in 0..4 {
-        if i == pos {
-            s.push('■');
-        } else if i == tail {
-            s.push('▪');
-        } else {
-            s.push('·');
-        }
-    }
-
-    Some(s)
-}
-
-fn git_branch(repo_root: &std::path::Path) -> Option<String> {
-    let out = Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(repo_root)
-        .output()
-        .ok()?;
-
-    let s = String::from_utf8(out.stdout).ok()?;
-    Some(s.trim().to_string())
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
