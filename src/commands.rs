@@ -1,15 +1,10 @@
 // src/commands.rs
-//
-// Slash-command dispatcher only.
-// No git. No agent orchestration. No testgen.
 
 use std::time::Instant;
 
 use crate::logger::log;
 use crate::state::{
-    AgentState,
-    InputMode,
-    LogLevel,
+    AgentState, CommandItem, InputMode, LogLevel
 };
 
 pub fn handle_command(state: &mut AgentState, raw: &str) {
@@ -85,45 +80,37 @@ fn enter_api_key_mode(state: &mut AgentState) {
         "Enter your OpenAI API key and press Enter.",
     );
 }
-
 pub fn update_command_hints(state: &mut AgentState) {
-    let input = state.ui.input.trim().to_string();
+    let input = state.ui.input.trim();
 
-    state.clear_hint();
-    state.clear_autocomplete();
+    let prev_selected = state.ui.command_selected;
 
-    if input.starts_with('!') || !input.starts_with('/') {
+    state.ui.command_items.clear();
+
+    if !input.starts_with('/') {
+        state.ui.command_selected = 0;
         return;
     }
 
-    if input == "/" {
-        state.set_hint("Type /help to see available commands");
-        return;
-    }
-
-    let commands: &[(&str, &str)] = &[
-        ("/help", "Show available commands"),
-        ("/clear", "Clear logs"),
-        ("/key", "Set OpenAI API key"),
-        ("/quit", "Stop agent execution"),
-        ("/q", "Stop agent execution"),
-        ("/exit", "Exit Osmogrep"),
+    let all: &[CommandItem] = &[
+        CommandItem { cmd: "/help", desc: "Show available commands" },
+        CommandItem { cmd: "/clear", desc: "Clear logs" },
+        CommandItem { cmd: "/key", desc: "Set OpenAI API key" },
+        CommandItem { cmd: "/quit", desc: "Stop agent execution" },
+        CommandItem { cmd: "/q", desc: "Stop agent execution" },
+        CommandItem { cmd: "/exit", desc: "Exit Osmogrep" },
     ];
 
-    for (cmd, desc) in commands {
-        if cmd.starts_with(&input) {
-            state.set_autocomplete((*cmd).to_string());
-            state.set_hint(*desc);
-            return;
+    for item in all {
+        if item.cmd.starts_with(input) {
+            state.ui.command_items.push(*item);
         }
     }
 
-    for (cmd, desc) in commands {
-        if input.starts_with(cmd) {
-            state.set_hint(*desc);
-            return;
-        }
+    if state.ui.command_items.is_empty() {
+        state.ui.command_selected = 0;
+    } else {
+        state.ui.command_selected =
+            prev_selected.min(state.ui.command_items.len() - 1);
     }
-
-    state.set_hint("Unknown command. Type /help");
 }

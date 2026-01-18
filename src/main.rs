@@ -93,13 +93,21 @@ fn main() -> Result<(), Box<dyn Error>> {
         if let Some(rx) = agent_rx.as_ref() {
             loop {
                 match rx.try_recv() {
-                    Ok(evt) => match evt {
+                    Ok(evt) => 
+                    match evt {
                         AgentEvent::ToolCall { name, args } => {
-                            log_tool_call(
-                                &mut state,
-                                name,
-                                args.to_string(),
-                            );
+                            // CLEAN COMMAND STRING
+                            let cmd = match args {
+                                serde_json::Value::Object(ref map) => {
+                                    map.values()
+                                        .filter_map(|v| v.as_str())
+                                        .collect::<Vec<_>>()
+                                        .join(" ")
+                                }
+                                _ => String::new(),
+                            };
+
+                            log_tool_call(&mut state, &name, cmd);
                         }
 
                         AgentEvent::ToolResult { summary } => {
@@ -219,18 +227,15 @@ fn init_state() -> AgentState {
             input_placeholder: None,
             execution_pending: false,
             should_exit: false,
-
             history: Vec::new(),
             history_index: None,
-
             hint: None,
             autocomplete: None,
-
+            command_items: Vec::new(),
+            command_selected: 0,
             last_activity: Instant::now(),
-
             exec_scroll: usize::MAX,
             follow_tail: true,
-
             active_spinner: None,
             spinner_started_at: None,
             diff_active: false,

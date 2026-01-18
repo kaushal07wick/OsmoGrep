@@ -22,7 +22,6 @@ pub enum AgentEvent {
     Done,
 }
 
-
 #[derive(Debug, Serialize, Deserialize)]
 struct Config {
     api_key: String,
@@ -75,6 +74,7 @@ impl Agent {
         if key.is_empty() {
             return;
         }
+
         self.api_key = Some(key.clone());
         let _ = save_config(&Config { api_key: key });
     }
@@ -104,7 +104,6 @@ impl Agent {
     }
 }
 
-
 struct RunAgent {
     tools: ToolRegistry,
     model: String,
@@ -131,10 +130,7 @@ impl RunAgent {
                 .ok_or("missing output array")?;
 
             let mut next_messages: Vec<Value> = match &input {
-                Value::String(s) => vec![json!({
-                    "role": "user",
-                    "content": s
-                })],
+                Value::String(s) => vec![json!({ "role": "user", "content": s })],
                 Value::Array(arr) => arr.clone(),
                 _ => return Err("invalid input state".into()),
             };
@@ -144,8 +140,9 @@ impl RunAgent {
             for item in output {
                 match item.get("type").and_then(Value::as_str) {
                     Some("reasoning") => {
-                            next_messages.push(item.clone());
-                        }
+                        next_messages.push(item.clone());
+                    }
+
                     Some("function_call") => {
                         saw_tool = true;
 
@@ -166,25 +163,23 @@ impl RunAgent {
                             .and_then(|s| serde_json::from_str(s).ok())
                             .unwrap_or_else(|| json!({}));
 
-                        tx.send(AgentEvent::ToolCall {
+                        let _ = tx.send(AgentEvent::ToolCall {
                             name: name.clone(),
                             args: args.clone(),
-                        }).ok();
+                        });
 
                         let result = self
                             .tools
                             .call(&name, args)
                             .unwrap_or_else(|e| json!({ "error": e }));
 
-                        let summary = if let Some(c) = result.get("count") {
-                            format!("count = {}", c)
-                        } else if let Some(obj) = result.as_object() {
-                            format!("{} keys", obj.len())
-                        } else {
-                            "ok".into()
-                        };
+                        let summary = result
+                            .get("count")
+                            .map(|c| format!("count = {}", c))
+                            .unwrap_or_else(|| "ok".into());
 
-                        tx.send(AgentEvent::ToolResult { summary }).ok();
+                        let _ = tx.send(AgentEvent::ToolResult { summary });
+
                         next_messages.push(item.clone());
                         next_messages.push(json!({
                             "type": "function_call_output",
@@ -195,7 +190,7 @@ impl RunAgent {
 
                     Some("output_text") => {
                         if let Some(text) = item.get("text").and_then(Value::as_str) {
-                            tx.send(AgentEvent::OutputText(text.to_string())).ok();
+                            let _ = tx.send(AgentEvent::OutputText(text.to_string()));
                             return Ok(());
                         }
                     }
@@ -205,7 +200,7 @@ impl RunAgent {
                             for c in content {
                                 if c.get("type").and_then(Value::as_str) == Some("output_text") {
                                     if let Some(text) = c.get("text").and_then(Value::as_str) {
-                                        tx.send(AgentEvent::OutputText(text.to_string())).ok();
+                                        let _ = tx.send(AgentEvent::OutputText(text.to_string()));
                                         return Ok(());
                                     }
                                 }
@@ -236,7 +231,7 @@ impl RunAgent {
             "tools": self.tools.schema(),
             "tool_choice": "auto",
             "reasoning": { "effort": "medium" },
-            "store": true        
+            "store": true
         });
 
         let mut child = Command::new("curl")
@@ -261,7 +256,7 @@ impl RunAgent {
 
         let (body, status) = out.rsplit_once('\n').ok_or("missing status")?;
         if status != "200" {
-            return Err(format!("API error {status}: {body}"));
+            return Err(format!("API error {}", status));
         }
 
         serde_json::from_str(body).map_err(|e| e.to_string())

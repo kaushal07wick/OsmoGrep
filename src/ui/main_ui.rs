@@ -4,6 +4,9 @@ use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers,
     MouseEvent, MouseEventKind,
 };
+const SCROLL_LINE_STEP: usize = 3;
+const SCROLL_PAGE_STEP: usize = 12;
+const SCROLL_WHEEL_STEP: usize = 6;
 
 fn parse_input(raw: &str) -> InputMode {
     let first = raw
@@ -36,8 +39,45 @@ pub fn handle_event(
 }
 
 fn handle_key(state: &mut AgentState, k: KeyEvent) {
+    let palette_active = !state.ui.command_items.is_empty();
+
     match k.code {
-        KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => {
+        /* ---------- Palette navigation ---------- */
+
+        KeyCode::Up if palette_active => {
+            state.ui.command_selected =
+                state.ui.command_selected.saturating_sub(1);
+        }
+
+        KeyCode::Down if palette_active => {
+            let max = state.ui.command_items.len().saturating_sub(1);
+            state.ui.command_selected =
+                (state.ui.command_selected + 1).min(max);
+        }
+
+        KeyCode::Enter if palette_active => {
+            if let Some(item) =
+                state.ui.command_items.get(state.ui.command_selected)
+            {
+                state.ui.input = item.cmd.to_string();
+                state.ui.input_mode = InputMode::Command; // ← CRITICAL
+                state.ui.command_items.clear();
+                state.ui.command_selected = 0;
+                state.ui.execution_pending = true;
+            }
+        }
+
+
+        KeyCode::Esc if palette_active => {
+            state.ui.command_items.clear();
+            state.ui.command_selected = 0;
+        }
+
+        /* ---------- Text input ---------- */
+
+        KeyCode::Char(c)
+            if !k.modifiers.contains(KeyModifiers::CONTROL) =>
+        {
             state.push_char(c);
         }
 
@@ -48,6 +88,8 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
         KeyCode::Enter if k.modifiers.contains(KeyModifiers::SHIFT) => {
             state.push_char('\n');
         }
+
+        /* ---------- Normal Enter (no palette) ---------- */
 
         KeyCode::Enter => {
             if state.ui.execution_pending {
@@ -71,16 +113,26 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
                 }
             }
 
+            state.ui.command_items.clear();
+            state.ui.command_selected = 0;
+
+            state.ui.autocomplete = None;
+            state.ui.hint = None;
+
             state.ui.execution_pending = true;
         }
 
-        KeyCode::Up if !k.modifiers.contains(KeyModifiers::CONTROL) => {
+        /* ---------- History (disabled during palette) ---------- */
+
+        KeyCode::Up if !palette_active => {
             state.history_prev();
         }
 
-        KeyCode::Down if !k.modifiers.contains(KeyModifiers::CONTROL) => {
+        KeyCode::Down if !palette_active => {
             state.history_next();
         }
+
+        /* ---------- Autocomplete ---------- */
 
         KeyCode::Tab => {
             if let Some(ac) = &state.ui.autocomplete {
@@ -93,39 +145,48 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
             }
         }
 
-        /* ---------------- Execution scroll ---------------- */
+        /* ---------- Execution scrolling ---------- */
 
         KeyCode::PageUp => {
-            if state.ui.exec_scroll == usize::MAX {
-                state.ui.exec_scroll = 0;
-            }
-            state.ui.exec_scroll = state.ui.exec_scroll.saturating_sub(5);
+            state.ui.exec_scroll = match state.ui.exec_scroll {
+                usize::MAX => SCROLL_PAGE_STEP,
+                v => v.saturating_add(SCROLL_PAGE_STEP),
+            };
+            state.ui.follow_tail = false;
         }
 
         KeyCode::PageDown => {
-            if state.ui.exec_scroll == usize::MAX {
-                return;
+            state.ui.exec_scroll =
+                state.ui.exec_scroll.saturating_sub(SCROLL_PAGE_STEP);
+            if state.ui.exec_scroll == 0 {
+                state.ui.exec_scroll = usize::MAX;
+                state.ui.follow_tail = true;
             }
-            state.ui.exec_scroll = state.ui.exec_scroll.saturating_add(5);
         }
 
         KeyCode::Up if k.modifiers.contains(KeyModifiers::CONTROL) => {
-            if state.ui.exec_scroll == usize::MAX {
-                state.ui.exec_scroll = 0;
-            }
-            state.ui.exec_scroll = state.ui.exec_scroll.saturating_sub(1);
+            state.ui.exec_scroll = match state.ui.exec_scroll {
+                usize::MAX => SCROLL_LINE_STEP,
+                v => v.saturating_add(SCROLL_LINE_STEP),
+            };
+            state.ui.follow_tail = false;
         }
 
         KeyCode::Down if k.modifiers.contains(KeyModifiers::CONTROL) => {
-            if state.ui.exec_scroll == usize::MAX {
-                return;
+            state.ui.exec_scroll =
+                state.ui.exec_scroll.saturating_sub(SCROLL_LINE_STEP);
+            if state.ui.exec_scroll == 0 {
+                state.ui.exec_scroll = usize::MAX;
+                state.ui.follow_tail = true;
             }
-            state.ui.exec_scroll = state.ui.exec_scroll.saturating_add(1);
         }
 
         KeyCode::End => {
             state.ui.exec_scroll = usize::MAX;
+            state.ui.follow_tail = true;
         }
+
+        /* ---------- Exit ---------- */
 
         KeyCode::Esc => {
             state.ui.should_exit = true;
@@ -135,20 +196,23 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
     }
 }
 
+
 fn handle_mouse(state: &mut AgentState, m: MouseEvent) {
     match m.kind {
         MouseEventKind::ScrollUp => {
-            if state.ui.exec_scroll == usize::MAX {
-                state.ui.exec_scroll = 0;
-            }
-            state.ui.exec_scroll = state.ui.exec_scroll.saturating_sub(3);
+            state.ui.exec_scroll = match state.ui.exec_scroll {
+                usize::MAX => SCROLL_WHEEL_STEP,
+                v => v.saturating_add(SCROLL_WHEEL_STEP),
+            };
+            state.ui.follow_tail = false;
         }
 
         MouseEventKind::ScrollDown => {
-            if state.ui.exec_scroll == usize::MAX {
-                return;
+            state.ui.exec_scroll = state.ui.exec_scroll.saturating_sub(SCROLL_WHEEL_STEP);
+            if state.ui.exec_scroll == 0 {
+                state.ui.exec_scroll = usize::MAX;
+                state.ui.follow_tail = true;
             }
-            state.ui.exec_scroll = state.ui.exec_scroll.saturating_add(3);
         }
 
         _ => {}

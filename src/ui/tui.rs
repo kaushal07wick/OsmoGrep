@@ -5,21 +5,23 @@ use ratatui::{
     layout::{Alignment, Rect},
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{Paragraph, Wrap},
+    widgets::{Paragraph, Wrap, Block, Borders, Clear},
     Terminal, Frame,
+    prelude::*,
 };
 
 use crate::{
     logger::parse_user_input_log,
     state::{AgentState, InputMode},
 };
-use crate::ui::helper::{render_static_command_line, running_pulse, git_branch, calculate_input_lines};
+use crate::ui::helper::{render_static_command_line, running_pulse, git_branch, calculate_input_lines, slash_hints_active};
 const TOP_PADDING: u16 = 1;
 
 const FG_MAIN: Color = Color::Rgb(220, 220, 220);
 const FG_DIM: Color = Color::Rgb(170, 170, 170);
 const FG_MUTED: Color = Color::Rgb(120, 120, 120);
 const PROMPT: &str = ">_ ";
+const SPINNER_WIDTH: usize = 4;
 
 const LOGO: [&str; 7] = [
     " ██████  ███████ ███    ███  ██████   ██████  ██████  ███████ ██████  ",
@@ -38,6 +40,12 @@ pub fn draw_ui<B: Backend>(
 ) -> io::Result<(Rect, Rect, Rect)> {
     let mut input_rect = Rect::default();
     let mut exec_rect = Rect::default();
+    let max_text_width = state.ui.command_items.iter()
+    .map(|item| item.cmd.len() + 1 + item.desc.len())
+    .max()
+    .unwrap_or(0) as u16;
+
+    let mut hint_rect = Rect::default();
 
     terminal.draw(|f| {
         let area = f.size();
@@ -90,16 +98,44 @@ pub fn draw_ui<B: Backend>(
                 .saturating_sub(header_rect.y + header_rect.height),
         };
 
+        let palette_active = !state.ui.command_items.is_empty();
+        let palette_height = if palette_active {
+            (state.ui.command_items.len().min(6) as u16) + 2
+        } else {
+            0
+        };
+
+        if palette_height > 0 {
+            let palette_width = 48; // stable, intentional width
+
+            let palette_x =
+                cmd_rect.x + PROMPT.len() as u16 + 2; // align with text start
+
+            let palette_y =
+                cmd_rect.y.saturating_sub(palette_height + 1);
+
+            hint_rect = Rect {
+                x: palette_x,
+                y: palette_y,
+                width: palette_width,
+                height: palette_height,
+            };
+        }
+
         render_header(f, header_rect, state);
         render_execution(f, exec_rect_calc, state);
         render_input_box(f, cmd_rect, state);
         render_status_bar(f, status_rect, state);
 
+        if palette_height > 0 {
+            render_command_palette(f, hint_rect, state);
+        }
+
         exec_rect = exec_rect_calc;
         input_rect = cmd_rect;
     })?;
 
-    Ok((input_rect, Rect::default(), exec_rect))
+    Ok((input_rect, hint_rect, exec_rect))
 }
 
 fn render_header(f: &mut Frame, area: Rect, state: &AgentState) {
@@ -148,7 +184,7 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
             if !lines.is_empty() {
                 lines.push(Line::from(""));
             }
-            lines.push(render_static_command_line(input));
+            lines.extend(render_static_command_line(input));
             last_was_user = true;
             continue;
         }
@@ -279,13 +315,21 @@ fn render_input_box(f: &mut Frame, area: Rect, state: &AgentState) {
 
     f.set_cursor(cursor_x, cursor_y);
 }
-
 fn render_status_bar(f: &mut Frame, area: Rect, state: &AgentState) {
     let spinner = running_pulse(state.ui.spinner_started_at)
-        .unwrap_or_else(|| "····".into());
+        .unwrap_or_else(|| "....".into());
+
+    let mut spinner_fixed = spinner;
+    let len = spinner_fixed.chars().count();
+
+    if len < SPINNER_WIDTH {
+        spinner_fixed.push_str(&" ".repeat(SPINNER_WIDTH - len));
+    } else if len > SPINNER_WIDTH {
+        spinner_fixed = spinner_fixed.chars().take(SPINNER_WIDTH).collect();
+    }
 
     let left = vec![
-        Span::styled(spinner, Style::default().fg(FG_MAIN)),
+        Span::styled(spinner_fixed, Style::default().fg(FG_MAIN)),
         Span::raw(" "),
         Span::styled("OPENAI", Style::default().fg(FG_DIM)),
     ];
@@ -297,10 +341,13 @@ fn render_status_bar(f: &mut Frame, area: Rect, state: &AgentState) {
         Span::styled(" run", Style::default().fg(FG_MUTED)),
     ];
 
-    let lw: usize = left.iter().map(|s| s.content.len()).sum();
+    let lw: usize = SPINNER_WIDTH + 1 + "OPENAI".len();
     let rw: usize = right.iter().map(|s| s.content.len()).sum();
 
-    let gap = area.width.saturating_sub((lw + rw) as u16).max(1) as usize;
+    let gap = area
+        .width
+        .saturating_sub((lw + rw) as u16)
+        .max(1) as usize;
 
     let mut spans = Vec::new();
     spans.extend(left);
@@ -308,4 +355,53 @@ fn render_status_bar(f: &mut Frame, area: Rect, state: &AgentState) {
     spans.extend(right);
 
     f.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+pub fn render_command_palette(
+    f: &mut Frame,
+    area: Rect,
+    state: &AgentState,
+) {
+    if state.ui.command_items.is_empty() {
+        return;
+    }
+
+    f.render_widget(Clear, area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" commands ")
+        .border_style(Style::default().fg(Color::DarkGray));
+
+    let inner_width = area.width.saturating_sub(2) as usize; // borders
+
+    let mut lines = Vec::new();
+
+    for (i, item) in state.ui.command_items.iter().enumerate() {
+        let selected = i == state.ui.command_selected;
+
+        let style = if selected {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::White)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+
+        let text = format!("{:<10} {}", item.cmd, item.desc);
+
+        let padded = format!(
+            "{:<width$}",
+            text,
+            width = inner_width
+        );
+
+        lines.push(Line::from(Span::styled(padded, style)));
+    }
+
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false });
+
+    f.render_widget(paragraph, area);
 }

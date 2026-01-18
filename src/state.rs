@@ -63,6 +63,12 @@ impl LogBuffer {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct CommandItem {
+    pub cmd: &'static str,
+    pub desc: &'static str,
+}
+
 pub struct UiState {
     // input
     pub input: String,
@@ -81,7 +87,8 @@ pub struct UiState {
     pub autocomplete: Option<String>,
     pub diff_active: bool,
     pub diff_snapshot: Vec<crate::ui::diff::Diff>,
-
+    pub command_items: Vec<CommandItem>,
+    pub command_selected: usize,
     pub last_activity: Instant,
 
     pub exec_scroll: usize,
