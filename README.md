@@ -1,119 +1,99 @@
-# ![  osmogrep](  osmogrep.png)
 
-# **  osmogrep**
-
-A **terminal-native execution agent** that validates code changes by **running real tests**, not eyeballing diffs.
-
-> **Can your code changes be validated autonomously through safe, deterministic execution?**
-
-![  osmogrep-working](  osmogrep.gif)
-## Functionality?
-
-| Area           | What   osmogrep Does                           |
-| -------------- | -------------------------------------------- |
-| **Input**      | Uncommitted git diffs                        |
-| **Context**    | AST-based symbol extraction + test graph     |
-| **Action**     | Generates + runs real tests                  |
-| **Isolation**  | Executes in temporary agent branches only    |
-| **Validation** | Single-test or full-suite execution          |
-| **Artifacts**  | Logs, reports, test files, structured output |
-| **UI**         | Highly optimized terminal TUI                |
-
-Everything runs in an **isolated agent branch**, fully reversible and safe.
-
-Supports:
-
-* Local models (Ollama)
-* OpenAI-compatible APIs
+<p align="center">
+  <img src="osmogrep.png" alt="osmogrep" width="600"/>
+</p>
 
 
-## Core Capabilities
+## What Osmogrep Is
 
-| Capability                 | Description                                       |
-| -------------------------- | ------------------------------------------------- |
-| **Diff Inspector**         | Parses diffs, extracts symbols, metrics, risk     |
-| **Context Graph**          | AST-driven symbol and call-graph extraction       |
-| **Single-Test Generation** | LLM generates minimal reproduction tests          |
-| **Full Suite Execution**   | Runs repo tests and builds a structured report    |
-| **Deterministic Cache**    | Avoids regenerating tests that already passed     |
-| **Sandboxed Execution**    | Uses OS-level worktrees for isolation             |
-| **Artifacts**              | Test files, logs, markdown, machine-readable JSON |
+Osmogrep is a Rust-native terminal UI for running autonomous AI agents, with structured logging, tool invocation, and streaming execution control.
 
-Designed for real engineering workflows—not toy demos.
+* A **local-first AI agent**
+* Running **inside your terminal**
+* Operating on a **real Git repository**
+* Using **explicit, auditable tools**
 
+## Core Concepts
+
+The agent acts through tools:
+
+* **Shell** — run real commands
+* **Search** — grep / ripgrep style search
+* **Read File** — inspect file contents
+* **Write File** — make concrete edits
+
+## UI
+
+Osmogrep ships with a **high-performance terminal UI**:
+
+* Streaming agent output
+* Tool calls rendered hierarchically
+* Scrollable execution history
+* Clear separation between:
+
+  * user input
+  * tool execution
+  * agent output
+
+## Model Support
+
+Osmogrep works with any **OpenAI-compatible API**, including:
+
+* OpenAI
+* Anthropic-compatible endpoints
+* Local models via **Ollama**
+
+Model choice is orthogonal to execution correctness.
 
 ## Installation
 
-### from crates.io
+### From crates.io
 
 ```bash
-cargo install   osmogrep
+cargo install osmogrep
 ```
 
-### Install latest from github
-
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/kaushal07wick/  osmogrep/master/install.sh | sh
-```
-
-
-Then run inside **any git repository**:
+### Latest from GitHub
 
 ```bash
-  osmogrep
+curl -fsSL https://raw.githubusercontent.com/kaushal07wick/osmogrep/master/install.sh | sh
 ```
 
 ## Usage
 
-Write code → `git add .` → run:
+Run inside any Git repository:
 
 ```bash
-  osmogrep
+osmogrep
 ```
 
-The agent inspects your diff, builds context, and executes in a sandbox branch.
+You interact with the agent directly:
 
-## Commands Overview
+* Ask it to inspect code
+* Search for symbols
+* Modify files
+* Run commands
+* Validate changes
 
-| Command                              | Description                                  |
-| ------------------------------------ | -------------------------------------------- |
-| `help`                               | Show all commands                            |
-| `inspect`                            | Analyze git changes and build context        |
-| `changes`                            | List analyzed changes                        |
-| `changes <n>`                        | Open diff in split TUI                       |
-| `agent run <n>`                      | Generate + run test for specific change      |
-| `agent run --all`                    | Generate tests for all diffs (parallel mode) |
-| `agent run --full`                   | Execute entire test suite with report        |
-| `model use openai/anthropic <model>` | Configure remote model                       |
-| `model use ollama <model>`           | Use local Ollama model                       |
-| `model show`                         | Show active model                            |
-| `agent cancel`                       | Cancel running agent                         |
-| `agent status`                       | Show current status                          |
-| `branch list`                        | List available git branches                  |
-| `clear` / `logs clear`               | Clear logs                                   |
-| `close`                              | Close result panel                           |
-| `quit`                               | Exit   osmogrep                                |
+All actions are visible and reversible via Git.
 
-## Particle Physics
+## Commands
 
-osmogrep is domain-agnostic, but it fits especially well with **particle physics / HEP** workflows where changes must be validated against **real, reproducible executions** (unit tests, integration tests, small-sample analyses).
+Osmogrep supports a small, explicit set of **slash commands**.
+Anything else is sent directly to the agent.
 
-Common ways to use it in HEP projects:
+### Slash Commands
 
-- **Reconstruction & simulation code**: catch regressions by generating focused tests for a specific diff (e.g., a tracking or calorimeter module) and executing them in an isolated worktree.
-- **Analysis pipelines**: validate that an algorithmic change still produces expected event selections or derived quantities by running a minimal “golden sample” test.
-- **Histogram/ntuple stability checks**: treat reference outputs (small ROOT files, JSON summaries, or text snapshots) as fixtures and have tests assert on key quantities (yields, means, efficiencies).
-- **Deterministic review**: instead of reviewing diffs in the abstract, you get *evidence*—logs + test artifacts—showing what actually passed.
+| Command  | Description                      |
+| -------- | -------------------------------- |
+| `/help`  | Show available commands          |
+| `/clear` | Clear execution logs             |
+| `/key`   | Enter OpenAI API key mode        |
+| `/quit`  | Stop the currently running agent |
+| `/q`     | Alias for `/quit`                |
+| `/exit`  | Exit Osmogrep                    |
 
-Practical tips:
-
-- Keep a small, fast test dataset in-repo (or downloadable in CI) and wire it into your test command.
-- Prefer “thin” assertions: check a few physics-relevant scalars (event counts, cutflow totals, χ²/KS distance thresholds) rather than entire files.
-- If your stack is containerized (common in HEP), run osmogrep inside the same image to keep execution reproducible.
 
 ## License
-
-Licensed under **MIT**.
-See the [LICENSE](LICENSE) file for details.
+[MIT License](LICENSE).
 
