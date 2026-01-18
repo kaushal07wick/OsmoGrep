@@ -93,7 +93,5 @@ Anything else is sent directly to the agent.
 | `/q`     | Alias for `/quit`                |
 | `/exit`  | Exit Osmogrep                    |
 
-
 ## License
 [MIT License](LICENSE).
-

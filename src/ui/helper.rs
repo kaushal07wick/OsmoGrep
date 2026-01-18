@@ -4,31 +4,38 @@ use ratatui::{
     text::{Line, Span},
 };
 
-use crate::state::{AgentState};
-
 const FG_MAIN: Color = Color::Rgb(220, 220, 220);
-const BG_CMD: Color = Color::Rgb(170, 170, 170);
 
-pub fn render_static_command_line(text: &str) -> Vec<Line> {
-    let content = format!("  {}  ", text);
-    let width = content.len();
+pub fn render_static_command_line(
+    text: &str,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let inner_width = width.saturating_sub(4);
+    let mut content = text.to_string();
+
+    if content.len() > inner_width {
+        content.truncate(inner_width.saturating_sub(1));
+        content.push('…');
+    }
+
+    let line = format!(" {:<inner_width$}  ", content);
+    let line_len = line.len(); 
 
     vec![
         Line::from(Span::styled(
-            " ".repeat(width),
+            " ".repeat(line_len),
             Style::default().bg(FG_MAIN),
         )),
         Line::from(Span::styled(
-            content,
+            line,
             Style::default().fg(Color::Black).bg(FG_MAIN),
         )),
         Line::from(Span::styled(
-            " ".repeat(width),
+            " ".repeat(line_len),
             Style::default().bg(FG_MAIN),
         )),
     ]
 }
-
 
 
 pub fn running_pulse(start: Option<Instant>) -> Option<String> {
@@ -86,9 +93,4 @@ pub fn calculate_input_lines(input: &str, width: usize, prompt_len: usize) -> us
     }
     
     line_count.max(1)
-}
-
-pub fn slash_hints_active(state: &AgentState) -> bool {
-    state.ui.input.trim_start().starts_with('/')
-        && state.ui.hint.is_some()
 }

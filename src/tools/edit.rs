@@ -53,7 +53,9 @@ impl Tool for Edit {
 
         Ok(json!({
             "path": path,
-            "mode": if all { "all" } else { "first" }
+            "mode": if all { "all" } else { "first" },
+            "before": src,
+            "after": updated
         }))
     }
 }

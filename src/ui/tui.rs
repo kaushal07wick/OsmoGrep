@@ -14,7 +14,12 @@ use crate::{
     logger::parse_user_input_log,
     state::{AgentState, InputMode},
 };
-use crate::ui::helper::{render_static_command_line, running_pulse, git_branch, calculate_input_lines, slash_hints_active};
+use crate::ui::helper::{
+    render_static_command_line,
+    running_pulse,
+    git_branch,
+    calculate_input_lines,
+};
 const TOP_PADDING: u16 = 1;
 
 const FG_MAIN: Color = Color::Rgb(220, 220, 220);
@@ -40,11 +45,6 @@ pub fn draw_ui<B: Backend>(
 ) -> io::Result<(Rect, Rect, Rect)> {
     let mut input_rect = Rect::default();
     let mut exec_rect = Rect::default();
-    let max_text_width = state.ui.command_items.iter()
-    .map(|item| item.cmd.len() + 1 + item.desc.len())
-    .max()
-    .unwrap_or(0) as u16;
-
     let mut hint_rect = Rect::default();
 
     terminal.draw(|f| {
@@ -137,7 +137,6 @@ pub fn draw_ui<B: Backend>(
 
     Ok((input_rect, hint_rect, exec_rect))
 }
-
 fn render_header(f: &mut Frame, area: Rect, state: &AgentState) {
     let mut lines: Vec<Line> = LOGO
         .iter()
@@ -154,6 +153,13 @@ fn render_header(f: &mut Frame, area: Rect, state: &AgentState) {
         Span::styled(" · ", Style::default().fg(FG_DIM)),
         Span::styled(version, Style::default().fg(FG_MUTED)),
     ]));
+
+    lines.push(Line::from(Span::styled(
+        "Type a task to make osmogrep work for you or /help (for commands) · !<cmd> runs linux shell · ",
+        Style::default()
+            .fg(FG_MUTED)
+            .add_modifier(Modifier::ITALIC),
+    )));
 
     f.render_widget(
         Paragraph::new(lines)
@@ -179,12 +185,14 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
 
     for log in state.logs.iter() {
         let text = log.text.as_str();
-
         if let Some(input) = parse_user_input_log(text) {
             if !lines.is_empty() {
                 lines.push(Line::from(""));
             }
-            lines.extend(render_static_command_line(input));
+            lines.extend(render_static_command_line(
+                input,
+                padded.width as usize,
+            ));
             last_was_user = true;
             continue;
         }
@@ -211,9 +219,19 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
 
     if state.ui.diff_active && !state.ui.diff_snapshot.is_empty() {
         lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled("Changes", Style::default().fg(FG_MAIN))));
-        for diff in &state.ui.diff_snapshot {
-            lines.extend(crate::ui::diff::render_diff(diff, padded.width));
+        lines.push(Line::from(Span::styled(
+            "Changes",
+            Style::default().fg(FG_MAIN).add_modifier(Modifier::BOLD),
+        )));
+
+        for snap in &state.ui.diff_snapshot {
+            let diff = crate::ui::diff::Diff::from_texts(
+                snap.target.clone(),
+                &snap.before,
+                &snap.after,
+            );
+
+            lines.extend(crate::ui::diff::render_diff(&diff, padded.width));
         }
     }
 
@@ -221,7 +239,7 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
     let scroll = if state.ui.follow_tail {
         max_scroll
     } else {
-        state.ui.exec_scroll.min(max_scroll)
+        max_scroll.saturating_sub(state.ui.exec_scroll)
     };
 
     f.render_widget(

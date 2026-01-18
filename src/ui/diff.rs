@@ -1,4 +1,3 @@
-use std::process::Command;
 use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
@@ -22,78 +21,13 @@ pub struct Diff {
     pub file: String,
     pub hunks: Vec<DiffLine>,
 }
-
-pub fn collect_unstaged_diffs(repo_root: &std::path::Path) -> Vec<Diff> {
-    let out = Command::new("git")
-        .args(["diff", "--no-color", "--unified=3"])
-        .current_dir(repo_root)
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .unwrap_or_default();
-
-    parse_git_diff(&out)
+impl Diff {
+    pub fn from_texts(file: String, before: &str, after: &str) -> Self {
+        let hunks = diff_strings(before, after);
+        Self { file, hunks }
+    }
 }
 
-fn parse_git_diff(input: &str) -> Vec<Diff> {
-    let mut diffs = Vec::new();
-
-    let mut current_file: Option<String> = None;
-    let mut hunks: Vec<DiffLine> = Vec::new();
-
-    for line in input.lines() {
-        if line.starts_with("diff --git ") {
-            if let Some(file) = current_file.take() {
-                if !hunks.is_empty() {
-                    diffs.push(Diff { file, hunks });
-                }
-                hunks = Vec::new();
-            }
-
-            let file = line
-                .split_whitespace()
-                .nth(3)
-                .and_then(|s| s.strip_prefix("b/"))
-                .unwrap_or("")
-                .to_string();
-
-            if file.starts_with('.') || file.is_empty() {
-                current_file = None;
-            } else {
-                current_file = Some(file);
-            }
-
-            continue;
-        }
-
-        if current_file.is_none() {
-            continue;
-        }
-
-        if line.starts_with("+++")
-            || line.starts_with("---")
-            || line.starts_with("@@")
-        {
-            continue;
-        }
-
-        if let Some(t) = line.strip_prefix('+') {
-            hunks.push(DiffLine::Added(t.to_string()));
-        } else if let Some(t) = line.strip_prefix('-') {
-            hunks.push(DiffLine::Removed(t.to_string()));
-        } else {
-            hunks.push(DiffLine::Context(line.to_string()));
-        }
-    }
-
-    if let Some(file) = current_file {
-        if !hunks.is_empty() {
-            diffs.push(Diff { file, hunks });
-        }
-    }
-
-    diffs
-}
 
 pub fn choose_diff_view(changed: usize) -> DiffView {
     if changed <= 80 {
@@ -128,6 +62,48 @@ pub fn render_diff(diff: &Diff, width: u16) -> Vec<Line<'static>> {
 
     out
 }
+
+fn diff_strings(before: &str, after: &str) -> Vec<DiffLine> {
+    let mut hunks = Vec::new();
+
+    let before_lines: Vec<&str> = before.lines().collect();
+    let after_lines: Vec<&str> = after.lines().collect();
+
+    let mut i = 0;
+    let mut j = 0;
+
+    while i < before_lines.len() || j < after_lines.len() {
+        match (before_lines.get(i), after_lines.get(j)) {
+            (Some(&b), Some(&a)) if b == a => {
+                hunks.push(DiffLine::Context(b.to_string()));
+                i += 1;
+                j += 1;
+            }
+
+            (Some(&b), Some(&a)) => {
+                hunks.push(DiffLine::Removed(b.to_string()));
+                hunks.push(DiffLine::Added(a.to_string()));
+                i += 1;
+                j += 1;
+            }
+
+            (Some(&b), None) => {
+                hunks.push(DiffLine::Removed(b.to_string()));
+                i += 1;
+            }
+
+            (None, Some(&a)) => {
+                hunks.push(DiffLine::Added(a.to_string()));
+                j += 1;
+            }
+
+            (None, None) => break,
+        }
+    }
+
+    hunks
+}
+
 
 fn render_unified(hunks: &[DiffLine]) -> Vec<Line<'static>> {
     let mut out = Vec::new();

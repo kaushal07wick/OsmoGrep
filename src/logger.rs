@@ -87,11 +87,3 @@ pub fn log_agent_output(
 pub fn parse_user_input_log(line: &str) -> Option<&str> {
     line.strip_prefix(USER_TAG)
 }
-
-pub fn is_tool_call(line: &str) -> bool {
-    line.starts_with(TOOL_PREFIX)
-}
-
-pub fn is_child(line: &str) -> bool {
-    line.starts_with(CHILD_PREFIX)
-}

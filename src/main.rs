@@ -21,7 +21,7 @@ use crossterm::{
     },
 };
 use crossterm::event::{EnableMouseCapture, DisableMouseCapture};
-
+use crate::state::DiffSnapshot;
 use ratatui::{Terminal, backend::CrosstermBackend, layout::Rect};
 
 use crate::{
@@ -42,14 +42,18 @@ use clap::Parser;
 #[command(
     name = "osmogrep",
     version,
-    about = "A lightweight Rust-based TUI AI execution agent"
+    about = "A lightweight Rust-based TUI Agent, for debugging, code reviews, and runtime bug catching."
 )]
 struct Cli {
-    // no flags yet — this is intentional
+
 }
 
 fn run_shell(state: &mut AgentState, cmd: &str) {
-    log_tool_call(state, "shell", cmd);
+    log(
+        state,
+        LogLevel::Info,
+        &format!("SHELL : $ {}", cmd),
+    );
 
     match std::process::Command::new("sh").arg("-c").arg(cmd).output() {
         Ok(out) => {
@@ -65,6 +69,7 @@ fn run_shell(state: &mut AgentState, cmd: &str) {
         }
     }
 }
+
 
 fn main() -> Result<(), Box<dyn Error>> {
     let _cli = Cli::parse();
@@ -112,6 +117,19 @@ fn main() -> Result<(), Box<dyn Error>> {
 
                         AgentEvent::ToolResult { summary } => {
                             log_tool_result(&mut state, summary);
+                        }
+                        AgentEvent::ToolDiff { tool, target, before, after } => {
+                            state.ui.diff_active = true;
+                            state.ui.diff_snapshot.clear();
+
+                            state.ui.diff_snapshot.push(
+                                DiffSnapshot {
+                                    tool,
+                                    target,
+                                    before,
+                                    after,
+                                }
+                            );
                         }
 
                         AgentEvent::OutputText(text) => {

@@ -17,10 +17,17 @@ use crate::tools::ToolRegistry;
 pub enum AgentEvent {
     ToolCall { name: String, args: Value },
     ToolResult { summary: String },
+    ToolDiff {
+        tool: String,
+        target: String,
+        before: String,
+        after: String,
+    },
     OutputText(String),
     Error(String),
     Done,
 }
+
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Config {
@@ -173,12 +180,28 @@ impl RunAgent {
                             .call(&name, args)
                             .unwrap_or_else(|e| json!({ "error": e }));
 
+                        if let (Some(before), Some(after), Some(path)) = (
+                            result.get("before").and_then(Value::as_str),
+                            result.get("after").and_then(Value::as_str),
+                            result.get("path").and_then(Value::as_str),
+                        ) {
+                            let _ = tx.send(AgentEvent::ToolDiff {
+                                tool: name.clone(),
+                                target: path.to_string(),
+                                before: before.to_string(),
+                                after: after.to_string(),
+                            });
+                        }
+
+                        // Keep ToolResult for logs / status line
                         let summary = result
-                            .get("count")
-                            .map(|c| format!("count = {}", c))
+                            .get("mode")
+                            .and_then(Value::as_str)
+                            .map(|m| format!("edit ({})", m))
                             .unwrap_or_else(|| "ok".into());
 
                         let _ = tx.send(AgentEvent::ToolResult { summary });
+
 
                         next_messages.push(item.clone());
                         next_messages.push(json!({

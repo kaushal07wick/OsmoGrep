@@ -196,23 +196,26 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
     }
 }
 
-
 fn handle_mouse(state: &mut AgentState, m: MouseEvent) {
     match m.kind {
         MouseEventKind::ScrollUp => {
-            state.ui.exec_scroll = match state.ui.exec_scroll {
-                usize::MAX => SCROLL_WHEEL_STEP,
-                v => v.saturating_add(SCROLL_WHEEL_STEP),
+            let current = match state.ui.exec_scroll {
+                usize::MAX => 0,
+                v => v,
             };
+
+            state.ui.exec_scroll = current.saturating_add(SCROLL_WHEEL_STEP);
             state.ui.follow_tail = false;
         }
 
         MouseEventKind::ScrollDown => {
-            state.ui.exec_scroll = state.ui.exec_scroll.saturating_sub(SCROLL_WHEEL_STEP);
-            if state.ui.exec_scroll == 0 {
-                state.ui.exec_scroll = usize::MAX;
-                state.ui.follow_tail = true;
-            }
+            let current = match state.ui.exec_scroll {
+                usize::MAX => 0,
+                v => v,
+            };
+
+            state.ui.exec_scroll = current.saturating_sub(SCROLL_WHEEL_STEP);
+            state.ui.follow_tail = false;
         }
 
         _ => {}
