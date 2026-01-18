@@ -207,20 +207,30 @@ fn init_state() -> AgentState {
             input_placeholder: None,
             execution_pending: false,
             should_exit: false,
+
             history: Vec::new(),
             history_index: None,
+
             hint: None,
             autocomplete: None,
+
             last_activity: Instant::now(),
+
             exec_scroll: usize::MAX,
+            follow_tail: true,
+
             active_spinner: None,
             spinner_started_at: None,
+            diff_active: false,
+            diff_snapshot: Vec::new(),
         },
+
         logs: crate::state::LogBuffer::new(),
         started_at: Instant::now(),
         repo_root: std::env::current_dir().unwrap(),
     }
 }
+
 
 fn setup_terminal() -> Result<(), Box<dyn Error>> {
     enable_raw_mode()?;

@@ -79,11 +79,13 @@ pub struct UiState {
 
     pub hint: Option<String>,
     pub autocomplete: Option<String>,
+    pub diff_active: bool,
+    pub diff_snapshot: Vec<crate::ui::diff::Diff>,
 
     pub last_activity: Instant,
 
     pub exec_scroll: usize,
-
+    pub follow_tail: bool,
     pub active_spinner: Option<String>,
     pub spinner_started_at: Option<Instant>,
 }

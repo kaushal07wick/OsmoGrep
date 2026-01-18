@@ -1,12 +1,9 @@
-// src/ui/main_ui.rs
-
 use crate::state::{AgentState, InputMode};
 use ratatui::layout::Rect;
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers,
     MouseEvent, MouseEventKind,
 };
-
 
 fn parse_input(raw: &str) -> InputMode {
     let first = raw
@@ -40,7 +37,6 @@ pub fn handle_event(
 
 fn handle_key(state: &mut AgentState, k: KeyEvent) {
     match k.code {
-
         KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => {
             state.push_char(c);
         }
@@ -49,14 +45,13 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
             state.backspace();
         }
 
-        // multiline input
         KeyCode::Enter if k.modifiers.contains(KeyModifiers::SHIFT) => {
             state.push_char('\n');
         }
 
         KeyCode::Enter => {
             if state.ui.execution_pending {
-                return; // prevent double-trigger
+                return;
             }
 
             let raw = state.ui.input.trim();
@@ -87,7 +82,6 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
             state.history_next();
         }
 
-
         KeyCode::Tab => {
             if let Some(ac) = &state.ui.autocomplete {
                 if ac.starts_with(&state.ui.input) {
@@ -99,23 +93,39 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
             }
         }
 
+        /* ---------------- Execution scroll ---------------- */
 
         KeyCode::PageUp => {
-            state.ui.exec_scroll = state.ui.exec_scroll.saturating_add(5);
-        }
-
-        KeyCode::PageDown => {
+            if state.ui.exec_scroll == usize::MAX {
+                state.ui.exec_scroll = 0;
+            }
             state.ui.exec_scroll = state.ui.exec_scroll.saturating_sub(5);
         }
 
-        KeyCode::Up if k.modifiers.contains(KeyModifiers::CONTROL) => {
-            state.ui.exec_scroll = state.ui.exec_scroll.saturating_add(1);
+        KeyCode::PageDown => {
+            if state.ui.exec_scroll == usize::MAX {
+                return;
+            }
+            state.ui.exec_scroll = state.ui.exec_scroll.saturating_add(5);
         }
 
-        KeyCode::Down if k.modifiers.contains(KeyModifiers::CONTROL) => {
+        KeyCode::Up if k.modifiers.contains(KeyModifiers::CONTROL) => {
+            if state.ui.exec_scroll == usize::MAX {
+                state.ui.exec_scroll = 0;
+            }
             state.ui.exec_scroll = state.ui.exec_scroll.saturating_sub(1);
         }
 
+        KeyCode::Down if k.modifiers.contains(KeyModifiers::CONTROL) => {
+            if state.ui.exec_scroll == usize::MAX {
+                return;
+            }
+            state.ui.exec_scroll = state.ui.exec_scroll.saturating_add(1);
+        }
+
+        KeyCode::End => {
+            state.ui.exec_scroll = usize::MAX;
+        }
 
         KeyCode::Esc => {
             state.ui.should_exit = true;
@@ -128,11 +138,17 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
 fn handle_mouse(state: &mut AgentState, m: MouseEvent) {
     match m.kind {
         MouseEventKind::ScrollUp => {
-            state.ui.exec_scroll = state.ui.exec_scroll.saturating_add(3);
+            if state.ui.exec_scroll == usize::MAX {
+                state.ui.exec_scroll = 0;
+            }
+            state.ui.exec_scroll = state.ui.exec_scroll.saturating_sub(3);
         }
 
         MouseEventKind::ScrollDown => {
-            state.ui.exec_scroll = state.ui.exec_scroll.saturating_sub(3);
+            if state.ui.exec_scroll == usize::MAX {
+                return;
+            }
+            state.ui.exec_scroll = state.ui.exec_scroll.saturating_add(3);
         }
 
         _ => {}

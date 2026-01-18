@@ -1,37 +1,34 @@
-// src/ui/tui.rs
-
-use std::{io, time::Instant};
+use std::{io, process::Command, time::Instant};
 
 use ratatui::{
     backend::Backend,
-    layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, Paragraph, Wrap},
+    widgets::{Paragraph, Wrap},
     Terminal,
 };
 
 use crate::{
     logger::parse_user_input_log,
-    state::{AgentState, InputMode, LogLevel},
+    state::{AgentState, InputMode},
 };
 
+const FG_MAIN: Color = Color::Rgb(220, 220, 220);
+const FG_DIM: Color = Color::Rgb(170, 170, 170);
+const FG_MUTED: Color = Color::Rgb(120, 120, 120);
 
-const BG_MAIN: Color = Color::Rgb(22, 22, 22);
-const BG_INPUT: Color = Color::Rgb(40, 40, 40);
+const PROMPT: &str = "> ";
 
-const GREEN: Color = Color::Rgb(0, 220, 140);
-const DIM: Color = Color::Rgb(140, 140, 140);
-
-const HEADER: [&str; 6] = [
-    " █████╗  ██████╗███╗   ███╗ █████╗  ██████╗ ██████╗ ███████╗██████╗ ",
-    "██╔══██╗██╔════╝████╗ ████║██╔══██╗██╔════╝ ██╔══██╗██╔════╝██╔══██╗",
-    "██║  ██║╚█████╗ ██╔████╔██║██║  ██║██║  ██╗ ██████╔╝█████╗  ██████╔╝",
-    "██║  ██║ ╚═══██╗██║╚██╔╝██║██║  ██║██║  ╚██╗██╔══██╗██╔══╝  ██╔═══╝ ",
-    "╚█████╔╝██████╔╝██║ ╚═╝ ██║╚█████╔╝╚██████╔╝██║  ██║███████╗██║     ",
-    " ╚════╝ ╚═════╝ ╚═╝     ╚═╝ ╚════╝  ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝     ",
+const LOGO: [&str; 7] = [
+    " ██████  ███████ ███    ███  ██████   ██████  ██████  ███████ ██████  ",
+    "██    ██ ██      ████  ████ ██    ██ ██       ██   ██ ██      ██   ██ ",
+    "██    ██ ███████ ██ ████ ██ ██    ██ ██   ███ ██████  █████   ██████  ",
+    "██    ██      ██ ██  ██  ██ ██    ██ ██    ██ ██   ██ ██      ██      ",
+    " ██████  ███████ ██      ██  ██████   ██████  ██   ██ ███████ ██      ",
+    "                                                                      ",
+    "                                                                      ",
 ];
-
 
 pub fn draw_ui<B: Backend>(
     terminal: &mut Terminal<B>,
@@ -46,54 +43,56 @@ pub fn draw_ui<B: Backend>(
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(6),  // HEADER
-                Constraint::Min(5),     // EXECUTION
-                Constraint::Length(3),  // INPUT
-                Constraint::Length(1),  // HINTS + OPENAI
-                Constraint::Length(1),  // breathing space
+                Constraint::Length(1),
+                Constraint::Length(LOGO.len() as u16 + 2),
+                Constraint::Min(5),     // execution
+                Constraint::Length(3), // command box
+                Constraint::Length(1), // status bar
             ])
             .split(area);
 
-        render_header(f, chunks[0]);
-        render_execution(f, chunks[1], state);
-        render_input(f, chunks[2], state);
-        render_status(f, chunks[3], state);
+        render_header(f, chunks[1], state);
+        render_execution(f, chunks[2], state);
+        render_input_box(f, chunks[3], state);
+        render_status_bar(f, chunks[4], state);
 
-        exec_rect = chunks[1];
-        input_rect = chunks[2];
+        exec_rect = chunks[2];
+        input_rect = chunks[3];
     })?;
 
     Ok((input_rect, Rect::default(), exec_rect))
 }
 
+/* ---------------- Header ---------------- */
 
-fn render_header(f: &mut ratatui::Frame, area: Rect) {
-    let lines = HEADER.iter().map(|l| {
-        Line::from(Span::styled(
-            *l,
-            Style::default()
-                .fg(GREEN)
-                .add_modifier(Modifier::BOLD),
-        ))
-    });
+fn render_header(f: &mut ratatui::Frame, area: Rect, state: &AgentState) {
+    let mut lines: Vec<Line> = LOGO
+        .iter()
+        .map(|l| Line::from(Span::styled(*l, Style::default().fg(FG_MAIN))))
+        .collect();
+
+    let branch = git_branch(&state.repo_root).unwrap_or_else(|| "detached".into());
+    let version = env!("CARGO_PKG_VERSION");
+
+    lines.push(Line::from(vec![
+        Span::styled(branch, Style::default().fg(FG_DIM)),
+        Span::styled(" · ", Style::default().fg(FG_MUTED)),
+        Span::styled(state.repo_root.to_string_lossy(), Style::default().fg(FG_DIM)),
+        Span::styled(" · ", Style::default().fg(FG_DIM)),
+        Span::styled(version, Style::default().fg(FG_MUTED)),
+    ]));
 
     f.render_widget(
-        Paragraph::new(lines.collect::<Vec<_>>())
-            .alignment(ratatui::layout::Alignment::Center),
+        Paragraph::new(lines)
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true }),
         area,
     );
 }
 
-fn render_execution(
-    f: &mut ratatui::Frame,
-    area: Rect,
-    state: &AgentState,
-) {
-    f.render_widget(
-        Block::default().style(Style::default().bg(BG_MAIN)),
-        area,
-    );
+/* ---------------- Execution ---------------- */
 
+fn render_execution(f: &mut ratatui::Frame, area: Rect, state: &AgentState) {
     let padded = Rect {
         x: area.x + 2,
         y: area.y + 1,
@@ -104,28 +103,55 @@ fn render_execution(
     let height = padded.height.max(1) as usize;
     let mut lines: Vec<Line> = Vec::new();
 
+    let mut last_was_user = false;
+    let mut md = crate::ui::markdown::Markdown::new();
+
     for log in state.logs.iter() {
-        // User input → render EXACTLY like command box, but without prefix
-        if let Some(input) = parse_user_input_log(&log.text) {
-            lines.push(render_command_box_line(input, false));
+        let text = log.text.as_str();
+
+        if let Some(input) = parse_user_input_log(text) {
+            if !lines.is_empty() {
+                lines.push(Line::from(""));
+            }
+            lines.push(render_static_command_line(input));
+            last_was_user = true;
             continue;
         }
 
-        let color = match log.level {
-            LogLevel::Success => Color::Green,
-            LogLevel::Warn => Color::Yellow,
-            LogLevel::Error => Color::Red,
-            _ => Color::Gray,
-        };
+        if text.starts_with("● ") {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(text, Style::default().fg(FG_MAIN))));
+            last_was_user = false;
+            continue;
+        }
 
+        if text.starts_with("└ ") {
+            lines.push(Line::from(Span::styled(text, Style::default().fg(FG_DIM))));
+            continue;
+        }
+
+        if last_was_user {
+            lines.push(Line::from(""));
+        }
+
+        lines.push(md.render_line(text));
+        last_was_user = false;
+    }
+
+    if state.ui.diff_active && !state.ui.diff_snapshot.is_empty() {
+        lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            &log.text,
-            Style::default().fg(color),
+            "Changes",
+            Style::default().fg(FG_MAIN),
         )));
+
+        for diff in &state.ui.diff_snapshot {
+            lines.extend(crate::ui::diff::render_diff(diff, padded.width));
+        }
     }
 
     let max_scroll = lines.len().saturating_sub(height);
-    let scroll = if state.ui.exec_scroll == usize::MAX {
+    let scroll = if state.ui.follow_tail {
         max_scroll
     } else {
         state.ui.exec_scroll.min(max_scroll)
@@ -139,93 +165,96 @@ fn render_execution(
     );
 }
 
+/* ---------------- Command Box ---------------- */
 
-fn render_input(
-    f: &mut ratatui::Frame,
-    area: Rect,
-    state: &AgentState,
-) {
-    f.render_widget(
-        Block::default().style(Style::default().bg(BG_INPUT)),
-        area,
-    );
-
-    let input_area = Rect {
+fn render_input_box(f: &mut ratatui::Frame, area: Rect, state: &AgentState) {
+    let inner = Rect {
         x: area.x + 2,
-        y: area.y + 1,
+        y: area.y,
         width: area.width.saturating_sub(4),
-        height: 1,
+        height: area.height,
     };
 
-    let masked = matches!(state.ui.input_mode, InputMode::ApiKey);
-
-    let input = if masked {
+    let input = if matches!(state.ui.input_mode, InputMode::ApiKey) {
         "•".repeat(state.ui.input.len())
     } else {
         state.ui.input.clone()
     };
 
-    let line = render_command_box_line(&input, true);
-    f.render_widget(Paragraph::new(line), input_area);
+    let top = Line::from(Span::styled(
+        "─".repeat(inner.width as usize),
+        Style::default().fg(Color::White),
+    ));
 
-    let cursor_x = input_area.x + 3 + state.ui.input.len() as u16;
-    f.set_cursor(cursor_x, input_area.y);
+    let middle = Line::from(vec![
+        Span::styled(PROMPT, Style::default().fg(Color::White)),
+        Span::styled(input, Style::default().fg(Color::White)),
+    ]);
+
+    let bottom = Line::from(Span::styled(
+        "─".repeat(inner.width as usize),
+        Style::default().fg(Color::White),
+    ));
+
+    let lines = vec![top, middle, bottom];
+
+    f.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }),
+        inner,
+    );
+
+    let cursor_x =
+        inner.x + PROMPT.len() as u16 + state.ui.input.len() as u16;
+    let cursor_y = inner.y + 1;
+
+    f.set_cursor(cursor_x, cursor_y);
 }
 
+/* ---------------- Status Bar ---------------- */
 
-fn render_status(
-    f: &mut ratatui::Frame,
-    area: Rect,
-    state: &AgentState,
-) {
-    let left = match running_pulse(state.ui.spinner_started_at) {
-        Some(p) => format!("OPENAI {}", p),
-        None => "OPENAI".into(),
-    };
+fn render_status_bar(f: &mut ratatui::Frame, area: Rect, state: &AgentState) {
+    let spinner = running_pulse(state.ui.spinner_started_at)
+        .unwrap_or_else(|| "····".into());
 
-    let right = vec![
-        Span::styled("[esc]", Style::default().fg(GREEN)),
-        Span::styled(" exit  ", Style::default().fg(DIM)),
-        Span::styled("[enter]", Style::default().fg(GREEN)),
-        Span::styled(" run  ", Style::default().fg(DIM)),
-        Span::styled("[tab]", Style::default().fg(GREEN)),
-        Span::styled(" autocomplete", Style::default().fg(DIM)),
+    let left = vec![
+        Span::styled(spinner, Style::default().fg(FG_MAIN)),
+        Span::raw(" "),
+        Span::styled("OPENAI", Style::default().fg(FG_DIM)),
     ];
 
-    let right_width: usize = right.iter().map(|s| s.content.len()).sum();
-    let spacing = area
+    let right = vec![
+        Span::styled("[esc]", Style::default().fg(FG_MAIN)),
+        Span::raw(" quit  "),
+        Span::styled("[enter]", Style::default().fg(FG_MAIN)),
+        Span::raw(" run"),
+    ];
+
+    let left_w: usize = left.iter().map(|s| s.content.len()).sum();
+    let right_w: usize = right.iter().map(|s| s.content.len()).sum();
+
+    let space = area
         .width
-        .saturating_sub(left.len() as u16 + right_width as u16)
+        .saturating_sub((left_w + right_w) as u16)
         .max(1) as usize;
 
     let mut spans = Vec::new();
-    spans.push(Span::styled(left, Style::default().fg(GREEN)));
-    spans.push(Span::raw(" ".repeat(spacing)));
+    spans.extend(left);
+    spans.push(Span::raw(" ".repeat(space)));
     spans.extend(right);
 
     f.render_widget(
-        Paragraph::new(Line::from(spans))
-            .style(Style::default().bg(BG_MAIN)),
+        Paragraph::new(Line::from(spans)),
         area,
     );
 }
 
+/* ---------------- Helpers ---------------- */
 
-fn render_command_box_line(text: &str, with_prefix: bool) -> Line {
-    let mut spans = Vec::new();
-
-    spans.push(Span::raw("  ")); // left padding
-
-    if with_prefix {
-        spans.push(Span::styled(">_ ", Style::default().fg(GREEN)));
-    }
-
-    spans.push(Span::styled(
-        text,
-        Style::default().fg(Color::White),
-    ));
-
-    Line::from(spans)
+fn render_static_command_line(text: &str) -> Line {
+    Line::from(vec![
+        Span::styled("│ ", Style::default().fg(FG_MAIN)),
+        Span::styled(text, Style::default().fg(FG_MAIN)),
+    ])
 }
 
 fn running_pulse(start: Option<Instant>) -> Option<String> {
@@ -255,4 +284,15 @@ fn running_pulse(start: Option<Instant>) -> Option<String> {
     }
 
     Some(s)
+}
+
+fn git_branch(repo_root: &std::path::Path) -> Option<String> {
+    let out = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(repo_root)
+        .output()
+        .ok()?;
+
+    let s = String::from_utf8(out.stdout).ok()?;
+    Some(s.trim().to_string())
 }

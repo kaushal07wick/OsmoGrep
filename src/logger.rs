@@ -4,7 +4,7 @@ use crate::state::{AgentState, LogLevel};
 
 const USER_TAG: &str = "USER|";
 const TOOL_PREFIX: &str = "● ";
-const CHILD_PREFIX: &str = "└ ";
+const CHILD_PREFIX: &str = "  └ ";
 
 pub fn log(
     state: &mut AgentState,
@@ -14,48 +14,52 @@ pub fn log(
     state.logs.push(level, msg.into());
 }
 
+
 pub fn log_user_input(
     state: &mut AgentState,
     input: impl Into<String>,
 ) {
     state.logs.push(
-        LogLevel::Info, // ← white in UI
+        LogLevel::Info,
         format!("{USER_TAG}{}", input.into()),
     );
 }
 
 
+fn format_tool_name(raw: &str) -> &str {
+    match raw {
+        "run_shell" | "shell" | "bash" => "Shell",
+        "search" => "Search",
+        "glob_files" => "Glob",
+        "write_file" => "Write",
+        "read_file" => "Read",
+        "edit_file" => "Edit",
+        other => other,
+    }
+}
+
 pub fn log_tool_call(
     state: &mut AgentState,
-    tool: impl Into<String>,
-    args: impl Into<String>,
+    tool: impl AsRef<str>,
+    command: impl Into<String>,
 ) {
+    let tool_name = format_tool_name(tool.as_ref());
+    let command = command.into();
+
     state.logs.push(
-        LogLevel::Success, 
-        format!(
-            "{TOOL_PREFIX}TOOL|{}|{}",
-            tool.into(),
-            args.into()
-        ),
+        LogLevel::Success,
+        format!("{TOOL_PREFIX}({tool_name}) {command}"),
     );
 }
 
 
 pub fn log_tool_result(
     state: &mut AgentState,
-    msg: impl Into<String>,
+    output: impl Into<String>,
 ) {
-    state.logs.push(
-        LogLevel::Info,
-        format!("{CHILD_PREFIX}{}", msg.into()),
-    );
-}
+    let output = output.into();
 
-pub fn log_agent_output(
-    state: &mut AgentState,
-    text: &str,
-) {
-    for line in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
+    for line in output.lines().map(str::trim).filter(|l| !l.is_empty()) {
         state.logs.push(
             LogLevel::Info,
             format!("{CHILD_PREFIX}{line}"),
@@ -64,6 +68,30 @@ pub fn log_agent_output(
 }
 
 
+pub fn log_agent_output(
+    state: &mut AgentState,
+    text: &str,
+) {
+    for line in text.lines() {
+        let line = line.trim_end();
+        if line.is_empty() {
+            // preserve paragraph breaks
+            state.logs.push(LogLevel::Info, String::new());
+        } else {
+            state.logs.push(LogLevel::Info, line.to_string());
+        }
+    }
+}
+
+
 pub fn parse_user_input_log(line: &str) -> Option<&str> {
     line.strip_prefix(USER_TAG)
+}
+
+pub fn is_tool_call(line: &str) -> bool {
+    line.starts_with(TOOL_PREFIX)
+}
+
+pub fn is_child(line: &str) -> bool {
+    line.starts_with(CHILD_PREFIX)
 }

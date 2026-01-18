@@ -95,6 +95,22 @@ The agent inspects your diff, builds context, and executes in a sandbox branch.
 | `close`                              | Close result panel                           |
 | `quit`                               | Exit   osmogrep                                |
 
+## Particle Physics
+
+osmogrep is domain-agnostic, but it fits especially well with **particle physics / HEP** workflows where changes must be validated against **real, reproducible executions** (unit tests, integration tests, small-sample analyses).
+
+Common ways to use it in HEP projects:
+
+- **Reconstruction & simulation code**: catch regressions by generating focused tests for a specific diff (e.g., a tracking or calorimeter module) and executing them in an isolated worktree.
+- **Analysis pipelines**: validate that an algorithmic change still produces expected event selections or derived quantities by running a minimal “golden sample” test.
+- **Histogram/ntuple stability checks**: treat reference outputs (small ROOT files, JSON summaries, or text snapshots) as fixtures and have tests assert on key quantities (yields, means, efficiencies).
+- **Deterministic review**: instead of reviewing diffs in the abstract, you get *evidence*—logs + test artifacts—showing what actually passed.
+
+Practical tips:
+
+- Keep a small, fast test dataset in-repo (or downloadable in CI) and wire it into your test command.
+- Prefer “thin” assertions: check a few physics-relevant scalars (event counts, cutflow totals, χ²/KS distance thresholds) rather than entire files.
+- If your stack is containerized (common in HEP), run osmogrep inside the same image to keep execution reproducible.
 
 ## License
 
