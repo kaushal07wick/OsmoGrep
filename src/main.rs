@@ -4,6 +4,7 @@ mod ui;
 mod tools;
 mod commands;
 mod agent;
+mod context;
 
 use std::{
     error::Error,
@@ -21,11 +22,18 @@ use crossterm::{
     },
 };
 use crossterm::event::{EnableMouseCapture, DisableMouseCapture};
-use crate::state::DiffSnapshot;
-use ratatui::{Terminal, backend::CrosstermBackend, layout::Rect};
+
+use ratatui::{
+    Terminal,
+    backend::CrosstermBackend,
+    layout::Rect,
+};
+
+use clap::Parser;
 
 use crate::{
     agent::{Agent, AgentEvent},
+    context::{ContextEvent},
     logger::{
         log,
         log_user_input,
@@ -33,10 +41,9 @@ use crate::{
         log_tool_result,
         log_agent_output,
     },
-    state::{AgentState, InputMode, LogLevel},
+    state::{AgentState, InputMode, LogLevel, DiffSnapshot},
     ui::{main_ui::handle_event, tui::draw_ui},
 };
-use clap::Parser;
 
 #[derive(Parser)]
 #[command(
@@ -44,9 +51,7 @@ use clap::Parser;
     version,
     about = "A lightweight Rust-based TUI Agent, for debugging, code reviews, and runtime bug catching."
 )]
-struct Cli {
-
-}
+struct Cli {}
 
 fn run_shell(state: &mut AgentState, cmd: &str) {
     log(
@@ -70,7 +75,6 @@ fn run_shell(state: &mut AgentState, cmd: &str) {
     }
 }
 
-
 fn main() -> Result<(), Box<dyn Error>> {
     let _cli = Cli::parse();
     setup_terminal()?;
@@ -80,7 +84,21 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut state = init_state();
     let mut agent = Agent::new();
+
     let mut agent_rx: Option<mpsc::Receiver<AgentEvent>> = None;
+    let mut context_rx: Option<mpsc::Receiver<ContextEvent>> = None;
+
+    /* ---------- SPAWN CONTEXT INDEXER ---------- */
+
+    {
+        let (tx, rx) = mpsc::channel();
+        let root = state.repo_root.clone();
+
+        context::spawn_indexer(root, tx);
+        context_rx = Some(rx);
+    }
+
+    /* ---------- MAIN LOOP ---------- */
 
     loop {
         let (input_rect, _, exec_rect) =
@@ -88,20 +106,64 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         if event::poll(Duration::from_millis(120))? {
             let ev = event::read()?;
-            handle_event(&mut state, ev, input_rect, Rect::default(), exec_rect);
+            handle_event(
+                &mut state,
+                ev,
+                input_rect,
+                Rect::default(),
+                exec_rect,
+            );
         }
 
         if state.ui.should_exit {
             break;
         }
 
+        if let Some(mut rx) = context_rx.take() {
+            let mut done = false;
+
+            loop {
+                match rx.try_recv() {
+                    Ok(evt) => match evt {
+                        ContextEvent::Started => {
+                            state.ui.indexing = true;
+                            state.ui.indexed = false;
+                            state.ui.spinner_started_at = Some(Instant::now());
+                        }
+
+                        ContextEvent::Finished => {
+                            state.ui.indexing = false;
+                            state.ui.indexed = true;
+                            state.ui.spinner_started_at = None;
+                            done = true;
+                        }
+
+                        ContextEvent::Error(_e) => {
+                            state.ui.indexing = false;
+                            state.ui.spinner_started_at = None;
+                            done = true;
+                        }
+                    },
+
+                    Err(mpsc::TryRecvError::Empty) => break,
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        state.ui.indexing = false;
+                        state.ui.spinner_started_at = None;
+                        done = true;
+                        break;
+                    }
+                }
+            }
+            if !done {
+                context_rx = Some(rx);
+            }
+        }
+
         if let Some(rx) = agent_rx.as_ref() {
             loop {
                 match rx.try_recv() {
-                    Ok(evt) => 
-                    match evt {
+                    Ok(evt) => match evt {
                         AgentEvent::ToolCall { name, args } => {
-                            // CLEAN COMMAND STRING
                             let cmd = match args {
                                 serde_json::Value::Object(ref map) => {
                                     map.values()
@@ -118,6 +180,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                         AgentEvent::ToolResult { summary } => {
                             log_tool_result(&mut state, summary);
                         }
+
                         AgentEvent::ToolDiff { tool, target, before, after } => {
                             state.ui.diff_active = true;
                             state.ui.diff_snapshot.clear();
@@ -223,7 +286,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                 }
             }
-
         }
 
         if !state.ui.execution_pending && agent_rx.is_none() {
@@ -258,6 +320,9 @@ fn init_state() -> AgentState {
             spinner_started_at: None,
             diff_active: false,
             diff_snapshot: Vec::new(),
+
+            indexing: false,
+            indexed: false,
         },
 
         logs: crate::state::LogBuffer::new(),
@@ -265,8 +330,6 @@ fn init_state() -> AgentState {
         repo_root: std::env::current_dir().unwrap(),
     }
 }
-
-
 fn setup_terminal() -> Result<(), Box<dyn Error>> {
     enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;

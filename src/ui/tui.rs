@@ -39,6 +39,7 @@ const LOGO: [&str; 7] = [
 ];
 
 
+/// master ui
 pub fn draw_ui<B: Backend>(
     terminal: &mut Terminal<B>,
     state: &AgentState,
@@ -137,6 +138,8 @@ pub fn draw_ui<B: Backend>(
 
     Ok((input_rect, hint_rect, exec_rect))
 }
+
+/// header with info
 fn render_header(f: &mut Frame, area: Rect, state: &AgentState) {
     let mut lines: Vec<Line> = LOGO
         .iter()
@@ -145,14 +148,36 @@ fn render_header(f: &mut Frame, area: Rect, state: &AgentState) {
 
     let branch = git_branch(&state.repo_root).unwrap_or_else(|| "detached".into());
     let version = env!("CARGO_PKG_VERSION");
+    let repo_display = state
+        .repo_root
+        .strip_prefix(dirs::home_dir().unwrap_or_default())
+        .map(|p| format!("~{}", std::path::MAIN_SEPARATOR.to_string() + &p.display().to_string()))
+        .unwrap_or_else(|_| state.repo_root.display().to_string());
 
-    lines.push(Line::from(vec![
-        Span::styled(branch, Style::default().fg(FG_DIM)),
+    let mut meta_spans = vec![
+        Span::styled(repo_display, Style::default().fg(FG_DIM)),
         Span::styled(" · ", Style::default().fg(FG_MUTED)),
-        Span::styled(state.repo_root.to_string_lossy(), Style::default().fg(FG_DIM)),
+        Span::styled(branch, Style::default().fg(FG_DIM)),
         Span::styled(" · ", Style::default().fg(FG_DIM)),
         Span::styled(version, Style::default().fg(FG_MUTED)),
-    ]));
+    ];
+
+    if state.ui.indexing {
+        meta_spans.push(Span::styled(
+            " · indexing…",
+            Style::default()
+                .fg(FG_MUTED)
+                .add_modifier(Modifier::ITALIC),
+        ));
+    } else if state.ui.indexed {
+        meta_spans.push(Span::styled(
+            " · indexed ✓",
+            Style::default().fg(FG_DIM),
+        ));
+    }
+
+    lines.push(Line::from(meta_spans));
+    lines.push(Line::from(" "));
 
     lines.push(Line::from(Span::styled(
         "Type a task to make osmogrep work for you or /help (for commands) · !<cmd> runs linux shell · ",
@@ -169,6 +194,7 @@ fn render_header(f: &mut Frame, area: Rect, state: &AgentState) {
     );
 }
 
+/// main panel
 fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
     let padded = Rect {
         x: area.x + 2,
@@ -250,6 +276,7 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
     );
 }
 
+/// input box ui
 fn render_input_box(f: &mut Frame, area: Rect, state: &AgentState) {
     if area.height < 3 {
         return;
@@ -333,6 +360,8 @@ fn render_input_box(f: &mut Frame, area: Rect, state: &AgentState) {
 
     f.set_cursor(cursor_x, cursor_y);
 }
+
+/// bottom status with animation and tabs
 fn render_status_bar(f: &mut Frame, area: Rect, state: &AgentState) {
     let spinner = running_pulse(state.ui.spinner_started_at)
         .unwrap_or_else(|| "....".into());
@@ -374,6 +403,8 @@ fn render_status_bar(f: &mut Frame, area: Rect, state: &AgentState) {
 
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
+
+/// command hints pallete
 pub fn render_command_palette(
     f: &mut Frame,
     area: Rect,

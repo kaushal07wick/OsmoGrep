@@ -84,14 +84,12 @@ pub struct UiState {
     pub input_mode: InputMode,
     pub input_masked: bool,
     pub input_placeholder: Option<String>,
-
     pub execution_pending: bool,
     pub should_exit: bool,
-
-
+    pub indexing: bool,
+    pub indexed: bool,
     pub history: Vec<String>,
     pub history_index: Option<usize>,
-
     pub hint: Option<String>,
     pub autocomplete: Option<String>,
     pub diff_active: bool,
@@ -99,7 +97,6 @@ pub struct UiState {
     pub command_items: Vec<CommandItem>,
     pub command_selected: usize,
     pub last_activity: Instant,
-
     pub exec_scroll: usize,
     pub follow_tail: bool,
     pub active_spinner: Option<String>,
