@@ -5,21 +5,47 @@ use ratatui::{
 };
 
 const FG_MAIN: Color = Color::Rgb(220, 220, 220);
-
 pub fn render_static_command_line(
     text: &str,
-    width: usize,
+    term_width: usize,
 ) -> Vec<Line<'static>> {
-    let inner_width = width.saturating_sub(4);
-    let mut content = text.to_string();
+    // visual tuning knobs
+    let max_fraction = 0.55;      // never exceed 55% of terminal width
+    let side_padding = 2;         // spaces on left + right inside the box
+    let outer_margin = 2;         // visual breathing room
 
+    let max_width = (term_width as f32 * max_fraction) as usize;
+    let desired_width = text.len() + side_padding * 2 + outer_margin * 2;
+
+    let box_width = desired_width
+        .min(max_width)
+        .min(term_width)
+        .max(10); // sanity floor
+
+    let inner_width = box_width
+        .saturating_sub(side_padding * 2 + outer_margin * 2);
+
+    let mut content = text.to_string();
     if content.len() > inner_width {
         content.truncate(inner_width.saturating_sub(1));
         content.push('…');
     }
 
-    let line = format!(" {:<inner_width$}  ", content);
-    let line_len = line.len(); 
+    let line = format!(
+        "{}{: <inner_width$}{}",
+        " ".repeat(side_padding),
+        content,
+        " ".repeat(side_padding),
+    );
+
+    let full_line = format!(
+        "{}{}{}",
+        " ".repeat(outer_margin),
+        line,
+        " ".repeat(outer_margin),
+    );
+
+    let line_len = full_line.len();
 
     vec![
         Line::from(Span::styled(
@@ -27,7 +53,7 @@ pub fn render_static_command_line(
             Style::default().bg(FG_MAIN),
         )),
         Line::from(Span::styled(
-            line,
+            full_line,
             Style::default().fg(Color::Black).bg(FG_MAIN),
         )),
         Line::from(Span::styled(

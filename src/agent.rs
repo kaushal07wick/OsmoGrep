@@ -126,7 +126,36 @@ impl RunAgent {
     ) -> Result<(), String> {
         let api_key = self.api_key.as_ref().ok_or("OPENAI_API_KEY not set")?;
 
-        let mut input: Value = Value::String(user_text.to_string());
+        let mut input = json!([
+            {
+                "role": "system",
+                "content":
+                    "You are Osmogrep, an AI coding agent working inside this repository.\n\
+                    \n\
+                    This repository may include a machine-generated index stored as a file named `.context.json` at the repository root.\n\
+                    This file, if present, describes the structure of the codebase: files, symbols, and call relationships.\n\
+                    \n\
+                    The index is a regular file and must be discovered and read using tools.\n\
+                    It may or may not exist.\n\
+                    \n\
+                    When working:\n\
+                    - Check for the presence of `.context.json` using tools when repository structure matters.\n\
+                    - If present, read it to understand the repository before acting.\n\
+                    - Use tools to inspect other files or make changes as needed.\n\
+                    - If `.context.json` is missing or insufficient, proceed normally and use tools freely.\n\
+                    \n\
+                    Philosophy:\n\
+                    This repository will outlive any single contributor.\n\
+                    Many people will read, use, and maintain this code over time.\n\
+                    Leave the codebase better than you found it.\n\
+                    Prefer clear structure, small deterministic functions, and reliable behavior.\n\
+                    Make changes that are easy to understand, review, and maintain."
+            },
+            {
+                "role": "user",
+                "content": user_text
+            }
+        ]);
 
         loop {
             let resp = self.call_openai(api_key, &input)?;
@@ -136,11 +165,11 @@ impl RunAgent {
                 .and_then(Value::as_array)
                 .ok_or("missing output array")?;
 
-            let mut next_messages: Vec<Value> = match &input {
-                Value::String(s) => vec![json!({ "role": "user", "content": s })],
-                Value::Array(arr) => arr.clone(),
-                _ => return Err("invalid input state".into()),
-            };
+            let mut next_messages = input
+                .as_array()
+                .ok_or("input must be message array")?
+                .clone();
+
 
             let mut saw_tool = false;
 

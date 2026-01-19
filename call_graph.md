@@ -23,7 +23,6 @@
 - String::new
 - ToolRegistry::new
 - Value::Array
-- Value::String
 - dirs::config_dir
 - env::var
 - fs::create_dir_all
@@ -251,7 +250,7 @@
 ### src/ui/helper.rs
 
 **Functions**
-- pub fn render_static_command_line( text: &str, width: usize, ) -> Vec<Line<'static>>
+- pub fn render_static_command_line( text: &str, term_width: usize, ) -> Vec<Line<'static>>
 - pub fn running_pulse(start: Option<Instant>) -> Option<String>
 - pub fn calculate_input_lines(input: &str, width: usize, prompt_len: usize) -> usize
 

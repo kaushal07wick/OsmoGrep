@@ -212,9 +212,6 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
     for log in state.logs.iter() {
         let text = log.text.as_str();
         if let Some(input) = parse_user_input_log(text) {
-            if !lines.is_empty() {
-                lines.push(Line::from(""));
-            }
             lines.extend(render_static_command_line(
                 input,
                 padded.width as usize,
@@ -233,10 +230,6 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
         if text.starts_with("└ ") {
             lines.push(Line::from(Span::styled(text, Style::default().fg(FG_DIM))));
             continue;
-        }
-
-        if last_was_user {
-            lines.push(Line::from(""));
         }
 
         lines.push(md.render_line(text));
