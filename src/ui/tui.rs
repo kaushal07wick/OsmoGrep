@@ -248,6 +248,16 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
             continue;
         }
 
+        if text.starts_with("· ") {
+            lines.push(Line::from(Span::styled(
+                text,
+                Style::default()
+                    .fg(FG_MUTED)
+                    .add_modifier(Modifier::ITALIC),
+            )));
+            continue;
+        }
+
         lines.push(md.render_line(text));
         last_was_user = false;
     }
@@ -321,8 +331,12 @@ fn render_voice_bar(f: &mut Frame, area: Rect, state: &AgentState) {
     }
 
     let text = voice_bar_text(state);
+    let line = Line::from(vec![
+        Span::styled("voice: ", Style::default().fg(FG_DIM)),
+        Span::styled(text, Style::default().fg(FG_MUTED)),
+    ]);
     f.render_widget(
-        Paragraph::new(text).wrap(Wrap { trim: true }),
+        Paragraph::new(line).wrap(Wrap { trim: true }),
         area,
     );
 }

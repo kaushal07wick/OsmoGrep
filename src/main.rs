@@ -41,6 +41,7 @@ use crate::{
         log_tool_call,
         log_tool_result,
         log_agent_output,
+        log_status,
     },
     state::{AgentState, InputMode, LogLevel, DiffSnapshot},
     ui::{main_ui::handle_event, tui::draw_ui},
@@ -109,22 +110,13 @@ fn main() -> Result<(), Box<dyn Error>> {
             voice_evt_tx.clone(),
         );
         state.voice.enabled = true;
-        log(
-            &mut state,
-            LogLevel::Info,
-            format!("Voice proxy listening on {listen_addr}"),
-        );
     } else if env_truthy("VLLM_REALTIME_AUTOCONNECT", true) {
         let _ = voice_cmd_tx.send(voice::VoiceCommand::Start {
             url: state.voice.url.clone(),
             model: state.voice.model.clone(),
         });
         state.voice.enabled = true;
-        log(
-            &mut state,
-            LogLevel::Info,
-            "Connecting voice input...",
-        );
+        log_status(&mut state, "Connecting voice input...");
     }
 
     let mut agent_rx: Option<mpsc::Receiver<AgentEvent>> = None;
@@ -215,7 +207,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                         state.voice.buffer.clear();
                         state.voice.last_activity = Some(Instant::now());
                         state.voice.last_inserted = None;
-                        log(&mut state, LogLevel::Success, "Voice connected.");
+                        log_status(&mut state, "Voice connected.");
                     }
                     voice::VoiceEvent::Disconnected => {
                         state.voice.connected = false;
@@ -291,7 +283,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                         log(&mut state, LogLevel::Error, msg);
                     }
                     voice::VoiceEvent::Status(msg) => {
+                        let status = msg.clone();
                         state.voice.status = Some(msg);
+                        log_status(&mut state, status);
                     }
                 },
                 Err(mpsc::TryRecvError::Empty) => break,

@@ -5,6 +5,7 @@ use crate::state::{AgentState, LogLevel};
 const USER_TAG: &str = "USER|";
 const TOOL_PREFIX: &str = "● ";
 const CHILD_PREFIX: &str = "  └ ";
+const STATUS_PREFIX: &str = "· ";
 
 pub fn log(
     state: &mut AgentState,
@@ -12,6 +13,13 @@ pub fn log(
     msg: impl Into<String>,
 ) {
     state.logs.push(level, msg.into());
+}
+
+pub fn log_status(
+    state: &mut AgentState,
+    msg: impl Into<String>,
+) {
+    state.logs.push(LogLevel::Info, format!("{STATUS_PREFIX}{}", msg.into()));
 }
 
 
