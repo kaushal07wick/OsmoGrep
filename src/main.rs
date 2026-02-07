@@ -5,6 +5,7 @@ mod tools;
 mod commands;
 mod agent;
 mod context;
+mod voice;
 
 use std::{
     error::Error,
@@ -53,6 +54,16 @@ use crate::{
 )]
 struct Cli {}
 
+fn env_truthy(key: &str, default: bool) -> bool {
+    match std::env::var(key) {
+        Ok(val) => {
+            let v = val.to_ascii_lowercase();
+            matches!(v.as_str(), "1" | "true" | "yes" | "on")
+        }
+        Err(_) => default,
+    }
+}
+
 fn run_shell(state: &mut AgentState, cmd: &str) {
     log(
         state,
@@ -85,8 +96,44 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut state = init_state();
     let mut agent = Agent::new();
 
+    let (voice_cmd_tx, voice_cmd_rx) = mpsc::channel();
+    let (voice_evt_tx, voice_evt_rx) = mpsc::channel();
+    let _voice_handle =
+        voice::spawn_voice_worker(voice_cmd_rx, voice_evt_tx.clone());
+    let proxy_listen = std::env::var("VLLM_REALTIME_PROXY_LISTEN").ok();
+    if let Some(listen_addr) = proxy_listen.clone() {
+        let _proxy_handle = voice::spawn_voice_proxy_worker(
+            listen_addr.clone(),
+            state.voice.url.clone(),
+            state.voice.model.clone(),
+            voice_evt_tx.clone(),
+        );
+        state.voice.enabled = true;
+        log(
+            &mut state,
+            LogLevel::Info,
+            format!("Voice proxy listening on {listen_addr}"),
+        );
+    } else if env_truthy("VLLM_REALTIME_AUTOCONNECT", true) {
+        let _ = voice_cmd_tx.send(voice::VoiceCommand::Start {
+            url: state.voice.url.clone(),
+            model: state.voice.model.clone(),
+        });
+        state.voice.enabled = true;
+        log(
+            &mut state,
+            LogLevel::Info,
+            "Connecting voice input...",
+        );
+    }
+
     let mut agent_rx: Option<mpsc::Receiver<AgentEvent>> = None;
     let mut context_rx: Option<mpsc::Receiver<ContextEvent>> = None;
+    let voice_silence_ms: u64 =
+        std::env::var("VLLM_REALTIME_SILENCE_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(1200);
 
     /* ---------- SPAWN CONTEXT INDEXER ---------- */
 
@@ -156,6 +203,137 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             if !done {
                 context_rx = Some(rx);
+            }
+        }
+
+        loop {
+            match voice_evt_rx.try_recv() {
+                Ok(evt) => match evt {
+                    voice::VoiceEvent::Connected => {
+                        state.voice.connected = true;
+                        state.voice.status = Some("connected".into());
+                        state.voice.buffer.clear();
+                        state.voice.last_activity = Some(Instant::now());
+                        state.voice.last_inserted = None;
+                        log(&mut state, LogLevel::Success, "Voice connected.");
+                    }
+                    voice::VoiceEvent::Disconnected => {
+                        state.voice.connected = false;
+                        state.voice.enabled = false;
+                        state.voice.status = Some("disconnected".into());
+                        state.voice.partial = None;
+                        state.voice.last_final = None;
+                        state.voice.buffer.clear();
+                        state.voice.last_activity = None;
+                        state.voice.last_inserted = None;
+                    }
+                    voice::VoiceEvent::Partial(delta) => {
+                        state.voice.partial = Some(delta);
+                        state.voice.last_final = None;
+                        if let Some(delta) = state.voice.partial.as_deref() {
+                            state.voice.buffer.push_str(delta);
+                        }
+                        state.voice.last_activity = Some(Instant::now());
+                        if state.ui.input.is_empty()
+                            || state
+                                .voice
+                                .last_inserted
+                                .as_deref()
+                                == Some(state.ui.input.as_str())
+                        {
+                            state.ui.input = state.voice.buffer.clone();
+                            state.voice.last_inserted =
+                                Some(state.ui.input.clone());
+                        }
+                    }
+                    voice::VoiceEvent::Final(text) => {
+                        let final_text = if text.trim().is_empty() {
+                            state.voice.buffer.clone()
+                        } else {
+                            text
+                        };
+                        state.ui.input_mode = InputMode::AgentText;
+                        state.ui.input_masked = false;
+                        state.ui.input_placeholder = None;
+                        state.ui.history_index = None;
+                        state.clear_hint();
+                        state.clear_autocomplete();
+                        if !final_text.trim().is_empty() {
+                            if state.ui.input.is_empty()
+                                || state
+                                    .voice
+                                    .last_inserted
+                                    .as_deref()
+                                    == Some(state.ui.input.as_str())
+                            {
+                                state.ui.input = final_text.clone();
+                            } else {
+                                if !state.ui.input.ends_with(' ') {
+                                    state.ui.input.push(' ');
+                                }
+                                state.ui.input.push_str(&final_text);
+                            }
+                            state.voice.last_inserted =
+                                Some(state.ui.input.clone());
+                        }
+                        state.voice.partial = None;
+                        state.voice.last_final = Some(final_text);
+                        state.voice.buffer.clear();
+                        state.voice.last_activity = Some(Instant::now());
+                    }
+                    voice::VoiceEvent::Error(msg) => {
+                        state.voice.enabled = false;
+                        state.voice.connected = false;
+                        state.voice.status = Some(format!("error: {msg}"));
+                        state.voice.buffer.clear();
+                        state.voice.last_activity = None;
+                        state.voice.last_inserted = None;
+                        log(&mut state, LogLevel::Error, msg);
+                    }
+                    voice::VoiceEvent::Status(msg) => {
+                        state.voice.status = Some(msg);
+                    }
+                },
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => break,
+            }
+        }
+
+        if state.voice.connected {
+            if let Some(last) = state.voice.last_activity {
+                if !state.voice.buffer.is_empty()
+                    && last.elapsed() >= Duration::from_millis(voice_silence_ms)
+                {
+                    let final_text = state.voice.buffer.clone();
+                    if !final_text.trim().is_empty() {
+                        state.ui.input_mode = InputMode::AgentText;
+                        state.ui.input_masked = false;
+                        state.ui.input_placeholder = None;
+                        state.ui.history_index = None;
+                        state.clear_hint();
+                        state.clear_autocomplete();
+                        if state.ui.input.is_empty()
+                            || state
+                                .voice
+                                .last_inserted
+                                .as_deref()
+                                == Some(state.ui.input.as_str())
+                        {
+                            state.ui.input = final_text.clone();
+                        } else {
+                            if !state.ui.input.ends_with(' ') {
+                                state.ui.input.push(' ');
+                            }
+                            state.ui.input.push_str(&final_text);
+                        }
+                        state.voice.last_final = Some(final_text);
+                        state.voice.last_inserted =
+                            Some(state.ui.input.clone());
+                    }
+                    state.voice.buffer.clear();
+                    state.voice.partial = None;
+                    state.voice.last_activity = Some(Instant::now());
+                }
             }
         }
 
@@ -247,7 +425,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             match mode {
                 InputMode::Command => {
-                    commands::handle_command(&mut state, text);
+                    commands::handle_command(
+                        &mut state,
+                        text,
+                        Some(&voice_cmd_tx),
+                    );
                 }
 
                 InputMode::Shell => {
@@ -299,6 +481,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 
 fn init_state() -> AgentState {
+    let voice_url = std::env::var("VLLM_REALTIME_URL")
+        .unwrap_or_else(|_| "ws://127.0.0.1:8000/v1/realtime".into());
+    let voice_model = std::env::var("VLLM_REALTIME_MODEL")
+        .unwrap_or_else(|_| "mistralai/Voxtral-Mini-4B-Realtime-2602".into());
+
     AgentState {
         ui: crate::state::UiState {
             input: String::new(),
@@ -328,6 +515,18 @@ fn init_state() -> AgentState {
         logs: crate::state::LogBuffer::new(),
         started_at: Instant::now(),
         repo_root: std::env::current_dir().unwrap(),
+        voice: crate::state::VoiceState {
+            enabled: false,
+            connected: false,
+            status: None,
+            partial: None,
+            last_final: None,
+            buffer: String::new(),
+            last_activity: None,
+            last_inserted: None,
+            url: voice_url,
+            model: voice_model,
+        },
     }
 }
 fn setup_terminal() -> Result<(), Box<dyn Error>> {

@@ -77,6 +77,70 @@ You interact with the agent directly:
 
 All actions are visible and reversible via Git.
 
+## Voice Input (vLLM Realtime + iPhone Mic)
+
+Osmogrep can accept **live voice input** via the vLLM realtime API and stream transcriptions directly into the input box.
+
+### Requirements
+
+* **GPU machine** capable of running vLLM
+* **vLLM** server with realtime support enabled
+* **iPhone** (or any browser mic) to capture audio
+* **ngrok** (or any HTTPS tunnel) for iOS mic access
+
+### vLLM Server
+
+Run vLLM with a realtime-capable model (example):
+
+```bash
+vllm serve mistralai/Voxtral-Mini-4B-Realtime-2602 \
+  --enable-realtime \
+  --host 0.0.0.0 \
+  --port 8000
+```
+
+### Osmogrep Voice Proxy
+
+Osmogrep opens a websocket proxy on `7001` and forwards to vLLM:
+
+```bash
+VLLM_REALTIME_PROXY_LISTEN=0.0.0.0:7001 \
+VLLM_REALTIME_URL=ws://127.0.0.1:8000/v1/realtime \
+VLLM_REALTIME_MODEL=mistralai/Voxtral-Mini-4B-Realtime-2602 \
+VLLM_REALTIME_SILENCE_MS=1200 \
+osmogrep
+```
+
+### Reverse Proxy (single HTTPS endpoint)
+
+Because iOS requires HTTPS for `getUserMedia`, run the local reverse proxy:
+
+```bash
+node tools/ws_reverse_proxy.js
+```
+
+This serves `mic.html` and proxies `/v1/realtime` to `localhost:7001`.
+
+### ngrok (HTTPS tunnel)
+
+Run a single tunnel to the reverse proxy:
+
+```bash
+ngrok http 8080
+```
+
+Open the HTTPS URL on iPhone:
+
+```text
+https://<ngrok-url>/mic.html
+```
+
+### What You Get
+
+* Live transcription shown above the input box
+* Final sentence **inserted directly into the input box**
+* Press **Enter** to send as a normal prompt
+
 ## Commands
 
 Osmogrep supports a small, explicit set of **slash commands**.

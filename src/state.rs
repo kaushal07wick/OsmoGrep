@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::time::{Instant};
+use std::time::Instant;
 
 pub const MAX_LOGS: usize = 1000;
 
@@ -109,6 +109,7 @@ pub struct AgentState {
 
     pub started_at: Instant,
     pub repo_root: PathBuf,
+    pub voice: VoiceState,
 }
 
 impl AgentState {
@@ -194,4 +195,17 @@ impl AgentState {
         self.ui.active_spinner = None;
         self.ui.spinner_started_at = None;
     }
+}
+
+pub struct VoiceState {
+    pub enabled: bool,
+    pub connected: bool,
+    pub status: Option<String>,
+    pub partial: Option<String>,
+    pub last_final: Option<String>,
+    pub buffer: String,
+    pub last_activity: Option<Instant>,
+    pub last_inserted: Option<String>,
+    pub url: String,
+    pub model: String,
 }

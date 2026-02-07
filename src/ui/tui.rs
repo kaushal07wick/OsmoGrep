@@ -47,6 +47,7 @@ pub fn draw_ui<B: Backend>(
     let mut input_rect = Rect::default();
     let mut exec_rect = Rect::default();
     let mut hint_rect = Rect::default();
+    let mut voice_rect = Rect::default();
 
     terminal.draw(|f| {
         let area = f.size();
@@ -90,11 +91,25 @@ pub fn draw_ui<B: Backend>(
             height: cmd_height,
         };
 
+        let voice_text = voice_bar_text(state);
+        let voice_lines =
+            calculate_input_lines(&voice_text, padded_area.width as usize, 0);
+        let available =
+            cmd_rect.y.saturating_sub(header_rect.y + header_rect.height);
+        let max_voice = available.max(1) as usize;
+        let voice_height = voice_lines.clamp(1, max_voice) as u16;
+        voice_rect = Rect {
+            x: padded_area.x,
+            y: cmd_rect.y.saturating_sub(voice_height),
+            width: padded_area.width,
+            height: voice_height,
+        };
+
         let exec_rect_calc = Rect {
             x: padded_area.x,
             y: header_rect.y + header_rect.height,
             width: padded_area.width,
-            height: cmd_rect
+            height: voice_rect
                 .y
                 .saturating_sub(header_rect.y + header_rect.height),
         };
@@ -125,6 +140,7 @@ pub fn draw_ui<B: Backend>(
 
         render_header(f, header_rect, state);
         render_execution(f, exec_rect_calc, state);
+        render_voice_bar(f, voice_rect, state);
         render_input_box(f, cmd_rect, state);
         render_status_bar(f, status_rect, state);
 
@@ -269,6 +285,48 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
     );
 }
 
+fn voice_bar_text(state: &AgentState) -> String {
+    let status = if state.voice.connected {
+        "VOICE"
+    } else if state.voice.enabled {
+        "VOICE (connecting)"
+    } else {
+        "VOICE (off)"
+    };
+
+    let mut text = state
+        .voice
+        .last_final
+        .clone()
+        .or_else(|| {
+            if state.voice.buffer.is_empty() {
+                None
+            } else {
+                Some(state.voice.buffer.clone())
+            }
+        })
+        .or_else(|| state.voice.partial.clone())
+        .unwrap_or_default();
+
+    if text.is_empty() && state.voice.connected {
+        text = "listening...".into();
+    }
+
+    format!("{status} {text}")
+}
+
+fn render_voice_bar(f: &mut Frame, area: Rect, state: &AgentState) {
+    if area.height == 0 {
+        return;
+    }
+
+    let text = voice_bar_text(state);
+    f.render_widget(
+        Paragraph::new(text).wrap(Wrap { trim: true }),
+        area,
+    );
+}
+
 /// input box ui
 fn render_input_box(f: &mut Frame, area: Rect, state: &AgentState) {
     if area.height < 3 {
@@ -368,10 +426,28 @@ fn render_status_bar(f: &mut Frame, area: Rect, state: &AgentState) {
         spinner_fixed = spinner_fixed.chars().take(SPINNER_WIDTH).collect();
     }
 
+    let voice_label = if state.voice.enabled {
+        if state.voice.connected {
+            "VOICE ON"
+        } else {
+            "VOICE ..."
+        }
+    } else {
+        "VOICE OFF"
+    };
+
+    let model_label = if state.voice.enabled {
+        "VOXTRAL"
+    } else {
+        "OPENAI"
+    };
+
     let left = vec![
         Span::styled(spinner_fixed, Style::default().fg(FG_MAIN)),
         Span::raw(" "),
-        Span::styled("OPENAI", Style::default().fg(FG_DIM)),
+        Span::styled(model_label, Style::default().fg(FG_DIM)),
+        Span::raw(" "),
+        Span::styled(voice_label, Style::default().fg(FG_DIM)),
     ];
 
     let right = vec![
@@ -381,20 +457,26 @@ fn render_status_bar(f: &mut Frame, area: Rect, state: &AgentState) {
         Span::styled(" run", Style::default().fg(FG_MUTED)),
     ];
 
-    let lw: usize = SPINNER_WIDTH + 1 + "OPENAI".len();
-    let rw: usize = right.iter().map(|s| s.content.len()).sum();
+    let rw: u16 = right.iter().map(|s| s.content.len() as u16).sum();
+    let right_width = rw.min(area.width);
+    let right_rect = Rect {
+        x: area.x + area.width.saturating_sub(right_width),
+        y: area.y,
+        width: right_width,
+        height: area.height,
+    };
+    let left_rect = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width.saturating_sub(right_width),
+        height: area.height,
+    };
 
-    let gap = area
-        .width
-        .saturating_sub((lw + rw) as u16)
-        .max(1) as usize;
-
-    let mut spans = Vec::new();
-    spans.extend(left);
-    spans.push(Span::raw(" ".repeat(gap)));
-    spans.extend(right);
-
-    f.render_widget(Paragraph::new(Line::from(spans)), area);
+    f.render_widget(Paragraph::new(Line::from(left)), left_rect);
+    f.render_widget(
+        Paragraph::new(Line::from(right)).alignment(Alignment::Right),
+        right_rect,
+    );
 }
 
 /// command hints pallete
