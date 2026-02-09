@@ -18,7 +18,7 @@ need_cmd() {
 
 os() {
   case "$(uname -s)" in
-    Linux) echo "unknown-linux-musl" ;;
+    Linux) echo "unknown-linux-gnu" ;;
     Darwin) echo "apple-darwin" ;;
     *) err "unsupported OS: $(uname -s)"; exit 1 ;;
   esac
