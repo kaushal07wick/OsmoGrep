@@ -15,22 +15,10 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            use_cross: false
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            use_cross: true
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            use_cross: false
           - target: aarch64-apple-darwin
             os: macos-latest
-            use_cross: false
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            use_cross: false
-          - target: aarch64-pc-windows-msvc
-            os: windows-latest
-            use_cross: false
 
     runs-on: ${{ matrix.os }}
 
@@ -43,19 +31,10 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Install Linux dependencies
-        if: contains(matrix.target, 'linux') && !matrix.use_cross
+        if: contains(matrix.target, 'linux')
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
 
-      - name: Install cross
-        if: matrix.use_cross
-        run: cargo install cross
-
-      - name: Build (cross)
-        if: matrix.use_cross
-        run: cross build --release --target ${{ matrix.target }}
-
-      - name: Build (native)
-        if: "!matrix.use_cross"
+      - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Package (unix)
@@ -98,9 +77,6 @@ jobs:
         with:
           files: |
             osmogrep-x86_64-unknown-linux-gnu/osmogrep-x86_64-unknown-linux-gnu.tar.gz
-            osmogrep-aarch64-unknown-linux-gnu/osmogrep-aarch64-unknown-linux-gnu.tar.gz
-            osmogrep-x86_64-apple-darwin/osmogrep-x86_64-apple-darwin.tar.gz
             osmogrep-aarch64-apple-darwin/osmogrep-aarch64-apple-darwin.tar.gz
             osmogrep-x86_64-pc-windows-msvc/osmogrep-x86_64-pc-windows-msvc.zip
-            osmogrep-aarch64-pc-windows-msvc/osmogrep-aarch64-pc-windows-msvc.zip
           generate_release_notes: true
