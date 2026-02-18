@@ -65,7 +65,11 @@ pub fn run_hook(name: &str, vars: &[(&str, &str)]) -> Result<Option<String>, Str
 
     let trimmed = text.trim();
     if trimmed.is_empty() {
-        Ok(Some(format!("hook={} exit={}", name, out.status.code().unwrap_or(-1))))
+        Ok(Some(format!(
+            "hook={} exit={}",
+            name,
+            out.status.code().unwrap_or(-1)
+        )))
     } else {
         Ok(Some(format!(
             "hook={} exit={} output={}",

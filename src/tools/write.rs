@@ -1,7 +1,7 @@
 // src/tools/write.rs
 
-use std::fs;
 use serde_json::{json, Value};
+use std::fs;
 
 use super::{Tool, ToolResult, ToolSafety};
 

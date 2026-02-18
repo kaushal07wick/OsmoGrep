@@ -54,22 +54,15 @@ impl Tool for Search {
             return Err(format!("path does not exist: {}", root).into());
         }
         if root_path.is_file() {
-            let file = File::open(root_path)
-                .map_err(|e| e.to_string())?;
+            let file = File::open(root_path).map_err(|e| e.to_string())?;
 
             let mut hits = Vec::new();
 
             for (i, line) in BufReader::new(file).lines().enumerate() {
-                let line = line
-                    .map_err(|e| e.to_string())?;
+                let line = line.map_err(|e| e.to_string())?;
 
                 if line.contains(pat) {
-                    hits.push(format!(
-                        "{}:{}:{}",
-                        root_path.display(),
-                        i + 1,
-                        line
-                    ));
+                    hits.push(format!("{}:{}:{}", root_path.display(), i + 1, line));
                 }
 
                 if hits.len() >= 200 {
@@ -93,8 +86,7 @@ impl Tool for Search {
             {
                 if out.status.success() {
                     let text = String::from_utf8_lossy(&out.stdout);
-                    let hits: Vec<String> =
-                        text.lines().take(200).map(|l| l.to_string()).collect();
+                    let hits: Vec<String> = text.lines().take(200).map(|l| l.to_string()).collect();
 
                     return Ok(json!({
                         "engine": "ripgrep",
@@ -128,12 +120,7 @@ impl Tool for Search {
                     };
 
                     if line.contains(pat) {
-                        hits.push(format!(
-                            "{}:{}:{}",
-                            path.display(),
-                            i + 1,
-                            line
-                        ));
+                        hits.push(format!("{}:{}:{}", path.display(), i + 1, line));
                     }
 
                     if hits.len() >= 200 {

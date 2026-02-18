@@ -1,7 +1,7 @@
 // src/tools/edit.rs
 
-use std::fs;
 use serde_json::{json, Value};
+use std::fs;
 
 use super::{Tool, ToolResult, ToolSafety};
 
@@ -36,10 +36,22 @@ impl Tool for Edit {
     }
 
     fn call(&self, args: Value) -> ToolResult {
-        let path = args.get("path").and_then(Value::as_str).ok_or("missing path")?;
-        let old = args.get("old").and_then(Value::as_str).ok_or("missing old")?;
-        let new = args.get("new").and_then(Value::as_str).ok_or("missing new")?;
-        let all = args.get("all_occ").and_then(Value::as_bool).unwrap_or(false);
+        let path = args
+            .get("path")
+            .and_then(Value::as_str)
+            .ok_or("missing path")?;
+        let old = args
+            .get("old")
+            .and_then(Value::as_str)
+            .ok_or("missing old")?;
+        let new = args
+            .get("new")
+            .and_then(Value::as_str)
+            .ok_or("missing new")?;
+        let all = args
+            .get("all_occ")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
 
         let pre_hook = crate::hooks::run_hook("pre_edit", &[("path", path)])
             .ok()

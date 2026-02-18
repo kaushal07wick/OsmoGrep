@@ -1,18 +1,18 @@
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use std::time::Instant;
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
 
 pub const MAX_LOGS: usize = 1000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputMode {
-    AgentText, 
-    Shell,     
-    Command,   
-    ApiKey,   
+    AgentText,
+    Shell,
+    Command,
+    ApiKey,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -73,7 +73,6 @@ pub struct DiffSnapshot {
     pub before: String,
     pub after: String,
 }
-
 
 #[derive(Clone, Copy)]
 pub struct CommandItem {
@@ -319,11 +318,7 @@ impl ConversationHistory {
     }
 
     fn recompute_estimate(&mut self) {
-        self.token_estimate = self
-            .messages
-            .iter()
-            .map(estimate_message_tokens)
-            .sum();
+        self.token_estimate = self.messages.iter().map(estimate_message_tokens).sum();
     }
 
     fn merge_summary(&mut self, removed: Vec<Value>) {
@@ -358,15 +353,15 @@ impl ConversationHistory {
             lines = lines[lines.len() - 36..].to_vec();
         }
 
-        let summary = format!(
-            "[conversation-summary]\n{}",
-            lines.join("\n")
-        );
+        let summary = format!("[conversation-summary]\n{}", lines.join("\n"));
 
-        self.messages.insert(1, json!({
-            "role": "assistant",
-            "content": summary,
-        }));
+        self.messages.insert(
+            1,
+            json!({
+                "role": "assistant",
+                "content": summary,
+            }),
+        );
         self.recompute_estimate();
     }
 }
@@ -383,10 +378,7 @@ fn summarize_message(msg: &Value) -> Option<String> {
     }
 
     let content = msg.get("content").and_then(Value::as_str)?;
-    let flat = content
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    let flat = content.split_whitespace().collect::<Vec<_>>().join(" ");
     if flat.is_empty() {
         return None;
     }

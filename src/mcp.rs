@@ -49,11 +49,7 @@ pub fn list_servers() -> Vec<String> {
         .unwrap_or_default()
 }
 
-pub fn call(
-    server: Option<&str>,
-    method: &str,
-    args: &Value,
-) -> Result<Value, String> {
+pub fn call(server: Option<&str>, method: &str, args: &Value) -> Result<Value, String> {
     let cfg = load_config().ok_or("MCP config not found")?;
     if !cfg.enabled.unwrap_or(false) {
         return Err("MCP is disabled. Set [mcp].enabled = true".to_string());
@@ -81,7 +77,10 @@ pub fn call(
         .arg(&scfg.cmd)
         .env("OSMOGREP_MCP_SERVER", &target)
         .env("OSMOGREP_MCP_METHOD", method)
-        .env("OSMOGREP_MCP_ARGS", serde_json::to_string(args).unwrap_or_else(|_| "{}".into()));
+        .env(
+            "OSMOGREP_MCP_ARGS",
+            serde_json::to_string(args).unwrap_or_else(|_| "{}".into()),
+        );
 
     let mut child = cmd.spawn().map_err(|e| e.to_string())?;
     let start = std::time::Instant::now();
@@ -103,7 +102,10 @@ pub fn call(
 
         if start.elapsed() > timeout {
             let _ = child.kill();
-            return Err(format!("MCP call timed out after {}ms", timeout.as_millis()));
+            return Err(format!(
+                "MCP call timed out after {}ms",
+                timeout.as_millis()
+            ));
         }
 
         std::thread::sleep(Duration::from_millis(50));

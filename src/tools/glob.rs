@@ -1,9 +1,9 @@
 // src/tools/glob.rs
 
-use serde_json::{json, Value};
 use glob::glob as glob_fn;
-use walkdir::WalkDir;
+use serde_json::{json, Value};
 use std::path::PathBuf;
+use walkdir::WalkDir;
 
 use super::{Tool, ToolResult, ToolSafety};
 
@@ -43,20 +43,14 @@ impl Tool for Glob {
             .and_then(Value::as_str)
             .ok_or("missing pat")?;
 
-        let root = args
-            .get("path")
-            .and_then(Value::as_str)
-            .unwrap_or(".");
+        let root = args.get("path").and_then(Value::as_str).unwrap_or(".");
 
         let mut count = 0usize;
         let mut sample: Vec<String> = Vec::new();
 
         // Broad patterns → WalkDir (streaming, safe)
         if pat == "*" || pat == "**" || pat == "**/*" {
-            for entry in WalkDir::new(root)
-                .into_iter()
-                .filter_map(Result::ok)
-            {
+            for entry in WalkDir::new(root).into_iter().filter_map(Result::ok) {
                 if entry.file_type().is_file() {
                     count += 1;
 

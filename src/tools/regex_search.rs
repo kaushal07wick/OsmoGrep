@@ -1,8 +1,8 @@
+use regex::Regex;
 use serde_json::{json, Value};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
-use regex::Regex;
 use walkdir::WalkDir;
 
 use super::{Tool, ToolResult, ToolSafety};

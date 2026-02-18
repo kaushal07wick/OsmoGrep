@@ -15,7 +15,9 @@ pub struct Markdown {
 
 impl Markdown {
     pub fn new() -> Self {
-        Self { state: MdState::Normal }
+        Self {
+            state: MdState::Normal,
+        }
     }
 
     pub fn render_line(&mut self, input: &str) -> Line<'static> {

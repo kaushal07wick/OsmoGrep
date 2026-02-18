@@ -37,10 +37,7 @@ impl Tool for GitCommit {
             .get("message")
             .and_then(Value::as_str)
             .ok_or("missing message")?;
-        let add_all = args
-            .get("add_all")
-            .and_then(Value::as_bool)
-            .unwrap_or(true);
+        let add_all = args.get("add_all").and_then(Value::as_bool).unwrap_or(true);
 
         let add_out = if add_all {
             Some(

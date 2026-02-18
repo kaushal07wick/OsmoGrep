@@ -1,7 +1,7 @@
 // src/tools/read.rs
 
-use std::fs;
 use serde_json::{json, Value};
+use std::fs;
 
 use super::{Tool, ToolResult, ToolSafety};
 
@@ -40,10 +40,7 @@ impl Tool for Read {
             .and_then(Value::as_str)
             .ok_or("missing path")?;
 
-        let offset = args
-            .get("offset")
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as usize;
+        let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
 
         let limit = args
             .get("limit")

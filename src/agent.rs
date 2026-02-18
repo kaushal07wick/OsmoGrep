@@ -1,6 +1,5 @@
 use std::{
-    env,
-    fs,
+    env, fs,
     io::Read,
     path::PathBuf,
     process::{Command, Stdio},
@@ -20,8 +19,13 @@ use crate::tools::{ToolRegistry, ToolSafety};
 
 #[derive(Debug)]
 pub enum AgentEvent {
-    ToolCall { name: String, args: Value },
-    ToolResult { summary: String },
+    ToolCall {
+        name: String,
+        args: Value,
+    },
+    ToolResult {
+        summary: String,
+    },
     ToolDiff {
         tool: String,
         target: String,
@@ -220,12 +224,7 @@ impl Agent {
         &self.model_cfg
     }
 
-    pub fn set_model_config(
-        &mut self,
-        provider: String,
-        model: String,
-        base_url: Option<String>,
-    ) {
+    pub fn set_model_config(&mut self, provider: String, model: String, base_url: Option<String>) {
         self.model_cfg.provider = provider;
         self.model_cfg.model = model;
         self.model_cfg.base_url = base_url;
@@ -449,7 +448,8 @@ impl RunAgent {
                                 if c.get("type").and_then(Value::as_str) == Some("output_text") {
                                     if let Some(text) = c.get("text").and_then(Value::as_str) {
                                         let _ = tx.send(AgentEvent::OutputText(text.to_string()));
-                                        persisted.push(json!({"role": "assistant", "content": text}));
+                                        persisted
+                                            .push(json!({"role": "assistant", "content": text}));
                                         let _ = tx.send(AgentEvent::ConversationUpdate(persisted));
                                         return Ok(());
                                     }
@@ -504,11 +504,7 @@ impl RunAgent {
         Err(last_err.unwrap_or_else(|| "unknown API error".into()))
     }
 
-    fn call_openai_blocking(
-        &self,
-        api_key: &str,
-        input: &Value,
-    ) -> Result<Value, String> {
+    fn call_openai_blocking(&self, api_key: &str, input: &Value) -> Result<Value, String> {
         let payload = json!({
             "model": self.model_cfg.model,
             "input": input,
@@ -701,7 +697,10 @@ fn summarize_args(tool: &str, args: &Value) -> String {
 
 fn env_truthy(key: &str, default: bool) -> bool {
     match env::var(key) {
-        Ok(val) => matches!(val.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"),
+        Ok(val) => matches!(
+            val.to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        ),
         Err(_) => default,
     }
 }

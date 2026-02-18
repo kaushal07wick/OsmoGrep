@@ -95,7 +95,12 @@ fn build_definition_patterns(symbol: &str) -> Result<Vec<Regex>, String> {
         .collect()
 }
 
-fn search_file(path: &Path, regexes: &[Regex], hits: &mut Vec<String>, limit: usize) -> Result<(), String> {
+fn search_file(
+    path: &Path,
+    regexes: &[Regex],
+    hits: &mut Vec<String>,
+    limit: usize,
+) -> Result<(), String> {
     let file = File::open(path).map_err(|e| e.to_string())?;
     for (idx, line) in BufReader::new(file).lines().enumerate() {
         let line = match line {

@@ -57,7 +57,10 @@ pub fn run_tests(repo_root: &Path, target: Option<&str>) -> Result<TestRun, Stri
     })
 }
 
-fn detect_framework_and_command(repo_root: &Path, target: Option<&str>) -> Result<(String, String), String> {
+fn detect_framework_and_command(
+    repo_root: &Path,
+    target: Option<&str>,
+) -> Result<(String, String), String> {
     let target = target.unwrap_or("").trim();
 
     let cargo = repo_root.join("Cargo.toml").exists();
@@ -108,8 +111,14 @@ fn parse_counts(framework: &str, output: &str) -> (usize, usize) {
 fn parse_cargo_counts(output: &str) -> (usize, usize) {
     let re = Regex::new(r"test result:\s+\w+\.\s+(\d+) passed;\s+(\d+) failed;").unwrap();
     if let Some(c) = re.captures_iter(output).last() {
-        let p = c.get(1).and_then(|m| m.as_str().parse::<usize>().ok()).unwrap_or(0);
-        let f = c.get(2).and_then(|m| m.as_str().parse::<usize>().ok()).unwrap_or(0);
+        let p = c
+            .get(1)
+            .and_then(|m| m.as_str().parse::<usize>().ok())
+            .unwrap_or(0);
+        let f = c
+            .get(2)
+            .and_then(|m| m.as_str().parse::<usize>().ok())
+            .unwrap_or(0);
         return (p, f);
     }
     (0, 0)
@@ -156,7 +165,10 @@ fn parse_jest_counts(output: &str) -> (usize, usize) {
 }
 
 fn parse_go_counts(output: &str) -> (usize, usize) {
-    let failed = output.lines().filter(|l| l.starts_with("--- FAIL:")).count();
+    let failed = output
+        .lines()
+        .filter(|l| l.starts_with("--- FAIL:"))
+        .count();
     let passed = output.lines().filter(|l| l.starts_with("ok\t")).count();
     (passed, failed)
 }

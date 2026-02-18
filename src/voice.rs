@@ -1,15 +1,15 @@
+use std::net::{TcpListener, TcpStream};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
 use std::thread;
 use std::time::Duration;
-use std::net::{TcpListener, TcpStream};
 
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
-use cpal::{SampleFormat, Stream};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::{SampleFormat, Stream};
 use crossbeam_channel::Sender as CbSender;
 use serde_json::json;
 use tungstenite::{accept, connect, Message};
@@ -42,22 +42,18 @@ pub fn spawn_voice_worker(
     cmd_rx: Receiver<VoiceCommand>,
     evt_tx: Sender<VoiceEvent>,
 ) -> thread::JoinHandle<()> {
-    thread::spawn(move || {
-        loop {
-            match cmd_rx.recv() {
-                Ok(VoiceCommand::Start { url, model }) => {
-                    if let Err(e) = run_session(&cmd_rx, &evt_tx, &url, &model) {
-                        let _ = evt_tx.send(VoiceEvent::Error(e));
-                    }
+    thread::spawn(move || loop {
+        match cmd_rx.recv() {
+            Ok(VoiceCommand::Start { url, model }) => {
+                if let Err(e) = run_session(&cmd_rx, &evt_tx, &url, &model) {
+                    let _ = evt_tx.send(VoiceEvent::Error(e));
                 }
-                Ok(VoiceCommand::Stop) => {
-                    let _ = evt_tx.send(VoiceEvent::Status(
-                        "Voice not running.".into(),
-                    ));
-                }
-                Ok(VoiceCommand::Shutdown) | Err(_) => {
-                    break;
-                }
+            }
+            Ok(VoiceCommand::Stop) => {
+                let _ = evt_tx.send(VoiceEvent::Status("Voice not running.".into()));
+            }
+            Ok(VoiceCommand::Shutdown) | Err(_) => {
+                break;
             }
         }
     })
@@ -73,9 +69,7 @@ pub fn spawn_voice_proxy_worker(
         let listener = match TcpListener::bind(&listen_addr) {
             Ok(listener) => listener,
             Err(e) => {
-                let _ = evt_tx.send(VoiceEvent::Error(format!(
-                    "Voice proxy bind failed: {e}"
-                )));
+                let _ = evt_tx.send(VoiceEvent::Error(format!("Voice proxy bind failed: {e}")));
                 return;
             }
         };
@@ -88,19 +82,13 @@ pub fn spawn_voice_proxy_worker(
             let stream = match stream {
                 Ok(stream) => stream,
                 Err(e) => {
-                    let _ = evt_tx.send(VoiceEvent::Error(format!(
-                        "Voice proxy accept failed: {e}"
-                    )));
+                    let _ =
+                        evt_tx.send(VoiceEvent::Error(format!("Voice proxy accept failed: {e}")));
                     continue;
                 }
             };
 
-            if let Err(e) = handle_proxy_connection(
-                stream,
-                &vllm_url,
-                &model,
-                &evt_tx,
-            ) {
+            if let Err(e) = handle_proxy_connection(stream, &vllm_url, &model, &evt_tx) {
                 let _ = evt_tx.send(VoiceEvent::Error(e));
             }
         }
@@ -171,9 +159,7 @@ fn run_session(
                 break;
             }
             Ok(VoiceCommand::Start { .. }) => {
-                let _ = evt_tx.send(VoiceEvent::Status(
-                    "Voice already running.".into(),
-                ));
+                let _ = evt_tx.send(VoiceEvent::Status("Voice already running.".into()));
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -288,16 +274,16 @@ fn handle_proxy_connection(
     evt_tx: &Sender<VoiceEvent>,
 ) -> Result<(), String> {
     let mut client_ws = accept(stream).map_err(|e| e.to_string())?;
-    let _ = evt_tx.send(VoiceEvent::Status(
-        "voice proxy client connected".into(),
-    ));
+    let _ = evt_tx.send(VoiceEvent::Status("voice proxy client connected".into()));
     let url = normalize_ws_url(vllm_url)?;
     let (mut vllm_ws, _resp) = connect(url.as_str()).map_err(|e| e.to_string())?;
 
     if let tungstenite::stream::MaybeTlsStream::Plain(stream) = vllm_ws.get_mut() {
         let _ = stream.set_read_timeout(Some(Duration::from_millis(30)));
     }
-    let _ = client_ws.get_mut().set_read_timeout(Some(Duration::from_millis(30)));
+    let _ = client_ws
+        .get_mut()
+        .set_read_timeout(Some(Duration::from_millis(30)));
 
     // Wait for session.created from vLLM.
     let _ = vllm_ws.read();
@@ -320,10 +306,8 @@ fn handle_proxy_connection(
         match client_ws.read() {
             Ok(Message::Text(text)) => {
                 if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
-                    let is_session_update = value
-                        .get("type")
-                        .and_then(|v| v.as_str())
-                        == Some("session.update");
+                    let is_session_update =
+                        value.get("type").and_then(|v| v.as_str()) == Some("session.update");
                     let typ = value.get("type").and_then(|v| v.as_str());
                     if is_session_update {
                         // ignore client session.update; proxy controls model
@@ -348,17 +332,14 @@ fn handle_proxy_connection(
             }
             Ok(Message::Close(_)) => {
                 let _ = vllm_ws.close(None);
-                let _ = evt_tx.send(VoiceEvent::Status(
-                    "voice proxy client disconnected".into(),
-                ));
+                let _ = evt_tx.send(VoiceEvent::Status("voice proxy client disconnected".into()));
                 let _ = evt_tx.send(VoiceEvent::Disconnected);
                 break;
             }
             Ok(_) => {}
             Err(tungstenite::Error::Io(e))
                 if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.kind() == std::io::ErrorKind::TimedOut =>
-            {}
+                    || e.kind() == std::io::ErrorKind::TimedOut => {}
             Err(e) => {
                 let _ = vllm_ws.close(None);
                 return Err(e.to_string());
@@ -373,17 +354,14 @@ fn handle_proxy_connection(
             }
             Ok(Message::Close(_)) => {
                 let _ = client_ws.close(None);
-                let _ = evt_tx.send(VoiceEvent::Status(
-                    "voice proxy server disconnected".into(),
-                ));
+                let _ = evt_tx.send(VoiceEvent::Status("voice proxy server disconnected".into()));
                 let _ = evt_tx.send(VoiceEvent::Disconnected);
                 break;
             }
             Ok(_) => {}
             Err(tungstenite::Error::Io(e))
                 if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.kind() == std::io::ErrorKind::TimedOut =>
-            {}
+                    || e.kind() == std::io::ErrorKind::TimedOut => {}
             Err(e) => {
                 let _ = client_ws.close(None);
                 return Err(e.to_string());
@@ -418,30 +396,15 @@ fn start_audio_capture(
     let channels = config.channels as usize;
 
     match sample_format {
-        SampleFormat::F32 => build_stream_f32(
-            device,
-            config,
-            channels,
-            sample_rate,
-            audio_tx,
-            stop,
-        ),
-        SampleFormat::I16 => build_stream_i16(
-            device,
-            config,
-            channels,
-            sample_rate,
-            audio_tx,
-            stop,
-        ),
-        SampleFormat::U16 => build_stream_u16(
-            device,
-            config,
-            channels,
-            sample_rate,
-            audio_tx,
-            stop,
-        ),
+        SampleFormat::F32 => {
+            build_stream_f32(device, config, channels, sample_rate, audio_tx, stop)
+        }
+        SampleFormat::I16 => {
+            build_stream_i16(device, config, channels, sample_rate, audio_tx, stop)
+        }
+        SampleFormat::U16 => {
+            build_stream_u16(device, config, channels, sample_rate, audio_tx, stop)
+        }
         _ => Err("Unsupported sample format".into()),
     }
 }
@@ -533,8 +496,7 @@ where
                     return;
                 }
 
-                let mut mono: Vec<f32> =
-                    Vec::with_capacity(data.len() / channels);
+                let mut mono: Vec<f32> = Vec::with_capacity(data.len() / channels);
 
                 for frame in data.chunks(channels) {
                     let mut sum = 0.0f32;
@@ -557,8 +519,7 @@ where
                 }
 
                 while out_buf.len() >= CHUNK_SAMPLES {
-                    let chunk: Vec<i16> =
-                        out_buf.drain(..CHUNK_SAMPLES).collect();
+                    let chunk: Vec<i16> = out_buf.drain(..CHUNK_SAMPLES).collect();
                     let _ = audio_tx.try_send(chunk);
                 }
             },
@@ -570,11 +531,7 @@ where
     Ok(stream)
 }
 
-fn resample_linear(
-    input: &[f32],
-    from_rate: u32,
-    to_rate: u32,
-) -> Vec<f32> {
+fn resample_linear(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
     if input.is_empty() {
         return Vec::new();
     }

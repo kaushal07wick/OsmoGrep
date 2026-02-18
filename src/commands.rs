@@ -6,10 +6,8 @@ use std::time::Instant;
 use crate::agent::Agent;
 use crate::logger::log;
 use crate::persistence;
+use crate::state::{AgentState, CommandItem, InputMode, LogLevel};
 use crate::test_harness::run_tests;
-use crate::state::{
-    AgentState, CommandItem, InputMode, LogLevel
-};
 use crate::voice::VoiceCommand;
 use std::sync::mpsc::Sender;
 
@@ -58,16 +56,10 @@ pub fn handle_command(
         "" => {}
 
         _ => {
-            log(
-                state,
-                LogLevel::Warn,
-                "Unknown command. Type /help",
-            );
+            log(state, LogLevel::Warn, "Unknown command. Type /help");
         }
     }
-
 }
-
 
 fn help(state: &mut AgentState) {
     use LogLevel::Info;
@@ -82,12 +74,32 @@ fn help(state: &mut AgentState) {
     log(state, Info, "  /model       Show active provider/model");
     log(state, Info, "  /model <provider> <model> [base_url]");
     log(state, Info, "  /test        Run auto-detected tests");
-    log(state, Info, "  /test <arg>  Run targeted tests (framework-specific)");
-    log(state, Info, "  /mcp         Show MCP status and configured servers");
+    log(
+        state,
+        Info,
+        "  /test <arg>  Run targeted tests (framework-specific)",
+    );
+    log(
+        state,
+        Info,
+        "  /mcp         Show MCP status and configured servers",
+    );
     log(state, Info, "  /providers   Show available model providers");
-    log(state, Info, "  /undo        Revert the last agent file change");
-    log(state, Info, "  /diff        Show all file changes this session");
-    log(state, Info, "  /approve     Toggle dangerous tool auto-approve");
+    log(
+        state,
+        Info,
+        "  /undo        Revert the last agent file change",
+    );
+    log(
+        state,
+        Info,
+        "  /diff        Show all file changes this session",
+    );
+    log(
+        state,
+        Info,
+        "  /approve     Toggle dangerous tool auto-approve",
+    );
     log(state, Info, "  /new         Start a fresh conversation");
     log(state, Info, "  /quit | /q   Stop agent execution");
     log(state, Info, "  /exit        Exit Osmogrep");
@@ -147,7 +159,9 @@ fn show_model(state: &mut AgentState, agent: Option<&mut Agent>) {
             "Model: provider={} model={} base_url={}",
             cfg.provider,
             cfg.model,
-            cfg.base_url.clone().unwrap_or_else(|| "(default)".to_string())
+            cfg.base_url
+                .clone()
+                .unwrap_or_else(|| "(default)".to_string())
         ),
     );
 }
@@ -192,19 +206,30 @@ fn set_model(state: &mut AgentState, cmd: &str, agent: Option<&mut Agent>) {
 
 fn run_test(state: &mut AgentState, cmd: &str) {
     let target = cmd.strip_prefix("/test").map(str::trim).unwrap_or("");
-    let target = if target.is_empty() { None } else { Some(target) };
+    let target = if target.is_empty() {
+        None
+    } else {
+        Some(target)
+    };
 
     log(
         state,
         LogLevel::Info,
-        format!("Running tests{}", target.map(|t| format!(" ({})", t)).unwrap_or_default()),
+        format!(
+            "Running tests{}",
+            target.map(|t| format!(" ({})", t)).unwrap_or_default()
+        ),
     );
 
     match run_tests(&state.repo_root, target) {
         Ok(run) => {
             log(
                 state,
-                if run.success { LogLevel::Success } else { LogLevel::Error },
+                if run.success {
+                    LogLevel::Success
+                } else {
+                    LogLevel::Error
+                },
                 format!(
                     "Test run [{}] exit={} passed={} failed={} duration={}ms",
                     run.framework, run.exit_code, run.passed, run.failed, run.duration_ms
@@ -241,7 +266,11 @@ fn show_mcp(state: &mut AgentState) {
         ),
     );
     if !servers.is_empty() {
-        log(state, LogLevel::Info, format!("Servers: {}", servers.join(", ")));
+        log(
+            state,
+            LogLevel::Info,
+            format!("Servers: {}", servers.join(", ")),
+        );
     }
 }
 
@@ -297,7 +326,10 @@ fn show_session_diff(state: &mut AgentState) {
     log(
         state,
         LogLevel::Info,
-        format!("Showing {} session change(s).", state.ui.diff_snapshot.len()),
+        format!(
+            "Showing {} session change(s).",
+            state.ui.diff_snapshot.len()
+        ),
     );
 }
 
@@ -316,11 +348,7 @@ fn enter_api_key_mode(state: &mut AgentState) {
 
 fn voice_status(state: &mut AgentState) {
     state.voice.visible = true;
-    let status = state
-        .voice
-        .status
-        .clone()
-        .unwrap_or_else(|| "idle".into());
+    let status = state.voice.status.clone().unwrap_or_else(|| "idle".into());
 
     log(
         state,
@@ -383,23 +411,74 @@ pub fn update_command_hints(state: &mut AgentState) {
     }
 
     let all: &[CommandItem] = &[
-        CommandItem { cmd: "/help", desc: "Show available commands" },
-        CommandItem { cmd: "/clear", desc: "Clear logs" },
-        CommandItem { cmd: "/key", desc: "Set OpenAI API key" },
-        CommandItem { cmd: "/voice", desc: "Show voice status" },
-        CommandItem { cmd: "/voice on", desc: "Start voice input" },
-        CommandItem { cmd: "/voice off", desc: "Stop voice input" },
-        CommandItem { cmd: "/model", desc: "Show active provider/model" },
-        CommandItem { cmd: "/test", desc: "Run auto-detected tests" },
-        CommandItem { cmd: "/mcp", desc: "Show MCP status and servers" },
-        CommandItem { cmd: "/providers", desc: "Show available model providers" },
-        CommandItem { cmd: "/undo", desc: "Revert the last agent file change" },
-        CommandItem { cmd: "/diff", desc: "Show all file changes this session" },
-        CommandItem { cmd: "/approve", desc: "Toggle dangerous tool auto-approve" },
-        CommandItem { cmd: "/new", desc: "Start a fresh conversation" },
-        CommandItem { cmd: "/quit", desc: "Stop agent execution" },
-        CommandItem { cmd: "/q", desc: "Stop agent execution" },
-        CommandItem { cmd: "/exit", desc: "Exit Osmogrep" },
+        CommandItem {
+            cmd: "/help",
+            desc: "Show available commands",
+        },
+        CommandItem {
+            cmd: "/clear",
+            desc: "Clear logs",
+        },
+        CommandItem {
+            cmd: "/key",
+            desc: "Set OpenAI API key",
+        },
+        CommandItem {
+            cmd: "/voice",
+            desc: "Show voice status",
+        },
+        CommandItem {
+            cmd: "/voice on",
+            desc: "Start voice input",
+        },
+        CommandItem {
+            cmd: "/voice off",
+            desc: "Stop voice input",
+        },
+        CommandItem {
+            cmd: "/model",
+            desc: "Show active provider/model",
+        },
+        CommandItem {
+            cmd: "/test",
+            desc: "Run auto-detected tests",
+        },
+        CommandItem {
+            cmd: "/mcp",
+            desc: "Show MCP status and servers",
+        },
+        CommandItem {
+            cmd: "/providers",
+            desc: "Show available model providers",
+        },
+        CommandItem {
+            cmd: "/undo",
+            desc: "Revert the last agent file change",
+        },
+        CommandItem {
+            cmd: "/diff",
+            desc: "Show all file changes this session",
+        },
+        CommandItem {
+            cmd: "/approve",
+            desc: "Toggle dangerous tool auto-approve",
+        },
+        CommandItem {
+            cmd: "/new",
+            desc: "Start a fresh conversation",
+        },
+        CommandItem {
+            cmd: "/quit",
+            desc: "Stop agent execution",
+        },
+        CommandItem {
+            cmd: "/q",
+            desc: "Stop agent execution",
+        },
+        CommandItem {
+            cmd: "/exit",
+            desc: "Exit Osmogrep",
+        },
     ];
 
     for item in all {
@@ -424,8 +503,7 @@ pub fn update_command_hints(state: &mut AgentState) {
     if state.ui.command_items.is_empty() {
         state.ui.command_selected = 0;
     } else {
-        state.ui.command_selected =
-            prev_selected.min(state.ui.command_items.len() - 1);
+        state.ui.command_selected = prev_selected.min(state.ui.command_items.len() - 1);
     }
 }
 

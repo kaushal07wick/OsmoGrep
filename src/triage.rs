@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 use clap::Args;
 use reqwest::blocking::Client;
-use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT};
+use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, USER_AGENT};
 use serde::{Deserialize, Serialize};
 
 #[derive(Args, Debug, Clone)]
@@ -19,13 +19,21 @@ pub struct TriageArgs {
     #[arg(long, default_value = "open", help = "Item state: open | closed | all")]
     pub state: String,
 
-    #[arg(long, default_value_t = 250, help = "Max PRs and issues each to analyze")]
+    #[arg(
+        long,
+        default_value_t = 250,
+        help = "Max PRs and issues each to analyze"
+    )]
     pub limit: usize,
 
     #[arg(long, default_value_t = 15, help = "Top PRs to deep-review")]
     pub deep_review_top: usize,
 
-    #[arg(long, default_value_t = 0.62, help = "Duplicate similarity threshold (0.0-1.0)")]
+    #[arg(
+        long,
+        default_value_t = 0.62,
+        help = "Duplicate similarity threshold (0.0-1.0)"
+    )]
     pub dedupe_threshold: f64,
 
     #[arg(long, help = "Path to a vision document for scope alignment")]
@@ -219,7 +227,11 @@ pub fn run(args: TriageArgs) -> Result<(), Box<dyn Error>> {
     let deep_count = args.deep_review_top.min(scored.len());
     for report in scored.iter_mut().take(deep_count) {
         if let Some(pr) = pulls.iter().find(|p| p.number == report.number) {
-            let deep = gh.fetch_deep_signals(&args.repo, pr.number, pr.head.as_ref().and_then(|h| h.sha.clone()))?;
+            let deep = gh.fetch_deep_signals(
+                &args.repo,
+                pr.number,
+                pr.head.as_ref().and_then(|h| h.sha.clone()),
+            )?;
             *report = score_pr(pr, Some(deep), vision_model.as_ref());
         }
     }
@@ -256,7 +268,10 @@ pub fn run(args: TriageArgs) -> Result<(), Box<dyn Error>> {
 fn print_summary(report: &TriageReport, out: Option<&PathBuf>) {
     println!("repo: {}", report.repo);
     println!("state: {}", report.state);
-    println!("scanned: {} PRs, {} Issues", report.scanned_prs, report.scanned_issues);
+    println!(
+        "scanned: {} PRs, {} Issues",
+        report.scanned_prs, report.scanned_issues
+    );
     println!("duplicates found: {}", report.duplicate_pairs.len());
 
     if !report.ranked_prs.is_empty() {
@@ -308,7 +323,8 @@ impl GithubClient {
             let url = format!(
                 "https://api.github.com/repos/{repo}/pulls?state={state}&per_page=100&page={page}&sort=updated&direction=desc"
             );
-            let mut chunk: Vec<GithubPull> = self.client.get(&url).send()?.error_for_status()?.json()?;
+            let mut chunk: Vec<GithubPull> =
+                self.client.get(&url).send()?.error_for_status()?.json()?;
             if chunk.is_empty() {
                 break;
             }
@@ -331,7 +347,8 @@ impl GithubClient {
             let url = format!(
                 "https://api.github.com/repos/{repo}/issues?state={state}&per_page=100&page={page}&sort=updated&direction=desc"
             );
-            let mut chunk: Vec<GithubIssue> = self.client.get(&url).send()?.error_for_status()?.json()?;
+            let mut chunk: Vec<GithubIssue> =
+                self.client.get(&url).send()?.error_for_status()?.json()?;
             if chunk.is_empty() {
                 break;
             }
@@ -348,9 +365,8 @@ impl GithubClient {
         pr_number: u64,
         head_sha: Option<String>,
     ) -> Result<DeepSignals, Box<dyn Error>> {
-        let reviews_url = format!(
-            "https://api.github.com/repos/{repo}/pulls/{pr_number}/reviews?per_page=100"
-        );
+        let reviews_url =
+            format!("https://api.github.com/repos/{repo}/pulls/{pr_number}/reviews?per_page=100");
         let reviews: Vec<GithubReview> = self
             .client
             .get(&reviews_url)
@@ -391,9 +407,8 @@ impl GithubClient {
             None
         };
 
-        let files_url = format!(
-            "https://api.github.com/repos/{repo}/pulls/{pr_number}/files?per_page=100"
-        );
+        let files_url =
+            format!("https://api.github.com/repos/{repo}/pulls/{pr_number}/files?per_page=100");
         let files: Vec<PullDetailFile> = self
             .client
             .get(&files_url)
@@ -476,18 +491,23 @@ fn find_duplicates(items: &[WorkItem], threshold: f64) -> Vec<DuplicatePair> {
             let a = &items[i];
             let b = &items[j];
 
-            let shared_title_tokens = a
-                .title_token_set
-                .intersection(&b.title_token_set)
-                .count();
+            let shared_title_tokens = a.title_token_set.intersection(&b.title_token_set).count();
 
             if shared_title_tokens == 0 {
                 continue;
             }
 
             let title_sim = dice_coefficient(&a.title, &b.title);
-            let body_a = if a.body.len() > 1200 { &a.body[..1200] } else { &a.body };
-            let body_b = if b.body.len() > 1200 { &b.body[..1200] } else { &b.body };
+            let body_a = if a.body.len() > 1200 {
+                &a.body[..1200]
+            } else {
+                &a.body
+            };
+            let body_b = if b.body.len() > 1200 {
+                &b.body[..1200]
+            } else {
+                &b.body
+            };
             let text_sim = jaccard(&a.token_set, &b.token_set);
             let body_sim = dice_coefficient(body_a, body_b);
 
@@ -521,11 +541,19 @@ fn find_duplicates(items: &[WorkItem], threshold: f64) -> Vec<DuplicatePair> {
         }
     }
 
-    out.sort_by(|x, y| y.similarity.partial_cmp(&x.similarity).unwrap_or(Ordering::Equal));
+    out.sort_by(|x, y| {
+        y.similarity
+            .partial_cmp(&x.similarity)
+            .unwrap_or(Ordering::Equal)
+    });
     out
 }
 
-fn score_pr(pr: &GithubPull, deep: Option<DeepSignals>, vision: Option<&VisionModel>) -> PrScoreReport {
+fn score_pr(
+    pr: &GithubPull,
+    deep: Option<DeepSignals>,
+    vision: Option<&VisionModel>,
+) -> PrScoreReport {
     let title = pr.title.clone().unwrap_or_default();
     let body = pr.body.clone().unwrap_or_default();
     let mut score = 50.0;
@@ -807,7 +835,13 @@ fn dice_coefficient(left: &str, right: &str) -> f64 {
 fn normalize_text(s: &str) -> String {
     s.to_ascii_lowercase()
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c.is_ascii_whitespace() { c } else { ' ' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c.is_ascii_whitespace() {
+                c
+            } else {
+                ' '
+            }
+        })
         .collect::<String>()
         .split_whitespace()
         .collect::<Vec<_>>()
@@ -838,7 +872,9 @@ fn is_date_near(a: &str, b: &str, within_days: i64) -> bool {
 }
 
 fn parse_date(s: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&Utc))
+    DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|d| d.with_timezone(&Utc))
 }
 
 fn build_vision_model(text: &str) -> VisionModel {

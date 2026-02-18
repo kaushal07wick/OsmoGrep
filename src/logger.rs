@@ -7,32 +7,21 @@ const TOOL_PREFIX: &str = "● ";
 const CHILD_PREFIX: &str = "  └ ";
 const STATUS_PREFIX: &str = "· ";
 
-pub fn log(
-    state: &mut AgentState,
-    level: LogLevel,
-    msg: impl Into<String>,
-) {
+pub fn log(state: &mut AgentState, level: LogLevel, msg: impl Into<String>) {
     state.logs.push(level, msg.into());
 }
 
-pub fn log_status(
-    state: &mut AgentState,
-    msg: impl Into<String>,
-) {
-    state.logs.push(LogLevel::Info, format!("{STATUS_PREFIX}{}", msg.into()));
+pub fn log_status(state: &mut AgentState, msg: impl Into<String>) {
+    state
+        .logs
+        .push(LogLevel::Info, format!("{STATUS_PREFIX}{}", msg.into()));
 }
 
-
-pub fn log_user_input(
-    state: &mut AgentState,
-    input: impl Into<String>,
-) {
-    state.logs.push(
-        LogLevel::Info,
-        format!("{USER_TAG}{}", input.into()),
-    );
+pub fn log_user_input(state: &mut AgentState, input: impl Into<String>) {
+    state
+        .logs
+        .push(LogLevel::Info, format!("{USER_TAG}{}", input.into()));
 }
-
 
 fn format_tool_name(raw: &str) -> &str {
     match raw {
@@ -60,11 +49,7 @@ fn format_tool_name(raw: &str) -> &str {
     }
 }
 
-pub fn log_tool_call(
-    state: &mut AgentState,
-    tool: impl AsRef<str>,
-    command: impl Into<String>,
-) {
+pub fn log_tool_call(state: &mut AgentState, tool: impl AsRef<str>, command: impl Into<String>) {
     let tool_name = format_tool_name(tool.as_ref());
     let command = command.into();
 
@@ -74,26 +59,17 @@ pub fn log_tool_call(
     );
 }
 
-
-pub fn log_tool_result(
-    state: &mut AgentState,
-    output: impl Into<String>,
-) {
+pub fn log_tool_result(state: &mut AgentState, output: impl Into<String>) {
     let output = output.into();
 
     for line in output.lines().map(str::trim).filter(|l| !l.is_empty()) {
-        state.logs.push(
-            LogLevel::Info,
-            format!("{CHILD_PREFIX}{line}"),
-        );
+        state
+            .logs
+            .push(LogLevel::Info, format!("{CHILD_PREFIX}{line}"));
     }
 }
 
-
-pub fn log_agent_output(
-    state: &mut AgentState,
-    text: &str,
-) {
+pub fn log_agent_output(state: &mut AgentState, text: &str) {
     for line in text.lines() {
         let line = line.trim_end();
         if line.is_empty() {
@@ -104,7 +80,6 @@ pub fn log_agent_output(
         }
     }
 }
-
 
 pub fn parse_user_input_log(line: &str) -> Option<&str> {
     line.strip_prefix(USER_TAG)

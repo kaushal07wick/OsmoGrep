@@ -1,47 +1,47 @@
-use std::collections::HashMap;
 use serde_json::Value;
+use std::collections::HashMap;
 
-mod shell;
-mod read;
-mod write;
+mod diagnostics;
 mod edit;
-mod search;
-mod glob;
-mod test;
-mod list_dir;
-mod git_diff;
-mod git_log;
-mod regex_search;
-mod web_fetch;
-mod mcp_call;
 mod find_definition;
 mod find_references;
 mod git_commit;
-mod patch;
+mod git_diff;
+mod git_log;
+mod glob;
+mod list_dir;
+mod mcp_call;
 mod notebook_edit;
+mod patch;
+mod read;
+mod regex_search;
+mod search;
+mod shell;
+mod test;
+mod web_fetch;
 mod web_search;
-mod diagnostics;
+mod write;
 
-pub use shell::Shell;
-pub use read::Read;
-pub use write::Write;
+pub use diagnostics::Diagnostics;
 pub use edit::Edit;
-pub use search::Search;
-pub use glob::Glob;
-pub use test::Test;
-pub use list_dir::ListDir;
-pub use git_diff::GitDiff;
-pub use git_log::GitLog;
-pub use regex_search::RegexSearch;
-pub use web_fetch::WebFetch;
-pub use mcp_call::McpCall;
 pub use find_definition::FindDefinition;
 pub use find_references::FindReferences;
 pub use git_commit::GitCommit;
-pub use patch::Patch;
+pub use git_diff::GitDiff;
+pub use git_log::GitLog;
+pub use glob::Glob;
+pub use list_dir::ListDir;
+pub use mcp_call::McpCall;
 pub use notebook_edit::NotebookEdit;
+pub use patch::Patch;
+pub use read::Read;
+pub use regex_search::RegexSearch;
+pub use search::Search;
+pub use shell::Shell;
+pub use test::Test;
+pub use web_fetch::WebFetch;
 pub use web_search::WebSearch;
-pub use diagnostics::Diagnostics;
+pub use write::Write;
 
 pub type ToolResult = Result<Value, String>;
 
@@ -61,7 +61,6 @@ pub trait Tool: Send + Sync {
 pub struct ToolRegistry {
     tools: HashMap<&'static str, Box<dyn Tool>>,
 }
-
 
 impl ToolRegistry {
     pub fn new() -> Self {

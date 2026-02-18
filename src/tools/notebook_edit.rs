@@ -36,14 +36,26 @@ impl Tool for NotebookEdit {
     }
 
     fn call(&self, args: Value) -> ToolResult {
-        let path = args.get("path").and_then(Value::as_str).ok_or("missing path")?;
+        let path = args
+            .get("path")
+            .and_then(Value::as_str)
+            .ok_or("missing path")?;
         let cell_index = args
             .get("cell_index")
             .and_then(Value::as_u64)
             .ok_or("missing cell_index")? as usize;
-        let old = args.get("old").and_then(Value::as_str).ok_or("missing old")?;
-        let new = args.get("new").and_then(Value::as_str).ok_or("missing new")?;
-        let all = args.get("all_occ").and_then(Value::as_bool).unwrap_or(false);
+        let old = args
+            .get("old")
+            .and_then(Value::as_str)
+            .ok_or("missing old")?;
+        let new = args
+            .get("new")
+            .and_then(Value::as_str)
+            .ok_or("missing new")?;
+        let all = args
+            .get("all_occ")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
 
         let src = fs::read_to_string(path).map_err(|e| e.to_string())?;
         let mut nb: Value = serde_json::from_str(&src).map_err(|e| e.to_string())?;
@@ -57,9 +69,7 @@ impl Tool for NotebookEdit {
         }
 
         let cell = &mut cells[cell_index];
-        let source = cell
-            .get_mut("source")
-            .ok_or("cell missing source")?;
+        let source = cell.get_mut("source").ok_or("cell missing source")?;
 
         let source_text = if let Some(arr) = source.as_array() {
             arr.iter()
@@ -80,10 +90,18 @@ impl Tool for NotebookEdit {
             source_text.replacen(old, new, 1)
         };
 
-        *source = Value::Array(updated.lines().map(|l| Value::String(format!("{}\n", l))).collect());
+        *source = Value::Array(
+            updated
+                .lines()
+                .map(|l| Value::String(format!("{}\n", l)))
+                .collect(),
+        );
 
-        fs::write(path, serde_json::to_string_pretty(&nb).map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())?;
+        fs::write(
+            path,
+            serde_json::to_string_pretty(&nb).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
 
         Ok(json!({
             "path": path,

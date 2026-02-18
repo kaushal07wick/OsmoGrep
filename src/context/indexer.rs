@@ -79,26 +79,18 @@ pub fn load_or_build(root: impl AsRef<Path>) -> Context {
     let current_stats = compute_repo_stats(root);
     let current_hashes = compute_file_hashes(root);
 
-    if let (Ok(ctx_raw), Ok(meta_raw)) =
-        (fs::read_to_string(&ctx_path), fs::read_to_string(&meta_path))
-    {
+    if let (Ok(ctx_raw), Ok(meta_raw)) = (
+        fs::read_to_string(&ctx_path),
+        fs::read_to_string(&meta_path),
+    ) {
         if let (Ok(mut ctx), Ok(meta)) = (
             serde_json::from_str::<Context>(&ctx_raw),
             serde_json::from_str::<Meta>(&meta_raw),
         ) {
             if meta.stats == current_stats {
-                incremental_update(
-                    root,
-                    &mut ctx,
-                    &meta.file_hashes,
-                    &current_hashes,
-                );
+                incremental_update(root, &mut ctx, &meta.file_hashes, &current_hashes);
 
-                fs::write(
-                    &ctx_path,
-                    serde_json::to_string_pretty(&ctx).unwrap(),
-                )
-                .unwrap();
+                fs::write(&ctx_path, serde_json::to_string_pretty(&ctx).unwrap()).unwrap();
 
                 fs::write(
                     &meta_path,
@@ -248,8 +240,12 @@ fn incremental_update(
 
     for path in &changed {
         let p = Path::new(path);
-        let Some(lang) = detect_language(p) else { continue };
-        let Ok(src) = fs::read_to_string(p) else { continue };
+        let Some(lang) = detect_language(p) else {
+            continue;
+        };
+        let Ok(src) = fs::read_to_string(p) else {
+            continue;
+        };
 
         match lang {
             "python" => extract_python(&src, path, &mut ctx.symbols),
@@ -329,18 +325,18 @@ fn rust_doc(node: Node, src: &str) -> Option<String> {
 
 /* ======================= BUILD ======================= */
 
-fn build_context(
-    root: &Path,
-    stats: RepoStats,
-    hashes: &HashMap<String, String>,
-) -> Context {
+fn build_context(root: &Path, stats: RepoStats, hashes: &HashMap<String, String>) -> Context {
     let mut files = Vec::new();
     let mut symbols = Vec::new();
 
     for (path, _) in hashes {
         let p = Path::new(path);
-        let Some(lang) = detect_language(p) else { continue };
-        let Ok(src) = fs::read_to_string(p) else { continue };
+        let Some(lang) = detect_language(p) else {
+            continue;
+        };
+        let Ok(src) = fs::read_to_string(p) else {
+            continue;
+        };
 
         match lang {
             "python" => extract_python(&src, path, &mut symbols),

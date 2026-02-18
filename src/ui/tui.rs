@@ -1,32 +1,29 @@
-use std::{io};
+use std::io;
 
 use ratatui::{
     backend::Backend,
     layout::{Alignment, Rect},
+    prelude::*,
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{Paragraph, Wrap, Block, Borders, Clear},
-    Terminal, Frame,
-    prelude::*,
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    Frame, Terminal,
 };
 
+use crate::ui::helper::{
+    calculate_input_lines, git_branch, render_static_command_line, running_pulse,
+};
 use crate::{
     logger::parse_user_input_log,
     state::{AgentState, InputMode},
-};
-use crate::ui::helper::{
-    render_static_command_line,
-    running_pulse,
-    git_branch,
-    calculate_input_lines,
 };
 const TOP_PADDING: u16 = 1;
 
 const FG_MAIN: Color = Color::Rgb(220, 220, 220);
 const FG_DIM: Color = Color::Rgb(170, 170, 170);
 const FG_MUTED: Color = Color::Rgb(120, 120, 120);
+const ACCENT_ORANGE: Color = Color::Rgb(255, 165, 80);
 const PROMPT: &str = ">_ ";
-const SPINNER_WIDTH: usize = 4;
 
 const LOGO: [&str; 7] = [
     " ██████  ███████ ███    ███  ██████   ██████  ██████  ███████ ██████  ",
@@ -38,7 +35,6 @@ const LOGO: [&str; 7] = [
     "                                                                      ",
 ];
 
-
 /// master ui
 pub fn draw_ui<B: Backend>(
     terminal: &mut Terminal<B>,
@@ -48,6 +44,7 @@ pub fn draw_ui<B: Backend>(
     let mut exec_rect = Rect::default();
     let mut hint_rect = Rect::default();
     let mut voice_rect = Rect::default();
+    let mut running_rect = Rect::default();
 
     terminal.draw(|f| {
         let area = f.size();
@@ -63,8 +60,7 @@ pub fn draw_ui<B: Backend>(
         let status_height = 1;
 
         let input_width = padded_area.width.saturating_sub(4) as usize;
-        let input_lines =
-            calculate_input_lines(&state.ui.input, input_width, PROMPT.len());
+        let input_lines = calculate_input_lines(&state.ui.input, input_width, PROMPT.len());
 
         let max_content_lines = 3;
         let visible_lines = input_lines.min(max_content_lines);
@@ -94,10 +90,10 @@ pub fn draw_ui<B: Backend>(
         let show_voice = state.voice.visible || state.voice.enabled || state.voice.connected;
         if show_voice {
             let voice_text = voice_bar_text(state);
-            let voice_lines =
-                calculate_input_lines(&voice_text, padded_area.width as usize, 0);
-            let available =
-                cmd_rect.y.saturating_sub(header_rect.y + header_rect.height);
+            let voice_lines = calculate_input_lines(&voice_text, padded_area.width as usize, 0);
+            let available = cmd_rect
+                .y
+                .saturating_sub(header_rect.y + header_rect.height);
             let max_voice = available.max(1) as usize;
             let voice_height = voice_lines.clamp(1, max_voice) as u16;
             voice_rect = Rect {
@@ -115,7 +111,7 @@ pub fn draw_ui<B: Backend>(
             };
         }
 
-        let exec_rect_calc = Rect {
+        let mut exec_rect_calc = Rect {
             x: padded_area.x,
             y: header_rect.y + header_rect.height,
             width: padded_area.width,
@@ -123,6 +119,22 @@ pub fn draw_ui<B: Backend>(
                 .y
                 .saturating_sub(header_rect.y + header_rect.height),
         };
+        if state.ui.agent_running && exec_rect_calc.height > 1 {
+            running_rect = Rect {
+                x: exec_rect_calc.x,
+                y: exec_rect_calc.y + exec_rect_calc.height - 1,
+                width: exec_rect_calc.width,
+                height: 1,
+            };
+            exec_rect_calc.height = exec_rect_calc.height.saturating_sub(1);
+        } else {
+            running_rect = Rect {
+                x: exec_rect_calc.x,
+                y: exec_rect_calc.y + exec_rect_calc.height,
+                width: exec_rect_calc.width,
+                height: 0,
+            };
+        }
 
         let palette_active = !state.ui.command_items.is_empty();
         let palette_height = if palette_active {
@@ -134,11 +146,9 @@ pub fn draw_ui<B: Backend>(
         if palette_height > 0 {
             let palette_width = padded_area.width.saturating_sub(6).min(72).max(44);
 
-            let palette_x =
-                cmd_rect.x + PROMPT.len() as u16 + 2; // align with text start
+            let palette_x = cmd_rect.x + PROMPT.len() as u16 + 2; // align with text start
 
-            let palette_y =
-                cmd_rect.y.saturating_sub(palette_height + 1);
+            let palette_y = cmd_rect.y.saturating_sub(palette_height + 1);
 
             hint_rect = Rect {
                 x: palette_x,
@@ -150,6 +160,7 @@ pub fn draw_ui<B: Backend>(
 
         render_header(f, header_rect, state);
         render_execution(f, exec_rect_calc, state);
+        render_running_badge(f, running_rect, state);
         render_voice_bar(f, voice_rect, state);
         render_input_box(f, cmd_rect, state);
         render_status_bar(f, status_rect, state);
@@ -177,7 +188,12 @@ fn render_header(f: &mut Frame, area: Rect, state: &AgentState) {
     let repo_display = state
         .repo_root
         .strip_prefix(dirs::home_dir().unwrap_or_default())
-        .map(|p| format!("~{}", std::path::MAIN_SEPARATOR.to_string() + &p.display().to_string()))
+        .map(|p| {
+            format!(
+                "~{}",
+                std::path::MAIN_SEPARATOR.to_string() + &p.display().to_string()
+            )
+        })
         .unwrap_or_else(|_| state.repo_root.display().to_string());
 
     let mut meta_spans = vec![
@@ -191,15 +207,10 @@ fn render_header(f: &mut Frame, area: Rect, state: &AgentState) {
     if state.ui.indexing {
         meta_spans.push(Span::styled(
             " · indexing…",
-            Style::default()
-                .fg(FG_MUTED)
-                .add_modifier(Modifier::ITALIC),
+            Style::default().fg(FG_MUTED).add_modifier(Modifier::ITALIC),
         ));
     } else if state.ui.indexed {
-        meta_spans.push(Span::styled(
-            " · indexed ✓",
-            Style::default().fg(FG_DIM),
-        ));
+        meta_spans.push(Span::styled(" · indexed ✓", Style::default().fg(FG_DIM)));
     }
 
     lines.push(Line::from(meta_spans));
@@ -222,6 +233,9 @@ fn render_header(f: &mut Frame, area: Rect, state: &AgentState) {
 
 /// main panel
 fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
+    if area.width < 4 || area.height < 3 {
+        return;
+    }
     let padded = Rect {
         x: area.x + 2,
         y: area.y + 1,
@@ -237,10 +251,7 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
     for log in state.logs.iter() {
         let text = log.text.as_str();
         if let Some(input) = parse_user_input_log(text) {
-            lines.extend(render_static_command_line(
-                input,
-                padded.width as usize,
-            ));
+            lines.extend(render_static_command_line(input, padded.width as usize));
             continue;
         }
 
@@ -258,9 +269,7 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
         if text.starts_with("· ") {
             lines.push(Line::from(Span::styled(
                 text,
-                Style::default()
-                    .fg(FG_MUTED)
-                    .add_modifier(Modifier::ITALIC),
+                Style::default().fg(FG_MUTED).add_modifier(Modifier::ITALIC),
             )));
             continue;
         }
@@ -269,20 +278,47 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
     }
 
     if state.ui.diff_active && !state.ui.diff_snapshot.is_empty() {
+        let rendered_diffs: Vec<_> = state
+            .ui
+            .diff_snapshot
+            .iter()
+            .map(|snap| {
+                crate::ui::diff::Diff::from_texts(snap.target.clone(), &snap.before, &snap.after)
+            })
+            .collect();
+        let total_added: usize = rendered_diffs.iter().map(|d| d.added).sum();
+        let total_removed: usize = rendered_diffs.iter().map(|d| d.removed).sum();
+
         lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("Changes ({})", state.ui.diff_snapshot.len()),
+                Style::default().fg(FG_MAIN).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                format!("+{total_added}"),
+                Style::default().fg(Color::Rgb(70, 190, 120)),
+            ),
+            Span::raw(" "),
+            Span::styled(
+                format!("-{total_removed}"),
+                Style::default().fg(Color::Rgb(220, 95, 90)),
+            ),
+        ]));
         lines.push(Line::from(Span::styled(
-            "Changes",
-            Style::default().fg(FG_MAIN).add_modifier(Modifier::BOLD),
+            "Use /undo to revert latest change, /diff to revisit session changes.",
+            Style::default().fg(FG_MUTED).add_modifier(Modifier::ITALIC),
         )));
 
-        for snap in &state.ui.diff_snapshot {
-            let diff = crate::ui::diff::Diff::from_texts(
-                snap.target.clone(),
-                &snap.before,
-                &snap.after,
-            );
-
-            lines.extend(crate::ui::diff::render_diff(&diff, padded.width));
+        for (idx, diff) in rendered_diffs.iter().enumerate() {
+            lines.extend(crate::ui::diff::render_diff(diff, padded.width));
+            if idx + 1 < state.ui.diff_snapshot.len() {
+                lines.push(Line::from(Span::styled(
+                    "─".repeat(padded.width.saturating_sub(1) as usize),
+                    Style::default().fg(Color::Rgb(70, 70, 70)),
+                )));
+            }
         }
     }
 
@@ -300,12 +336,7 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
     }
 
     if state.ui.streaming_active {
-        let partial = state
-            .ui
-            .streaming_buffer
-            .rsplit('\n')
-            .next()
-            .unwrap_or("");
+        let partial = state.ui.streaming_buffer.rsplit('\n').next().unwrap_or("");
         if !partial.is_empty() {
             lines.push(Line::from(Span::styled(
                 format!("{partial}█"),
@@ -326,6 +357,23 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
             .scroll((scroll as u16, 0))
             .wrap(Wrap { trim: false }),
         padded,
+    );
+}
+
+fn render_running_badge(f: &mut Frame, area: Rect, state: &AgentState) {
+    if !state.ui.agent_running || area.height == 0 || area.width < 10 {
+        return;
+    }
+    let pulse = running_pulse(state.ui.spinner_started_at).unwrap_or_else(|| "…".to_string());
+    let text = format!("  ● running {pulse}  (Esc to cancel)");
+    f.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            text,
+            Style::default()
+                .fg(ACCENT_ORANGE)
+                .add_modifier(Modifier::BOLD),
+        ))),
+        area,
     );
 }
 
@@ -369,10 +417,7 @@ fn render_voice_bar(f: &mut Frame, area: Rect, state: &AgentState) {
         Span::styled("voice: ", Style::default().fg(FG_DIM)),
         Span::styled(text, Style::default().fg(FG_MUTED)),
     ]);
-    f.render_widget(
-        Paragraph::new(line).wrap(Wrap { trim: true }),
-        area,
-    );
+    f.render_widget(Paragraph::new(line).wrap(Wrap { trim: true }), area);
 }
 
 /// input box ui
@@ -427,7 +472,7 @@ fn render_input_box(f: &mut Frame, area: Rect, state: &AgentState) {
                 Span::styled(PROMPT, Style::default().fg(Color::White)),
                 Span::styled(line, Style::default().fg(Color::White)),
             ];
-            
+
             // Add badge on first line if there are hidden lines
             if hidden_lines > 0 {
                 spans.push(Span::raw(" "));
@@ -436,7 +481,7 @@ fn render_input_box(f: &mut Frame, area: Rect, state: &AgentState) {
                     Style::default().fg(Color::Yellow),
                 ));
             }
-            
+
             out.push(Line::from(spans));
         } else {
             // Continuation lines (no prompt)
@@ -462,69 +507,55 @@ fn render_input_box(f: &mut Frame, area: Rect, state: &AgentState) {
 
 /// bottom status with animation and tabs
 fn render_status_bar(f: &mut Frame, area: Rect, state: &AgentState) {
-    let spinner = running_pulse(state.ui.spinner_started_at)
-        .unwrap_or_else(|| "....".into());
-
-    let mut spinner_fixed = spinner;
-    let len = spinner_fixed.chars().count();
-
-    if len < SPINNER_WIDTH {
-        spinner_fixed.push_str(&" ".repeat(SPINNER_WIDTH - len));
-    } else if len > SPINNER_WIDTH {
-        spinner_fixed = spinner_fixed.chars().take(SPINNER_WIDTH).collect();
-    }
-
     let voice_label = if state.voice.enabled {
         if state.voice.connected {
-            "VOICE ON"
+            "voice on"
         } else {
-            "VOICE ..."
+            "voice connecting"
         }
     } else {
-        "VOICE OFF"
+        "voice off"
     };
 
     let model_label = if state.voice.enabled {
-        "VOXTRAL"
+        "voxtral"
     } else {
-        "OPENAI"
+        "openai"
     };
 
-    let run_label = if state.ui.agent_running { "RUN" } else { "IDLE" };
-    let perm_label = if state.ui.pending_permission.is_some() {
-        "PERM?"
+    let run_label = if state.ui.agent_running {
+        "running"
     } else {
-        "PERM-"
+        "idle"
     };
-    let ctx_label = format!("CTX {}", state.conversation.token_estimate);
     let total_tokens = state.usage.prompt_tokens + state.usage.completion_tokens;
     let est_cost = ((state.usage.prompt_tokens as f64) * 0.0000025)
         + ((state.usage.completion_tokens as f64) * 0.0000100);
-    let cost_label = format!("TOK {} ${:.4}", total_tokens, est_cost);
+    let usage_label = format!("tokens {} ${:.4}", total_tokens, est_cost);
 
     let mut left = vec![
-        Span::styled(spinner_fixed, Style::default().fg(FG_MAIN)),
-        Span::raw(" "),
         Span::styled(model_label, Style::default().fg(FG_DIM)),
-        Span::raw(" "),
-        Span::styled(run_label, Style::default().fg(FG_MAIN)),
-        Span::raw(" "),
         Span::styled(
-            perm_label,
-            Style::default().fg(if state.ui.pending_permission.is_some() {
-                Color::Yellow
+            format!(" · {run_label}"),
+            Style::default().fg(if state.ui.agent_running {
+                ACCENT_ORANGE
             } else {
-                FG_DIM
+                FG_MAIN
             }),
         ),
-        Span::raw(" "),
-        Span::styled(ctx_label, Style::default().fg(FG_MUTED)),
-        Span::raw(" "),
-        Span::styled(cost_label, Style::default().fg(FG_MUTED)),
+        Span::styled(format!(" · {usage_label}"), Style::default().fg(FG_MUTED)),
     ];
+    if state.ui.pending_permission.is_some() {
+        left.push(Span::styled(
+            " · approval needed",
+            Style::default().fg(Color::Yellow),
+        ));
+    }
     if state.voice.visible || state.voice.enabled || state.voice.connected {
-        left.insert(3, Span::raw(" "));
-        left.insert(4, Span::styled(voice_label, Style::default().fg(FG_DIM)));
+        left.push(Span::styled(
+            format!(" · {voice_label}"),
+            Style::default().fg(FG_DIM),
+        ));
     }
 
     let esc_action = if state.ui.agent_running {
@@ -563,11 +594,7 @@ fn render_status_bar(f: &mut Frame, area: Rect, state: &AgentState) {
 }
 
 /// command hints pallete
-pub fn render_command_palette(
-    f: &mut Frame,
-    area: Rect,
-    state: &AgentState,
-) {
+pub fn render_command_palette(f: &mut Frame, area: Rect, state: &AgentState) {
     if state.ui.command_items.is_empty() {
         return;
     }
@@ -613,11 +640,7 @@ pub fn render_command_palette(
 
         let text = format!("{:<14} {}", item.cmd, item.desc);
 
-        let padded = format!(
-            "{:<width$}",
-            text,
-            width = inner_width
-        );
+        let padded = format!("{:<width$}", text, width = inner_width);
 
         lines.push(Line::from(Span::styled(padded, style)));
     }

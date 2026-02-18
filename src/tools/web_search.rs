@@ -43,10 +43,7 @@ impl Tool for WebSearch {
             .unwrap_or(8)
             .min(20);
 
-        let url = format!(
-            "https://duckduckgo.com/html/?q={}",
-            encode_query(query)
-        );
+        let url = format!("https://duckduckgo.com/html/?q={}", encode_query(query));
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(20))
             .build()

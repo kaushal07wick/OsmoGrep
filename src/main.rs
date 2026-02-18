@@ -1,16 +1,16 @@
-mod state;
-mod logger;
-mod ui;
-mod tools;
-mod commands;
 mod agent;
+mod commands;
 mod context;
-mod voice;
-mod triage;
-mod test_harness;
-mod persistence;
 mod hooks;
+mod logger;
 mod mcp;
+mod persistence;
+mod state;
+mod test_harness;
+mod tools;
+mod triage;
+mod ui;
+mod voice;
 
 use std::{
     error::Error,
@@ -19,38 +19,24 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::{
-    event,
-    execute,
-    terminal::{
-        disable_raw_mode, enable_raw_mode,
-        EnterAlternateScreen, LeaveAlternateScreen,
-    },
+    event, execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use crossterm::event::{EnableMouseCapture, DisableMouseCapture};
 
-use ratatui::{
-    Terminal,
-    backend::CrosstermBackend,
-    layout::Rect,
-};
+use ratatui::{backend::CrosstermBackend, layout::Rect, Terminal};
 
 use clap::{Parser, Subcommand};
 
 use crate::{
     agent::{Agent, AgentEvent, CancelToken},
-    context::{ContextEvent},
+    context::ContextEvent,
     logger::{
-        log,
-        log_user_input,
-        log_tool_call,
-        log_tool_result,
-        log_agent_output,
-        log_status,
-        update_streaming_log,
-        flush_streaming_log,
+        flush_streaming_log, log, log_agent_output, log_status, log_tool_call, log_tool_result,
+        log_user_input, update_streaming_log,
     },
-    state::{AgentState, InputMode, LogLevel, DiffSnapshot, MAX_CONVERSATION_TOKENS},
+    state::{AgentState, DiffSnapshot, InputMode, LogLevel, MAX_CONVERSATION_TOKENS},
     ui::{main_ui::handle_event, tui::draw_ui},
 };
 
@@ -82,11 +68,7 @@ fn env_truthy(key: &str, default: bool) -> bool {
 }
 
 fn run_shell(state: &mut AgentState, cmd: &str) {
-    log(
-        state,
-        LogLevel::Info,
-        &format!("SHELL : $ {}", cmd),
-    );
+    log(state, LogLevel::Info, &format!("SHELL : $ {}", cmd));
 
     match std::process::Command::new("sh").arg("-c").arg(cmd).output() {
         Ok(out) => {
@@ -125,8 +107,7 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
 
     let (voice_cmd_tx, voice_cmd_rx) = mpsc::channel();
     let (voice_evt_tx, voice_evt_rx) = mpsc::channel();
-    let _voice_handle =
-        voice::spawn_voice_worker(voice_cmd_rx, voice_evt_tx.clone());
+    let _voice_handle = voice::spawn_voice_worker(voice_cmd_rx, voice_evt_tx.clone());
     let proxy_listen = std::env::var("VLLM_REALTIME_PROXY_LISTEN").ok();
     if let Some(listen_addr) = proxy_listen.clone() {
         let _proxy_handle = voice::spawn_voice_proxy_worker(
@@ -150,11 +131,10 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
     let mut agent_rx: Option<mpsc::Receiver<AgentEvent>> = None;
     let mut agent_cancel: Option<CancelToken> = None;
     let mut context_rx: Option<mpsc::Receiver<ContextEvent>> = None;
-    let voice_silence_ms: u64 =
-        std::env::var("VLLM_REALTIME_SILENCE_MS")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(1200);
+    let voice_silence_ms: u64 = std::env::var("VLLM_REALTIME_SILENCE_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(1200);
 
     /* ---------- SPAWN CONTEXT INDEXER ---------- */
 
@@ -169,18 +149,11 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
     /* ---------- MAIN LOOP ---------- */
 
     loop {
-        let (input_rect, _, exec_rect) =
-            draw_ui(&mut terminal, &state)?;
+        let (input_rect, _, exec_rect) = draw_ui(&mut terminal, &state)?;
 
         if event::poll(Duration::from_millis(120))? {
             let ev = event::read()?;
-            handle_event(
-                &mut state,
-                ev,
-                input_rect,
-                Rect::default(),
-                exec_rect,
-            );
+            handle_event(&mut state, ev, input_rect, Rect::default(), exec_rect);
         }
 
         if state.ui.should_exit {
@@ -258,15 +231,10 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
                         }
                         state.voice.last_activity = Some(Instant::now());
                         if state.ui.input.is_empty()
-                            || state
-                                .voice
-                                .last_inserted
-                                .as_deref()
-                                == Some(state.ui.input.as_str())
+                            || state.voice.last_inserted.as_deref() == Some(state.ui.input.as_str())
                         {
                             state.ui.input = state.voice.buffer.clone();
-                            state.voice.last_inserted =
-                                Some(state.ui.input.clone());
+                            state.voice.last_inserted = Some(state.ui.input.clone());
                         }
                     }
                     voice::VoiceEvent::Final(text) => {
@@ -283,10 +251,7 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
                         state.clear_autocomplete();
                         if !final_text.trim().is_empty() {
                             if state.ui.input.is_empty()
-                                || state
-                                    .voice
-                                    .last_inserted
-                                    .as_deref()
+                                || state.voice.last_inserted.as_deref()
                                     == Some(state.ui.input.as_str())
                             {
                                 state.ui.input = final_text.clone();
@@ -296,8 +261,7 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
                                 }
                                 state.ui.input.push_str(&final_text);
                             }
-                            state.voice.last_inserted =
-                                Some(state.ui.input.clone());
+                            state.voice.last_inserted = Some(state.ui.input.clone());
                         }
                         state.voice.partial = None;
                         state.voice.last_final = Some(final_text);
@@ -339,11 +303,7 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
                         state.clear_hint();
                         state.clear_autocomplete();
                         if state.ui.input.is_empty()
-                            || state
-                                .voice
-                                .last_inserted
-                                .as_deref()
-                                == Some(state.ui.input.as_str())
+                            || state.voice.last_inserted.as_deref() == Some(state.ui.input.as_str())
                         {
                             state.ui.input = final_text.clone();
                         } else {
@@ -353,8 +313,7 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
                             state.ui.input.push_str(&final_text);
                         }
                         state.voice.last_final = Some(final_text);
-                        state.voice.last_inserted =
-                            Some(state.ui.input.clone());
+                        state.voice.last_inserted = Some(state.ui.input.clone());
                     }
                     state.voice.buffer.clear();
                     state.voice.partial = None;
@@ -377,12 +336,11 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
                     Ok(evt) => match evt {
                         AgentEvent::ToolCall { name, args } => {
                             let cmd = match args {
-                                serde_json::Value::Object(ref map) => {
-                                    map.values()
-                                        .filter_map(|v| v.as_str())
-                                        .collect::<Vec<_>>()
-                                        .join(" ")
-                                }
+                                serde_json::Value::Object(ref map) => map
+                                    .values()
+                                    .filter_map(|v| v.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(" "),
                                 _ => String::new(),
                             };
 
@@ -393,7 +351,12 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
                             log_tool_result(&mut state, summary);
                         }
 
-                        AgentEvent::ToolDiff { tool, target, before, after } => {
+                        AgentEvent::ToolDiff {
+                            tool,
+                            target,
+                            before,
+                            after,
+                        } => {
                             let snap = DiffSnapshot {
                                 tool,
                                 target,
@@ -408,7 +371,12 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
                             let _ = persistence::save(&state);
                         }
 
-                        AgentEvent::PreviewDiff { tool, target, before, after } => {
+                        AgentEvent::PreviewDiff {
+                            tool,
+                            target,
+                            before,
+                            after,
+                        } => {
                             state.ui.diff_active = true;
                             state.ui.diff_snapshot = vec![DiffSnapshot {
                                 tool: format!("preview:{tool}"),
@@ -440,7 +408,11 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
                             state.ui.streaming_active = false;
                         }
 
-                        AgentEvent::PermissionRequest { tool_name, args_summary, reply_tx } => {
+                        AgentEvent::PermissionRequest {
+                            tool_name,
+                            args_summary,
+                            reply_tx,
+                        } => {
                             if state.ui.auto_approve {
                                 let _ = reply_tx.send(true);
                                 log_status(
@@ -448,19 +420,18 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
                                     format!("Auto-approved {} ({})", tool_name, args_summary),
                                 );
                             } else {
-                                state.ui.pending_permission = Some(crate::state::PendingPermission {
-                                    tool_name,
-                                    args_summary,
-                                    reply_tx,
-                                });
+                                state.ui.pending_permission =
+                                    Some(crate::state::PendingPermission {
+                                        tool_name,
+                                        args_summary,
+                                        reply_tx,
+                                    });
                             }
                         }
 
                         AgentEvent::ConversationUpdate(messages) => {
                             state.conversation.set_messages(messages);
-                            state
-                                .conversation
-                                .trim_to_budget(MAX_CONVERSATION_TOKENS);
+                            state.conversation.trim_to_budget(MAX_CONVERSATION_TOKENS);
                             let _ = persistence::save(&state);
                         }
 
@@ -606,7 +577,6 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
     teardown_terminal(&mut terminal)?;
     Ok(())
 }
-
 
 fn init_state() -> AgentState {
     let voice_url = std::env::var("VLLM_REALTIME_URL")

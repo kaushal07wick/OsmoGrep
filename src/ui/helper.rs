@@ -1,29 +1,22 @@
-use std::{process::Command, time::Instant};
 use ratatui::{
     style::{Color, Style},
     text::{Line, Span},
 };
+use std::{process::Command, time::Instant};
 
 const FG_MAIN: Color = Color::Rgb(220, 220, 220);
-pub fn render_static_command_line(
-    text: &str,
-    term_width: usize,
-) -> Vec<Line<'static>> {
+pub fn render_static_command_line(text: &str, term_width: usize) -> Vec<Line<'static>> {
     // visual tuning knobs
-    let max_fraction = 0.55;      // never exceed 55% of terminal width
-    let side_padding = 2;         // spaces on left + right inside the box
-    let outer_margin = 2;         // visual breathing room
+    let max_fraction = 0.55; // never exceed 55% of terminal width
+    let side_padding = 2; // spaces on left + right inside the box
+    let outer_margin = 2; // visual breathing room
 
     let max_width = (term_width as f32 * max_fraction) as usize;
     let desired_width = text.len() + side_padding * 2 + outer_margin * 2;
 
-    let box_width = desired_width
-        .min(max_width)
-        .min(term_width)
-        .max(10); // sanity floor
+    let box_width = desired_width.min(max_width).min(term_width).max(10); // sanity floor
 
-    let inner_width = box_width
-        .saturating_sub(side_padding * 2 + outer_margin * 2);
+    let inner_width = box_width.saturating_sub(side_padding * 2 + outer_margin * 2);
 
     let mut content = text.to_string();
     if content.len() > inner_width {
@@ -63,33 +56,16 @@ pub fn render_static_command_line(
     ]
 }
 
-
 pub fn running_pulse(start: Option<Instant>) -> Option<String> {
     let start = start?;
     let t = (start.elapsed().as_millis() / 90) as usize;
-
-    let width = 5;
-    let cycle = (width - 1) * 2;
-    let mut pos = t % cycle;
-
-    if pos >= width {
-        pos = cycle - pos;
-    }
-
-    let mut s = String::with_capacity(width);
-    for i in 0..width {
-        if i == pos {
-            s.push('■');
-        } else if i + 1 == pos || i == pos + 1 {
-            s.push('▪');
-        } else {
-            s.push('·');
-        }
-    }
-
-    Some(s)
+    let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    Some(format!(
+        "{} {:>4.1}s",
+        frames[t % frames.len()],
+        start.elapsed().as_secs_f32()
+    ))
 }
-
 
 pub fn git_branch(repo_root: &std::path::Path) -> Option<String> {
     let out = Command::new("git")
@@ -97,7 +73,9 @@ pub fn git_branch(repo_root: &std::path::Path) -> Option<String> {
         .current_dir(repo_root)
         .output()
         .ok()?;
-    String::from_utf8(out.stdout).ok().map(|s| s.trim().to_string())
+    String::from_utf8(out.stdout)
+        .ok()
+        .map(|s| s.trim().to_string())
 }
 
 /// Calculate how many lines the input will take when rendered
@@ -105,10 +83,10 @@ pub fn calculate_input_lines(input: &str, width: usize, prompt_len: usize) -> us
     if input.is_empty() {
         return 1;
     }
-    
+
     let text_width = width.saturating_sub(prompt_len).max(1);
     let mut line_count = 0;
-    
+
     for line in input.lines() {
         if line.is_empty() {
             line_count += 1;
@@ -117,6 +95,6 @@ pub fn calculate_input_lines(input: &str, width: usize, prompt_len: usize) -> us
             line_count += (chars + text_width - 1) / text_width;
         }
     }
-    
+
     line_count.max(1)
 }

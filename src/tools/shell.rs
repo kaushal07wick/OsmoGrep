@@ -1,8 +1,8 @@
 // src/tools/shell.rs
 
-use std::process::Command;
-use serde_json::{json, Value};
 use super::{Tool, ToolResult, ToolSafety};
+use serde_json::{json, Value};
+use std::process::Command;
 pub struct Shell;
 
 impl Tool for Shell {

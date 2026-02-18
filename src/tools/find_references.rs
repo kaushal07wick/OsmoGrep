@@ -49,8 +49,8 @@ impl Tool for FindReferences {
             .unwrap_or(200)
             .min(2000);
 
-        let sym_re = Regex::new(&format!(r"\b{}\b", regex::escape(symbol)))
-            .map_err(|e| e.to_string())?;
+        let sym_re =
+            Regex::new(&format!(r"\b{}\b", regex::escape(symbol))).map_err(|e| e.to_string())?;
         let def_re = Regex::new(&format!(
             r"\b(fn|struct|enum|trait|type|const|def|class|function|let|var|func)\s+{}\b",
             regex::escape(symbol)
@@ -86,7 +86,13 @@ impl Tool for FindReferences {
     }
 }
 
-fn search_file(path: &Path, sym_re: &Regex, def_re: &Regex, hits: &mut Vec<String>, limit: usize) -> Result<(), String> {
+fn search_file(
+    path: &Path,
+    sym_re: &Regex,
+    def_re: &Regex,
+    hits: &mut Vec<String>,
+    limit: usize,
+) -> Result<(), String> {
     let file = File::open(path).map_err(|e| e.to_string())?;
     for (idx, line) in BufReader::new(file).lines().enumerate() {
         let line = match line {
