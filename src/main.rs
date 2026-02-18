@@ -9,6 +9,7 @@ mod voice;
 mod triage;
 mod test_harness;
 mod persistence;
+mod hooks;
 
 use std::{
     error::Error,
@@ -404,6 +405,16 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
                             state.ui.diff_active = true;
                             state.ui.diff_snapshot = vec![snap];
                             let _ = persistence::save(&state);
+                        }
+
+                        AgentEvent::PreviewDiff { tool, target, before, after } => {
+                            state.ui.diff_active = true;
+                            state.ui.diff_snapshot = vec![DiffSnapshot {
+                                tool: format!("preview:{tool}"),
+                                target,
+                                before,
+                                after,
+                            }];
                         }
 
                         AgentEvent::OutputText(text) => {

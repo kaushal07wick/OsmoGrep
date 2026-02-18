@@ -36,6 +36,10 @@ impl Tool for Shell {
             .and_then(Value::as_str)
             .ok_or("missing cmd")?;
 
+        let pre_hook = crate::hooks::run_hook("pre_shell", &[("cmd", cmd)])
+            .ok()
+            .flatten();
+
         let out = Command::new("sh")
             .arg("-c")
             .arg(cmd)
@@ -45,7 +49,8 @@ impl Tool for Shell {
         Ok(json!({
             "stdout": String::from_utf8_lossy(&out.stdout),
             "stderr": String::from_utf8_lossy(&out.stderr),
-            "exit_code": out.status.code()
+            "exit_code": out.status.code(),
+            "hook": pre_hook
         }))
     }
 }

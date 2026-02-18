@@ -41,6 +41,9 @@ impl Tool for Edit {
         let new = args.get("new").and_then(Value::as_str).ok_or("missing new")?;
         let all = args.get("all_occ").and_then(Value::as_bool).unwrap_or(false);
 
+        let pre_hook = crate::hooks::run_hook("pre_edit", &[("path", path)])
+            .ok()
+            .flatten();
         let src = fs::read_to_string(path).map_err(|e| e.to_string())?;
 
         if !src.contains(old) {
@@ -54,12 +57,17 @@ impl Tool for Edit {
         };
 
         fs::write(path, &updated).map_err(|e| e.to_string())?;
+        let post_hook = crate::hooks::run_hook("post_edit", &[("path", path)])
+            .ok()
+            .flatten();
 
         Ok(json!({
             "path": path,
             "mode": if all { "all" } else { "first" },
             "before": src,
-            "after": updated
+            "after": updated,
+            "pre_hook": pre_hook,
+            "post_hook": post_hook
         }))
     }
 }

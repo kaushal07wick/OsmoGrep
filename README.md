@@ -185,5 +185,14 @@ During agent execution:
 
 Agent toolset now also includes: `run_tests`, `list_dir`, `git_diff`, `git_log`, `regex_search`, `web_fetch`.
 
+Hooks can be configured in `~/.config/osmogrep/config.toml`:
+
+```toml
+[hooks]
+pre_shell = "echo running {cmd}"
+pre_edit = "echo editing {path}"
+post_edit = "cargo check -q"
+```
+
 ## License
 [MIT License](LICENSE).

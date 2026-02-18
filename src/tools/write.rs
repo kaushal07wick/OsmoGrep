@@ -44,14 +44,22 @@ impl Tool for Write {
             .and_then(Value::as_str)
             .ok_or("missing content")?;
 
+        let pre_hook = crate::hooks::run_hook("pre_edit", &[("path", path)])
+            .ok()
+            .flatten();
         let before = fs::read_to_string(path).unwrap_or_default();
         fs::write(path, content).map_err(|e| e.to_string())?;
+        let post_hook = crate::hooks::run_hook("post_edit", &[("path", path)])
+            .ok()
+            .flatten();
 
         Ok(json!({
             "path": path,
             "bytes": content.len(),
             "before": before,
-            "after": content
+            "after": content,
+            "pre_hook": pre_hook,
+            "post_hook": post_hook
         }))
     }
 }

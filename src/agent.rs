@@ -28,6 +28,12 @@ pub enum AgentEvent {
         before: String,
         after: String,
     },
+    PreviewDiff {
+        tool: String,
+        target: String,
+        before: String,
+        after: String,
+    },
     OutputText(String),
     StreamDelta(String),
     StreamDone,
@@ -342,6 +348,17 @@ impl RunAgent {
                         if self.tools.safety(&name) == Some(ToolSafety::Dangerous)
                             && !self.auto_approve
                         {
+                            if let Some((target, before, after)) =
+                                preview_diff_from_args(&name, &args)
+                            {
+                                let _ = tx.send(AgentEvent::PreviewDiff {
+                                    tool: name.clone(),
+                                    target,
+                                    before,
+                                    after,
+                                });
+                            }
+
                             let (reply_tx, reply_rx) = mpsc::channel::<bool>();
                             let _ = tx.send(AgentEvent::PermissionRequest {
                                 tool_name: name.clone(),
@@ -664,6 +681,38 @@ fn env_truthy(key: &str, default: bool) -> bool {
     match env::var(key) {
         Ok(val) => matches!(val.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"),
         Err(_) => default,
+    }
+}
+
+fn preview_diff_from_args(name: &str, args: &Value) -> Option<(String, String, String)> {
+    match name {
+        "edit_file" => {
+            let path = args.get("path").and_then(Value::as_str)?;
+            let old = args.get("old").and_then(Value::as_str)?;
+            let new = args.get("new").and_then(Value::as_str)?;
+            let all = args
+                .get("all_occ")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+
+            let before = fs::read_to_string(path).ok()?;
+            if !before.contains(old) {
+                return None;
+            }
+            let after = if all {
+                before.replace(old, new)
+            } else {
+                before.replacen(old, new, 1)
+            };
+            Some((path.to_string(), before, after))
+        }
+        "write_file" => {
+            let path = args.get("path").and_then(Value::as_str)?;
+            let content = args.get("content").and_then(Value::as_str)?;
+            let before = fs::read_to_string(path).unwrap_or_default();
+            Some((path.to_string(), before, content.to_string()))
+        }
+        _ => None,
     }
 }
 
