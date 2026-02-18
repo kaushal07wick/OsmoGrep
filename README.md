@@ -194,5 +194,22 @@ pre_edit = "echo editing {path}"
 post_edit = "cargo check -q"
 ```
 
+MCP scaffold can also be configured in the same file:
+
+```toml
+[mcp]
+enabled = true
+default_server = "docs"
+
+[mcp.servers.docs]
+cmd = "node /path/to/your-mcp-bridge.js"
+timeout_ms = 30000
+```
+
+The agent tool `mcp_call` passes:
+- `OSMOGREP_MCP_SERVER`
+- `OSMOGREP_MCP_METHOD`
+- `OSMOGREP_MCP_ARGS` (JSON)
+
 ## License
 [MIT License](LICENSE).

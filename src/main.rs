@@ -10,6 +10,7 @@ mod triage;
 mod test_harness;
 mod persistence;
 mod hooks;
+mod mcp;
 
 use std::{
     error::Error,

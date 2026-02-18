@@ -48,6 +48,7 @@ fn format_tool_name(raw: &str) -> &str {
         "git_log" => "GitLog",
         "regex_search" => "Regex",
         "web_fetch" => "WebFetch",
+        "mcp_call" => "MCP",
         other => other,
     }
 }
