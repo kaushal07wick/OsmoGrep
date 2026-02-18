@@ -1,12 +1,18 @@
 // src/commands.rs
 
+use std::env;
 use std::fs;
-use std::time::Instant;
+use std::process::Command;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::{io::Write, path::PathBuf};
 
 use crate::agent::Agent;
 use crate::logger::log;
 use crate::persistence;
-use crate::state::{AgentState, CommandItem, InputMode, LogLevel};
+use crate::state::{
+    AgentState, CommandItem, InputMode, JobKind, JobRecord, JobRequest, JobStatus, LogLevel,
+    PermissionProfile, PlanItem, MAX_CONVERSATION_TOKENS,
+};
 use crate::test_harness::run_tests;
 use crate::voice::VoiceCommand;
 use std::sync::mpsc::Sender;
@@ -16,6 +22,7 @@ pub fn handle_command(
     raw: &str,
     voice_tx: Option<&Sender<VoiceCommand>>,
     agent: Option<&mut Agent>,
+    steer_tx: Option<&Sender<String>>,
 ) {
     state.ui.last_activity = Instant::now();
     state.clear_hint();
@@ -30,6 +37,38 @@ pub fn handle_command(
     }
     if cmd.starts_with("/test ") {
         run_test(state, &cmd);
+        return;
+    }
+    if cmd.starts_with("/steer ") {
+        set_steer(state, &cmd, steer_tx);
+        return;
+    }
+    if cmd.starts_with("/profile ") {
+        set_profile(state, &cmd);
+        return;
+    }
+    if cmd.starts_with("/swarm ") {
+        run_swarm_now(state, &cmd, agent);
+        return;
+    }
+    if cmd.starts_with("/job ") {
+        handle_job(state, &cmd);
+        return;
+    }
+    if cmd.starts_with("/plan add ") {
+        plan_add(state, &cmd);
+        return;
+    }
+    if cmd.starts_with("/plan done ") {
+        plan_done(state, &cmd);
+        return;
+    }
+    if cmd.starts_with("/autofix ") {
+        set_autofix(state, &cmd);
+        return;
+    }
+    if cmd.starts_with("/nv ") {
+        open_nv(state, &cmd);
         return;
     }
 
@@ -52,6 +91,15 @@ pub fn handle_command(
         "/providers" => show_providers(state),
         "/undo" => undo_last_change(state),
         "/diff" => show_session_diff(state),
+        "/steer" => show_steer(state),
+        "/compact" => compact_context(state),
+        "/metrics" => show_metrics(state),
+        "/profile" => show_profile(state),
+        "/jobs" => show_jobs(state),
+        "/autofix" => show_autofix(state),
+        "/nv" => open_nv(state, &cmd),
+        "/plan" => show_plan(state),
+        "/plan clear" => plan_clear(state),
 
         "" => {}
 
@@ -95,12 +143,55 @@ fn help(state: &mut AgentState) {
         Info,
         "  /diff        Show all file changes this session",
     );
+    log(state, Info, "  /compact     Compress conversation context");
+    log(state, Info, "  /metrics     Show usage and queue metrics");
+    log(
+        state,
+        Info,
+        "  /profile     Show permission profile (read-only/workspace-auto/full-access)",
+    );
+    log(state, Info, "  /profile <name>  Set permission profile");
     log(
         state,
         Info,
         "  /approve     Toggle dangerous tool auto-approve",
     );
     log(state, Info, "  /new         Start a fresh conversation");
+    log(state, Info, "  /steer       Show current steer instruction");
+    log(
+        state,
+        Info,
+        "  /steer <txt> Set persistent steer instruction",
+    );
+    log(
+        state,
+        Info,
+        "  /steer now <txt> Interrupt current run and relaunch with steer",
+    );
+    log(state, Info, "  /steer clear Remove steer instruction");
+    log(state, Info, "  /swarm <txt> Run parallel scoped sub-agents");
+    log(state, Info, "  /jobs        Show background jobs");
+    log(state, Info, "  /autofix     Show auto-eval mode");
+    log(state, Info, "  /autofix on|off  Toggle auto post-run tests");
+    log(
+        state,
+        Info,
+        "  /nv [file]   Open Neovim split at repo root with tree view",
+    );
+    log(
+        state,
+        Info,
+        "  /nv toggle   Toggle nvim pane in current tmux window",
+    );
+    log(state, Info, "  /nv help     Show nvim/tmux exit shortcuts");
+    log(state, Info, "  /job test [target]   Queue test job");
+    log(state, Info, "  /job swarm <txt>     Queue swarm job");
+    log(state, Info, "  /job resume <id>     Requeue prior job");
+    log(state, Info, "  /job cancel all      Cancel queued jobs");
+    log(state, Info, "  /plan        Show plan list");
+    log(state, Info, "  /plan add <txt>      Add plan item");
+    log(state, Info, "  /plan done <id>      Mark plan item done");
+    log(state, Info, "  /plan clear          Clear plan items");
     log(state, Info, "  /quit | /q   Stop agent execution");
     log(state, Info, "  /exit        Exit Osmogrep");
     log(state, Info, "");
@@ -333,6 +424,920 @@ fn show_session_diff(state: &mut AgentState) {
     );
 }
 
+fn show_steer(state: &mut AgentState) {
+    match state.steer.as_deref() {
+        Some(s) if !s.trim().is_empty() => {
+            log(state, LogLevel::Info, format!("Steer: {}", s.trim()));
+        }
+        _ => log(state, LogLevel::Info, "Steer: (not set)"),
+    }
+}
+
+fn set_steer(state: &mut AgentState, cmd: &str, steer_tx: Option<&Sender<String>>) {
+    let value = cmd.strip_prefix("/steer").map(str::trim).unwrap_or("");
+    if let Some(now_text) = value.strip_prefix("now ").map(str::trim) {
+        if now_text.is_empty() {
+            log(state, LogLevel::Warn, "Usage: /steer now <instruction>");
+            return;
+        }
+        state.steer = Some(now_text.to_string());
+        if state.ui.agent_running {
+            if let Some(tx) = steer_tx {
+                if tx.send(now_text.to_string()).is_ok() {
+                    log(
+                        state,
+                        LogLevel::Info,
+                        "Steer-now injected into running agent.",
+                    );
+                } else {
+                    state.ui.queued_agent_prompt = Some(now_text.to_string());
+                    log(
+                        state,
+                        LogLevel::Warn,
+                        "Live steer channel unavailable. Queued follow-up prompt instead.",
+                    );
+                }
+            } else {
+                state.ui.queued_agent_prompt = Some(now_text.to_string());
+                log(
+                    state,
+                    LogLevel::Warn,
+                    "Live steer channel unavailable. Queued follow-up prompt instead.",
+                );
+            }
+        } else {
+            state.ui.queued_agent_prompt = Some(now_text.to_string());
+            log(
+                state,
+                LogLevel::Info,
+                "Steer-now queued for immediate launch.",
+            );
+        }
+        let _ = persistence::save(state);
+        return;
+    }
+
+    if value.eq_ignore_ascii_case("clear") || value.eq_ignore_ascii_case("off") {
+        state.steer = None;
+        log(state, LogLevel::Success, "Steer instruction cleared.");
+        let _ = persistence::save(state);
+        return;
+    }
+
+    if value.is_empty() {
+        show_steer(state);
+        return;
+    }
+
+    state.steer = Some(value.to_string());
+    log(state, LogLevel::Success, "Steer instruction updated.");
+    let _ = persistence::save(state);
+}
+
+fn compact_context(state: &mut AgentState) {
+    let before = state.conversation.token_estimate;
+    state
+        .conversation
+        .trim_to_budget(MAX_CONVERSATION_TOKENS.saturating_mul(2) / 3);
+    let after = state.conversation.token_estimate;
+    log(
+        state,
+        LogLevel::Info,
+        format!("Context compacted: {} -> {} tokens", before, after),
+    );
+    let _ = persistence::save(state);
+}
+
+fn show_metrics(state: &mut AgentState) {
+    let total_tokens = state.usage.prompt_tokens + state.usage.completion_tokens;
+    let est_cost = ((state.usage.prompt_tokens as f64) * 0.0000025)
+        + ((state.usage.completion_tokens as f64) * 0.0000100);
+    let queued = state
+        .jobs
+        .iter()
+        .filter(|j| matches!(j.status, JobStatus::Queued | JobStatus::Running))
+        .count();
+    log(
+        state,
+        LogLevel::Info,
+        format!(
+            "tokens={} cost=${:.4} context_tokens={} jobs_active={}",
+            total_tokens, est_cost, state.conversation.token_estimate, queued
+        ),
+    );
+}
+
+fn show_profile(state: &mut AgentState) {
+    log(
+        state,
+        LogLevel::Info,
+        format!("Permission profile: {}", state.permission_profile.as_str()),
+    );
+}
+
+fn set_profile(state: &mut AgentState, cmd: &str) {
+    let value = cmd.strip_prefix("/profile").map(str::trim).unwrap_or("");
+    let Some(profile) = PermissionProfile::parse(value) else {
+        log(
+            state,
+            LogLevel::Warn,
+            "Usage: /profile <read-only|workspace-auto|full-access>",
+        );
+        return;
+    };
+    state.permission_profile = profile;
+    state.ui.auto_approve = matches!(profile, PermissionProfile::FullAccess);
+    log(
+        state,
+        LogLevel::Success,
+        format!("Permission profile set to {}", profile.as_str()),
+    );
+    let _ = persistence::save(state);
+}
+
+fn run_swarm_now(state: &mut AgentState, cmd: &str, agent: Option<&mut Agent>) {
+    let prompt = cmd.strip_prefix("/swarm").map(str::trim).unwrap_or("");
+    if prompt.is_empty() {
+        log(state, LogLevel::Warn, "Usage: /swarm <task>");
+        return;
+    }
+    let Some(agent) = agent else {
+        log(state, LogLevel::Warn, "Agent unavailable.");
+        return;
+    };
+
+    match agent.run_swarm(prompt) {
+        Ok(outputs) => {
+            log(state, LogLevel::Success, "Swarm completed.");
+            for (role, text) in outputs {
+                log(state, LogLevel::Info, format!("[{}]", role));
+                for line in text.lines().take(20) {
+                    log(state, LogLevel::Info, line.to_string());
+                }
+            }
+        }
+        Err(e) => log(state, LogLevel::Error, format!("Swarm failed: {}", e)),
+    }
+}
+
+fn handle_job(state: &mut AgentState, cmd: &str) {
+    let rest = cmd.strip_prefix("/job").map(str::trim).unwrap_or("");
+
+    if rest == "cancel all" {
+        let mut ids = Vec::new();
+        for req in &state.job_queue {
+            ids.push(req.id);
+        }
+        state.job_queue.clear();
+        for id in ids {
+            if let Some(job) = state.jobs.iter_mut().find(|j| j.id == id) {
+                job.status = JobStatus::Cancelled;
+            }
+        }
+        log(state, LogLevel::Info, "Cancelled queued jobs.");
+        let _ = persistence::save(state);
+        return;
+    }
+
+    if let Some(arg) = rest.strip_prefix("resume ") {
+        let Ok(id) = arg.trim().parse::<u64>() else {
+            log(state, LogLevel::Warn, "Usage: /job resume <id>");
+            return;
+        };
+        let Some(old) = state.jobs.iter().find(|j| j.id == id).cloned() else {
+            log(state, LogLevel::Warn, format!("Job #{} not found.", id));
+            return;
+        };
+        queue_job(state, old.kind, old.input);
+        return;
+    }
+
+    if let Some(arg) = rest.strip_prefix("swarm ") {
+        let arg = arg.trim();
+        if arg.is_empty() {
+            log(state, LogLevel::Warn, "Usage: /job swarm <task>");
+            return;
+        }
+        queue_job(state, JobKind::Swarm, arg.to_string());
+        return;
+    }
+
+    if let Some(arg) = rest.strip_prefix("test") {
+        queue_job(state, JobKind::Test, arg.trim().to_string());
+        return;
+    }
+
+    log(
+        state,
+        LogLevel::Warn,
+        "Usage: /job test [target] | /job swarm <task> | /job resume <id> | /job cancel all",
+    );
+}
+
+fn queue_job(state: &mut AgentState, kind: JobKind, input: String) {
+    let id = state.next_job_id;
+    state.next_job_id += 1;
+    state.jobs.push(JobRecord {
+        id,
+        kind: kind.clone(),
+        input: input.clone(),
+        status: JobStatus::Queued,
+        output: None,
+    });
+    state.job_queue.push(JobRequest { id, kind, input });
+    log(state, LogLevel::Info, format!("Queued job #{}", id));
+    let _ = persistence::save(state);
+}
+
+fn show_jobs(state: &mut AgentState) {
+    if state.jobs.is_empty() {
+        log(state, LogLevel::Info, "No jobs yet.");
+        return;
+    }
+
+    let rows: Vec<String> = state
+        .jobs
+        .iter()
+        .rev()
+        .take(15)
+        .map(|job| {
+            let status = match job.status {
+                JobStatus::Queued => "queued",
+                JobStatus::Running => "running",
+                JobStatus::Done => "done",
+                JobStatus::Failed => "failed",
+                JobStatus::Cancelled => "cancelled",
+            };
+            format!(
+                "#{} [{}] {} - {}",
+                job.id,
+                job.kind.as_str(),
+                status,
+                compact_line(&job.input, 80)
+            )
+        })
+        .collect();
+
+    for row in rows {
+        log(state, LogLevel::Info, row);
+    }
+}
+
+fn show_plan(state: &mut AgentState) {
+    if state.plan_items.is_empty() {
+        log(state, LogLevel::Info, "Plan is empty.");
+        return;
+    }
+    let rows: Vec<String> = state
+        .plan_items
+        .iter()
+        .enumerate()
+        .map(|(idx, item)| {
+            format!(
+                "{}. [{}] {}",
+                idx + 1,
+                if item.done { "x" } else { " " },
+                item.text
+            )
+        })
+        .collect();
+    for row in rows {
+        log(state, LogLevel::Info, row);
+    }
+}
+
+fn plan_add(state: &mut AgentState, cmd: &str) {
+    let text = cmd.strip_prefix("/plan add").map(str::trim).unwrap_or("");
+    if text.is_empty() {
+        log(state, LogLevel::Warn, "Usage: /plan add <text>");
+        return;
+    }
+    state.plan_items.push(PlanItem {
+        text: text.to_string(),
+        done: false,
+    });
+    log(state, LogLevel::Success, "Plan item added.");
+    let _ = persistence::save(state);
+}
+
+fn plan_done(state: &mut AgentState, cmd: &str) {
+    let idx = cmd.strip_prefix("/plan done").map(str::trim).unwrap_or("");
+    let Ok(n) = idx.parse::<usize>() else {
+        log(state, LogLevel::Warn, "Usage: /plan done <id>");
+        return;
+    };
+    if n == 0 || n > state.plan_items.len() {
+        log(state, LogLevel::Warn, "Plan item out of range.");
+        return;
+    }
+    if let Some(item) = state.plan_items.get_mut(n - 1) {
+        item.done = true;
+    }
+    log(
+        state,
+        LogLevel::Success,
+        format!("Plan item {} marked done.", n),
+    );
+    let _ = persistence::save(state);
+}
+
+fn plan_clear(state: &mut AgentState) {
+    state.plan_items.clear();
+    log(state, LogLevel::Info, "Plan cleared.");
+    let _ = persistence::save(state);
+}
+
+fn compact_line(s: &str, max: usize) -> String {
+    let flat = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= max {
+        flat
+    } else {
+        let mut out: String = flat.chars().take(max.saturating_sub(1)).collect();
+        out.push('…');
+        out
+    }
+}
+
+fn show_autofix(state: &mut AgentState) {
+    log(
+        state,
+        LogLevel::Info,
+        format!("Auto-eval: {}", if state.auto_eval { "on" } else { "off" }),
+    );
+}
+
+fn set_autofix(state: &mut AgentState, cmd: &str) {
+    let value = cmd.strip_prefix("/autofix").map(str::trim).unwrap_or("");
+    match value {
+        "on" => state.auto_eval = true,
+        "off" => state.auto_eval = false,
+        _ => {
+            log(state, LogLevel::Warn, "Usage: /autofix on|off");
+            return;
+        }
+    }
+    show_autofix(state);
+    let _ = persistence::save(state);
+}
+
+fn open_nv(state: &mut AgentState, cmd: &str) {
+    if cmd.trim() == "/nv help" {
+        log(state, LogLevel::Info, "nvim exit: :q, :wq, :qa!, :qa");
+        log(
+            state,
+            LogLevel::Info,
+            "navigation: Ctrl+w h/l to move between panes",
+        );
+        log(
+            state,
+            LogLevel::Info,
+            "plugin panels: press q or Esc to close (lazy, tree, etc.)",
+        );
+        log(state, LogLevel::Info, "tmux detach: Ctrl+b then d");
+        return;
+    }
+    if cmd.trim() == "/nv toggle" {
+        toggle_nv_pane(state);
+        return;
+    }
+
+    if !has_cmd("tmux") || !has_cmd("nvim") {
+        let missing = [
+            if has_cmd("tmux") { None } else { Some("tmux") },
+            if has_cmd("nvim") {
+                None
+            } else {
+                Some("neovim (nvim)")
+            },
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(", ");
+        log(
+            state,
+            LogLevel::Error,
+            format!(
+                "/nv requires missing dependency: {}. Run install.sh or install them manually.",
+                missing
+            ),
+        );
+        log(
+            state,
+            LogLevel::Info,
+            "macOS: brew install tmux neovim | Ubuntu: sudo apt-get install -y tmux neovim",
+        );
+        return;
+    }
+    ensure_nvim_ux_bootstrap(state);
+
+    let target = cmd.strip_prefix("/nv").map(str::trim).unwrap_or("");
+    let entry = if !target.is_empty() {
+        target.to_string()
+    } else if let Some(active) = state.ui.active_edit_target.clone() {
+        active
+    } else if let Some(last) = state.session_changes.last().map(|s| s.target.clone()) {
+        last
+    } else {
+        ".".to_string()
+    };
+    let repo = shell_escape(&state.repo_root.display().to_string());
+    let nvim_cmd = build_nvim_command(&repo, &entry);
+    let recent = recent_session_files(state, 4);
+
+    let _ = Command::new("tmux")
+        .args(["set-option", "-g", "mouse", "on"])
+        .output();
+
+    if env::var("TMUX").is_err() {
+        let exe = match env::current_exe() {
+            Ok(path) => shell_escape(&path.display().to_string()),
+            Err(e) => {
+                log(
+                    state,
+                    LogLevel::Error,
+                    format!("Failed to resolve current executable for /nv: {}", e),
+                );
+                return;
+            }
+        };
+        let session = format!(
+            "osmogrep-nv-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+        );
+        let cwd = state.repo_root.display().to_string();
+        let osmogrep_cmd = format!(
+            "cd {} && OSMOGREP_NV_TIPS=1 OSMOGREP_MANAGED_TMUX=1 OSMOGREP_NV_SESSION={} {}",
+            repo,
+            shell_escape(&session),
+            exe
+        );
+
+        let steps: Vec<(Vec<String>, &str)> = vec![
+            (
+                vec![
+                    "new-session".into(),
+                    "-d".into(),
+                    "-s".into(),
+                    session.clone(),
+                    "-c".into(),
+                    cwd.clone(),
+                    osmogrep_cmd,
+                ],
+                "create tmux session",
+            ),
+            (
+                vec![
+                    "split-window".into(),
+                    "-h".into(),
+                    "-b".into(),
+                    "-p".into(),
+                    "65".into(),
+                    "-t".into(),
+                    format!("{}:0", session),
+                    "-c".into(),
+                    cwd.clone(),
+                    nvim_cmd.clone(),
+                ],
+                "split nvim pane",
+            ),
+            (
+                vec![
+                    "set-option".into(),
+                    "-t".into(),
+                    session.clone(),
+                    "-g".into(),
+                    "mouse".into(),
+                    "on".into(),
+                ],
+                "enable mouse",
+            ),
+            (
+                vec![
+                    "select-pane".into(),
+                    "-t".into(),
+                    format!("{}:0.1", session),
+                ],
+                "focus osmogrep pane",
+            ),
+        ];
+
+        for (args, step) in steps {
+            match Command::new("tmux").args(args).output() {
+                Ok(out) if out.status.success() => {}
+                Ok(out) => {
+                    log(
+                        state,
+                        LogLevel::Error,
+                        format!(
+                            "/nv failed to {}: {}",
+                            step,
+                            String::from_utf8_lossy(&out.stderr).trim()
+                        ),
+                    );
+                    return;
+                }
+                Err(e) => {
+                    log(
+                        state,
+                        LogLevel::Error,
+                        format!("/nv failed to {}: {}", step, e),
+                    );
+                    return;
+                }
+            }
+        }
+
+        state.ui.tmux_attach_session = Some(session.clone());
+        state.ui.should_exit = true;
+        log(
+            state,
+            LogLevel::Success,
+            format!("Prepared tmux session {}. Switching now...", session),
+        );
+        if !recent.is_empty() {
+            log(
+                state,
+                LogLevel::Info,
+                format!("Recent edited files: {}", recent.join(", ")),
+            );
+        }
+        return;
+    }
+
+    match Command::new("tmux")
+        .args(["split-window", "-h", "-b", "-p", "65", &nvim_cmd])
+        .output()
+    {
+        Ok(out) if out.status.success() => {
+            log(
+                state,
+                LogLevel::Success,
+                if target.is_empty() {
+                    format!("Opened Neovim pane on the left at {}.", entry)
+                } else {
+                    format!("Opened Neovim pane with {}.", target)
+                },
+            );
+            if !recent.is_empty() {
+                log(
+                    state,
+                    LogLevel::Info,
+                    format!("Recent edited files: {}", recent.join(", ")),
+                );
+            }
+        }
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            log(
+                state,
+                LogLevel::Error,
+                format!("Failed to open /nv pane: {}", stderr.trim()),
+            );
+        }
+        Err(e) => {
+            log(
+                state,
+                LogLevel::Error,
+                format!("Failed to launch tmux for /nv: {}", e),
+            );
+        }
+    }
+}
+
+fn build_nvim_command(repo: &str, entry: &str) -> String {
+    let entry = shell_escape(entry);
+    format!(
+        "cd {repo} && nvim --headless \"+Lazy! sync\" +qa >/dev/null 2>&1 || true; nvim {entry} -c \"set termguicolors\" -c \"silent! LspStart\" -c \"silent! NvimTreeOpen\" -c \"vertical resize 32\" -c \"wincmd l\""
+    )
+}
+
+fn recent_session_files(state: &AgentState, max: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    for snap in state.session_changes.iter().rev() {
+        if !out.iter().any(|x: &String| x == &snap.target) {
+            out.push(snap.target.clone());
+        }
+        if out.len() >= max {
+            break;
+        }
+    }
+    out
+}
+
+fn shell_escape(s: &str) -> String {
+    if s.is_empty() {
+        return "''".to_string();
+    }
+    if s.chars()
+        .all(|c| c.is_ascii_alphanumeric() || "/._-".contains(c))
+    {
+        return s.to_string();
+    }
+    let escaped = s.replace('\'', "'\"'\"'");
+    format!("'{}'", escaped)
+}
+
+fn has_cmd(name: &str) -> bool {
+    Command::new("sh")
+        .arg("-c")
+        .arg(format!("command -v {} >/dev/null 2>&1", name))
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+fn ensure_nvim_ux_bootstrap(state: &mut AgentState) {
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("~"));
+    let cfg_dir = home.join(".config").join("nvim");
+    let init_path = cfg_dir.join("init.lua");
+    let marker = "-- osmogrep-managed-nvim";
+
+    let existing = fs::read_to_string(&init_path).ok();
+    if let Some(ref text) = existing {
+        if !text.contains(marker) {
+            log(
+                state,
+                LogLevel::Info,
+                format!(
+                    "Detected existing nvim config at {} (leaving it unchanged).",
+                    init_path.display()
+                ),
+            );
+            return;
+        }
+    }
+
+    if let Err(e) = fs::create_dir_all(&cfg_dir) {
+        log(
+            state,
+            LogLevel::Warn,
+            format!("Failed to create nvim config directory: {}", e),
+        );
+        return;
+    }
+
+    let managed = format!(
+        r#"{marker}
+vim.g.mapleader = ' '
+vim.opt.termguicolors = true
+vim.opt.number = true
+vim.opt.relativenumber = true
+vim.opt.signcolumn = 'yes'
+vim.opt.cursorline = true
+vim.opt.updatetime = 200
+vim.opt.splitright = true
+vim.opt.splitbelow = true
+vim.opt.clipboard = 'unnamedplus'
+
+local lazypath = vim.fn.stdpath('data') .. '/lazy/lazy.nvim'
+vim.g.loaded_netrw = 1
+vim.g.loaded_netrwPlugin = 1
+local stat = vim.loop.fs_stat(lazypath)
+if stat and stat.type ~= 'directory' then
+  pcall(vim.fn.delete, lazypath)
+  stat = nil
+end
+if not stat then
+  vim.fn.system({{
+    'git', 'clone', '--filter=blob:none',
+    'https://github.com/folke/lazy.nvim.git',
+    '--branch=stable', lazypath
+  }})
+end
+vim.opt.rtp:prepend(lazypath)
+
+require('lazy').setup({{
+  {{ 'catppuccin/nvim', name = 'catppuccin', priority = 1000 }},
+  {{ 'nvim-tree/nvim-web-devicons' }},
+  {{
+    'nvim-tree/nvim-tree.lua',
+    config = function()
+      require('nvim-tree').setup({{
+        hijack_netrw = true,
+        sync_root_with_cwd = true,
+        view = {{ width = 34 }},
+        renderer = {{ icons = {{ show = {{ folder = true, file = true, folder_arrow = true }} }} }},
+      }})
+    end
+  }},
+  {{
+    'nvim-treesitter/nvim-treesitter',
+    build = ':TSUpdate',
+    config = function()
+      require('nvim-treesitter.configs').setup({{
+        highlight = {{ enable = true }},
+        indent = {{ enable = true }},
+        ensure_installed = {{ 'lua', 'vim', 'vimdoc', 'rust', 'python', 'javascript', 'typescript', 'go', 'json', 'toml', 'bash' }},
+      }})
+    end
+  }},
+  {{
+    'nvim-telescope/telescope.nvim',
+    dependencies = {{ 'nvim-lua/plenary.nvim' }},
+  }},
+  {{ 'neovim/nvim-lspconfig' }},
+  {{
+    'williamboman/mason.nvim',
+    config = function() require('mason').setup() end
+  }},
+  {{
+    'williamboman/mason-lspconfig.nvim',
+    dependencies = {{ 'williamboman/mason.nvim', 'neovim/nvim-lspconfig' }},
+    config = function()
+      require('mason-lspconfig').setup({{
+        ensure_installed = {{ 'lua_ls', 'rust_analyzer', 'pyright', 'ts_ls', 'gopls', 'clangd' }},
+      }})
+    end
+  }},
+}})
+
+vim.cmd.colorscheme('catppuccin-mocha')
+vim.keymap.set('n', '<leader>e', '<cmd>NvimTreeToggle<CR>', {{ silent = true }})
+vim.keymap.set('n', '<C-b>', '<cmd>NvimTreeToggle<CR>', {{ silent = true }})
+vim.keymap.set('n', '<leader>ff', '<cmd>Telescope find_files<CR>', {{ silent = true }})
+vim.api.nvim_create_autocmd('FileType', {{
+  pattern = 'lazy',
+  callback = function()
+    vim.keymap.set('n', 'q', '<cmd>close<CR>', {{ buffer = true, silent = true }})
+    vim.keymap.set('n', '<Esc>', '<cmd>close<CR>', {{ buffer = true, silent = true }})
+  end,
+}})
+vim.api.nvim_create_autocmd('VimEnter', {{
+  callback = function()
+    pcall(vim.cmd, 'NvimTreeOpen')
+    pcall(vim.cmd, 'wincmd l')
+  end,
+}})
+
+local lspconfig = require('lspconfig')
+local servers = {{ 'lua_ls', 'rust_analyzer', 'pyright', 'ts_ls', 'gopls', 'clangd' }}
+for _, server in ipairs(servers) do
+  pcall(function() lspconfig[server].setup({{}}) end)
+end
+"#
+    );
+
+    let write_result = (|| -> Result<(), String> {
+        let mut f = fs::File::create(&init_path).map_err(|e| e.to_string())?;
+        f.write_all(managed.as_bytes()).map_err(|e| e.to_string())?;
+        Ok(())
+    })();
+
+    match write_result {
+        Ok(()) => log(
+            state,
+            LogLevel::Info,
+            format!("Prepared managed nvim UX config at {}", init_path.display()),
+        ),
+        Err(e) => log(
+            state,
+            LogLevel::Warn,
+            format!("Failed to write nvim UX config: {}", e),
+        ),
+    }
+}
+
+fn toggle_nv_pane(state: &mut AgentState) {
+    if env::var("TMUX").is_err() {
+        log(
+            state,
+            LogLevel::Warn,
+            "/nv toggle works inside tmux windows only.",
+        );
+        return;
+    }
+
+    let window = match tmux_current_window_id() {
+        Some(w) => w,
+        None => {
+            log(
+                state,
+                LogLevel::Warn,
+                "Could not resolve current tmux window.",
+            );
+            return;
+        }
+    };
+
+    if let Some(pane_id) = tmux_find_nvim_pane(&window) {
+        match Command::new("tmux")
+            .args(["kill-pane", "-t", &pane_id])
+            .output()
+        {
+            Ok(out) if out.status.success() => {
+                log(state, LogLevel::Success, "Closed nvim pane.");
+            }
+            Ok(out) => {
+                log(
+                    state,
+                    LogLevel::Error,
+                    format!(
+                        "Failed to close nvim pane: {}",
+                        String::from_utf8_lossy(&out.stderr).trim()
+                    ),
+                );
+            }
+            Err(e) => log(
+                state,
+                LogLevel::Error,
+                format!("Failed to run tmux kill-pane: {}", e),
+            ),
+        }
+        return;
+    }
+
+    let repo = shell_escape(&state.repo_root.display().to_string());
+    let entry = state
+        .ui
+        .active_edit_target
+        .clone()
+        .or_else(|| state.session_changes.last().map(|s| s.target.clone()))
+        .unwrap_or_else(|| ".".to_string());
+    let nvim_cmd = build_nvim_command(&repo, &entry);
+
+    match Command::new("tmux")
+        .args([
+            "split-window",
+            "-h",
+            "-b",
+            "-p",
+            "65",
+            "-t",
+            &window,
+            "-c",
+            &state.repo_root.display().to_string(),
+            &nvim_cmd,
+        ])
+        .output()
+    {
+        Ok(out) if out.status.success() => {
+            let _ = Command::new("tmux")
+                .args(["set-option", "-g", "mouse", "on"])
+                .output();
+            log(state, LogLevel::Success, "Opened nvim pane.");
+        }
+        Ok(out) => log(
+            state,
+            LogLevel::Error,
+            format!(
+                "Failed to open nvim pane: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ),
+        ),
+        Err(e) => log(
+            state,
+            LogLevel::Error,
+            format!("Failed to run tmux split-window: {}", e),
+        ),
+    }
+}
+
+fn tmux_current_window_id() -> Option<String> {
+    let out = Command::new("tmux")
+        .args(["display-message", "-p", "#{session_name}:#{window_index}"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
+
+fn tmux_find_nvim_pane(window: &str) -> Option<String> {
+    let out = Command::new("tmux")
+        .args([
+            "list-panes",
+            "-t",
+            window,
+            "-F",
+            "#{pane_id} #{pane_current_command}",
+        ])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    for line in text.lines() {
+        let mut parts = line.split_whitespace();
+        let pane = parts.next()?;
+        let cmd = parts.next().unwrap_or("");
+        if cmd == "nvim" || cmd == "vim" {
+            return Some(pane.to_string());
+        }
+    }
+    None
+}
+
 fn enter_api_key_mode(state: &mut AgentState) {
     state.ui.input.clear();
     state.ui.input_mode = InputMode::ApiKey;
@@ -460,12 +1465,52 @@ pub fn update_command_hints(state: &mut AgentState) {
             desc: "Show all file changes this session",
         },
         CommandItem {
+            cmd: "/compact",
+            desc: "Compress conversation context",
+        },
+        CommandItem {
+            cmd: "/metrics",
+            desc: "Show usage and queue metrics",
+        },
+        CommandItem {
+            cmd: "/profile",
+            desc: "Show or set permission profile",
+        },
+        CommandItem {
             cmd: "/approve",
             desc: "Toggle dangerous tool auto-approve",
         },
         CommandItem {
             cmd: "/new",
             desc: "Start a fresh conversation",
+        },
+        CommandItem {
+            cmd: "/steer",
+            desc: "Set or show persistent steer instruction",
+        },
+        CommandItem {
+            cmd: "/swarm",
+            desc: "Run parallel scoped sub-agents",
+        },
+        CommandItem {
+            cmd: "/jobs",
+            desc: "Show background jobs",
+        },
+        CommandItem {
+            cmd: "/autofix",
+            desc: "Toggle auto post-run eval tests",
+        },
+        CommandItem {
+            cmd: "/nv",
+            desc: "Open Neovim split (auto tmux bootstrap)",
+        },
+        CommandItem {
+            cmd: "/job",
+            desc: "Queue background job",
+        },
+        CommandItem {
+            cmd: "/plan",
+            desc: "Show/update plan items",
         },
         CommandItem {
             cmd: "/quit",

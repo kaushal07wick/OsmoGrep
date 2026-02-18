@@ -5,7 +5,7 @@ use std::{
     process::{Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc::{self, Sender},
+        mpsc::{self, Receiver, Sender},
         Arc,
     },
     thread,
@@ -15,6 +15,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::state::PermissionProfile;
 use crate::tools::{ToolRegistry, ToolSafety};
 
 #[derive(Debug)]
@@ -169,6 +170,11 @@ pub struct Agent {
     api_key: Option<String>,
 }
 
+pub struct RunControl {
+    pub cancel: CancelToken,
+    pub steer_tx: Sender<String>,
+}
+
 impl Agent {
     pub fn new() -> Self {
         let cfg = load_config();
@@ -224,6 +230,10 @@ impl Agent {
         &self.model_cfg
     }
 
+    pub fn api_key(&self) -> Option<String> {
+        self.api_key.clone()
+    }
+
     pub fn set_model_config(&mut self, provider: String, model: String, base_url: Option<String>) {
         self.model_cfg.provider = provider;
         self.model_cfg.model = model;
@@ -245,13 +255,16 @@ impl Agent {
         repo_root: PathBuf,
         user_text: String,
         prior_messages: Vec<Value>,
+        steer: Option<String>,
+        permission_profile: PermissionProfile,
         auto_approve: bool,
         tx: Sender<AgentEvent>,
-    ) -> CancelToken {
+    ) -> RunControl {
         let model_cfg = self.model_cfg.clone();
         let api_key = self.api_key.clone();
         let cancel = CancelToken::new();
         let cancel_worker = cancel.clone();
+        let (steer_tx, steer_rx) = mpsc::channel::<String>();
 
         thread::spawn(move || {
             let runner = RunAgent {
@@ -259,10 +272,12 @@ impl Agent {
                 model_cfg,
                 api_key,
                 auto_approve,
+                permission_profile,
                 cancel: cancel_worker.clone(),
             };
 
-            if let Err(e) = runner.run(repo_root, &user_text, prior_messages, &tx) {
+            if let Err(e) = runner.run(repo_root, &user_text, prior_messages, steer, steer_rx, &tx)
+            {
                 if e == "cancelled" {
                     let _ = tx.send(AgentEvent::Cancelled);
                 } else {
@@ -273,7 +288,12 @@ impl Agent {
             let _ = tx.send(AgentEvent::Done);
         });
 
-        cancel
+        RunControl { cancel, steer_tx }
+    }
+
+    pub fn run_swarm(&self, user_text: &str) -> Result<Vec<(String, String)>, String> {
+        let api_key = self.api_key.as_ref().ok_or("OPENAI_API_KEY not set")?;
+        run_swarm_with(self.model_cfg.clone(), api_key, user_text)
     }
 }
 
@@ -282,6 +302,7 @@ struct RunAgent {
     model_cfg: ModelConfig,
     api_key: Option<String>,
     auto_approve: bool,
+    permission_profile: PermissionProfile,
     cancel: CancelToken,
 }
 
@@ -291,6 +312,8 @@ impl RunAgent {
         repo_root: PathBuf,
         user_text: &str,
         prior_messages: Vec<Value>,
+        steer: Option<String>,
+        steer_rx: Receiver<String>,
         tx: &Sender<AgentEvent>,
     ) -> Result<(), String> {
         let api_key = self.api_key.as_ref().ok_or("OPENAI_API_KEY not set")?;
@@ -308,11 +331,18 @@ impl RunAgent {
                 }
             }
         }
+        if let Some(steer_text) = steer.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            persisted.push(json!({
+                "role": "system",
+                "content": format!("[steer]\n{}", steer_text),
+            }));
+        }
         persisted.push(json!({ "role": "user", "content": user_text }));
 
         let mut input = Value::Array(persisted.clone());
 
         loop {
+            apply_pending_steer(&steer_rx, &mut persisted, &mut input, tx);
             if self.cancel.is_cancelled() {
                 return Err("cancelled".into());
             }
@@ -332,6 +362,7 @@ impl RunAgent {
             let mut saw_tool = false;
 
             for item in output {
+                apply_pending_steer(&steer_rx, &mut persisted, &mut input, tx);
                 if self.cancel.is_cancelled() {
                     return Err("cancelled".into());
                 }
@@ -366,9 +397,21 @@ impl RunAgent {
                             args: args.clone(),
                         });
 
-                        if self.tools.safety(&name) == Some(ToolSafety::Dangerous)
-                            && !self.auto_approve
-                        {
+                        let dangerous = self.tools.safety(&name) == Some(ToolSafety::Dangerous);
+                        if dangerous && self.permission_profile == PermissionProfile::ReadOnly {
+                            next_messages.push(item.clone());
+                            next_messages.push(json!({
+                                "type": "function_call_output",
+                                "call_id": call_id,
+                                "output": "{\"error\":\"permission profile is read-only\"}"
+                            }));
+                            continue;
+                        }
+
+                        let should_prompt = dangerous
+                            && self.permission_profile != PermissionProfile::FullAccess
+                            && !self.auto_approve;
+                        if should_prompt {
                             if let Some((target, before, after)) =
                                 preview_diff_from_args(&name, &args)
                             {
@@ -703,6 +746,173 @@ fn env_truthy(key: &str, default: bool) -> bool {
         ),
         Err(_) => default,
     }
+}
+
+fn apply_pending_steer(
+    steer_rx: &Receiver<String>,
+    persisted: &mut Vec<Value>,
+    input: &mut Value,
+    tx: &Sender<AgentEvent>,
+) {
+    let mut latest: Option<String> = None;
+    while let Ok(s) = steer_rx.try_recv() {
+        let t = s.trim();
+        if !t.is_empty() {
+            latest = Some(t.to_string());
+        }
+    }
+
+    if let Some(text) = latest {
+        persisted.push(json!({
+            "role": "system",
+            "content": format!("[steer-now]\n{}", text),
+        }));
+        *input = Value::Array(persisted.clone());
+        let preview = if text.chars().count() > 88 {
+            let mut s: String = text.chars().take(87).collect();
+            s.push('…');
+            s
+        } else {
+            text
+        };
+        let _ = tx.send(AgentEvent::ToolResult {
+            summary: format!("steer applied live: {}", preview),
+        });
+    }
+}
+
+fn run_swarm_with(
+    model_cfg: ModelConfig,
+    api_key: &str,
+    user_text: &str,
+) -> Result<Vec<(String, String)>, String> {
+    let scopes = [
+        (
+            "explore",
+            "Map relevant files/modules and explain what to inspect first.",
+        ),
+        (
+            "edit",
+            "Propose concrete code changes with minimal, safe patches.",
+        ),
+        (
+            "test",
+            "Design targeted tests and validation sequence for the requested change.",
+        ),
+        (
+            "review",
+            "Find likely regressions, edge-cases, and approval/blocking risks.",
+        ),
+    ];
+
+    let mut handles = Vec::new();
+    for (name, scope_prompt) in scopes {
+        let cfg = model_cfg.clone();
+        let key = api_key.to_string();
+        let user = user_text.to_string();
+        let scope = scope_prompt.to_string();
+        let role = name.to_string();
+        handles.push(thread::spawn(move || {
+            let text = one_shot_scoped_call(&cfg, &key, &user, &scope)?;
+            Ok::<(String, String), String>((role, text))
+        }));
+    }
+
+    let mut out = Vec::new();
+    for h in handles {
+        let res = h
+            .join()
+            .map_err(|_| "swarm thread panicked".to_string())??;
+        out.push(res);
+    }
+    Ok(out)
+}
+
+pub fn run_swarm_job(
+    model_cfg: ModelConfig,
+    api_key: String,
+    user_text: String,
+) -> Result<String, String> {
+    let mut parts = run_swarm_with(model_cfg, &api_key, &user_text)?;
+    parts.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut out = String::new();
+    for (idx, (role, text)) in parts.iter().enumerate() {
+        if idx > 0 {
+            out.push_str("\n\n");
+        }
+        out.push_str(&format!("[{}]\n{}", role, text));
+    }
+    Ok(out)
+}
+
+fn one_shot_scoped_call(
+    model_cfg: &ModelConfig,
+    api_key: &str,
+    user_text: &str,
+    scope_prompt: &str,
+) -> Result<String, String> {
+    let payload = json!({
+        "model": model_cfg.model,
+        "input": [
+            {
+                "role": "system",
+                "content": format!(
+                    "You are a focused coding sub-agent.\nScope: {}\nBe concise and concrete.",
+                    scope_prompt
+                )
+            },
+            {"role": "user", "content": user_text}
+        ],
+        "reasoning": {"effort": "medium"},
+        "store": false
+    });
+
+    let base = model_cfg
+        .base_url
+        .clone()
+        .unwrap_or_else(|| default_base_url_for(&model_cfg.provider));
+    let endpoint = format!("{}/responses", base.trim_end_matches('/'));
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let resp = client
+        .post(endpoint)
+        .bearer_auth(api_key)
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send()
+        .map_err(|e| e.to_string())?;
+
+    if !resp.status().is_success() {
+        return Err(format!("API error {}", resp.status()));
+    }
+
+    let value: Value = resp.json().map_err(|e| e.to_string())?;
+    extract_response_text(&value).ok_or_else(|| "no output_text in swarm response".to_string())
+}
+
+fn extract_response_text(value: &Value) -> Option<String> {
+    let output = value.get("output")?.as_array()?;
+    for item in output {
+        if item.get("type").and_then(Value::as_str) == Some("output_text") {
+            if let Some(text) = item.get("text").and_then(Value::as_str) {
+                return Some(text.to_string());
+            }
+        }
+        if item.get("type").and_then(Value::as_str) == Some("message") {
+            let content = item.get("content").and_then(Value::as_array)?;
+            for c in content {
+                if c.get("type").and_then(Value::as_str) == Some("output_text") {
+                    if let Some(text) = c.get("text").and_then(Value::as_str) {
+                        return Some(text.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 fn preview_diff_from_args(name: &str, args: &Value) -> Option<(String, String, String)> {

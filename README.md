@@ -174,6 +174,7 @@ Anything else is sent directly to the agent.
 | `/providers` | Show available model providers |
 | `/new`   | Start a fresh conversation       |
 | `/approve` | Toggle dangerous tool auto-approve |
+| `/nv`    | Open Neovim + Osmogrep split in tmux |
 | `/quit`  | Stop the currently running agent |
 | `/q`     | Alias for `/quit`                |
 | `/exit`  | Exit Osmogrep                    |
@@ -189,6 +190,13 @@ Agent toolset now also includes:
 `run_tests`, `list_dir`, `git_diff`, `git_log`, `regex_search`, `web_fetch`,
 `find_definition`, `find_references`, `git_commit`, `patch`, `notebook_edit`,
 `web_search`, `diagnostics`, `mcp_call`.
+
+`/nv` notes:
+- If not already inside tmux, Osmogrep bootstraps a tmux session automatically.
+- Left pane runs `nvim`; right pane runs Osmogrep.
+- Managed Neovim UX is auto-installed by `install.sh` (theme, tree, icons, treesitter, LSP setup).
+- `/nv toggle` hides/shows the nvim pane in the current tmux window.
+- Exit helpers: `/nv help` (shows `:q`, `:wq`, `:qa!`, pane navigation, tmux detach).
 
 Repository-specific behavior can be guided with `.osmogrep.md` at repo root.
 

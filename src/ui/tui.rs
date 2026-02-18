@@ -365,7 +365,19 @@ fn render_running_badge(f: &mut Frame, area: Rect, state: &AgentState) {
         return;
     }
     let pulse = running_pulse(state.ui.spinner_started_at).unwrap_or_else(|| "…".to_string());
-    let text = format!("  ● running {pulse}  (Esc to cancel)");
+    let target = state
+        .ui
+        .active_edit_target
+        .as_deref()
+        .map(|s| format!(" · editing {}", truncate_for_badge(s, 44)))
+        .unwrap_or_default();
+    let recent = recent_edited_summary(state, 3);
+    let recent = if recent.is_empty() {
+        String::new()
+    } else {
+        format!(" · edited {}", recent)
+    };
+    let text = format!("  ● running {pulse}{target}{recent}  (Esc to cancel)");
     f.render_widget(
         Paragraph::new(Line::from(Span::styled(
             text,
@@ -375,6 +387,32 @@ fn render_running_badge(f: &mut Frame, area: Rect, state: &AgentState) {
         ))),
         area,
     );
+}
+
+fn truncate_for_badge(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
+fn recent_edited_summary(state: &AgentState, max: usize) -> String {
+    let mut files: Vec<String> = Vec::new();
+    for snap in state.session_changes.iter().rev() {
+        if !files.iter().any(|x| x == &snap.target) {
+            files.push(snap.target.clone());
+        }
+        if files.len() >= max {
+            break;
+        }
+    }
+    files
+        .into_iter()
+        .map(|f| truncate_for_badge(&f, 20))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn voice_bar_text(state: &AgentState) -> String {
@@ -465,13 +503,12 @@ fn render_input_box(f: &mut Frame, area: Rect, state: &AgentState) {
     out.push(Line::from("─".repeat(inner_width)));
 
     // Show visible lines
+    let mut image_idx = 1usize;
     for (i, line) in visual.iter().take(visible_lines).enumerate() {
         if i == 0 {
             // First line with prompt
-            let mut spans = vec![
-                Span::styled(PROMPT, Style::default().fg(Color::White)),
-                Span::styled(line, Style::default().fg(Color::White)),
-            ];
+            let mut spans = vec![Span::styled(PROMPT, Style::default().fg(Color::White))];
+            spans.extend(render_image_alias_spans(line, &mut image_idx));
 
             // Add badge on first line if there are hidden lines
             if hidden_lines > 0 {
@@ -485,10 +522,7 @@ fn render_input_box(f: &mut Frame, area: Rect, state: &AgentState) {
             out.push(Line::from(spans));
         } else {
             // Continuation lines (no prompt)
-            out.push(Line::from(Span::styled(
-                line,
-                Style::default().fg(Color::White),
-            )));
+            out.push(Line::from(render_image_alias_spans(line, &mut image_idx)));
         }
     }
 
@@ -503,6 +537,67 @@ fn render_input_box(f: &mut Frame, area: Rect, state: &AgentState) {
     let cursor_y = area.y + 1;
 
     f.set_cursor(cursor_x, cursor_y);
+}
+
+fn render_image_alias_spans(line: &str, image_idx: &mut usize) -> Vec<Span<'static>> {
+    if line.is_empty() {
+        return vec![Span::raw(String::new())];
+    }
+
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut token = String::new();
+
+    let flush_token = |t: &mut String, spans: &mut Vec<Span<'static>>, image_idx: &mut usize| {
+        if t.is_empty() {
+            return;
+        }
+        if looks_like_image_path(t) {
+            spans.push(Span::styled(
+                format!("@image_{}", *image_idx),
+                Style::default()
+                    .fg(ACCENT_ORANGE)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            *image_idx += 1;
+        } else {
+            spans.push(Span::styled(t.clone(), Style::default().fg(Color::White)));
+        }
+        t.clear();
+    };
+
+    for ch in line.chars() {
+        if ch.is_whitespace() {
+            flush_token(&mut token, &mut spans, image_idx);
+            spans.push(Span::raw(ch.to_string()));
+        } else {
+            token.push(ch);
+        }
+    }
+    flush_token(&mut token, &mut spans, image_idx);
+    spans
+}
+
+fn looks_like_image_path(token: &str) -> bool {
+    let trimmed = token
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim_matches(|c: char| ",;:!?)[]{}".contains(c));
+    if trimmed.is_empty() {
+        return false;
+    }
+    let has_path_hint =
+        trimmed.contains('/') || trimmed.starts_with("~") || trimmed.starts_with("./");
+    if !has_path_hint {
+        return false;
+    }
+    let ext = trimmed
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    matches!(
+        ext.as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" | "heic" | "tiff" | "avif"
+    )
 }
 
 /// bottom status with animation and tabs

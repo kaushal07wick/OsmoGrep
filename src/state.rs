@@ -110,6 +110,9 @@ pub struct UiState {
     pub streaming_buffer: String,
     pub streaming_active: bool,
     pub streaming_lines_logged: usize,
+    pub tmux_attach_session: Option<String>,
+    pub active_edit_target: Option<String>,
+    pub queued_agent_prompt: Option<String>,
 }
 
 pub struct AgentState {
@@ -118,11 +121,93 @@ pub struct AgentState {
     pub session_changes: Vec<DiffSnapshot>,
     pub undo_stack: Vec<DiffSnapshot>,
     pub usage: UsageStats,
+    pub steer: Option<String>,
+    pub auto_eval: bool,
+    pub permission_profile: PermissionProfile,
+    pub jobs: Vec<JobRecord>,
+    pub job_queue: Vec<JobRequest>,
+    pub next_job_id: u64,
+    pub plan_items: Vec<PlanItem>,
 
     pub started_at: Instant,
     pub repo_root: PathBuf,
     pub voice: VoiceState,
     pub conversation: ConversationHistory,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionProfile {
+    ReadOnly,
+    WorkspaceAuto,
+    FullAccess,
+}
+
+impl PermissionProfile {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PermissionProfile::ReadOnly => "read-only",
+            PermissionProfile::WorkspaceAuto => "workspace-auto",
+            PermissionProfile::FullAccess => "full-access",
+        }
+    }
+
+    pub fn parse(v: &str) -> Option<Self> {
+        match v.trim().to_ascii_lowercase().as_str() {
+            "read-only" | "readonly" => Some(Self::ReadOnly),
+            "workspace-auto" | "workspace" | "auto" => Some(Self::WorkspaceAuto),
+            "full-access" | "full" => Some(Self::FullAccess),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JobKind {
+    Swarm,
+    Test,
+}
+
+impl JobKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            JobKind::Swarm => "swarm",
+            JobKind::Test => "test",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum JobStatus {
+    Queued,
+    Running,
+    Done,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct JobRecord {
+    pub id: u64,
+    pub kind: JobKind,
+    pub input: String,
+    pub status: JobStatus,
+    pub output: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct JobRequest {
+    pub id: u64,
+    pub kind: JobKind,
+    pub input: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PlanItem {
+    pub text: String,
+    pub done: bool,
 }
 
 impl AgentState {

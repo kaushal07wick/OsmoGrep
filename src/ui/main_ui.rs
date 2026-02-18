@@ -155,6 +155,15 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
 
         /* ---------- Autocomplete ---------- */
         KeyCode::Tab => {
+            if state.ui.agent_running {
+                let raw = state.ui.input.trim();
+                if !raw.is_empty() {
+                    state.ui.queued_agent_prompt = Some(raw.to_string());
+                    state.ui.input.clear();
+                    crate::logger::log_status(state, "Queued follow-up prompt (tab).");
+                    return;
+                }
+            }
             if let Some(ac) = &state.ui.autocomplete {
                 if ac.starts_with(&state.ui.input) {
                     let suffix = &ac[state.ui.input.len()..];
