@@ -11,6 +11,8 @@ mod test;
 mod list_dir;
 mod git_diff;
 mod git_log;
+mod regex_search;
+mod web_fetch;
 
 pub use shell::Shell;
 pub use read::Read;
@@ -22,6 +24,8 @@ pub use test::Test;
 pub use list_dir::ListDir;
 pub use git_diff::GitDiff;
 pub use git_log::GitLog;
+pub use regex_search::RegexSearch;
+pub use web_fetch::WebFetch;
 
 pub type ToolResult = Result<Value, String>;
 
@@ -58,6 +62,8 @@ impl ToolRegistry {
             Box::new(ListDir),
             Box::new(GitDiff),
             Box::new(GitLog),
+            Box::new(RegexSearch),
+            Box::new(WebFetch),
         ];
 
         for tool in list {

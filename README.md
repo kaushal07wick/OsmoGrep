@@ -180,5 +180,7 @@ During agent execution:
 - `/model <provider> <model> [base_url]` switches runtime model config.
 - `/test <target>` runs targeted tests (e.g. `cargo test foo`, `pytest tests/test_x.py`).
 
+Agent toolset now also includes: `run_tests`, `list_dir`, `git_diff`, `git_log`, `regex_search`, `web_fetch`.
+
 ## License
 [MIT License](LICENSE).

@@ -46,6 +46,8 @@ fn format_tool_name(raw: &str) -> &str {
         "list_dir" => "ListDir",
         "git_diff" => "GitDiff",
         "git_log" => "GitLog",
+        "regex_search" => "Regex",
+        "web_fetch" => "WebFetch",
         other => other,
     }
 }
