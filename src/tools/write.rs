@@ -44,11 +44,14 @@ impl Tool for Write {
             .and_then(Value::as_str)
             .ok_or("missing content")?;
 
+        let before = fs::read_to_string(path).unwrap_or_default();
         fs::write(path, content).map_err(|e| e.to_string())?;
 
         Ok(json!({
             "path": path,
-            "bytes": content.len()
+            "bytes": content.len(),
+            "before": before,
+            "after": content
         }))
     }
 }

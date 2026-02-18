@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use std::time::Instant;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 pub const MAX_LOGS: usize = 1000;
@@ -65,7 +66,7 @@ impl LogBuffer {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiffSnapshot {
     pub tool: String,
     pub target: String,
@@ -115,6 +116,9 @@ pub struct UiState {
 pub struct AgentState {
     pub ui: UiState,
     pub logs: LogBuffer,
+    pub session_changes: Vec<DiffSnapshot>,
+    pub undo_stack: Vec<DiffSnapshot>,
+    pub usage: UsageStats,
 
     pub started_at: Instant,
     pub repo_root: PathBuf,
@@ -219,6 +223,12 @@ pub struct VoiceState {
     pub last_inserted: Option<String>,
     pub url: String,
     pub model: String,
+}
+
+#[derive(Default)]
+pub struct UsageStats {
+    pub prompt_tokens: usize,
+    pub completion_tokens: usize,
 }
 
 pub struct PendingPermission {

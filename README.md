@@ -168,6 +168,8 @@ Anything else is sent directly to the agent.
 | `/key`   | Enter OpenAI API key mode        |
 | `/model` | Show/switch provider + model     |
 | `/test`  | Run auto-detected project tests  |
+| `/undo`  | Revert last agent file change    |
+| `/diff`  | Show session file changes        |
 | `/new`   | Start a fresh conversation       |
 | `/approve` | Toggle dangerous tool auto-approve |
 | `/quit`  | Stop the currently running agent |
@@ -179,6 +181,7 @@ During agent execution:
 - Dangerous tools (`run_shell`, `write_file`, `edit_file`) prompt for approval unless `/approve` is enabled.
 - `/model <provider> <model> [base_url]` switches runtime model config.
 - `/test <target>` runs targeted tests (e.g. `cargo test foo`, `pytest tests/test_x.py`).
+- Session state and undo checkpoints are persisted per-repo under `~/.config/osmogrep/sessions/`.
 
 Agent toolset now also includes: `run_tests`, `list_dir`, `git_diff`, `git_log`, `regex_search`, `web_fetch`.
 

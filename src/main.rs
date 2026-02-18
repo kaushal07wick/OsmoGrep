@@ -8,6 +8,7 @@ mod context;
 mod voice;
 mod triage;
 mod test_harness;
+mod persistence;
 
 use std::{
     error::Error,
@@ -117,6 +118,7 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut state = init_state();
+    persistence::load(&mut state);
     let mut agent = Agent::new();
 
     let (voice_cmd_tx, voice_cmd_rx) = mpsc::channel();
@@ -180,6 +182,7 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
         }
 
         if state.ui.should_exit {
+            let _ = persistence::save(&state);
             break;
         }
 
@@ -389,23 +392,26 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
                         }
 
                         AgentEvent::ToolDiff { tool, target, before, after } => {
-                            state.ui.diff_active = true;
-                            state.ui.diff_snapshot.clear();
+                            let snap = DiffSnapshot {
+                                tool,
+                                target,
+                                before,
+                                after,
+                            };
 
-                            state.ui.diff_snapshot.push(
-                                DiffSnapshot {
-                                    tool,
-                                    target,
-                                    before,
-                                    after,
-                                }
-                            );
+                            state.session_changes.push(snap.clone());
+                            state.undo_stack.push(snap.clone());
+                            state.ui.diff_active = true;
+                            state.ui.diff_snapshot = vec![snap];
+                            let _ = persistence::save(&state);
                         }
 
                         AgentEvent::OutputText(text) => {
+                            state.usage.completion_tokens += (text.len() / 4).max(1);
                             if !state.ui.streaming_active {
                                 log_agent_output(&mut state, &text);
                             }
+                            let _ = persistence::save(&state);
                         }
 
                         AgentEvent::StreamDelta(delta) => {
@@ -443,6 +449,7 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
                             state
                                 .conversation
                                 .trim_to_budget(MAX_CONVERSATION_TOKENS);
+                            let _ = persistence::save(&state);
                         }
 
                         AgentEvent::Cancelled => {
@@ -552,9 +559,11 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
 
                         state.ui.spinner_started_at = Some(Instant::now());
                         state.ui.agent_running = true;
+                        state.usage.prompt_tokens += (text.len() / 4).max(1);
                         state.ui.streaming_active = false;
                         state.ui.streaming_buffer.clear();
                         state.ui.streaming_lines_logged = 0;
+                        let _ = persistence::save(&state);
                     } else if !agent.is_configured() {
                         log(
                             &mut state,
@@ -627,6 +636,9 @@ fn init_state() -> AgentState {
         },
 
         logs: crate::state::LogBuffer::new(),
+        session_changes: Vec::new(),
+        undo_stack: Vec::new(),
+        usage: crate::state::UsageStats::default(),
         started_at: Instant::now(),
         repo_root: std::env::current_dir().unwrap(),
         voice: crate::state::VoiceState {

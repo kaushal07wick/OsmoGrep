@@ -1,9 +1,11 @@
 // src/commands.rs
 
+use std::fs;
 use std::time::Instant;
 
 use crate::agent::Agent;
 use crate::logger::log;
+use crate::persistence;
 use crate::test_harness::run_tests;
 use crate::state::{
     AgentState, CommandItem, InputMode, LogLevel
@@ -48,6 +50,8 @@ pub fn handle_command(
         "/approve" => toggle_auto_approve(state),
         "/model" => show_model(state, agent),
         "/test" => run_test(state, &cmd),
+        "/undo" => undo_last_change(state),
+        "/diff" => show_session_diff(state),
 
         "" => {}
 
@@ -77,6 +81,8 @@ fn help(state: &mut AgentState) {
     log(state, Info, "  /model <provider> <model> [base_url]");
     log(state, Info, "  /test        Run auto-detected tests");
     log(state, Info, "  /test <arg>  Run targeted tests (framework-specific)");
+    log(state, Info, "  /undo        Revert the last agent file change");
+    log(state, Info, "  /diff        Show all file changes this session");
     log(state, Info, "  /approve     Toggle dangerous tool auto-approve");
     log(state, Info, "  /new         Start a fresh conversation");
     log(state, Info, "  /quit | /q   Stop agent execution");
@@ -108,6 +114,7 @@ fn quit_agent(state: &mut AgentState) {
 fn new_conversation(state: &mut AgentState) {
     state.conversation.clear();
     log(state, LogLevel::Info, "Started a new conversation.");
+    let _ = persistence::save(state);
 }
 
 fn toggle_auto_approve(state: &mut AgentState) {
@@ -176,6 +183,7 @@ fn set_model(state: &mut AgentState, cmd: &str, agent: Option<&mut Agent>) {
             base_url.unwrap_or_else(|| "(default)".to_string())
         ),
     );
+    let _ = persistence::save(state);
 }
 
 fn run_test(state: &mut AgentState, cmd: &str) {
@@ -214,6 +222,54 @@ fn run_test(state: &mut AgentState, cmd: &str) {
             log(state, LogLevel::Error, format!("Test run failed: {}", e));
         }
     }
+}
+
+fn undo_last_change(state: &mut AgentState) {
+    let Some(last) = state.undo_stack.pop() else {
+        log(state, LogLevel::Warn, "Nothing to undo.");
+        return;
+    };
+
+    if let Err(e) = fs::write(&last.target, &last.before) {
+        log(
+            state,
+            LogLevel::Error,
+            format!("Undo failed for {}: {}", last.target, e),
+        );
+        return;
+    }
+
+    if let Some(pos) = state
+        .session_changes
+        .iter()
+        .rposition(|s| s.target == last.target && s.after == last.after)
+    {
+        state.session_changes.remove(pos);
+    }
+
+    state.ui.diff_active = true;
+    state.ui.diff_snapshot = vec![last.clone()];
+    log(
+        state,
+        LogLevel::Success,
+        format!("Undid last change on {}", last.target),
+    );
+    let _ = persistence::save(state);
+}
+
+fn show_session_diff(state: &mut AgentState) {
+    if state.session_changes.is_empty() {
+        log(state, LogLevel::Info, "No session changes to show.");
+        return;
+    }
+
+    state.ui.diff_active = true;
+    state.ui.diff_snapshot = state.session_changes.clone();
+    log(
+        state,
+        LogLevel::Info,
+        format!("Showing {} session change(s).", state.ui.diff_snapshot.len()),
+    );
 }
 
 fn enter_api_key_mode(state: &mut AgentState) {
@@ -306,6 +362,8 @@ pub fn update_command_hints(state: &mut AgentState) {
         CommandItem { cmd: "/voice off", desc: "Stop voice input" },
         CommandItem { cmd: "/model", desc: "Show active provider/model" },
         CommandItem { cmd: "/test", desc: "Run auto-detected tests" },
+        CommandItem { cmd: "/undo", desc: "Revert the last agent file change" },
+        CommandItem { cmd: "/diff", desc: "Show all file changes this session" },
         CommandItem { cmd: "/approve", desc: "Toggle dangerous tool auto-approve" },
         CommandItem { cmd: "/new", desc: "Start a fresh conversation" },
         CommandItem { cmd: "/quit", desc: "Stop agent execution" },

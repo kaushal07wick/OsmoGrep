@@ -497,6 +497,10 @@ fn render_status_bar(f: &mut Frame, area: Rect, state: &AgentState) {
         "PERM-"
     };
     let ctx_label = format!("CTX {}", state.conversation.token_estimate);
+    let total_tokens = state.usage.prompt_tokens + state.usage.completion_tokens;
+    let est_cost = ((state.usage.prompt_tokens as f64) * 0.0000025)
+        + ((state.usage.completion_tokens as f64) * 0.0000100);
+    let cost_label = format!("TOK {} ${:.4}", total_tokens, est_cost);
 
     let mut left = vec![
         Span::styled(spinner_fixed, Style::default().fg(FG_MAIN)),
@@ -515,6 +519,8 @@ fn render_status_bar(f: &mut Frame, area: Rect, state: &AgentState) {
         ),
         Span::raw(" "),
         Span::styled(ctx_label, Style::default().fg(FG_MUTED)),
+        Span::raw(" "),
+        Span::styled(cost_label, Style::default().fg(FG_MUTED)),
     ];
     if state.voice.visible || state.voice.enabled || state.voice.connected {
         left.insert(3, Span::raw(" "));
