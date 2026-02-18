@@ -51,6 +51,7 @@ pub fn handle_command(
         "/model" => show_model(state, agent),
         "/test" => run_test(state, &cmd),
         "/mcp" => show_mcp(state),
+        "/providers" => show_providers(state),
         "/undo" => undo_last_change(state),
         "/diff" => show_session_diff(state),
 
@@ -83,6 +84,7 @@ fn help(state: &mut AgentState) {
     log(state, Info, "  /test        Run auto-detected tests");
     log(state, Info, "  /test <arg>  Run targeted tests (framework-specific)");
     log(state, Info, "  /mcp         Show MCP status and configured servers");
+    log(state, Info, "  /providers   Show available model providers");
     log(state, Info, "  /undo        Revert the last agent file change");
     log(state, Info, "  /diff        Show all file changes this session");
     log(state, Info, "  /approve     Toggle dangerous tool auto-approve");
@@ -243,6 +245,14 @@ fn show_mcp(state: &mut AgentState) {
     }
 }
 
+fn show_providers(state: &mut AgentState) {
+    log(
+        state,
+        LogLevel::Info,
+        "Providers: openai, groq, mistral, ollama (anthropic-compatible via custom base_url)",
+    );
+}
+
 fn undo_last_change(state: &mut AgentState) {
     let Some(last) = state.undo_stack.pop() else {
         log(state, LogLevel::Warn, "Nothing to undo.");
@@ -382,6 +392,7 @@ pub fn update_command_hints(state: &mut AgentState) {
         CommandItem { cmd: "/model", desc: "Show active provider/model" },
         CommandItem { cmd: "/test", desc: "Run auto-detected tests" },
         CommandItem { cmd: "/mcp", desc: "Show MCP status and servers" },
+        CommandItem { cmd: "/providers", desc: "Show available model providers" },
         CommandItem { cmd: "/undo", desc: "Revert the last agent file change" },
         CommandItem { cmd: "/diff", desc: "Show all file changes this session" },
         CommandItem { cmd: "/approve", desc: "Toggle dangerous tool auto-approve" },

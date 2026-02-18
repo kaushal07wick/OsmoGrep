@@ -119,7 +119,21 @@ fn save_config(cfg: &Config) -> std::io::Result<()> {
     fs::write(path, toml::to_string(cfg).unwrap())
 }
 
-fn system_prompt() -> Value {
+fn repo_instruction_suffix(repo_root: &std::path::Path) -> String {
+    let path = repo_root.join(".osmogrep.md");
+    if let Ok(text) = fs::read_to_string(path) {
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            return format!(
+                "\n\nRepository-specific instructions (.osmogrep.md):\n{}",
+                trimmed
+            );
+        }
+    }
+    String::new()
+}
+
+fn system_prompt(repo_root: &std::path::Path) -> Value {
     json!({
         "role": "system",
         "content":
@@ -275,7 +289,7 @@ struct RunAgent {
 impl RunAgent {
     fn run(
         &self,
-        _repo_root: PathBuf,
+        repo_root: PathBuf,
         user_text: &str,
         prior_messages: Vec<Value>,
         tx: &Sender<AgentEvent>,
@@ -283,10 +297,18 @@ impl RunAgent {
         let api_key = self.api_key.as_ref().ok_or("OPENAI_API_KEY not set")?;
 
         let mut persisted = if prior_messages.is_empty() {
-            vec![system_prompt()]
+            vec![system_prompt(&repo_root)]
         } else {
             prior_messages
         };
+        if let Some(Value::Object(obj)) = persisted.get_mut(0) {
+            if let Some(Value::String(content)) = obj.get_mut("content") {
+                let suffix = repo_instruction_suffix(&repo_root);
+                if !suffix.is_empty() && !content.contains("Repository-specific instructions") {
+                    content.push_str(&suffix);
+                }
+            }
+        }
         persisted.push(json!({ "role": "user", "content": user_text }));
 
         let mut input = Value::Array(persisted.clone());

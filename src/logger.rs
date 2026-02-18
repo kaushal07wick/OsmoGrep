@@ -49,6 +49,13 @@ fn format_tool_name(raw: &str) -> &str {
         "regex_search" => "Regex",
         "web_fetch" => "WebFetch",
         "mcp_call" => "MCP",
+        "find_definition" => "Def",
+        "find_references" => "Refs",
+        "git_commit" => "GitCommit",
+        "patch" => "Patch",
+        "notebook_edit" => "Notebook",
+        "web_search" => "WebSearch",
+        "diagnostics" => "Diag",
         other => other,
     }
 }

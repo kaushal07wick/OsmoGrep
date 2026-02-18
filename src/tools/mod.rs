@@ -14,6 +14,13 @@ mod git_log;
 mod regex_search;
 mod web_fetch;
 mod mcp_call;
+mod find_definition;
+mod find_references;
+mod git_commit;
+mod patch;
+mod notebook_edit;
+mod web_search;
+mod diagnostics;
 
 pub use shell::Shell;
 pub use read::Read;
@@ -28,6 +35,13 @@ pub use git_log::GitLog;
 pub use regex_search::RegexSearch;
 pub use web_fetch::WebFetch;
 pub use mcp_call::McpCall;
+pub use find_definition::FindDefinition;
+pub use find_references::FindReferences;
+pub use git_commit::GitCommit;
+pub use patch::Patch;
+pub use notebook_edit::NotebookEdit;
+pub use web_search::WebSearch;
+pub use diagnostics::Diagnostics;
 
 pub type ToolResult = Result<Value, String>;
 
@@ -67,6 +81,13 @@ impl ToolRegistry {
             Box::new(RegexSearch),
             Box::new(WebFetch),
             Box::new(McpCall),
+            Box::new(FindDefinition),
+            Box::new(FindReferences),
+            Box::new(GitCommit),
+            Box::new(Patch),
+            Box::new(NotebookEdit),
+            Box::new(WebSearch),
+            Box::new(Diagnostics),
         ];
 
         for tool in list {

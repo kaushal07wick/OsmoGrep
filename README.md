@@ -170,6 +170,8 @@ Anything else is sent directly to the agent.
 | `/test`  | Run auto-detected project tests  |
 | `/undo`  | Revert last agent file change    |
 | `/diff`  | Show session file changes        |
+| `/mcp`   | Show MCP status and servers      |
+| `/providers` | Show available model providers |
 | `/new`   | Start a fresh conversation       |
 | `/approve` | Toggle dangerous tool auto-approve |
 | `/quit`  | Stop the currently running agent |
@@ -183,7 +185,12 @@ During agent execution:
 - `/test <target>` runs targeted tests (e.g. `cargo test foo`, `pytest tests/test_x.py`).
 - Session state and undo checkpoints are persisted per-repo under `~/.config/osmogrep/sessions/`.
 
-Agent toolset now also includes: `run_tests`, `list_dir`, `git_diff`, `git_log`, `regex_search`, `web_fetch`.
+Agent toolset now also includes:
+`run_tests`, `list_dir`, `git_diff`, `git_log`, `regex_search`, `web_fetch`,
+`find_definition`, `find_references`, `git_commit`, `patch`, `notebook_edit`,
+`web_search`, `diagnostics`, `mcp_call`.
+
+Repository-specific behavior can be guided with `.osmogrep.md` at repo root.
 
 Hooks can be configured in `~/.config/osmogrep/config.toml`:
 
