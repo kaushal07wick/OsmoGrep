@@ -6,6 +6,7 @@ mod commands;
 mod agent;
 mod context;
 mod voice;
+mod triage;
 
 use std::{
     error::Error,
@@ -30,10 +31,10 @@ use ratatui::{
     layout::Rect,
 };
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 
 use crate::{
-    agent::{Agent, AgentEvent},
+    agent::{Agent, AgentEvent, CancelToken},
     context::{ContextEvent},
     logger::{
         log,
@@ -42,8 +43,10 @@ use crate::{
         log_tool_result,
         log_agent_output,
         log_status,
+        update_streaming_log,
+        flush_streaming_log,
     },
-    state::{AgentState, InputMode, LogLevel, DiffSnapshot},
+    state::{AgentState, InputMode, LogLevel, DiffSnapshot, MAX_CONVERSATION_TOKENS},
     ui::{main_ui::handle_event, tui::draw_ui},
 };
 
@@ -53,7 +56,16 @@ use crate::{
     version,
     about = "A lightweight Rust-based TUI Agent, for debugging, code reviews, and runtime bug catching."
 )]
-struct Cli {}
+struct Cli {
+    #[command(subcommand)]
+    command: Option<CliCommand>,
+}
+
+#[derive(Subcommand)]
+enum CliCommand {
+    /// Analyze GitHub PRs/issues for duplicates, ranking, and scope drift
+    Triage(triage::TriageArgs),
+}
 
 fn env_truthy(key: &str, default: bool) -> bool {
     match std::env::var(key) {
@@ -88,7 +100,16 @@ fn run_shell(state: &mut AgentState, cmd: &str) {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let _cli = Cli::parse();
+    let cli = Cli::parse();
+    if let Some(CliCommand::Triage(args)) = cli.command {
+        triage::run(args)?;
+        return Ok(());
+    }
+
+    run_tui()
+}
+
+fn run_tui() -> Result<(), Box<dyn Error>> {
     setup_terminal()?;
 
     let backend = CrosstermBackend::new(io::stdout());
@@ -120,6 +141,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let mut agent_rx: Option<mpsc::Receiver<AgentEvent>> = None;
+    let mut agent_cancel: Option<CancelToken> = None;
     let mut context_rx: Option<mpsc::Receiver<ContextEvent>> = None;
     let voice_silence_ms: u64 =
         std::env::var("VLLM_REALTIME_SILENCE_MS")
@@ -331,6 +353,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
 
+        if state.ui.cancel_requested {
+            if let Some(token) = agent_cancel.as_ref() {
+                token.cancel();
+                log_status(&mut state, "Cancellation requested.");
+            }
+            state.ui.cancel_requested = false;
+        }
+
         if let Some(rx) = agent_rx.as_ref() {
             loop {
                 match rx.try_recv() {
@@ -368,18 +398,77 @@ fn main() -> Result<(), Box<dyn Error>> {
                         }
 
                         AgentEvent::OutputText(text) => {
-                            log_agent_output(&mut state, &text);
+                            if !state.ui.streaming_active {
+                                log_agent_output(&mut state, &text);
+                            }
+                        }
+
+                        AgentEvent::StreamDelta(delta) => {
+                            state.ui.streaming_active = true;
+                            state.ui.follow_tail = true;
+                            state.ui.streaming_buffer.push_str(&delta);
+                            update_streaming_log(&mut state);
+                        }
+
+                        AgentEvent::StreamDone => {
+                            if state.ui.streaming_active {
+                                flush_streaming_log(&mut state);
+                            }
+                            state.ui.streaming_active = false;
+                        }
+
+                        AgentEvent::PermissionRequest { tool_name, args_summary, reply_tx } => {
+                            if state.ui.auto_approve {
+                                let _ = reply_tx.send(true);
+                                log_status(
+                                    &mut state,
+                                    format!("Auto-approved {} ({})", tool_name, args_summary),
+                                );
+                            } else {
+                                state.ui.pending_permission = Some(crate::state::PendingPermission {
+                                    tool_name,
+                                    args_summary,
+                                    reply_tx,
+                                });
+                            }
+                        }
+
+                        AgentEvent::ConversationUpdate(messages) => {
+                            state.conversation.set_messages(messages);
+                            state
+                                .conversation
+                                .trim_to_budget(MAX_CONVERSATION_TOKENS);
+                        }
+
+                        AgentEvent::Cancelled => {
+                            state.ui.streaming_active = false;
+                            flush_streaming_log(&mut state);
+                            log(&mut state, LogLevel::Warn, "Agent cancelled.");
+                            state.ui.spinner_started_at = None;
+                            state.ui.agent_running = false;
+                            state.ui.pending_permission = None;
+                            agent_cancel = None;
+                            agent_rx = None;
+                            break;
                         }
 
                         AgentEvent::Error(e) => {
                             log(&mut state, LogLevel::Error, e);
+                            state.ui.streaming_active = false;
+                            flush_streaming_log(&mut state);
                             state.ui.spinner_started_at = None;
+                            state.ui.agent_running = false;
+                            state.ui.pending_permission = None;
+                            agent_cancel = None;
                             agent_rx = None;
                             break;
                         }
 
                         AgentEvent::Done => {
                             state.ui.spinner_started_at = None;
+                            state.ui.agent_running = false;
+                            state.ui.pending_permission = None;
+                            agent_cancel = None;
                             agent_rx = None;
                             break;
                         }
@@ -387,7 +476,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 
                     Err(mpsc::TryRecvError::Empty) => break,
                     Err(mpsc::TryRecvError::Disconnected) => {
+                        state.ui.streaming_active = false;
+                        flush_streaming_log(&mut state);
                         state.ui.spinner_started_at = None;
+                        state.ui.agent_running = false;
+                        state.ui.pending_permission = None;
+                        agent_cancel = None;
                         agent_rx = None;
                         break;
                     }
@@ -437,11 +531,24 @@ fn main() -> Result<(), Box<dyn Error>> {
                     if agent.is_configured() && !text.is_empty() {
                         let (tx, rx) = mpsc::channel();
                         let repo_root = state.repo_root.clone();
+                        let prior_messages = state.conversation.messages.clone();
+                        let auto_approve = state.ui.auto_approve;
 
-                        agent.spawn(repo_root, text.to_string(), tx);
+                        let cancel = agent.spawn(
+                            repo_root,
+                            text.to_string(),
+                            prior_messages,
+                            auto_approve,
+                            tx,
+                        );
                         agent_rx = Some(rx);
+                        agent_cancel = Some(cancel);
 
                         state.ui.spinner_started_at = Some(Instant::now());
+                        state.ui.agent_running = true;
+                        state.ui.streaming_active = false;
+                        state.ui.streaming_buffer.clear();
+                        state.ui.streaming_lines_logged = 0;
                     } else if !agent.is_configured() {
                         log(
                             &mut state,
@@ -499,6 +606,13 @@ fn init_state() -> AgentState {
             follow_tail: true,
             active_spinner: None,
             spinner_started_at: None,
+            agent_running: false,
+            cancel_requested: false,
+            auto_approve: false,
+            pending_permission: None,
+            streaming_buffer: String::new(),
+            streaming_active: false,
+            streaming_lines_logged: 0,
             diff_active: false,
             diff_snapshot: Vec::new(),
 
@@ -521,6 +635,7 @@ fn init_state() -> AgentState {
             url: voice_url,
             model: voice_model,
         },
+        conversation: crate::state::ConversationHistory::new(),
     }
 }
 fn setup_terminal() -> Result<(), Box<dyn Error>> {

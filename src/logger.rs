@@ -95,3 +95,37 @@ pub fn log_agent_output(
 pub fn parse_user_input_log(line: &str) -> Option<&str> {
     line.strip_prefix(USER_TAG)
 }
+
+pub fn update_streaming_log(state: &mut AgentState) {
+    let total_lines = state.ui.streaming_buffer.matches('\n').count();
+    if total_lines <= state.ui.streaming_lines_logged {
+        return;
+    }
+
+    let lines: Vec<&str> = state.ui.streaming_buffer.split('\n').collect();
+    for line in lines
+        .iter()
+        .take(total_lines)
+        .skip(state.ui.streaming_lines_logged)
+    {
+        state.logs.push(LogLevel::Info, (*line).to_string());
+    }
+    state.ui.streaming_lines_logged = total_lines;
+}
+
+pub fn flush_streaming_log(state: &mut AgentState) {
+    let tail = state
+        .ui
+        .streaming_buffer
+        .rsplit('\n')
+        .next()
+        .unwrap_or("")
+        .trim_end();
+
+    if !tail.is_empty() {
+        state.logs.push(LogLevel::Info, tail.to_string());
+    }
+
+    state.ui.streaming_buffer.clear();
+    state.ui.streaming_lines_logged = 0;
+}

@@ -7,7 +7,7 @@ use std::path::Path;
 use std::process::Command;
 use walkdir::WalkDir;
 
-use super::{Tool, ToolResult};
+use super::{Tool, ToolResult, ToolSafety};
 
 pub struct Search;
 
@@ -31,6 +31,10 @@ impl Tool for Search {
                 "additionalProperties": false
             }
         })
+    }
+
+    fn safety(&self) -> ToolSafety {
+        ToolSafety::Safe
     }
 
     fn call(&self, args: Value) -> ToolResult {

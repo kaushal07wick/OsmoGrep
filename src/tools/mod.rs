@@ -17,9 +17,16 @@ pub use glob::Glob;
 
 pub type ToolResult = Result<Value, String>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolSafety {
+    Safe,
+    Dangerous,
+}
+
 pub trait Tool: Send + Sync {
     fn name(&self) -> &'static str;
     fn schema(&self) -> Value;
+    fn safety(&self) -> ToolSafety;
     fn call(&self, args: Value) -> ToolResult;
 }
 
@@ -55,6 +62,10 @@ impl ToolRegistry {
             .ok_or_else(|| format!("unknown tool: {}", name))?;
 
         tool.call(args)
+    }
+
+    pub fn safety(&self, name: &str) -> Option<ToolSafety> {
+        self.tools.get(name).map(|t| t.safety())
     }
 
     pub fn schema(&self) -> Vec<Value> {

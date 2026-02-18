@@ -222,7 +222,6 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
     let height = padded.height.max(1) as usize;
     let mut lines: Vec<Line> = Vec::new();
 
-    let mut last_was_user = false;
     let mut md = crate::ui::markdown::Markdown::new();
 
     for log in state.logs.iter() {
@@ -232,14 +231,12 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
                 input,
                 padded.width as usize,
             ));
-            last_was_user = true;
             continue;
         }
 
         if text.starts_with("● ") {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(text, Style::default().fg(FG_MAIN))));
-            last_was_user = false;
             continue;
         }
 
@@ -259,7 +256,6 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
         }
 
         lines.push(md.render_line(text));
-        last_was_user = false;
     }
 
     if state.ui.diff_active && !state.ui.diff_snapshot.is_empty() {
@@ -277,6 +273,34 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
             );
 
             lines.extend(crate::ui::diff::render_diff(&diff, padded.width));
+        }
+    }
+
+    if let Some(p) = &state.ui.pending_permission {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!(
+                "Allow {} ({})? [y]es [n]o [a]lways",
+                p.tool_name, p.args_summary
+            ),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )));
+    }
+
+    if state.ui.streaming_active {
+        let partial = state
+            .ui
+            .streaming_buffer
+            .rsplit('\n')
+            .next()
+            .unwrap_or("");
+        if !partial.is_empty() {
+            lines.push(Line::from(Span::styled(
+                format!("{partial}█"),
+                Style::default().fg(FG_DIM),
+            )));
         }
     }
 
@@ -456,17 +480,44 @@ fn render_status_bar(f: &mut Frame, area: Rect, state: &AgentState) {
         "OPENAI"
     };
 
+    let run_label = if state.ui.agent_running { "RUN" } else { "IDLE" };
+    let perm_label = if state.ui.pending_permission.is_some() {
+        "PERM?"
+    } else {
+        "PERM-"
+    };
+    let ctx_label = format!("CTX {}", state.conversation.token_estimate);
+
     let left = vec![
         Span::styled(spinner_fixed, Style::default().fg(FG_MAIN)),
         Span::raw(" "),
         Span::styled(model_label, Style::default().fg(FG_DIM)),
         Span::raw(" "),
         Span::styled(voice_label, Style::default().fg(FG_DIM)),
+        Span::raw(" "),
+        Span::styled(run_label, Style::default().fg(FG_MAIN)),
+        Span::raw(" "),
+        Span::styled(
+            perm_label,
+            Style::default().fg(if state.ui.pending_permission.is_some() {
+                Color::Yellow
+            } else {
+                FG_DIM
+            }),
+        ),
+        Span::raw(" "),
+        Span::styled(ctx_label, Style::default().fg(FG_MUTED)),
     ];
+
+    let esc_action = if state.ui.agent_running {
+        " cancel  "
+    } else {
+        " quit  "
+    };
 
     let right = vec![
         Span::styled("[esc]", Style::default().fg(FG_MAIN)),
-        Span::styled(" quit  ", Style::default().fg(FG_MUTED)),
+        Span::styled(esc_action, Style::default().fg(FG_MUTED)),
         Span::styled("[enter]", Style::default().fg(FG_MAIN)),
         Span::styled(" run", Style::default().fg(FG_MUTED)),
     ];

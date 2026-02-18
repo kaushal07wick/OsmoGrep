@@ -3,7 +3,7 @@
 use std::fs;
 use serde_json::{json, Value};
 
-use super::{Tool, ToolResult};
+use super::{Tool, ToolResult, ToolSafety};
 
 pub struct Edit;
 
@@ -29,6 +29,10 @@ impl Tool for Edit {
                 "additionalProperties": false
             }
         })
+    }
+
+    fn safety(&self) -> ToolSafety {
+        ToolSafety::Dangerous
     }
 
     fn call(&self, args: Value) -> ToolResult {

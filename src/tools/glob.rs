@@ -5,7 +5,7 @@ use glob::glob as glob_fn;
 use walkdir::WalkDir;
 use std::path::PathBuf;
 
-use super::{Tool, ToolResult};
+use super::{Tool, ToolResult, ToolSafety};
 
 pub struct Glob;
 
@@ -31,6 +31,10 @@ impl Tool for Glob {
                 "additionalProperties": false
             }
         })
+    }
+
+    fn safety(&self) -> ToolSafety {
+        ToolSafety::Safe
     }
 
     fn call(&self, args: Value) -> ToolResult {

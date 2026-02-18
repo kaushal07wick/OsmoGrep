@@ -67,6 +67,19 @@ Run inside any Git repository:
 osmogrep
 ```
 
+Run PR/Issue triage for a GitHub repository:
+
+```bash
+osmogrep triage \
+  --repo owner/repo \
+  --state open \
+  --limit 300 \
+  --vision ./VISION.md \
+  --out triage-report.json
+```
+
+`GITHUB_TOKEN` is recommended for higher API limits.
+
 You interact with the agent directly:
 
 * Ask it to inspect code
@@ -153,9 +166,15 @@ Anything else is sent directly to the agent.
 | `/help`  | Show available commands          |
 | `/clear` | Clear execution logs             |
 | `/key`   | Enter OpenAI API key mode        |
+| `/new`   | Start a fresh conversation       |
+| `/approve` | Toggle dangerous tool auto-approve |
 | `/quit`  | Stop the currently running agent |
 | `/q`     | Alias for `/quit`                |
 | `/exit`  | Exit Osmogrep                    |
+
+During agent execution:
+- `Esc` requests cancellation instead of exiting.
+- Dangerous tools (`run_shell`, `write_file`, `edit_file`) prompt for approval unless `/approve` is enabled.
 
 ## License
 [MIT License](LICENSE).

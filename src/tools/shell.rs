@@ -2,7 +2,7 @@
 
 use std::process::Command;
 use serde_json::{json, Value};
-use super::{Tool, ToolResult};
+use super::{Tool, ToolResult, ToolSafety};
 pub struct Shell;
 
 impl Tool for Shell {
@@ -24,6 +24,10 @@ impl Tool for Shell {
                 "additionalProperties": false
             }
         })
+    }
+
+    fn safety(&self) -> ToolSafety {
+        ToolSafety::Dangerous
     }
 
     fn call(&self, args: Value) -> ToolResult {

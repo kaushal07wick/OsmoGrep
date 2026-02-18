@@ -3,7 +3,7 @@
 use std::fs;
 use serde_json::{json, Value};
 
-use super::{Tool, ToolResult};
+use super::{Tool, ToolResult, ToolSafety};
 
 pub struct Read;
 
@@ -28,6 +28,10 @@ impl Tool for Read {
                 "additionalProperties": false
             }
         })
+    }
+
+    fn safety(&self) -> ToolSafety {
+        ToolSafety::Safe
     }
 
     fn call(&self, args: Value) -> ToolResult {

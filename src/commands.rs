@@ -31,6 +31,8 @@ pub fn handle_command(
         "/quit" | "/q" => quit_agent(state),
 
         "/key" => enter_api_key_mode(state),
+        "/new" => new_conversation(state),
+        "/approve" => toggle_auto_approve(state),
 
         "" => {}
 
@@ -55,6 +57,8 @@ fn help(state: &mut AgentState) {
     log(state, Info, "  /voice       Show voice status");
     log(state, Info, "  /voice on    Start voice input");
     log(state, Info, "  /voice off   Stop voice input");
+    log(state, Info, "  /approve     Toggle dangerous tool auto-approve");
+    log(state, Info, "  /new         Start a fresh conversation");
     log(state, Info, "  /quit | /q   Stop agent execution");
     log(state, Info, "  /exit        Exit Osmogrep");
     log(state, Info, "");
@@ -76,8 +80,26 @@ fn exit_app(state: &mut AgentState) {
 
 fn quit_agent(state: &mut AgentState) {
     log(state, LogLevel::Info, "Stopping agent execution.");
+    state.ui.cancel_requested = true;
     state.stop_spinner();
     state.ui.exec_scroll = usize::MAX;
+}
+
+fn new_conversation(state: &mut AgentState) {
+    state.conversation.clear();
+    log(state, LogLevel::Info, "Started a new conversation.");
+}
+
+fn toggle_auto_approve(state: &mut AgentState) {
+    state.ui.auto_approve = !state.ui.auto_approve;
+    log(
+        state,
+        LogLevel::Info,
+        format!(
+            "Dangerous tool auto-approve: {}",
+            if state.ui.auto_approve { "on" } else { "off" }
+        ),
+    );
 }
 
 fn enter_api_key_mode(state: &mut AgentState) {
@@ -165,6 +187,8 @@ pub fn update_command_hints(state: &mut AgentState) {
         CommandItem { cmd: "/voice", desc: "Show voice status" },
         CommandItem { cmd: "/voice on", desc: "Start voice input" },
         CommandItem { cmd: "/voice off", desc: "Stop voice input" },
+        CommandItem { cmd: "/approve", desc: "Toggle dangerous tool auto-approve" },
+        CommandItem { cmd: "/new", desc: "Start a fresh conversation" },
         CommandItem { cmd: "/quit", desc: "Stop agent execution" },
         CommandItem { cmd: "/q", desc: "Stop agent execution" },
         CommandItem { cmd: "/exit", desc: "Exit Osmogrep" },

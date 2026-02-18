@@ -39,6 +39,40 @@ pub fn handle_event(
 }
 
 fn handle_key(state: &mut AgentState, k: KeyEvent) {
+    if let Some(pending) = state.ui.pending_permission.take() {
+        match k.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                let _ = pending.reply_tx.send(true);
+                crate::logger::log(
+                    state,
+                    crate::state::LogLevel::Info,
+                    format!("Approved {} {}", pending.tool_name, pending.args_summary),
+                );
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') => {
+                let _ = pending.reply_tx.send(false);
+                crate::logger::log(
+                    state,
+                    crate::state::LogLevel::Warn,
+                    format!("Denied {} {}", pending.tool_name, pending.args_summary),
+                );
+            }
+            KeyCode::Char('a') | KeyCode::Char('A') => {
+                let _ = pending.reply_tx.send(true);
+                state.ui.auto_approve = true;
+                crate::logger::log(
+                    state,
+                    crate::state::LogLevel::Info,
+                    "Auto-approve enabled for dangerous tools.",
+                );
+            }
+            _ => {
+                state.ui.pending_permission = Some(pending);
+            }
+        }
+        return;
+    }
+
     let palette_active = !state.ui.command_items.is_empty();
 
     match k.code {
@@ -189,7 +223,11 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
         /* ---------- Exit ---------- */
 
         KeyCode::Esc => {
-            state.ui.should_exit = true;
+            if state.ui.agent_running {
+                state.ui.cancel_requested = true;
+            } else {
+                state.ui.should_exit = true;
+            }
         }
 
         _ => {}
