@@ -65,7 +65,31 @@ impl CancelToken {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Config {
-    api_key: String,
+    #[serde(default)]
+    api_key: Option<String>,
+    #[serde(default)]
+    model: Option<ModelConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelConfig {
+    pub provider: String,
+    pub model: String,
+    #[serde(default)]
+    pub api_key_env: Option<String>,
+    #[serde(default)]
+    pub base_url: Option<String>,
+}
+
+impl Default for ModelConfig {
+    fn default() -> Self {
+        Self {
+            provider: "openai".to_string(),
+            model: "gpt-5.2".to_string(),
+            api_key_env: Some("OPENAI_API_KEY".to_string()),
+            base_url: None,
+        }
+    }
 }
 
 fn config_path() -> PathBuf {
@@ -117,19 +141,42 @@ fn system_prompt() -> Value {
 }
 
 pub struct Agent {
-    model: String,
+    model_cfg: ModelConfig,
     api_key: Option<String>,
 }
 
 impl Agent {
     pub fn new() -> Self {
-        let api_key = env::var("OPENAI_API_KEY")
-            .ok()
-            .or_else(|| load_config().map(|c| c.api_key));
+        let cfg = load_config();
+        let mut model_cfg = cfg
+            .as_ref()
+            .and_then(|c| c.model.clone())
+            .unwrap_or_default();
 
-        let model = env::var("OSMOGREP_MODEL").unwrap_or_else(|_| "gpt-5.2".to_string());
+        if let Ok(model) = env::var("OSMOGREP_MODEL") {
+            if !model.trim().is_empty() {
+                model_cfg.model = model;
+            }
+        }
+        if let Ok(provider) = env::var("OSMOGREP_PROVIDER") {
+            if !provider.trim().is_empty() {
+                model_cfg.provider = provider;
+            }
+        }
+        if let Ok(base_url) = env::var("OSMOGREP_BASE_URL") {
+            if !base_url.trim().is_empty() {
+                model_cfg.base_url = Some(base_url);
+            }
+        }
 
-        Self { model, api_key }
+        let cfg_api_key = cfg.as_ref().and_then(|c| c.api_key.clone());
+        let env_key_name = model_cfg
+            .api_key_env
+            .clone()
+            .unwrap_or_else(default_api_key_env);
+        let api_key = env::var(&env_key_name).ok().or(cfg_api_key);
+
+        Self { model_cfg, api_key }
     }
 
     pub fn is_configured(&self) -> bool {
@@ -143,7 +190,35 @@ impl Agent {
         }
 
         self.api_key = Some(key.clone());
-        let _ = save_config(&Config { api_key: key });
+        let _ = save_config(&Config {
+            api_key: Some(key),
+            model: Some(self.model_cfg.clone()),
+        });
+    }
+
+    pub fn model_config(&self) -> &ModelConfig {
+        &self.model_cfg
+    }
+
+    pub fn set_model_config(
+        &mut self,
+        provider: String,
+        model: String,
+        base_url: Option<String>,
+    ) {
+        self.model_cfg.provider = provider;
+        self.model_cfg.model = model;
+        self.model_cfg.base_url = base_url;
+        self.model_cfg.api_key_env = Some(default_api_key_env_for(&self.model_cfg.provider));
+
+        if let Some(key_name) = self.model_cfg.api_key_env.clone() {
+            self.api_key = env::var(key_name).ok().or(self.api_key.clone());
+        }
+
+        let _ = save_config(&Config {
+            api_key: self.api_key.clone(),
+            model: Some(self.model_cfg.clone()),
+        });
     }
 
     pub fn spawn(
@@ -154,7 +229,7 @@ impl Agent {
         auto_approve: bool,
         tx: Sender<AgentEvent>,
     ) -> CancelToken {
-        let model = self.model.clone();
+        let model_cfg = self.model_cfg.clone();
         let api_key = self.api_key.clone();
         let cancel = CancelToken::new();
         let cancel_worker = cancel.clone();
@@ -162,7 +237,7 @@ impl Agent {
         thread::spawn(move || {
             let runner = RunAgent {
                 tools: ToolRegistry::new(),
-                model,
+                model_cfg,
                 api_key,
                 auto_approve,
                 cancel: cancel_worker.clone(),
@@ -185,7 +260,7 @@ impl Agent {
 
 struct RunAgent {
     tools: ToolRegistry,
-    model: String,
+    model_cfg: ModelConfig,
     api_key: Option<String>,
     auto_approve: bool,
     cancel: CancelToken,
@@ -396,7 +471,7 @@ impl RunAgent {
         input: &Value,
     ) -> Result<Value, String> {
         let payload = json!({
-            "model": self.model,
+            "model": self.model_cfg.model,
             "input": input,
             "tools": self.tools.schema(),
             "tool_choice": "auto",
@@ -410,7 +485,7 @@ impl RunAgent {
             .arg("\n%{http_code}")
             .arg("-X")
             .arg("POST")
-            .arg("https://api.openai.com/v1/responses")
+            .arg(self.responses_endpoint())
             .arg("-H")
             .arg("Content-Type: application/json")
             .arg("-H")
@@ -457,7 +532,7 @@ impl RunAgent {
         tx: &Sender<AgentEvent>,
     ) -> Result<Value, String> {
         let payload = json!({
-            "model": self.model,
+            "model": self.model_cfg.model,
             "input": input,
             "tools": self.tools.schema(),
             "tool_choice": "auto",
@@ -472,7 +547,7 @@ impl RunAgent {
             .map_err(|e| e.to_string())?;
 
         let mut resp = client
-            .post("https://api.openai.com/v1/responses")
+            .post(self.responses_endpoint())
             .bearer_auth(api_key)
             .header("Content-Type", "application/json")
             .json(&payload)
@@ -558,6 +633,17 @@ impl RunAgent {
     }
 }
 
+impl RunAgent {
+    fn responses_endpoint(&self) -> String {
+        let base = self
+            .model_cfg
+            .base_url
+            .clone()
+            .unwrap_or_else(|| default_base_url_for(&self.model_cfg.provider));
+        format!("{}/responses", base.trim_end_matches('/'))
+    }
+}
+
 fn summarize_args(tool: &str, args: &Value) -> String {
     match tool {
         "run_shell" => args
@@ -578,5 +664,29 @@ fn env_truthy(key: &str, default: bool) -> bool {
     match env::var(key) {
         Ok(val) => matches!(val.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"),
         Err(_) => default,
+    }
+}
+
+fn default_base_url_for(provider: &str) -> String {
+    match provider {
+        "openai" => "https://api.openai.com/v1".to_string(),
+        "groq" => "https://api.groq.com/openai/v1".to_string(),
+        "mistral" => "https://api.mistral.ai/v1".to_string(),
+        "ollama" => "http://127.0.0.1:11434/v1".to_string(),
+        _ => "https://api.openai.com/v1".to_string(),
+    }
+}
+
+fn default_api_key_env() -> String {
+    "OPENAI_API_KEY".to_string()
+}
+
+fn default_api_key_env_for(provider: &str) -> String {
+    match provider {
+        "openai" => "OPENAI_API_KEY".to_string(),
+        "groq" => "GROQ_API_KEY".to_string(),
+        "mistral" => "MISTRAL_API_KEY".to_string(),
+        "ollama" => "OLLAMA_API_KEY".to_string(),
+        _ => "OPENAI_API_KEY".to_string(),
     }
 }

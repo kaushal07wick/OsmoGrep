@@ -208,6 +208,7 @@ impl AgentState {
 }
 
 pub struct VoiceState {
+    pub visible: bool,
     pub enabled: bool,
     pub connected: bool,
     pub status: Option<String>,

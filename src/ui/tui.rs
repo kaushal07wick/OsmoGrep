@@ -91,19 +91,29 @@ pub fn draw_ui<B: Backend>(
             height: cmd_height,
         };
 
-        let voice_text = voice_bar_text(state);
-        let voice_lines =
-            calculate_input_lines(&voice_text, padded_area.width as usize, 0);
-        let available =
-            cmd_rect.y.saturating_sub(header_rect.y + header_rect.height);
-        let max_voice = available.max(1) as usize;
-        let voice_height = voice_lines.clamp(1, max_voice) as u16;
-        voice_rect = Rect {
-            x: padded_area.x,
-            y: cmd_rect.y.saturating_sub(voice_height),
-            width: padded_area.width,
-            height: voice_height,
-        };
+        let show_voice = state.voice.visible || state.voice.enabled || state.voice.connected;
+        if show_voice {
+            let voice_text = voice_bar_text(state);
+            let voice_lines =
+                calculate_input_lines(&voice_text, padded_area.width as usize, 0);
+            let available =
+                cmd_rect.y.saturating_sub(header_rect.y + header_rect.height);
+            let max_voice = available.max(1) as usize;
+            let voice_height = voice_lines.clamp(1, max_voice) as u16;
+            voice_rect = Rect {
+                x: padded_area.x,
+                y: cmd_rect.y.saturating_sub(voice_height),
+                width: padded_area.width,
+                height: voice_height,
+            };
+        } else {
+            voice_rect = Rect {
+                x: padded_area.x,
+                y: cmd_rect.y,
+                width: padded_area.width,
+                height: 0,
+            };
+        }
 
         let exec_rect_calc = Rect {
             x: padded_area.x,
@@ -116,13 +126,13 @@ pub fn draw_ui<B: Backend>(
 
         let palette_active = !state.ui.command_items.is_empty();
         let palette_height = if palette_active {
-            (state.ui.command_items.len().min(6) as u16) + 2
+            (state.ui.command_items.len().min(10) as u16) + 2
         } else {
             0
         };
 
         if palette_height > 0 {
-            let palette_width = 48; // stable, intentional width
+            let palette_width = padded_area.width.saturating_sub(6).min(72).max(44);
 
             let palette_x =
                 cmd_rect.x + PROMPT.len() as u16 + 2; // align with text start
@@ -488,12 +498,10 @@ fn render_status_bar(f: &mut Frame, area: Rect, state: &AgentState) {
     };
     let ctx_label = format!("CTX {}", state.conversation.token_estimate);
 
-    let left = vec![
+    let mut left = vec![
         Span::styled(spinner_fixed, Style::default().fg(FG_MAIN)),
         Span::raw(" "),
         Span::styled(model_label, Style::default().fg(FG_DIM)),
-        Span::raw(" "),
-        Span::styled(voice_label, Style::default().fg(FG_DIM)),
         Span::raw(" "),
         Span::styled(run_label, Style::default().fg(FG_MAIN)),
         Span::raw(" "),
@@ -508,6 +516,10 @@ fn render_status_bar(f: &mut Frame, area: Rect, state: &AgentState) {
         Span::raw(" "),
         Span::styled(ctx_label, Style::default().fg(FG_MUTED)),
     ];
+    if state.voice.visible || state.voice.enabled || state.voice.connected {
+        left.insert(3, Span::raw(" "));
+        left.insert(4, Span::styled(voice_label, Style::default().fg(FG_DIM)));
+    }
 
     let esc_action = if state.ui.agent_running {
         " cancel  "
@@ -565,8 +577,24 @@ pub fn render_command_palette(
 
     let mut lines = Vec::new();
 
-    for (i, item) in state.ui.command_items.iter().enumerate() {
-        let selected = i == state.ui.command_selected;
+    let visible_rows = area.height.saturating_sub(2) as usize;
+    if visible_rows == 0 {
+        return;
+    }
+
+    let len = state.ui.command_items.len();
+    let start = if len <= visible_rows {
+        0
+    } else if state.ui.command_selected >= visible_rows {
+        state.ui.command_selected + 1 - visible_rows
+    } else {
+        0
+    };
+    let end = (start + visible_rows).min(len);
+
+    for (i, item) in state.ui.command_items[start..end].iter().enumerate() {
+        let actual_idx = start + i;
+        let selected = actual_idx == state.ui.command_selected;
 
         let style = if selected {
             Style::default()
@@ -577,7 +605,7 @@ pub fn render_command_palette(
             Style::default().fg(Color::Gray)
         };
 
-        let text = format!("{:<10} {}", item.cmd, item.desc);
+        let text = format!("{:<14} {}", item.cmd, item.desc);
 
         let padded = format!(
             "{:<width$}",

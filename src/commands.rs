@@ -2,7 +2,9 @@
 
 use std::time::Instant;
 
+use crate::agent::Agent;
 use crate::logger::log;
+use crate::test_harness::run_tests;
 use crate::state::{
     AgentState, CommandItem, InputMode, LogLevel
 };
@@ -13,14 +15,25 @@ pub fn handle_command(
     state: &mut AgentState,
     raw: &str,
     voice_tx: Option<&Sender<VoiceCommand>>,
+    agent: Option<&mut Agent>,
 ) {
     state.ui.last_activity = Instant::now();
     state.clear_hint();
     state.clear_autocomplete();
 
-    let cmd = raw.trim();
+    let cmd_raw = raw.trim();
+    let cmd = normalize_command_prefix(cmd_raw);
 
-    match cmd {
+    if cmd.starts_with("/model ") {
+        set_model(state, &cmd, agent);
+        return;
+    }
+    if cmd.starts_with("/test ") {
+        run_test(state, &cmd);
+        return;
+    }
+
+    match cmd.as_str() {
         "/help" => help(state),
         "/clear" => clear_logs(state),
         "/voice" => voice_status(state),
@@ -33,6 +46,8 @@ pub fn handle_command(
         "/key" => enter_api_key_mode(state),
         "/new" => new_conversation(state),
         "/approve" => toggle_auto_approve(state),
+        "/model" => show_model(state, agent),
+        "/test" => run_test(state, &cmd),
 
         "" => {}
 
@@ -44,6 +59,7 @@ pub fn handle_command(
             );
         }
     }
+
 }
 
 
@@ -57,6 +73,10 @@ fn help(state: &mut AgentState) {
     log(state, Info, "  /voice       Show voice status");
     log(state, Info, "  /voice on    Start voice input");
     log(state, Info, "  /voice off   Stop voice input");
+    log(state, Info, "  /model       Show active provider/model");
+    log(state, Info, "  /model <provider> <model> [base_url]");
+    log(state, Info, "  /test        Run auto-detected tests");
+    log(state, Info, "  /test <arg>  Run targeted tests (framework-specific)");
     log(state, Info, "  /approve     Toggle dangerous tool auto-approve");
     log(state, Info, "  /new         Start a fresh conversation");
     log(state, Info, "  /quit | /q   Stop agent execution");
@@ -102,6 +122,100 @@ fn toggle_auto_approve(state: &mut AgentState) {
     );
 }
 
+fn show_model(state: &mut AgentState, agent: Option<&mut Agent>) {
+    let Some(agent) = agent else {
+        log(state, LogLevel::Warn, "Agent unavailable.");
+        return;
+    };
+
+    let cfg = agent.model_config();
+    log(
+        state,
+        LogLevel::Info,
+        format!(
+            "Model: provider={} model={} base_url={}",
+            cfg.provider,
+            cfg.model,
+            cfg.base_url.clone().unwrap_or_else(|| "(default)".to_string())
+        ),
+    );
+}
+
+fn set_model(state: &mut AgentState, cmd: &str, agent: Option<&mut Agent>) {
+    let Some(agent) = agent else {
+        log(state, LogLevel::Warn, "Agent unavailable.");
+        return;
+    };
+
+    let parts: Vec<&str> = cmd.split_whitespace().collect();
+    if parts.len() < 3 {
+        log(
+            state,
+            LogLevel::Warn,
+            "Usage: /model <provider> <model> [base_url]",
+        );
+        return;
+    }
+
+    let provider = parts[1].to_string();
+    let model = parts[2].to_string();
+    let base_url = if parts.len() >= 4 {
+        Some(parts[3].to_string())
+    } else {
+        None
+    };
+
+    agent.set_model_config(provider.clone(), model.clone(), base_url.clone());
+    log(
+        state,
+        LogLevel::Success,
+        format!(
+            "Switched model: provider={} model={} base_url={}",
+            provider,
+            model,
+            base_url.unwrap_or_else(|| "(default)".to_string())
+        ),
+    );
+}
+
+fn run_test(state: &mut AgentState, cmd: &str) {
+    let target = cmd.strip_prefix("/test").map(str::trim).unwrap_or("");
+    let target = if target.is_empty() { None } else { Some(target) };
+
+    log(
+        state,
+        LogLevel::Info,
+        format!("Running tests{}", target.map(|t| format!(" ({})", t)).unwrap_or_default()),
+    );
+
+    match run_tests(&state.repo_root, target) {
+        Ok(run) => {
+            log(
+                state,
+                if run.success { LogLevel::Success } else { LogLevel::Error },
+                format!(
+                    "Test run [{}] exit={} passed={} failed={} duration={}ms",
+                    run.framework, run.exit_code, run.passed, run.failed, run.duration_ms
+                ),
+            );
+            for line in run
+                .output
+                .lines()
+                .rev()
+                .take(30)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+            {
+                log(state, LogLevel::Info, line.to_string());
+            }
+        }
+        Err(e) => {
+            log(state, LogLevel::Error, format!("Test run failed: {}", e));
+        }
+    }
+}
+
 fn enter_api_key_mode(state: &mut AgentState) {
     state.ui.input.clear();
     state.ui.input_mode = InputMode::ApiKey;
@@ -116,6 +230,7 @@ fn enter_api_key_mode(state: &mut AgentState) {
 }
 
 fn voice_status(state: &mut AgentState) {
+    state.voice.visible = true;
     let status = state
         .voice
         .status
@@ -137,6 +252,7 @@ fn voice_status(state: &mut AgentState) {
 }
 
 fn voice_on(state: &mut AgentState, voice_tx: Option<&Sender<VoiceCommand>>) {
+    state.voice.visible = true;
     if state.voice.enabled {
         log(state, LogLevel::Info, "Voice already enabled.");
         return;
@@ -155,6 +271,7 @@ fn voice_on(state: &mut AgentState, voice_tx: Option<&Sender<VoiceCommand>>) {
 }
 
 fn voice_off(state: &mut AgentState, voice_tx: Option<&Sender<VoiceCommand>>) {
+    state.voice.visible = true;
     if !state.voice.enabled {
         log(state, LogLevel::Info, "Voice already disabled.");
         return;
@@ -169,7 +286,7 @@ fn voice_off(state: &mut AgentState, voice_tx: Option<&Sender<VoiceCommand>>) {
     }
 }
 pub fn update_command_hints(state: &mut AgentState) {
-    let input = state.ui.input.trim();
+    let input = normalize_command_prefix(state.ui.input.trim());
 
     let prev_selected = state.ui.command_selected;
 
@@ -187,6 +304,8 @@ pub fn update_command_hints(state: &mut AgentState) {
         CommandItem { cmd: "/voice", desc: "Show voice status" },
         CommandItem { cmd: "/voice on", desc: "Start voice input" },
         CommandItem { cmd: "/voice off", desc: "Stop voice input" },
+        CommandItem { cmd: "/model", desc: "Show active provider/model" },
+        CommandItem { cmd: "/test", desc: "Run auto-detected tests" },
         CommandItem { cmd: "/approve", desc: "Toggle dangerous tool auto-approve" },
         CommandItem { cmd: "/new", desc: "Start a fresh conversation" },
         CommandItem { cmd: "/quit", desc: "Stop agent execution" },
@@ -195,8 +314,21 @@ pub fn update_command_hints(state: &mut AgentState) {
     ];
 
     for item in all {
-        if item.cmd.starts_with(input) {
+        if input == "/" || item.cmd.starts_with(&input) {
             state.ui.command_items.push(*item);
+        }
+    }
+
+    if state.ui.command_items.is_empty() {
+        for item in all {
+            if item.cmd.contains(&input)
+                || item
+                    .desc
+                    .to_ascii_lowercase()
+                    .contains(&input[1..].to_ascii_lowercase())
+            {
+                state.ui.command_items.push(*item);
+            }
         }
     }
 
@@ -205,5 +337,15 @@ pub fn update_command_hints(state: &mut AgentState) {
     } else {
         state.ui.command_selected =
             prev_selected.min(state.ui.command_items.len() - 1);
+    }
+}
+
+fn normalize_command_prefix(input: &str) -> String {
+    if let Some(rest) = input.strip_prefix('／') {
+        format!("/{}", rest)
+    } else if let Some(rest) = input.strip_prefix('÷') {
+        format!("/{}", rest)
+    } else {
+        input.to_string()
     }
 }

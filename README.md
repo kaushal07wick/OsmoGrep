@@ -166,6 +166,8 @@ Anything else is sent directly to the agent.
 | `/help`  | Show available commands          |
 | `/clear` | Clear execution logs             |
 | `/key`   | Enter OpenAI API key mode        |
+| `/model` | Show/switch provider + model     |
+| `/test`  | Run auto-detected project tests  |
 | `/new`   | Start a fresh conversation       |
 | `/approve` | Toggle dangerous tool auto-approve |
 | `/quit`  | Stop the currently running agent |
@@ -175,6 +177,8 @@ Anything else is sent directly to the agent.
 During agent execution:
 - `Esc` requests cancellation instead of exiting.
 - Dangerous tools (`run_shell`, `write_file`, `edit_file`) prompt for approval unless `/approve` is enabled.
+- `/model <provider> <model> [base_url]` switches runtime model config.
+- `/test <target>` runs targeted tests (e.g. `cargo test foo`, `pytest tests/test_x.py`).
 
 ## License
 [MIT License](LICENSE).

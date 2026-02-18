@@ -42,6 +42,10 @@ fn format_tool_name(raw: &str) -> &str {
         "write_file" => "Write",
         "read_file" => "Read",
         "edit_file" => "Edit",
+        "run_tests" => "Test",
+        "list_dir" => "ListDir",
+        "git_diff" => "GitDiff",
+        "git_log" => "GitLog",
         other => other,
     }
 }

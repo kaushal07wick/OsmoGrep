@@ -7,6 +7,7 @@ mod agent;
 mod context;
 mod voice;
 mod triage;
+mod test_harness;
 
 use std::{
     error::Error,
@@ -130,12 +131,14 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
             state.voice.model.clone(),
             voice_evt_tx.clone(),
         );
+        state.voice.visible = true;
         state.voice.enabled = true;
-    } else if env_truthy("VLLM_REALTIME_AUTOCONNECT", true) {
+    } else if env_truthy("VLLM_REALTIME_AUTOCONNECT", false) {
         let _ = voice_cmd_tx.send(voice::VoiceCommand::Start {
             url: state.voice.url.clone(),
             model: state.voice.model.clone(),
         });
+        state.voice.visible = true;
         state.voice.enabled = true;
         log_status(&mut state, "Connecting voice input...");
     }
@@ -224,6 +227,7 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
             match voice_evt_rx.try_recv() {
                 Ok(evt) => match evt {
                     voice::VoiceEvent::Connected => {
+                        state.voice.visible = true;
                         state.voice.connected = true;
                         state.voice.status = Some("connected".into());
                         state.voice.buffer.clear();
@@ -296,6 +300,7 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
                         state.voice.last_activity = Some(Instant::now());
                     }
                     voice::VoiceEvent::Error(msg) => {
+                        state.voice.visible = true;
                         state.voice.enabled = false;
                         state.voice.connected = false;
                         state.voice.status = Some(format!("error: {msg}"));
@@ -517,6 +522,7 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
                         &mut state,
                         text,
                         Some(&voice_cmd_tx),
+                        Some(&mut agent),
                     );
                 }
 
@@ -624,6 +630,7 @@ fn init_state() -> AgentState {
         started_at: Instant::now(),
         repo_root: std::env::current_dir().unwrap(),
         voice: crate::state::VoiceState {
+            visible: false,
             enabled: false,
             connected: false,
             status: None,

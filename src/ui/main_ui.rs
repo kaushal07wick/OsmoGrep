@@ -17,11 +17,15 @@ fn parse_input(raw: &str) -> InputMode {
 
     if first.starts_with('!') {
         InputMode::Shell
-    } else if first.starts_with('/') {
+    } else if is_command_prefix(first) {
         InputMode::Command
     } else {
         InputMode::AgentText
     }
+}
+
+fn is_command_prefix(s: &str) -> bool {
+    s.starts_with('/') || s.starts_with('／') || s.starts_with('÷')
 }
 
 pub fn handle_event(
