@@ -73,12 +73,35 @@ Run PR/Issue triage for a GitHub repository:
 osmogrep triage \
   --repo owner/repo \
   --state open \
-  --limit 300 \
+  --limit 3000 \
+  --deep-review-all \
+  --incremental \
+  --state-file .context/triage-state-owner_repo.json \
   --vision ./VISION.md \
   --out triage-report.json
 ```
 
 `GITHUB_TOKEN` is recommended for higher API limits.
+
+Apply triage actions (labels/comments) to GitHub:
+
+```bash
+osmogrep triage \
+  --repo owner/repo \
+  --state open \
+  --limit 3000 \
+  --incremental \
+  --vision ./VISION.md \
+  --comment-actions \
+  --apply-actions \
+  --action-limit 100 \
+  --out triage-report.json
+```
+
+Triage now supports:
+- Incremental runs via `--incremental` + `--state-file`
+- Duplicate detection with lexical + semantic token scoring
+- Optional action planning/execution (`label`, `comment`) with `--apply-actions`
 
 You interact with the agent directly:
 
