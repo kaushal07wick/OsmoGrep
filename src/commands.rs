@@ -15,6 +15,8 @@ use crate::state::{
 };
 use crate::test_harness::run_tests;
 use crate::voice::VoiceCommand;
+use serde::Deserialize;
+use serde_json::Value;
 use std::sync::mpsc::Sender;
 
 pub fn handle_command(
@@ -67,6 +69,10 @@ pub fn handle_command(
         set_autofix(state, &cmd);
         return;
     }
+    if cmd.starts_with("/gh ") {
+        handle_gh_command(state, &cmd);
+        return;
+    }
     if cmd.starts_with("/nv ") {
         open_nv(state, &cmd);
         return;
@@ -97,6 +103,7 @@ pub fn handle_command(
         "/profile" => show_profile(state),
         "/jobs" => show_jobs(state),
         "/autofix" => show_autofix(state),
+        "/gh" => handle_gh_command(state, &cmd),
         "/nv" => open_nv(state, &cmd),
         "/plan" => show_plan(state),
         "/plan clear" => plan_clear(state),
@@ -173,6 +180,14 @@ fn help(state: &mut AgentState) {
     log(state, Info, "  /jobs        Show background jobs");
     log(state, Info, "  /autofix     Show auto-eval mode");
     log(state, Info, "  /autofix on|off  Toggle auto post-run tests");
+    log(state, Info, "  /gh          Show GitHub CLI/repo status");
+    log(state, Info, "  /gh prs [state] [limit]      List PRs");
+    log(state, Info, "  /gh issues [state] [limit]   List issues");
+    log(
+        state,
+        Info,
+        "  /gh triage [triage flags]    Run triage in-place",
+    );
     log(
         state,
         Info,
@@ -778,6 +793,544 @@ fn set_autofix(state: &mut AgentState, cmd: &str) {
     }
     show_autofix(state);
     let _ = persistence::save(state);
+}
+
+#[derive(Debug, Deserialize)]
+struct GhActor {
+    login: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GhLabel {
+    name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GhPrRow {
+    number: u64,
+    title: Option<String>,
+    url: Option<String>,
+    is_draft: Option<bool>,
+    review_decision: Option<String>,
+    updated_at: Option<String>,
+    author: Option<GhActor>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GhIssueRow {
+    number: u64,
+    title: Option<String>,
+    url: Option<String>,
+    updated_at: Option<String>,
+    author: Option<GhActor>,
+    labels: Option<Vec<GhLabel>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GhRepoRef {
+    name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GhRepoInfo {
+    name_with_owner: Option<String>,
+    url: Option<String>,
+    default_branch_ref: Option<GhRepoRef>,
+}
+
+fn handle_gh_command(state: &mut AgentState, cmd: &str) {
+    let rest = cmd.strip_prefix("/gh").map(str::trim).unwrap_or("");
+    if rest.is_empty() || rest == "status" || rest == "check" {
+        gh_status(state);
+        return;
+    }
+
+    if let Some(arg) = rest.strip_prefix("prs") {
+        gh_list_prs(state, arg.trim());
+        return;
+    }
+
+    if let Some(arg) = rest.strip_prefix("issues") {
+        gh_list_issues(state, arg.trim());
+        return;
+    }
+
+    if let Some(arg) = rest.strip_prefix("triage") {
+        gh_run_triage(state, arg.trim());
+        return;
+    }
+
+    log(
+        state,
+        LogLevel::Warn,
+        "Usage: /gh [status] | /gh prs [open|closed|merged] [limit] | /gh issues [open|closed] [limit] | /gh triage [flags]",
+    );
+}
+
+fn gh_status(state: &mut AgentState) {
+    if !has_cmd("gh") {
+        log(
+            state,
+            LogLevel::Error,
+            "GitHub CLI (gh) is not installed. Install it: https://cli.github.com/",
+        );
+        log(
+            state,
+            LogLevel::Info,
+            "macOS: brew install gh | Ubuntu: sudo apt-get install gh",
+        );
+        return;
+    }
+
+    let version = run_cmd_capture("gh", &["--version"]);
+    match version {
+        Ok(text) => {
+            if let Some(line) = text.lines().next() {
+                log(state, LogLevel::Info, format!("gh: {}", line));
+            }
+        }
+        Err(e) => {
+            log(
+                state,
+                LogLevel::Error,
+                format!("Failed to run gh --version: {}", e),
+            );
+            return;
+        }
+    }
+
+    match run_cmd_capture("gh", &["auth", "status", "-h", "github.com"]) {
+        Ok(_) => log(state, LogLevel::Success, "GitHub auth: ok"),
+        Err(e) => {
+            log(
+                state,
+                LogLevel::Warn,
+                format!("GitHub auth not ready: {}. Run: gh auth login", e),
+            );
+            return;
+        }
+    }
+
+    match gh_repo_info() {
+        Ok(repo) => {
+            let name = repo
+                .name_with_owner
+                .unwrap_or_else(|| "(unknown repo)".to_string());
+            let url = repo.url.unwrap_or_else(|| "(unknown url)".to_string());
+            let branch = repo
+                .default_branch_ref
+                .and_then(|r| r.name)
+                .unwrap_or_else(|| "(unknown)".to_string());
+            log(
+                state,
+                LogLevel::Info,
+                format!("Repo: {} [{}] {}", name, branch, url),
+            );
+        }
+        Err(e) => {
+            log(
+                state,
+                LogLevel::Warn,
+                format!(
+                    "Could not resolve repo from current directory: {}. Run this inside a cloned GitHub repo.",
+                    e
+                ),
+            );
+        }
+    }
+}
+
+fn gh_list_prs(state: &mut AgentState, arg: &str) {
+    if !ensure_gh_ready(state) {
+        return;
+    }
+
+    let mut pr_state = "open".to_string();
+    let mut limit = 30usize;
+    for tok in arg.split_whitespace() {
+        match tok {
+            "open" | "closed" | "merged" => pr_state = tok.to_string(),
+            "all" => pr_state = "open".to_string(),
+            _ => {
+                if let Ok(n) = tok.parse::<usize>() {
+                    limit = n.clamp(1, 500);
+                }
+            }
+        }
+    }
+
+    let limit_s = limit.to_string();
+    let args = [
+        "pr",
+        "list",
+        "--state",
+        pr_state.as_str(),
+        "--limit",
+        limit_s.as_str(),
+        "--json",
+        "number,title,url,isDraft,reviewDecision,updatedAt,author",
+    ];
+
+    let output = match run_cmd_capture("gh", &args) {
+        Ok(v) => v,
+        Err(e) => {
+            log(state, LogLevel::Error, format!("Failed to list PRs: {}", e));
+            return;
+        }
+    };
+
+    let prs: Vec<GhPrRow> = match serde_json::from_str(&output) {
+        Ok(v) => v,
+        Err(e) => {
+            log(
+                state,
+                LogLevel::Error,
+                format!("Failed to parse PR list JSON: {}", e),
+            );
+            return;
+        }
+    };
+
+    log(
+        state,
+        LogLevel::Info,
+        format!("PRs [{}] count={}", pr_state, prs.len()),
+    );
+    for pr in prs {
+        let title = compact_line(pr.title.as_deref().unwrap_or(""), 72);
+        let author = pr
+            .author
+            .and_then(|a| a.login)
+            .unwrap_or_else(|| "unknown".to_string());
+        let review = pr
+            .review_decision
+            .unwrap_or_else(|| "UNREVIEWED".to_string());
+        let draft = if pr.is_draft.unwrap_or(false) {
+            " draft"
+        } else {
+            ""
+        };
+        let updated = pr.updated_at.unwrap_or_else(|| "-".to_string());
+        log(
+            state,
+            LogLevel::Info,
+            format!(
+                "#{} [{}{}] {} (@{}, {})",
+                pr.number, review, draft, title, author, updated
+            ),
+        );
+        if let Some(url) = pr.url {
+            log(state, LogLevel::Info, format!("  {}", url));
+        }
+    }
+}
+
+fn gh_list_issues(state: &mut AgentState, arg: &str) {
+    if !ensure_gh_ready(state) {
+        return;
+    }
+
+    let mut issue_state = "open".to_string();
+    let mut limit = 30usize;
+    for tok in arg.split_whitespace() {
+        match tok {
+            "open" | "closed" => issue_state = tok.to_string(),
+            "all" => issue_state = "open".to_string(),
+            _ => {
+                if let Ok(n) = tok.parse::<usize>() {
+                    limit = n.clamp(1, 500);
+                }
+            }
+        }
+    }
+
+    let limit_s = limit.to_string();
+    let args = [
+        "issue",
+        "list",
+        "--state",
+        issue_state.as_str(),
+        "--limit",
+        limit_s.as_str(),
+        "--json",
+        "number,title,url,updatedAt,author,labels",
+    ];
+
+    let output = match run_cmd_capture("gh", &args) {
+        Ok(v) => v,
+        Err(e) => {
+            log(
+                state,
+                LogLevel::Error,
+                format!("Failed to list issues: {}", e),
+            );
+            return;
+        }
+    };
+
+    let issues: Vec<GhIssueRow> = match serde_json::from_str(&output) {
+        Ok(v) => v,
+        Err(e) => {
+            log(
+                state,
+                LogLevel::Error,
+                format!("Failed to parse issue list JSON: {}", e),
+            );
+            return;
+        }
+    };
+
+    log(
+        state,
+        LogLevel::Info,
+        format!("Issues [{}] count={}", issue_state, issues.len()),
+    );
+    for issue in issues {
+        let title = compact_line(issue.title.as_deref().unwrap_or(""), 72);
+        let author = issue
+            .author
+            .and_then(|a| a.login)
+            .unwrap_or_else(|| "unknown".to_string());
+        let labels = issue
+            .labels
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|l| l.name)
+            .take(3)
+            .collect::<Vec<_>>();
+        let label_text = if labels.is_empty() {
+            String::new()
+        } else {
+            format!(" labels={}", labels.join(","))
+        };
+        let updated = issue.updated_at.unwrap_or_else(|| "-".to_string());
+        log(
+            state,
+            LogLevel::Info,
+            format!(
+                "#{} {} (@{}, {}{})",
+                issue.number, title, author, updated, label_text
+            ),
+        );
+        if let Some(url) = issue.url {
+            log(state, LogLevel::Info, format!("  {}", url));
+        }
+    }
+}
+
+fn gh_run_triage(state: &mut AgentState, arg: &str) {
+    if !ensure_gh_ready(state) {
+        return;
+    }
+
+    let repo = match gh_repo_info() {
+        Ok(info) => info.name_with_owner.unwrap_or_default(),
+        Err(e) => {
+            log(
+                state,
+                LogLevel::Error,
+                format!("Cannot resolve repo for triage: {}", e),
+            );
+            return;
+        }
+    };
+    if repo.is_empty() {
+        log(
+            state,
+            LogLevel::Error,
+            "Cannot resolve owner/repo from current directory.",
+        );
+        return;
+    }
+
+    let mut pass_through: Vec<String> = arg
+        .split_whitespace()
+        .filter(|t| !t.is_empty())
+        .map(|s| s.to_string())
+        .collect();
+
+    let has_repo = pass_through.iter().any(|t| t == "--repo");
+    let has_json_only = pass_through.iter().any(|t| t == "--json-only");
+    let has_state_file = pass_through.iter().any(|t| t == "--state-file");
+    let has_incremental = pass_through.iter().any(|t| t == "--incremental");
+
+    let mut args: Vec<String> = vec!["triage".to_string()];
+    if !has_repo {
+        args.push("--repo".to_string());
+        args.push(repo.clone());
+    }
+    if !has_incremental {
+        args.push("--incremental".to_string());
+    }
+    if !has_state_file {
+        args.push("--state-file".to_string());
+        args.push(format!(
+            ".context/triage-state-{}.json",
+            repo.replace('/', "_")
+        ));
+    }
+    args.append(&mut pass_through);
+    if !has_json_only {
+        args.push("--json-only".to_string());
+    }
+
+    log(
+        state,
+        LogLevel::Info,
+        format!("Running triage for {} ...", repo),
+    );
+
+    let exe = match env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            log(
+                state,
+                LogLevel::Error,
+                format!("Unable to resolve osmogrep executable: {}", e),
+            );
+            return;
+        }
+    };
+
+    let out = match Command::new(exe)
+        .args(args.iter().map(|s| s.as_str()))
+        .current_dir(&state.repo_root)
+        .output()
+    {
+        Ok(o) => o,
+        Err(e) => {
+            log(
+                state,
+                LogLevel::Error,
+                format!("Failed to start triage: {}", e),
+            );
+            return;
+        }
+    };
+
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let msg = if !err.is_empty() { err } else { stdout };
+        log(state, LogLevel::Error, format!("Triage failed: {}", msg));
+        return;
+    }
+
+    let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let report: Value = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(e) => {
+            log(
+                state,
+                LogLevel::Error,
+                format!("Triage output parse error: {}", e),
+            );
+            return;
+        }
+    };
+
+    let scanned_prs = report
+        .get("scanned_prs")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let scanned_issues = report
+        .get("scanned_issues")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let dupes = report
+        .get("duplicate_pairs")
+        .and_then(Value::as_array)
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let actions = report
+        .get("planned_actions")
+        .and_then(Value::as_array)
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let applied = report
+        .get("applied_action_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+
+    log(
+        state,
+        LogLevel::Success,
+        format!(
+            "Triage done: PRs={} Issues={} Duplicates={} PlannedActions={} AppliedActions={}",
+            scanned_prs, scanned_issues, dupes, actions, applied
+        ),
+    );
+
+    if let Some(ranked) = report.get("ranked_prs").and_then(Value::as_array) {
+        for pr in ranked.iter().take(15) {
+            let number = pr.get("number").and_then(Value::as_u64).unwrap_or(0);
+            let score = pr.get("score").and_then(Value::as_f64).unwrap_or(0.0);
+            let decision = pr
+                .get("decision")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let title = compact_line(pr.get("title").and_then(Value::as_str).unwrap_or(""), 68);
+            log(
+                state,
+                LogLevel::Info,
+                format!("#{} [{:.1}] {} ({})", number, score, title, decision),
+            );
+        }
+    }
+}
+
+fn ensure_gh_ready(state: &mut AgentState) -> bool {
+    if !has_cmd("gh") {
+        log(
+            state,
+            LogLevel::Error,
+            "GitHub CLI (gh) is not installed. Install it: https://cli.github.com/",
+        );
+        return false;
+    }
+    if let Err(e) = run_cmd_capture("gh", &["auth", "status", "-h", "github.com"]) {
+        log(
+            state,
+            LogLevel::Error,
+            format!("GitHub CLI auth required: {}. Run: gh auth login", e),
+        );
+        return false;
+    }
+    true
+}
+
+fn gh_repo_info() -> Result<GhRepoInfo, String> {
+    let raw = run_cmd_capture(
+        "gh",
+        &[
+            "repo",
+            "view",
+            "--json",
+            "nameWithOwner,url,defaultBranchRef",
+        ],
+    )?;
+    serde_json::from_str::<GhRepoInfo>(&raw).map_err(|e| e.to_string())
+}
+
+fn run_cmd_capture(cmd: &str, args: &[&str]) -> Result<String, String> {
+    let out = Command::new(cmd)
+        .args(args)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        let msg = if err.is_empty() {
+            format!("{} exited with {}", cmd, out.status)
+        } else {
+            err
+        };
+        return Err(msg);
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
 fn open_nv(state: &mut AgentState, cmd: &str) {
@@ -1499,6 +2052,10 @@ pub fn update_command_hints(state: &mut AgentState) {
         CommandItem {
             cmd: "/autofix",
             desc: "Toggle auto post-run eval tests",
+        },
+        CommandItem {
+            cmd: "/gh",
+            desc: "GitHub repo status + PR/issue triage commands",
         },
         CommandItem {
             cmd: "/nv",
