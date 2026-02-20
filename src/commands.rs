@@ -69,6 +69,10 @@ pub fn handle_command(
         set_autofix(state, &cmd);
         return;
     }
+    if cmd.starts_with("/triage") || cmd.starts_with("/traige") {
+        run_triage_agent(state, &cmd);
+        return;
+    }
     if cmd.starts_with("/gh ") {
         handle_gh_command(state, &cmd);
         return;
@@ -103,6 +107,7 @@ pub fn handle_command(
         "/profile" => show_profile(state),
         "/jobs" => show_jobs(state),
         "/autofix" => show_autofix(state),
+        "/triage" | "/traige" => run_triage_agent(state, &cmd),
         "/gh" => handle_gh_command(state, &cmd),
         "/nv" => open_nv(state, &cmd),
         "/plan" => show_plan(state),
@@ -180,6 +185,11 @@ fn help(state: &mut AgentState) {
     log(state, Info, "  /jobs        Show background jobs");
     log(state, Info, "  /autofix     Show auto-eval mode");
     log(state, Info, "  /autofix on|off  Toggle auto post-run tests");
+    log(
+        state,
+        Info,
+        "  /triage [args]  One-command PR/Issue triage workflow in TUI",
+    );
     log(state, Info, "  /gh          Show GitHub CLI/repo status");
     log(state, Info, "  /gh prs [state] [limit]      List PRs");
     log(state, Info, "  /gh issues [state] [limit]   List issues");
@@ -793,6 +803,59 @@ fn set_autofix(state: &mut AgentState, cmd: &str) {
     }
     show_autofix(state);
     let _ = persistence::save(state);
+}
+
+fn run_triage_agent(state: &mut AgentState, cmd: &str) {
+    let user_args = cmd
+        .strip_prefix("/triage")
+        .or_else(|| cmd.strip_prefix("/traige"))
+        .map(str::trim)
+        .unwrap_or("");
+
+    let objective = if user_args.is_empty() {
+        "Run full triage for this repo with sensible defaults.".to_string()
+    } else {
+        format!("Run triage with user intent/options: {user_args}")
+    };
+
+    let prompt = format!(
+        "You are running an end-to-end GitHub triage workflow for the current repository.\n\
+         Objective: {objective}\n\
+         \n\
+         Requirements:\n\
+         1) Use tools (shell/read/write) and keep everything inside this repo context.\n\
+         2) Verify `gh` is installed and authenticated. If not, stop and provide exact command to fix.\n\
+         3) Resolve owner/repo via `gh repo view --json nameWithOwner,url,defaultBranchRef`.\n\
+         4) Collect current PR and issue snapshots (open by default) using `gh pr list` and `gh issue list` with JSON fields.\n\
+         5) Run `osmogrep triage` with robust defaults unless overridden by user intent:\n\
+            - `--state open`\n\
+            - `--limit 3000`\n\
+            - `--deep-review-all`\n\
+            - `--incremental`\n\
+            - `--state-file .context/triage-state-<owner_repo>.json`\n\
+            - include `--vision ./VISION.md` only if file exists.\n\
+         6) If triage output is large, summarize top/bottom/high-risk items without losing key signals.\n\
+         7) If user intent clearly asks to apply labels/comments, include `--apply-actions --comment-actions`.\n\
+         \n\
+         Output format (strict markdown):\n\
+         - `## Triage Summary`\n\
+         - `## Repo Snapshot`\n\
+         - `## Top PR Candidates`\n\
+         - `## Duplicate Clusters`\n\
+         - `## Vision Drift / Reject Candidates`\n\
+         - `## Action Plan`\n\
+         - `## Commands Run`\n\
+         - `## Next Steps`\n\
+         \n\
+         Keep content actionable and concise. Include concrete PR/Issue numbers and links where available."
+    );
+
+    state.ui.queued_agent_prompt = Some(prompt);
+    log(
+        state,
+        LogLevel::Info,
+        "Queued autonomous triage workflow. It will stream tool calls and produce a markdown report.",
+    );
 }
 
 #[derive(Debug, Deserialize)]
@@ -2052,6 +2115,10 @@ pub fn update_command_hints(state: &mut AgentState) {
         CommandItem {
             cmd: "/autofix",
             desc: "Toggle auto post-run eval tests",
+        },
+        CommandItem {
+            cmd: "/triage",
+            desc: "Run autonomous GitHub PR/Issue triage workflow",
         },
         CommandItem {
             cmd: "/gh",

@@ -155,6 +155,21 @@ fn system_prompt(repo_root: &std::path::Path) -> Value {
             - If present, read it to understand the repository before acting.\n\
             - Use tools to inspect other files or make changes as needed.\n\
             - If `.context.json` is missing or insufficient, proceed normally and use tools freely.\n\
+            - Prefer high-leverage workflows over many tiny manual steps.\n\
+            - If the user asks for repository triage/review (PRs/issues), proactively use GitHub CLI (`gh`) and local triage tooling when available.\n\
+            - For triage-style tasks, gather evidence first, then produce ranked recommendations with clear rationale.\n\
+            \n\
+            Triage defaults (when user intent is PR/issue triage):\n\
+            - Resolve repository via `gh repo view`.\n\
+            - Fetch PR/issue snapshots with `gh pr list` / `gh issue list` JSON output.\n\
+            - Run `osmogrep triage` for dedupe, scoring, and scope-drift checks.\n\
+            - Prefer incremental mode and durable state files under `.context/`.\n\
+            - Apply triage actions only when user explicitly asks for auto-apply.\n\
+            \n\
+            Final response style:\n\
+            - Use concise markdown sections with concrete findings.\n\
+            - Include top candidates, duplicates, drift/reject risks, and explicit next actions.\n\
+            - Be specific with issue/PR IDs and command outputs where relevant.\n\
             \n\
             Philosophy:\n\
             This repository will outlive any single contributor.\n\
