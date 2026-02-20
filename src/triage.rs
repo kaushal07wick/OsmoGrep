@@ -3,9 +3,9 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::error::Error;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use clap::Args;
 use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, USER_AGENT};
@@ -31,16 +31,81 @@ pub struct TriageArgs {
 
     #[arg(
         long,
+        default_value_t = false,
+        help = "Deep-review every fetched PR (overrides --deep-review-top)"
+    )]
+    pub deep_review_all: bool,
+
+    #[arg(
+        long,
         default_value_t = 0.62,
         help = "Duplicate similarity threshold (0.0-1.0)"
     )]
     pub dedupe_threshold: f64,
+
+    #[arg(
+        long,
+        default_value_t = 800_000,
+        help = "Safety cap for duplicate-pair comparisons"
+    )]
+    pub max_pair_comparisons: usize,
+
+    #[arg(long, help = "Only analyze items updated after this RFC3339 timestamp")]
+    pub since: Option<String>,
+
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Use saved triage state to run incrementally"
+    )]
+    pub incremental: bool,
+
+    #[arg(long, help = "Path to incremental triage state JSON")]
+    pub state_file: Option<PathBuf>,
 
     #[arg(long, help = "Path to a vision document for scope alignment")]
     pub vision: Option<PathBuf>,
 
     #[arg(long, help = "GitHub token (or set GITHUB_TOKEN)")]
     pub token: Option<String>,
+
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Apply labels/comments to GitHub issues/PRs"
+    )]
+    pub apply_actions: bool,
+
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Include duplicate/vision comments in action plan"
+    )]
+    pub comment_actions: bool,
+
+    #[arg(long, default_value_t = 50, help = "Max suggested/applied actions")]
+    pub action_limit: usize,
+
+    #[arg(
+        long,
+        default_value = "triage:duplicate-candidate",
+        help = "Label for probable duplicates"
+    )]
+    pub label_duplicate: String,
+
+    #[arg(
+        long,
+        default_value = "triage:priority-review",
+        help = "Label for top-ranked PRs"
+    )]
+    pub label_priority: String,
+
+    #[arg(
+        long,
+        default_value = "triage:vision-drift",
+        help = "Label for vision-misaligned PRs"
+    )]
+    pub label_reject: String,
 
     #[arg(long, help = "Write full report JSON to this file")]
     pub out: Option<PathBuf>,
@@ -49,7 +114,7 @@ pub struct TriageArgs {
     pub json_only: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 enum ItemKind {
     PullRequest,
@@ -65,11 +130,14 @@ struct WorkItem {
     url: String,
     author: String,
     created_at: String,
+    updated_at: String,
     token_set: HashSet<String>,
+    semantic_token_set: HashSet<String>,
     title_token_set: HashSet<String>,
+    char_trigram_set: HashSet<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 struct DuplicatePair {
     left_kind: ItemKind,
     left_number: u64,
@@ -115,10 +183,36 @@ struct TriageReport {
     repo: String,
     state: String,
     generated_at: String,
+    incremental: bool,
+    since: Option<String>,
+    state_file: String,
+    max_seen_updated_at: Option<String>,
     scanned_prs: usize,
     scanned_issues: usize,
     duplicate_pairs: Vec<DuplicatePair>,
     ranked_prs: Vec<PrScoreReport>,
+    planned_actions: Vec<TriageAction>,
+    applied_action_count: usize,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct TriageAction {
+    item_kind: ItemKind,
+    item_number: u64,
+    item_url: String,
+    action_type: String,
+    value: String,
+    reason: String,
+    status: String,
+    error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+struct TriageState {
+    repo: String,
+    state: String,
+    last_run_at: Option<String>,
+    last_seen_updated_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -139,6 +233,7 @@ struct GithubPull {
     html_url: Option<String>,
     user: Option<GithubUser>,
     created_at: Option<String>,
+    updated_at: Option<String>,
     draft: Option<bool>,
     comments: Option<u64>,
     review_comments: Option<u64>,
@@ -162,6 +257,7 @@ struct GithubIssue {
     html_url: Option<String>,
     user: Option<GithubUser>,
     created_at: Option<String>,
+    updated_at: Option<String>,
     pull_request: Option<serde_json::Value>,
 }
 
@@ -193,10 +289,14 @@ struct VisionModel {
 pub fn run(args: TriageArgs) -> Result<(), Box<dyn Error>> {
     let state = normalize_state(&args.state)?;
     let token = args.token.clone().or_else(|| env::var("GITHUB_TOKEN").ok());
+    let state_file = resolve_state_file(args.state_file.clone(), &args.repo);
 
-    let gh = GithubClient::new(token)?;
-    let pulls = gh.fetch_pulls(&args.repo, state, args.limit)?;
-    let issues = gh.fetch_issues(&args.repo, state, args.limit)?;
+    let persisted = load_state_file(&state_file)?;
+    let since = resolve_since(&args, persisted.as_ref())?;
+
+    let gh = GithubClient::new(token.clone())?;
+    let pulls = gh.fetch_pulls(&args.repo, state, args.limit, since.as_ref())?;
+    let issues = gh.fetch_issues(&args.repo, state, args.limit, since.as_ref())?;
 
     let vision_model = if let Some(path) = args.vision.as_ref() {
         let content = fs::read_to_string(path)?;
@@ -215,7 +315,7 @@ pub fn run(args: TriageArgs) -> Result<(), Box<dyn Error>> {
         }
     }
 
-    let duplicate_pairs = find_duplicates(&items, args.dedupe_threshold);
+    let duplicate_pairs = find_duplicates(&items, args.dedupe_threshold, args.max_pair_comparisons);
 
     let mut scored: Vec<PrScoreReport> = pulls
         .iter()
@@ -224,7 +324,12 @@ pub fn run(args: TriageArgs) -> Result<(), Box<dyn Error>> {
 
     scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
 
-    let deep_count = args.deep_review_top.min(scored.len());
+    let deep_count = if args.deep_review_all {
+        scored.len()
+    } else {
+        args.deep_review_top.min(scored.len())
+    };
+
     for report in scored.iter_mut().take(deep_count) {
         if let Some(pr) = pulls.iter().find(|p| p.number == report.number) {
             let deep = gh.fetch_deep_signals(
@@ -238,14 +343,45 @@ pub fn run(args: TriageArgs) -> Result<(), Box<dyn Error>> {
 
     scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
 
+    let mut action_plan = build_action_plan(&scored, &duplicate_pairs, &args);
+    if action_plan.len() > args.action_limit {
+        action_plan.truncate(args.action_limit);
+    }
+
+    let mut applied_action_count = 0usize;
+    if args.apply_actions {
+        if token.is_none() {
+            return Err("--apply-actions requires --token or GITHUB_TOKEN".into());
+        }
+        applied_action_count = apply_actions(&gh, &args.repo, &mut action_plan, args.action_limit);
+    }
+
+    let max_seen_updated_at = latest_seen_updated_at(&pulls, &issues);
+
+    if args.incremental || args.state_file.is_some() {
+        let state_value = TriageState {
+            repo: args.repo.clone(),
+            state: state.to_string(),
+            last_run_at: Some(Utc::now().to_rfc3339()),
+            last_seen_updated_at: max_seen_updated_at.clone().or_else(|| since.clone()),
+        };
+        save_state_file(&state_file, &state_value)?;
+    }
+
     let report = TriageReport {
         repo: args.repo.clone(),
         state: state.to_string(),
         generated_at: Utc::now().to_rfc3339(),
+        incremental: args.incremental,
+        since,
+        state_file: state_file.display().to_string(),
+        max_seen_updated_at,
         scanned_prs: pulls.len(),
         scanned_issues: issues.iter().filter(|i| i.pull_request.is_none()).count(),
         duplicate_pairs,
         ranked_prs: scored,
+        planned_actions: action_plan,
+        applied_action_count,
     };
 
     let json_report = serde_json::to_string_pretty(&report)?;
@@ -259,13 +395,13 @@ pub fn run(args: TriageArgs) -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    print_summary(&report, args.out.as_ref());
+    print_summary(&report, args.out.as_ref(), args.apply_actions);
     println!("\n{}", json_report);
 
     Ok(())
 }
 
-fn print_summary(report: &TriageReport, out: Option<&PathBuf>) {
+fn print_summary(report: &TriageReport, out: Option<&PathBuf>, apply_actions: bool) {
     println!("repo: {}", report.repo);
     println!("state: {}", report.state);
     println!(
@@ -273,6 +409,9 @@ fn print_summary(report: &TriageReport, out: Option<&PathBuf>) {
         report.scanned_prs, report.scanned_issues
     );
     println!("duplicates found: {}", report.duplicate_pairs.len());
+    if let Some(since) = report.since.as_ref() {
+        println!("since: {}", since);
+    }
 
     if !report.ranked_prs.is_empty() {
         println!("top PR candidates:");
@@ -282,6 +421,14 @@ fn print_summary(report: &TriageReport, out: Option<&PathBuf>) {
                 pr.number, pr.score, pr.title, pr.decision
             );
         }
+    }
+
+    if !report.planned_actions.is_empty() {
+        println!("planned actions: {}", report.planned_actions.len());
+    }
+
+    if apply_actions {
+        println!("applied actions: {}", report.applied_action_count);
     }
 
     if let Some(path) = out {
@@ -316,21 +463,45 @@ impl GithubClient {
         repo: &str,
         state: &str,
         limit: usize,
+        since: Option<&String>,
     ) -> Result<Vec<GithubPull>, Box<dyn Error>> {
+        let since_dt = since.and_then(|s| parse_date(s));
+
         let mut page = 1;
         let mut out = Vec::new();
         while out.len() < limit {
             let url = format!(
                 "https://api.github.com/repos/{repo}/pulls?state={state}&per_page=100&page={page}&sort=updated&direction=desc"
             );
-            let mut chunk: Vec<GithubPull> =
+            let chunk: Vec<GithubPull> =
                 self.client.get(&url).send()?.error_for_status()?.json()?;
             if chunk.is_empty() {
                 break;
             }
-            out.append(&mut chunk);
+
+            let mut reached_old = false;
+            for pr in chunk {
+                if since_dt.is_some() {
+                    if let Some(updated) = pr.updated_at.as_ref().and_then(|d| parse_date(d)) {
+                        if updated <= since_dt.unwrap() {
+                            reached_old = true;
+                            continue;
+                        }
+                    }
+                }
+                out.push(pr);
+                if out.len() >= limit {
+                    break;
+                }
+            }
+
+            if reached_old {
+                break;
+            }
+
             page += 1;
         }
+
         out.truncate(limit);
         Ok(out)
     }
@@ -340,13 +511,18 @@ impl GithubClient {
         repo: &str,
         state: &str,
         limit: usize,
+        since: Option<&String>,
     ) -> Result<Vec<GithubIssue>, Box<dyn Error>> {
         let mut page = 1;
         let mut out = Vec::new();
         while out.len() < limit {
-            let url = format!(
+            let mut url = format!(
                 "https://api.github.com/repos/{repo}/issues?state={state}&per_page=100&page={page}&sort=updated&direction=desc"
             );
+            if let Some(since_ts) = since {
+                url.push_str("&since=");
+                url.push_str(since_ts);
+            }
             let mut chunk: Vec<GithubIssue> =
                 self.client.get(&url).send()?.error_for_status()?.json()?;
             if chunk.is_empty() {
@@ -428,6 +604,26 @@ impl GithubClient {
             changed_paths,
         })
     }
+
+    fn add_labels(&self, repo: &str, number: u64, labels: &[String]) -> Result<(), Box<dyn Error>> {
+        let url = format!("https://api.github.com/repos/{repo}/issues/{number}/labels");
+        self.client
+            .post(&url)
+            .json(&serde_json::json!({ "labels": labels }))
+            .send()?
+            .error_for_status()?;
+        Ok(())
+    }
+
+    fn add_comment(&self, repo: &str, number: u64, body: &str) -> Result<(), Box<dyn Error>> {
+        let url = format!("https://api.github.com/repos/{repo}/issues/{number}/comments");
+        self.client
+            .post(&url)
+            .json(&serde_json::json!({ "body": body }))
+            .send()?
+            .error_for_status()?;
+        Ok(())
+    }
 }
 
 fn normalize_state(state: &str) -> Result<&'static str, Box<dyn Error>> {
@@ -443,12 +639,13 @@ fn work_item_from_pr(pr: &GithubPull) -> WorkItem {
     let title = pr.title.clone().unwrap_or_default();
     let body = pr.body.clone().unwrap_or_default();
     let text = format!("{}\n{}", title, body);
+    let token_set = tokenize(&text);
 
     WorkItem {
         kind: ItemKind::PullRequest,
         number: pr.number,
         title: title.clone(),
-        body,
+        body: body.clone(),
         url: pr.html_url.clone().unwrap_or_default(),
         author: pr
             .user
@@ -456,8 +653,15 @@ fn work_item_from_pr(pr: &GithubPull) -> WorkItem {
             .and_then(|u| u.login.clone())
             .unwrap_or_else(|| "unknown".to_string()),
         created_at: pr.created_at.clone().unwrap_or_default(),
-        token_set: tokenize(&text),
+        updated_at: pr
+            .updated_at
+            .clone()
+            .or_else(|| pr.created_at.clone())
+            .unwrap_or_default(),
+        semantic_token_set: semanticize_tokens(&token_set),
         title_token_set: tokenize(&title),
+        char_trigram_set: char_ngrams(&text, 3, 2200),
+        token_set,
     }
 }
 
@@ -465,12 +669,13 @@ fn work_item_from_issue(issue: &GithubIssue) -> WorkItem {
     let title = issue.title.clone().unwrap_or_default();
     let body = issue.body.clone().unwrap_or_default();
     let text = format!("{}\n{}", title, body);
+    let token_set = tokenize(&text);
 
     WorkItem {
         kind: ItemKind::Issue,
         number: issue.number,
         title: title.clone(),
-        body,
+        body: body.clone(),
         url: issue.html_url.clone().unwrap_or_default(),
         author: issue
             .user
@@ -478,66 +683,89 @@ fn work_item_from_issue(issue: &GithubIssue) -> WorkItem {
             .and_then(|u| u.login.clone())
             .unwrap_or_else(|| "unknown".to_string()),
         created_at: issue.created_at.clone().unwrap_or_default(),
-        token_set: tokenize(&text),
+        updated_at: issue
+            .updated_at
+            .clone()
+            .or_else(|| issue.created_at.clone())
+            .unwrap_or_default(),
+        semantic_token_set: semanticize_tokens(&token_set),
         title_token_set: tokenize(&title),
+        char_trigram_set: char_ngrams(&text, 3, 2200),
+        token_set,
     }
 }
 
-fn find_duplicates(items: &[WorkItem], threshold: f64) -> Vec<DuplicatePair> {
+fn find_duplicates(
+    items: &[WorkItem],
+    threshold: f64,
+    max_pair_comparisons: usize,
+) -> Vec<DuplicatePair> {
     let mut out = Vec::new();
+    if items.len() < 2 {
+        return out;
+    }
 
-    for i in 0..items.len() {
-        for j in (i + 1)..items.len() {
-            let a = &items[i];
-            let b = &items[j];
+    let candidates = candidate_pairs(items, max_pair_comparisons);
 
-            let shared_title_tokens = a.title_token_set.intersection(&b.title_token_set).count();
+    for (i, j) in candidates {
+        let a = &items[i];
+        let b = &items[j];
 
-            if shared_title_tokens == 0 {
-                continue;
-            }
+        let shared_title_tokens = a.title_token_set.intersection(&b.title_token_set).count();
 
-            let title_sim = dice_coefficient(&a.title, &b.title);
-            let body_a = if a.body.len() > 1200 {
-                &a.body[..1200]
-            } else {
-                &a.body
-            };
-            let body_b = if b.body.len() > 1200 {
-                &b.body[..1200]
-            } else {
-                &b.body
-            };
-            let text_sim = jaccard(&a.token_set, &b.token_set);
-            let body_sim = dice_coefficient(body_a, body_b);
+        let title_sim = dice_coefficient(&a.title, &b.title);
+        let body_a = if a.body.len() > 1400 {
+            &a.body[..1400]
+        } else {
+            &a.body
+        };
+        let body_b = if b.body.len() > 1400 {
+            &b.body[..1400]
+        } else {
+            &b.body
+        };
+        let text_sim = jaccard(&a.token_set, &b.token_set);
+        let body_sim = dice_coefficient(body_a, body_b);
+        let semantic_sim = jaccard(&a.semantic_token_set, &b.semantic_token_set);
+        let trigram_sim = jaccard(&a.char_trigram_set, &b.char_trigram_set);
 
-            let mut similarity = (title_sim * 0.55) + (text_sim * 0.30) + (body_sim * 0.15);
-            if a.author == b.author {
-                similarity += 0.03;
-            }
-            if is_date_near(&a.created_at, &b.created_at, 14) {
-                similarity += 0.02;
-            }
+        let mut similarity = (title_sim * 0.35)
+            + (text_sim * 0.18)
+            + (body_sim * 0.10)
+            + (semantic_sim * 0.22)
+            + (trigram_sim * 0.15);
 
-            if similarity >= threshold {
-                let rationale = format!(
-                    "title_dice={:.2}, text_jaccard={:.2}, body_dice={:.2}, shared_title_tokens={}",
-                    title_sim, text_sim, body_sim, shared_title_tokens
-                );
+        if a.author == b.author {
+            similarity += 0.03;
+        }
+        if is_date_near(&a.created_at, &b.created_at, 14)
+            || is_date_near(&a.updated_at, &b.updated_at, 14)
+        {
+            similarity += 0.02;
+        }
 
-                out.push(DuplicatePair {
-                    left_kind: a.kind.clone(),
-                    left_number: a.number,
-                    left_title: a.title.clone(),
-                    left_url: a.url.clone(),
-                    right_kind: b.kind.clone(),
-                    right_number: b.number,
-                    right_title: b.title.clone(),
-                    right_url: b.url.clone(),
-                    similarity,
-                    rationale,
-                });
-            }
+        if shared_title_tokens == 0 && similarity < (threshold + 0.07) {
+            continue;
+        }
+
+        if similarity >= threshold {
+            let rationale = format!(
+                "title_dice={:.2}, text_jaccard={:.2}, semantic_jaccard={:.2}, body_dice={:.2}, trigram_jaccard={:.2}, shared_title_tokens={}",
+                title_sim, text_sim, semantic_sim, body_sim, trigram_sim, shared_title_tokens
+            );
+
+            out.push(DuplicatePair {
+                left_kind: a.kind.clone(),
+                left_number: a.number,
+                left_title: a.title.clone(),
+                left_url: a.url.clone(),
+                right_kind: b.kind.clone(),
+                right_number: b.number,
+                right_title: b.title.clone(),
+                right_url: b.url.clone(),
+                similarity,
+                rationale,
+            });
         }
     }
 
@@ -547,6 +775,56 @@ fn find_duplicates(items: &[WorkItem], threshold: f64) -> Vec<DuplicatePair> {
             .unwrap_or(Ordering::Equal)
     });
     out
+}
+
+fn candidate_pairs(items: &[WorkItem], max_pair_comparisons: usize) -> Vec<(usize, usize)> {
+    let mut by_title_token: HashMap<&str, Vec<usize>> = HashMap::new();
+
+    for (idx, item) in items.iter().enumerate() {
+        for token in &item.title_token_set {
+            by_title_token.entry(token.as_str()).or_default().push(idx);
+        }
+    }
+
+    let mut pair_votes: HashMap<(usize, usize), u16> = HashMap::new();
+
+    for indexes in by_title_token.values() {
+        if indexes.len() < 2 || indexes.len() > 300 {
+            continue;
+        }
+
+        for i in 0..indexes.len() {
+            for j in (i + 1)..indexes.len() {
+                let a = indexes[i];
+                let b = indexes[j];
+                let key = if a < b { (a, b) } else { (b, a) };
+                let entry = pair_votes.entry(key).or_insert(0);
+                *entry = entry.saturating_add(1);
+            }
+        }
+    }
+
+    let mut pairs: Vec<((usize, usize), u16)> = pair_votes.into_iter().collect();
+    pairs.sort_by(|a, b| b.1.cmp(&a.1));
+
+    if pairs.is_empty() {
+        let mut fallback = Vec::new();
+        for i in 0..items.len() {
+            for j in (i + 1)..items.len() {
+                fallback.push((i, j));
+                if fallback.len() >= max_pair_comparisons {
+                    return fallback;
+                }
+            }
+        }
+        return fallback;
+    }
+
+    pairs
+        .into_iter()
+        .take(max_pair_comparisons)
+        .map(|(pair, _)| pair)
+        .collect()
 }
 
 fn score_pr(
@@ -728,6 +1006,289 @@ fn score_pr(
     }
 }
 
+fn build_action_plan(
+    scored: &[PrScoreReport],
+    duplicates: &[DuplicatePair],
+    args: &TriageArgs,
+) -> Vec<TriageAction> {
+    let mut actions = Vec::new();
+    let mut uniq_label_keys: HashSet<(ItemKind, u64, String)> = HashSet::new();
+    let mut uniq_comment_keys: HashSet<(ItemKind, u64)> = HashSet::new();
+    let pr_scores: HashMap<u64, f64> = scored.iter().map(|p| (p.number, p.score)).collect();
+
+    for pr in scored {
+        if pr.decision == "priority_review" {
+            push_label_action(
+                &mut actions,
+                &mut uniq_label_keys,
+                ItemKind::PullRequest,
+                pr.number,
+                pr.url.clone(),
+                args.label_priority.clone(),
+                "High triage score".to_string(),
+            );
+        }
+
+        if pr.decision == "reject_candidate" {
+            if let Some(v) = pr.signals.vision_alignment {
+                if v < 0.25 {
+                    push_label_action(
+                        &mut actions,
+                        &mut uniq_label_keys,
+                        ItemKind::PullRequest,
+                        pr.number,
+                        pr.url.clone(),
+                        args.label_reject.clone(),
+                        format!("Vision alignment is low ({:.2})", v),
+                    );
+
+                    if args.comment_actions
+                        && uniq_comment_keys.insert((ItemKind::PullRequest, pr.number))
+                    {
+                        actions.push(TriageAction {
+                            item_kind: ItemKind::PullRequest,
+                            item_number: pr.number,
+                            item_url: pr.url.clone(),
+                            action_type: "comment".to_string(),
+                            value: format!(
+                                "Triage note: this PR appears to drift from VISION scope (alignment {:.2}). Please re-check goals and acceptance criteria.",
+                                v
+                            ),
+                            reason: "Vision alignment warning".to_string(),
+                            status: "planned".to_string(),
+                            error: None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    for dup in duplicates {
+        if dup.similarity < (args.dedupe_threshold + 0.08) {
+            continue;
+        }
+
+        let (canonical_kind, canonical_number, canonical_url, dup_kind, dup_number, dup_url) =
+            choose_canonical_duplicate(dup, &pr_scores);
+
+        push_label_action(
+            &mut actions,
+            &mut uniq_label_keys,
+            dup_kind.clone(),
+            dup_number,
+            dup_url.clone(),
+            args.label_duplicate.clone(),
+            format!(
+                "Likely duplicate of {:?} #{} (sim {:.2})",
+                canonical_kind, canonical_number, dup.similarity
+            ),
+        );
+
+        if args.comment_actions && uniq_comment_keys.insert((dup_kind.clone(), dup_number)) {
+            actions.push(TriageAction {
+                item_kind: dup_kind,
+                item_number: dup_number,
+                item_url: dup_url,
+                action_type: "comment".to_string(),
+                value: format!(
+                    "Triage note: this looks like a probable duplicate of {:?} #{} ({}), similarity {:.2}. Consider consolidating discussion there.",
+                    canonical_kind, canonical_number, canonical_url, dup.similarity
+                ),
+                reason: "Probable duplicate".to_string(),
+                status: "planned".to_string(),
+                error: None,
+            });
+        }
+    }
+
+    actions
+}
+
+fn choose_canonical_duplicate(
+    dup: &DuplicatePair,
+    pr_scores: &HashMap<u64, f64>,
+) -> (ItemKind, u64, String, ItemKind, u64, String) {
+    match (&dup.left_kind, &dup.right_kind) {
+        (ItemKind::PullRequest, ItemKind::PullRequest) => {
+            let left = pr_scores.get(&dup.left_number).copied().unwrap_or(0.0);
+            let right = pr_scores.get(&dup.right_number).copied().unwrap_or(0.0);
+            if left >= right {
+                (
+                    dup.left_kind.clone(),
+                    dup.left_number,
+                    dup.left_url.clone(),
+                    dup.right_kind.clone(),
+                    dup.right_number,
+                    dup.right_url.clone(),
+                )
+            } else {
+                (
+                    dup.right_kind.clone(),
+                    dup.right_number,
+                    dup.right_url.clone(),
+                    dup.left_kind.clone(),
+                    dup.left_number,
+                    dup.left_url.clone(),
+                )
+            }
+        }
+        _ => {
+            if dup.left_number <= dup.right_number {
+                (
+                    dup.left_kind.clone(),
+                    dup.left_number,
+                    dup.left_url.clone(),
+                    dup.right_kind.clone(),
+                    dup.right_number,
+                    dup.right_url.clone(),
+                )
+            } else {
+                (
+                    dup.right_kind.clone(),
+                    dup.right_number,
+                    dup.right_url.clone(),
+                    dup.left_kind.clone(),
+                    dup.left_number,
+                    dup.left_url.clone(),
+                )
+            }
+        }
+    }
+}
+
+fn push_label_action(
+    actions: &mut Vec<TriageAction>,
+    uniq: &mut HashSet<(ItemKind, u64, String)>,
+    kind: ItemKind,
+    number: u64,
+    url: String,
+    label: String,
+    reason: String,
+) {
+    if !uniq.insert((kind.clone(), number, label.clone())) {
+        return;
+    }
+
+    actions.push(TriageAction {
+        item_kind: kind,
+        item_number: number,
+        item_url: url,
+        action_type: "label".to_string(),
+        value: label,
+        reason,
+        status: "planned".to_string(),
+        error: None,
+    });
+}
+
+fn apply_actions(
+    gh: &GithubClient,
+    repo: &str,
+    actions: &mut [TriageAction],
+    action_limit: usize,
+) -> usize {
+    let mut applied = 0usize;
+
+    for action in actions.iter_mut().take(action_limit) {
+        let result = match action.action_type.as_str() {
+            "label" => gh.add_labels(repo, action.item_number, &[action.value.clone()]),
+            "comment" => gh.add_comment(repo, action.item_number, &action.value),
+            _ => Err("unknown action type".into()),
+        };
+
+        match result {
+            Ok(_) => {
+                action.status = "applied".to_string();
+                action.error = None;
+                applied += 1;
+            }
+            Err(e) => {
+                action.status = "failed".to_string();
+                action.error = Some(e.to_string());
+            }
+        }
+    }
+
+    applied
+}
+
+fn resolve_state_file(path: Option<PathBuf>, repo: &str) -> PathBuf {
+    if let Some(path) = path {
+        return path;
+    }
+
+    let name = repo.replace('/', "_");
+    PathBuf::from(format!(".context/triage-state-{name}.json"))
+}
+
+fn load_state_file(path: &Path) -> Result<Option<TriageState>, Box<dyn Error>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let raw = fs::read_to_string(path)?;
+    let state: TriageState = serde_json::from_str(&raw)?;
+    Ok(Some(state))
+}
+
+fn save_state_file(path: &Path, value: &TriageState) -> Result<(), Box<dyn Error>> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+    fs::write(path, serde_json::to_string_pretty(value)?)?;
+    Ok(())
+}
+
+fn resolve_since(
+    args: &TriageArgs,
+    persisted: Option<&TriageState>,
+) -> Result<Option<String>, Box<dyn Error>> {
+    if let Some(since) = args.since.as_ref() {
+        if parse_date(since).is_none() {
+            return Err(format!("invalid --since timestamp: {since}").into());
+        }
+        return Ok(Some(since.clone()));
+    }
+
+    if args.incremental {
+        if let Some(last_seen) = persisted.and_then(|s| s.last_seen_updated_at.clone()) {
+            let dt = parse_date(&last_seen)
+                .ok_or_else(|| format!("invalid saved state timestamp: {last_seen}"))?;
+            let overlap = dt - Duration::minutes(10);
+            return Ok(Some(overlap.to_rfc3339()));
+        }
+    }
+
+    Ok(None)
+}
+
+fn latest_seen_updated_at(pulls: &[GithubPull], issues: &[GithubIssue]) -> Option<String> {
+    let mut latest: Option<DateTime<Utc>> = None;
+
+    for pr in pulls {
+        if let Some(dt) = pr.updated_at.as_ref().and_then(|d| parse_date(d)) {
+            latest = Some(match latest {
+                Some(curr) if curr > dt => curr,
+                _ => dt,
+            });
+        }
+    }
+
+    for issue in issues {
+        if let Some(dt) = issue.updated_at.as_ref().and_then(|d| parse_date(d)) {
+            latest = Some(match latest {
+                Some(curr) if curr > dt => curr,
+                _ => dt,
+            });
+        }
+    }
+
+    latest.map(|d| d.to_rfc3339())
+}
+
 fn tokenize(text: &str) -> HashSet<String> {
     text.to_ascii_lowercase()
         .split(|c: char| !c.is_ascii_alphanumeric())
@@ -735,6 +1296,26 @@ fn tokenize(text: &str) -> HashSet<String> {
         .map(stem_token)
         .filter(|t| !is_stopword(t))
         .collect()
+}
+
+fn semanticize_tokens(tokens: &HashSet<String>) -> HashSet<String> {
+    tokens
+        .iter()
+        .map(|t| semantic_root(t))
+        .collect::<HashSet<_>>()
+}
+
+fn semantic_root(token: &str) -> String {
+    match token {
+        "bug" | "fault" | "error" | "defect" | "panic" | "crash" => "bug".to_string(),
+        "fix" | "resolve" | "repair" | "patch" | "hotfix" => "fix".to_string(),
+        "performance" | "perf" | "latency" | "throughput" => "performance".to_string(),
+        "doc" | "docs" | "readme" | "documentation" => "docs".to_string(),
+        "refactor" | "cleanup" | "rework" => "refactor".to_string(),
+        "auth" | "authentication" | "oauth" | "login" => "auth".to_string(),
+        "api" | "endpoint" | "route" => "api".to_string(),
+        _ => token.to_string(),
+    }
 }
 
 fn stem_token(token: &str) -> String {
@@ -861,6 +1442,20 @@ fn bigrams(s: &str) -> Vec<String> {
     out
 }
 
+fn char_ngrams(s: &str, n: usize, max_chars: usize) -> HashSet<String> {
+    let normalized = normalize_text(s);
+    let chars: Vec<char> = normalized.chars().take(max_chars).collect();
+    if chars.len() < n || n == 0 {
+        return HashSet::new();
+    }
+
+    let mut out = HashSet::new();
+    for i in 0..=(chars.len() - n) {
+        out.insert(chars[i..i + n].iter().collect::<String>());
+    }
+    out
+}
+
 fn is_date_near(a: &str, b: &str, within_days: i64) -> bool {
     let da = parse_date(a);
     let db = parse_date(b);
@@ -908,4 +1503,67 @@ fn cosine_against_vision(vision: &VisionModel, text: &str) -> f64 {
         .sum::<f64>();
 
     dot / (vision.norm * probe_norm)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn semantic_root_groups_aliases() {
+        assert_eq!(semantic_root("crash"), "bug");
+        assert_eq!(semantic_root("documentation"), "docs");
+        assert_eq!(semantic_root("route"), "api");
+    }
+
+    #[test]
+    fn candidate_pairs_returns_items_with_shared_title_tokens() {
+        let items = vec![
+            WorkItem {
+                kind: ItemKind::Issue,
+                number: 1,
+                title: "fix login bug".to_string(),
+                body: String::new(),
+                url: String::new(),
+                author: "a".to_string(),
+                created_at: String::new(),
+                updated_at: String::new(),
+                token_set: tokenize("fix login bug"),
+                semantic_token_set: tokenize("fix login bug"),
+                title_token_set: tokenize("fix login bug"),
+                char_trigram_set: HashSet::new(),
+            },
+            WorkItem {
+                kind: ItemKind::Issue,
+                number: 2,
+                title: "repair auth crash".to_string(),
+                body: String::new(),
+                url: String::new(),
+                author: "b".to_string(),
+                created_at: String::new(),
+                updated_at: String::new(),
+                token_set: tokenize("repair auth crash"),
+                semantic_token_set: tokenize("repair auth crash"),
+                title_token_set: tokenize("repair auth crash"),
+                char_trigram_set: HashSet::new(),
+            },
+            WorkItem {
+                kind: ItemKind::Issue,
+                number: 3,
+                title: "update docs".to_string(),
+                body: String::new(),
+                url: String::new(),
+                author: "c".to_string(),
+                created_at: String::new(),
+                updated_at: String::new(),
+                token_set: tokenize("update docs"),
+                semantic_token_set: tokenize("update docs"),
+                title_token_set: tokenize("update docs"),
+                char_trigram_set: HashSet::new(),
+            },
+        ];
+
+        let pairs = candidate_pairs(&items, 100);
+        assert!(!pairs.is_empty());
+    }
 }
