@@ -195,6 +195,7 @@ Anything else is sent directly to the agent.
 | `/diff`  | Show session file changes        |
 | `/mcp`   | Show MCP status and servers      |
 | `/providers` | Show available model providers |
+| `/triage` | One-command PR/Issue triage workflow (streaming + markdown output) |
 | `/gh`    | GitHub CLI status + PR/Issue/Triage views |
 | `/new`   | Start a fresh conversation       |
 | `/approve` | Toggle dangerous tool auto-approve |
