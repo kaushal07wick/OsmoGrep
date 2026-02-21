@@ -211,6 +211,14 @@ During agent execution:
 - `/test <target>` runs targeted tests (e.g. `cargo test foo`, `pytest tests/test_x.py`).
 - Session state and undo checkpoints are persisted per-repo under `~/.config/osmogrep/sessions/`.
 
+`/gh triage` defaults are tuned for high-volume repos:
+- `--state open --limit 3000 --deep-review-all --incremental`
+- auto state file: `.context/triage-state-<owner_repo>.json`
+- auto report outputs:
+  - `.context/triage-report-<owner_repo>.json`
+  - `.context/triage-brief-<owner_repo>.md`
+- auto `--vision ./VISION.md` when `VISION.md` exists at repo root
+
 Agent toolset now also includes:
 `run_tests`, `list_dir`, `git_diff`, `git_log`, `regex_search`, `web_fetch`,
 `find_definition`, `find_references`, `git_commit`, `patch`, `notebook_edit`,

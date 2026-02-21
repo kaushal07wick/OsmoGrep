@@ -196,7 +196,7 @@ fn help(state: &mut AgentState) {
     log(
         state,
         Info,
-        "  /gh triage [triage flags]    Run triage in-place",
+        "  /gh triage [triage flags]    Run high-volume triage (3000 + deep review + brief)",
     );
     log(
         state,
@@ -930,7 +930,7 @@ fn handle_gh_command(state: &mut AgentState, cmd: &str) {
     log(
         state,
         LogLevel::Warn,
-        "Usage: /gh [status] | /gh prs [open|closed|merged] [limit] | /gh issues [open|closed] [limit] | /gh triage [flags]",
+        "Usage: /gh [status] | /gh prs [open|closed|merged] [limit] | /gh issues [open|closed] [limit] | /gh triage [flags] (defaults: open/3000/deep-review-all)",
     );
 }
 
@@ -1216,25 +1216,54 @@ fn gh_run_triage(state: &mut AgentState, arg: &str) {
         .map(|s| s.to_string())
         .collect();
 
-    let has_repo = pass_through.iter().any(|t| t == "--repo");
-    let has_json_only = pass_through.iter().any(|t| t == "--json-only");
-    let has_state_file = pass_through.iter().any(|t| t == "--state-file");
-    let has_incremental = pass_through.iter().any(|t| t == "--incremental");
+    let has_repo = has_flag(&pass_through, "--repo");
+    let has_json_only = has_flag(&pass_through, "--json-only");
+    let has_state_file = has_flag(&pass_through, "--state-file");
+    let has_incremental = has_flag(&pass_through, "--incremental");
+    let has_state = has_flag(&pass_through, "--state");
+    let has_limit = has_flag(&pass_through, "--limit");
+    let has_deep_review_top = has_flag(&pass_through, "--deep-review-top");
+    let has_deep_review_all = has_flag(&pass_through, "--deep-review-all");
+    let has_out = has_flag(&pass_through, "--out");
+    let has_vision = has_flag(&pass_through, "--vision");
+
+    let repo_slug = repo.replace('/', "_");
+    let context_dir = state.repo_root.join(".context");
+    let _ = fs::create_dir_all(&context_dir);
+    let report_json_path = context_dir.join(format!("triage-report-{}.json", repo_slug));
+    let report_md_path = context_dir.join(format!("triage-brief-{}.md", repo_slug));
+    let vision_default = state.repo_root.join("VISION.md");
 
     let mut args: Vec<String> = vec!["triage".to_string()];
     if !has_repo {
         args.push("--repo".to_string());
         args.push(repo.clone());
     }
+    if !has_state {
+        args.push("--state".to_string());
+        args.push("open".to_string());
+    }
+    if !has_limit {
+        args.push("--limit".to_string());
+        args.push("3000".to_string());
+    }
+    if !has_deep_review_all && !has_deep_review_top {
+        args.push("--deep-review-all".to_string());
+    }
     if !has_incremental {
         args.push("--incremental".to_string());
     }
     if !has_state_file {
         args.push("--state-file".to_string());
-        args.push(format!(
-            ".context/triage-state-{}.json",
-            repo.replace('/', "_")
-        ));
+        args.push(format!(".context/triage-state-{}.json", repo_slug));
+    }
+    if !has_out {
+        args.push("--out".to_string());
+        args.push(report_json_path.display().to_string());
+    }
+    if !has_vision && vision_default.exists() {
+        args.push("--vision".to_string());
+        args.push("./VISION.md".to_string());
     }
     args.append(&mut pass_through);
     if !has_json_only {
@@ -1329,7 +1358,7 @@ fn gh_run_triage(state: &mut AgentState, arg: &str) {
     );
 
     if let Some(ranked) = report.get("ranked_prs").and_then(Value::as_array) {
-        for pr in ranked.iter().take(15) {
+        for pr in ranked.iter().take(12) {
             let number = pr.get("number").and_then(Value::as_u64).unwrap_or(0);
             let score = pr.get("score").and_then(Value::as_f64).unwrap_or(0.0);
             let decision = pr
@@ -1344,6 +1373,207 @@ fn gh_run_triage(state: &mut AgentState, arg: &str) {
             );
         }
     }
+
+    match write_triage_brief(&report, &repo, &report_md_path) {
+        Ok(_) => log(
+            state,
+            LogLevel::Success,
+            format!(
+                "Wrote triage brief: {}",
+                report_md_path.strip_prefix(&state.repo_root).unwrap_or(&report_md_path).display()
+            ),
+        ),
+        Err(e) => log(
+            state,
+            LogLevel::Warn,
+            format!("Could not write triage brief markdown: {}", e),
+        ),
+    }
+}
+
+fn has_flag(args: &[String], flag: &str) -> bool {
+    args.iter().any(|t| t == flag)
+}
+
+fn write_triage_brief(report: &Value, repo: &str, path: &PathBuf) -> Result<(), String> {
+    let scanned_prs = report
+        .get("scanned_prs")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let scanned_issues = report
+        .get("scanned_issues")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let duplicates = report
+        .get("duplicate_pairs")
+        .and_then(Value::as_array)
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let applied = report
+        .get("applied_action_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let generated_at = report
+        .get("generated_at")
+        .and_then(Value::as_str)
+        .unwrap_or("-");
+
+    let mut md = String::new();
+    md.push_str("# PR/Issue Triage Brief\n\n");
+    md.push_str(&format!("- Repo: `{}`\n", repo));
+    md.push_str(&format!("- Generated: `{}`\n", generated_at));
+    md.push_str(&format!(
+        "- Scanned: **{} PRs**, **{} Issues**\n",
+        scanned_prs, scanned_issues
+    ));
+    md.push_str(&format!("- Duplicate pairs: **{}**\n", duplicates));
+    md.push_str(&format!("- Applied actions: **{}**\n\n", applied));
+
+    md.push_str("## Top PR Candidates\n\n");
+    if let Some(ranked) = report.get("ranked_prs").and_then(Value::as_array) {
+        if ranked.is_empty() {
+            md.push_str("_No PR rankings in report._\n\n");
+        } else {
+            for pr in ranked.iter().take(20) {
+                let number = pr.get("number").and_then(Value::as_u64).unwrap_or(0);
+                let score = pr.get("score").and_then(Value::as_f64).unwrap_or(0.0);
+                let decision = pr
+                    .get("decision")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown");
+                let title = pr
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .map(|s| compact_line(s, 110))
+                    .unwrap_or_else(|| "(untitled)".to_string());
+                let url = pr.get("url").and_then(Value::as_str).unwrap_or("");
+                if url.is_empty() {
+                    md.push_str(&format!(
+                        "- #{} [{:.1}] {} ({})\n",
+                        number, score, title, decision
+                    ));
+                } else {
+                    md.push_str(&format!(
+                        "- [#{}]({}) [{:.1}] {} ({})\n",
+                        number, url, score, title, decision
+                    ));
+                }
+            }
+            md.push('\n');
+        }
+    }
+
+    md.push_str("## Duplicate Clusters (Top Pairs)\n\n");
+    if let Some(pairs) = report.get("duplicate_pairs").and_then(Value::as_array) {
+        if pairs.is_empty() {
+            md.push_str("_No probable duplicates found._\n\n");
+        } else {
+            for pair in pairs.iter().take(25) {
+                let l_num = pair.get("left_number").and_then(Value::as_u64).unwrap_or(0);
+                let l_title = compact_line(
+                    pair.get("left_title").and_then(Value::as_str).unwrap_or(""),
+                    90,
+                );
+                let l_url = pair.get("left_url").and_then(Value::as_str).unwrap_or("");
+                let r_num = pair.get("right_number").and_then(Value::as_u64).unwrap_or(0);
+                let r_title = compact_line(
+                    pair.get("right_title").and_then(Value::as_str).unwrap_or(""),
+                    90,
+                );
+                let r_url = pair.get("right_url").and_then(Value::as_str).unwrap_or("");
+                let sim = pair.get("similarity").and_then(Value::as_f64).unwrap_or(0.0);
+
+                let left = if l_url.is_empty() {
+                    format!("#{} {}", l_num, l_title)
+                } else {
+                    format!("[#{}]({}) {}", l_num, l_url, l_title)
+                };
+                let right = if r_url.is_empty() {
+                    format!("#{} {}", r_num, r_title)
+                } else {
+                    format!("[#{}]({}) {}", r_num, r_url, r_title)
+                };
+                md.push_str(&format!("- {:.2}: {} ↔ {}\n", sim, left, right));
+            }
+            md.push('\n');
+        }
+    }
+
+    md.push_str("## Vision Drift / Reject Candidates\n\n");
+    if let Some(ranked) = report.get("ranked_prs").and_then(Value::as_array) {
+        let mut any = false;
+        for pr in ranked {
+            let decision = pr
+                .get("decision")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if !(decision.contains("reject") || decision.contains("hold")) {
+                continue;
+            }
+            any = true;
+            let number = pr.get("number").and_then(Value::as_u64).unwrap_or(0);
+            let score = pr.get("score").and_then(Value::as_f64).unwrap_or(0.0);
+            let title = compact_line(pr.get("title").and_then(Value::as_str).unwrap_or(""), 95);
+            let url = pr.get("url").and_then(Value::as_str).unwrap_or("");
+            let rationale = pr
+                .get("rationale")
+                .and_then(Value::as_array)
+                .and_then(|arr| arr.first())
+                .and_then(Value::as_str)
+                .unwrap_or("See report JSON for full rationale.");
+            if url.is_empty() {
+                md.push_str(&format!(
+                    "- #{} [{:.1}] {} ({})\n",
+                    number, score, title, decision
+                ));
+            } else {
+                md.push_str(&format!(
+                    "- [#{}]({}) [{:.1}] {} ({})\n",
+                    number, url, score, title, decision
+                ));
+            }
+            md.push_str(&format!("  - {}\n", compact_line(rationale, 140)));
+        }
+        if !any {
+            md.push_str("_No explicit reject/hold candidates from current scoring._\n");
+        }
+        md.push('\n');
+    }
+
+    md.push_str("## Action Plan\n\n");
+    if let Some(actions) = report.get("planned_actions").and_then(Value::as_array) {
+        if actions.is_empty() {
+            md.push_str("_No actions planned._\n");
+        } else {
+            for action in actions.iter().take(40) {
+                let number = action
+                    .get("item_number")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                let kind = action
+                    .get("item_kind")
+                    .and_then(Value::as_str)
+                    .unwrap_or("item");
+                let action_type = action
+                    .get("action_type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("action");
+                let value = action.get("value").and_then(Value::as_str).unwrap_or("-");
+                let reason = action.get("reason").and_then(Value::as_str).unwrap_or("-");
+                md.push_str(&format!(
+                    "- {} #{}: `{}` => `{}` ({})\n",
+                    kind,
+                    number,
+                    action_type,
+                    value,
+                    compact_line(reason, 120)
+                ));
+            }
+        }
+    }
+
+    fs::write(path, md).map_err(|e| e.to_string())
 }
 
 fn ensure_gh_ready(state: &mut AgentState) -> bool {
