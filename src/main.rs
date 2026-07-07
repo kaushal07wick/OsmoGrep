@@ -14,7 +14,9 @@ mod voice;
 
 use std::{
     error::Error,
-    io,
+    fs, io,
+    io::Write,
+    path::PathBuf,
     process::Command,
     sync::mpsc,
     time::{Duration, Instant},
@@ -28,7 +30,7 @@ use crossterm::{
 
 use ratatui::{backend::CrosstermBackend, layout::Rect, Terminal};
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 
 use crate::{
     agent::{Agent, AgentEvent, CancelToken, RunControl},
@@ -66,8 +68,37 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum CliCommand {
+    /// Run the coding agent headlessly and print events to stdout
+    Run(RunArgs),
     /// Analyze GitHub PRs/issues for duplicates, ranking, and scope drift
     Triage(triage::TriageArgs),
+}
+
+#[derive(Args, Debug)]
+struct RunArgs {
+    /// Repository root for tool execution
+    #[arg(long, default_value = ".")]
+    repo_root: PathBuf,
+
+    /// Prompt text to send to the agent
+    #[arg(long, conflicts_with = "prompt_file")]
+    prompt: Option<String>,
+
+    /// File containing the prompt to send to the agent
+    #[arg(long)]
+    prompt_file: Option<PathBuf>,
+
+    /// Emit newline-delimited JSON events for non-TUI callers
+    #[arg(long, default_value_t = false)]
+    json_events: bool,
+
+    /// Permission profile: read-only, workspace-auto, or full-access
+    #[arg(long, default_value = "workspace-auto")]
+    permission_profile: String,
+
+    /// Approve dangerous workspace actions without an interactive prompt
+    #[arg(long, default_value_t = false)]
+    auto_approve: bool,
 }
 
 fn env_truthy(key: &str, default: bool) -> bool {
@@ -157,12 +188,193 @@ fn start_agent_run(
 
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
+    if let Some(CliCommand::Run(args)) = cli.command {
+        let code = run_headless(args)?;
+        if code != 0 {
+            std::process::exit(code);
+        }
+        return Ok(());
+    }
     if let Some(CliCommand::Triage(args)) = cli.command {
         triage::run(args)?;
         return Ok(());
     }
 
     run_tui()
+}
+
+fn run_headless(args: RunArgs) -> Result<i32, Box<dyn Error>> {
+    let prompt = match (args.prompt, args.prompt_file) {
+        (Some(prompt), None) => prompt,
+        (None, Some(path)) => fs::read_to_string(path)?,
+        (None, None) => {
+            return Err("provide --prompt or --prompt-file".into());
+        }
+        (Some(_), Some(_)) => {
+            return Err("use only one of --prompt or --prompt-file".into());
+        }
+    };
+
+    let prompt = prompt.trim().to_string();
+    if prompt.is_empty() {
+        return Err("prompt is empty".into());
+    }
+
+    let repo_root = fs::canonicalize(&args.repo_root).unwrap_or(args.repo_root);
+    let permission_profile = PermissionProfile::parse(&args.permission_profile)
+        .ok_or("permission profile must be read-only, workspace-auto, or full-access")?;
+    let agent = Agent::new();
+    if !agent.is_configured() {
+        return Err("OPENAI_API_KEY is not set".into());
+    }
+
+    let (tx, rx) = mpsc::channel();
+    let _control = agent.spawn(
+        repo_root,
+        prompt,
+        Vec::new(),
+        None,
+        permission_profile,
+        args.auto_approve,
+        tx,
+    );
+
+    let mut exit_code = 0;
+    loop {
+        let evt = match rx.recv() {
+            Ok(evt) => evt,
+            Err(_) => {
+                exit_code = exit_code.max(1);
+                break;
+            }
+        };
+
+        let done = matches!(evt, AgentEvent::Done);
+        let failed = matches!(evt, AgentEvent::Error(_) | AgentEvent::Cancelled);
+        emit_headless_event(evt, args.json_events, args.auto_approve);
+        if failed {
+            exit_code = exit_code.max(1);
+        }
+        if done || failed {
+            break;
+        }
+    }
+
+    Ok(exit_code)
+}
+
+fn emit_headless_event(evt: AgentEvent, json_events: bool, auto_approve: bool) {
+    if json_events {
+        emit_headless_json(evt, auto_approve);
+    } else {
+        emit_headless_text(evt, auto_approve);
+    }
+    let _ = io::stdout().flush();
+}
+
+fn emit_headless_json(evt: AgentEvent, auto_approve: bool) {
+    let value = match evt {
+        AgentEvent::ToolCall { name, args } => {
+            serde_json::json!({ "type": "tool_call", "name": name, "args": args })
+        }
+        AgentEvent::ToolResult { summary } => {
+            serde_json::json!({ "type": "tool_result", "summary": summary })
+        }
+        AgentEvent::ToolDiff {
+            tool,
+            target,
+            before,
+            after,
+        } => serde_json::json!({
+            "type": "tool_diff",
+            "tool": tool,
+            "target": target,
+            "before": before,
+            "after": after
+        }),
+        AgentEvent::PreviewDiff {
+            tool,
+            target,
+            before,
+            after,
+        } => serde_json::json!({
+            "type": "preview_diff",
+            "tool": tool,
+            "target": target,
+            "before": before,
+            "after": after
+        }),
+        AgentEvent::OutputText(text) => {
+            serde_json::json!({ "type": "output_text", "text": text })
+        }
+        AgentEvent::StreamDelta(text) => {
+            serde_json::json!({ "type": "stream_delta", "text": text })
+        }
+        AgentEvent::StreamDone => serde_json::json!({ "type": "stream_done" }),
+        AgentEvent::PermissionRequest {
+            tool_name,
+            args_summary,
+            reply_tx,
+        } => {
+            let approved = auto_approve;
+            let _ = reply_tx.send(approved);
+            serde_json::json!({
+                "type": "permission_request",
+                "tool_name": tool_name,
+                "args_summary": args_summary,
+                "approved": approved
+            })
+        }
+        AgentEvent::ConversationUpdate(_) => {
+            serde_json::json!({ "type": "conversation_update" })
+        }
+        AgentEvent::Cancelled => serde_json::json!({ "type": "cancelled" }),
+        AgentEvent::Error(message) => {
+            serde_json::json!({ "type": "error", "message": message })
+        }
+        AgentEvent::Done => serde_json::json!({ "type": "done" }),
+    };
+    println!("{}", value);
+}
+
+fn emit_headless_text(evt: AgentEvent, auto_approve: bool) {
+    match evt {
+        AgentEvent::ToolCall { name, args } => {
+            println!("[tool] {} {}", name, compact_json(&args));
+        }
+        AgentEvent::ToolResult { summary } => println!("[result] {}", summary),
+        AgentEvent::ToolDiff { tool, target, .. } => {
+            println!("[diff] {} {}", tool, target);
+        }
+        AgentEvent::PreviewDiff { tool, target, .. } => {
+            println!("[preview] {} {}", tool, target);
+        }
+        AgentEvent::OutputText(text) => println!("{}", text),
+        AgentEvent::StreamDelta(text) => print!("{}", text),
+        AgentEvent::StreamDone => println!(),
+        AgentEvent::PermissionRequest {
+            tool_name,
+            args_summary,
+            reply_tx,
+        } => {
+            let approved = auto_approve;
+            let _ = reply_tx.send(approved);
+            println!(
+                "[permission] {} {} {}",
+                if approved { "approved" } else { "denied" },
+                tool_name,
+                args_summary
+            );
+        }
+        AgentEvent::ConversationUpdate(_) => {}
+        AgentEvent::Cancelled => println!("[cancelled]"),
+        AgentEvent::Error(message) => eprintln!("[error] {}", message),
+        AgentEvent::Done => println!("[done]"),
+    }
+}
+
+fn compact_json(value: &serde_json::Value) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string())
 }
 
 fn run_tui() -> Result<(), Box<dyn Error>> {
