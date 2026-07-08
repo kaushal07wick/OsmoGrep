@@ -293,10 +293,7 @@ impl ToolRegistry {
         args: Value,
         is_cancelled: &dyn Fn() -> bool,
     ) -> ToolResult {
-        static TOOL_CWD_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-        let _guard = TOOL_CWD_LOCK
-            .get_or_init(|| Mutex::new(()))
+        let _guard = tool_cwd_lock()
             .lock()
             .map_err(|_| "tool cwd lock poisoned".to_string())?;
         let previous = std::env::current_dir().map_err(|e| e.to_string())?;
@@ -387,6 +384,11 @@ fn contains_any(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| haystack.contains(needle))
 }
 
+fn tool_cwd_lock() -> &'static Mutex<()> {
+    static TOOL_CWD_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    TOOL_CWD_LOCK.get_or_init(|| Mutex::new(()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -422,6 +424,7 @@ mod tests {
         fs::create_dir_all(&nested).unwrap();
         fs::write(nested.join("readme.txt"), "parallel scoped").unwrap();
 
+        let _cwd_guard = tool_cwd_lock().lock().unwrap();
         let previous = std::env::current_dir().unwrap();
         let registry = ToolRegistry::with_root(root.clone());
         let result = registry
