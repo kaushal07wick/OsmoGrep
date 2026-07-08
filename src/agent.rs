@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 use crate::harness::{clip, RunLedger};
 use crate::state::PermissionProfile;
 use crate::tool_guard::ToolLoopGuard;
-use crate::tools::{ToolRegistry, ToolSafety};
+use crate::tools::{ToolRegistry, ToolSafety, ToolScope};
 
 #[derive(Debug)]
 pub enum AgentEvent {
@@ -337,6 +337,7 @@ impl Agent {
         thread::spawn(move || {
             let runner = RunAgent {
                 tools: ToolRegistry::with_root(repo_root.clone()),
+                tool_scope: ToolScope::for_prompt(&user_text),
                 model_cfg,
                 api_key,
                 auto_approve,
@@ -367,6 +368,7 @@ impl Agent {
 
 struct RunAgent {
     tools: ToolRegistry,
+    tool_scope: ToolScope,
     model_cfg: ModelConfig,
     api_key: Option<String>,
     auto_approve: bool,
@@ -785,7 +787,7 @@ impl RunAgent {
         let mut payload = json!({
             "model": self.model_cfg.model,
             "input": input,
-            "tools": self.tools.schema(),
+            "tools": self.tools.scoped_schema(&self.tool_scope),
             "tool_choice": "auto",
             "store": true
         });

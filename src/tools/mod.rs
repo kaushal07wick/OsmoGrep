@@ -67,6 +67,61 @@ pub struct ToolRegistry {
     repo_root: PathBuf,
 }
 
+#[derive(Clone, Debug)]
+pub struct ToolScope {
+    include_web: bool,
+    include_mcp: bool,
+    include_notebooks: bool,
+    include_git_commit: bool,
+}
+
+impl ToolScope {
+    pub fn for_prompt(prompt: &str) -> Self {
+        let lower = prompt.to_ascii_lowercase();
+        Self {
+            include_web: contains_any(
+                &lower,
+                &[
+                    "http://",
+                    "https://",
+                    "url",
+                    "web",
+                    "internet",
+                    "latest",
+                    "current docs",
+                    "documentation",
+                    "search online",
+                    "fetch",
+                ],
+            ),
+            include_mcp: lower.contains("mcp"),
+            include_notebooks: contains_any(&lower, &["notebook", ".ipynb", "jupyter"]),
+            include_git_commit: contains_any(
+                &lower,
+                &[
+                    "commit",
+                    "push",
+                    "branch",
+                    "git ",
+                    "git-",
+                    "pull request",
+                    " pr ",
+                ],
+            ),
+        }
+    }
+
+    fn allows(&self, name: &str) -> bool {
+        match name {
+            "web_fetch" | "web_search" => self.include_web,
+            "mcp_call" => self.include_mcp,
+            "notebook_edit" => self.include_notebooks,
+            "git_commit" => self.include_git_commit,
+            _ => true,
+        }
+    }
+}
+
 impl ToolRegistry {
     pub fn with_root(repo_root: PathBuf) -> Self {
         let mut tools: HashMap<&'static str, Box<dyn Tool>> = HashMap::new();
@@ -115,8 +170,11 @@ impl ToolRegistry {
         self.tools.get(name).map(|t| t.safety())
     }
 
-    pub fn schema(&self) -> Vec<Value> {
-        self.tools.values().map(|t| t.schema()).collect()
+    pub fn scoped_schema(&self, scope: &ToolScope) -> Vec<Value> {
+        self.tools
+            .iter()
+            .filter_map(|(name, tool)| scope.allows(name).then(|| tool.schema()))
+            .collect()
     }
 
     fn call_in_repo_root(&self, tool: &dyn Tool, args: Value) -> ToolResult {
@@ -151,6 +209,10 @@ impl ToolRegistry {
             (Err(err), Err(restore_err)) => Err(format!("{err}; {restore_err}")),
         }
     }
+}
+
+fn contains_any(haystack: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| haystack.contains(needle))
 }
 
 #[cfg(test)]
@@ -209,5 +271,46 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn default_tool_scope_hides_specialized_tools() {
+        let root = std::env::temp_dir().join(format!("osmogrep-scope-root-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let registry = ToolRegistry::with_root(root.clone());
+        let names =
+            schema_names(&registry.scoped_schema(&ToolScope::for_prompt("fix the rust bug")));
+
+        assert!(names.contains(&"read_file".to_string()));
+        assert!(names.contains(&"run_shell".to_string()));
+        assert!(names.contains(&"update_plan".to_string()));
+        assert!(!names.contains(&"web_search".to_string()));
+        assert!(!names.contains(&"web_fetch".to_string()));
+        assert!(!names.contains(&"mcp_call".to_string()));
+        assert!(!names.contains(&"notebook_edit".to_string()));
+        assert!(!names.contains(&"git_commit".to_string()));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn tool_scope_exposes_web_tools_for_current_docs_requests() {
+        let root = std::env::temp_dir().join(format!("osmogrep-web-scope-root-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let registry = ToolRegistry::with_root(root.clone());
+        let names = schema_names(&registry.scoped_schema(&ToolScope::for_prompt(
+            "fetch the latest docs from https://example.com",
+        )));
+
+        assert!(names.contains(&"web_search".to_string()));
+        assert!(names.contains(&"web_fetch".to_string()));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn schema_names(schema: &[Value]) -> Vec<String> {
+        schema
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+            .map(ToString::to_string)
+            .collect()
     }
 }
