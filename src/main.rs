@@ -8,6 +8,7 @@ mod mcp;
 mod persistence;
 mod state;
 mod test_harness;
+mod tool_budget;
 mod tools;
 mod triage;
 mod ui;

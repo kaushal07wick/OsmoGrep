@@ -46,24 +46,30 @@ impl Tool for Shell {
             .arg(cmd)
             .output()
             .map_err(|e| e.to_string())?;
-        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+        let stdout_raw = String::from_utf8_lossy(&out.stdout).to_string();
+        let stderr_raw = String::from_utf8_lossy(&out.stderr).to_string();
         let exit_code = out.status.code().unwrap_or(-1);
-        let mut combined = stdout.clone();
-        if !stderr.is_empty() {
+        let mut combined = stdout_raw.clone();
+        if !stderr_raw.is_empty() {
             if !combined.ends_with('\n') {
                 combined.push('\n');
             }
-            combined.push_str(&stderr);
+            combined.push_str(&stderr_raw);
         }
         let verification = crate::verification::record_command(&root, cmd, exit_code, &combined);
+        let stdout = crate::tool_budget::budget_text(&root, "run_shell_stdout", &stdout_raw);
+        let stderr = crate::tool_budget::budget_text(&root, "run_shell_stderr", &stderr_raw);
 
         Ok(json!({
-            "stdout": stdout,
-            "stderr": stderr,
+            "stdout": stdout.text,
+            "stderr": stderr.text,
             "exit_code": exit_code,
             "hook": pre_hook,
-            "verification": crate::verification::to_json(&verification)
+            "verification": crate::verification::to_json(&verification),
+            "output_budget": {
+                "stdout": stdout,
+                "stderr": stderr
+            }
         }))
     }
 }
