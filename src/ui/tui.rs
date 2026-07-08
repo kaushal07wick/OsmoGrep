@@ -15,7 +15,7 @@ use crate::ui::helper::{
 };
 use crate::{
     logger::parse_user_input_log,
-    state::{AgentState, InputMode, UiAccent, UiDensity, UiTheme},
+    state::{AgentState, InputMode, PendingUpdate, PlanItem, UiAccent, UiDensity, UiTheme},
 };
 
 const FG_MAIN: Color = Color::Rgb(220, 220, 220);
@@ -452,16 +452,8 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
 
     if let Some(update) = &state.ui.pending_update {
         lines.push(Line::from(""));
-        let prompt = if update.installing {
-            format!("Installing Osmogrep {}...", update.latest_version)
-        } else {
-            format!(
-                "Update Osmogrep {} -> {}? [y]es [n]o",
-                update.current_version, update.latest_version
-            )
-        };
         lines.push(Line::from(Span::styled(
-            prompt,
+            pending_update_prompt(update),
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
@@ -499,20 +491,24 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
 }
 
 fn render_plan_lines(state: &AgentState, p: UiPalette) -> Vec<Line<'static>> {
+    render_plan_lines_for_items(&state.plan_items, p)
+}
+
+fn render_plan_lines_for_items(plan_items: &[PlanItem], p: UiPalette) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    let completed = state.plan_items.iter().filter(|item| item.done).count();
+    let completed = plan_items.iter().filter(|item| item.done).count();
     lines.push(Line::from(vec![
         Span::styled(
             "Plan",
             Style::default().fg(p.fg_main).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            format!(" · {}/{}", completed, state.plan_items.len()),
+            format!(" · {}/{}", completed, plan_items.len()),
             Style::default().fg(p.fg_muted),
         ),
     ]));
 
-    for item in state.plan_items.iter().take(8) {
+    for item in plan_items.iter().take(8) {
         let (mark, style) = if item.done {
             ("[x]", Style::default().fg(Color::Rgb(70, 190, 120)))
         } else if item.active {
@@ -529,14 +525,33 @@ fn render_plan_lines(state: &AgentState, p: UiPalette) -> Vec<Line<'static>> {
         ]));
     }
 
-    if state.plan_items.len() > 8 {
+    if plan_items.len() > 8 {
         lines.push(Line::from(Span::styled(
-            format!("... {} more", state.plan_items.len() - 8),
+            format!("... {} more", plan_items.len() - 8),
             Style::default().fg(p.fg_muted),
         )));
     }
 
     lines
+}
+
+fn pending_update_prompt(update: &PendingUpdate) -> String {
+    if update.installing {
+        format!("Installing Osmogrep {}...", update.latest_version)
+    } else {
+        format!(
+            "Update Osmogrep {} -> {}? [y]es [n]o",
+            update.current_version, update.latest_version
+        )
+    }
+}
+
+fn update_status_label(update: &PendingUpdate) -> &'static str {
+    if update.installing {
+        " · updating"
+    } else {
+        " · update available"
+    }
 }
 
 fn render_running_badge(f: &mut Frame, area: Rect, state: &AgentState) {
@@ -889,12 +904,10 @@ fn render_status_bar(f: &mut Frame, area: Rect, state: &AgentState) {
         ));
     }
     if let Some(update) = &state.ui.pending_update {
-        let label = if update.installing {
-            " · updating"
-        } else {
-            " · update available"
-        };
-        left.push(Span::styled(label, Style::default().fg(Color::Yellow)));
+        left.push(Span::styled(
+            update_status_label(update),
+            Style::default().fg(Color::Yellow),
+        ));
     }
     if state.voice.visible || state.voice.enabled || state.voice.connected {
         left.push(Span::styled(
@@ -1003,7 +1016,12 @@ pub fn render_command_palette(f: &mut Frame, area: Rect, state: &AgentState) {
 
 #[cfg(test)]
 mod tests {
-    use super::wrap_visual_lines;
+    use super::{
+        pending_update_prompt, render_plan_lines_for_items, update_status_label, wrap_visual_lines,
+        UiPalette,
+    };
+    use crate::state::{PendingUpdate, PlanItem};
+    use ratatui::{style::Color, text::Line};
 
     #[test]
     fn wraps_multibyte_mask_without_splitting_chars() {
@@ -1013,5 +1031,81 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].chars().count(), 25);
         assert_eq!(lines[1].chars().count(), 1);
+    }
+
+    #[test]
+    fn renders_update_prompt_snapshot() {
+        let available = pending_update(false);
+        let installing = pending_update(true);
+
+        assert_eq!(
+            pending_update_prompt(&available),
+            "Update Osmogrep 0.3.2 -> 0.3.3? [y]es [n]o"
+        );
+        assert_eq!(update_status_label(&available), " · update available");
+        assert_eq!(
+            pending_update_prompt(&installing),
+            "Installing Osmogrep 0.3.3..."
+        );
+        assert_eq!(update_status_label(&installing), " · updating");
+    }
+
+    #[test]
+    fn renders_plan_progress_snapshot() {
+        let lines = render_plan_lines_for_items(
+            &[
+                PlanItem {
+                    text: "inspect".to_string(),
+                    done: true,
+                    active: false,
+                },
+                PlanItem {
+                    text: "implement".to_string(),
+                    done: false,
+                    active: true,
+                },
+                PlanItem {
+                    text: "verify".to_string(),
+                    done: false,
+                    active: false,
+                },
+            ],
+            test_palette(),
+        );
+        let snapshot = lines.iter().map(plain_text).collect::<Vec<_>>();
+
+        assert_eq!(
+            snapshot,
+            vec!["Plan · 1/3", "[x] inspect", "[>] implement", "[ ] verify"]
+        );
+    }
+
+    fn pending_update(installing: bool) -> PendingUpdate {
+        PendingUpdate {
+            current_version: "0.3.2".to_string(),
+            latest_version: "0.3.3".to_string(),
+            asset_url: "https://example.com/osmogrep.tar.gz".to_string(),
+            asset_name: "osmogrep.tar.gz".to_string(),
+            checksum_url: "https://example.com/osmogrep.tar.gz.sha256".to_string(),
+            installing,
+        }
+    }
+
+    fn test_palette() -> UiPalette {
+        UiPalette {
+            fg_main: Color::White,
+            fg_dim: Color::Gray,
+            fg_muted: Color::DarkGray,
+            accent: Color::Yellow,
+            input_fg: Color::White,
+            border: Color::Gray,
+        }
+    }
+
+    fn plain_text(line: &Line<'_>) -> String {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect()
     }
 }
