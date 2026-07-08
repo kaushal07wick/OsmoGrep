@@ -103,6 +103,11 @@ pub enum AgentEvent {
     Done,
 }
 
+struct ModelResponse {
+    value: Value,
+    output_streamed: bool,
+}
+
 #[derive(Clone)]
 pub struct CancelToken {
     cancelled: Arc<AtomicBool>,
@@ -632,7 +637,9 @@ impl RunAgent {
                 iteration,
             );
 
-            let resp = self.call_openai_with_retry(api_key, &input, tx)?;
+            let model_response = self.call_openai_with_retry(api_key, &input, tx)?;
+            let output_streamed = model_response.output_streamed;
+            let resp = model_response.value;
 
             let output = resp
                 .get("output")
@@ -848,7 +855,7 @@ impl RunAgent {
                                 input = Value::Array(next_messages);
                                 continue 'agent_loop;
                             }
-                            let _ = tx.send(AgentEvent::OutputText(text.to_string()));
+                            send_final_output_if_unstreamed(tx, text, output_streamed);
                             ledger.final_text(text, iteration);
                             persisted.push(json!({
                                 "role": "assistant",
@@ -876,7 +883,7 @@ impl RunAgent {
                                             input = Value::Array(next_messages);
                                             continue 'agent_loop;
                                         }
-                                        let _ = tx.send(AgentEvent::OutputText(text.to_string()));
+                                        send_final_output_if_unstreamed(tx, text, output_streamed);
                                         ledger.final_text(text, iteration);
                                         persisted.push(json!({
                                             "role": "assistant",
@@ -1042,7 +1049,7 @@ impl RunAgent {
         api_key: &str,
         input: &Value,
         tx: &Sender<AgentEvent>,
-    ) -> Result<Value, String> {
+    ) -> Result<ModelResponse, String> {
         let mut last_err = None;
 
         for attempt in 1..=3 {
@@ -1053,12 +1060,16 @@ impl RunAgent {
             let streaming_disabled = env_truthy("OSMOGREP_NO_STREAM", false);
             let result = if streaming_disabled {
                 self.call_openai_blocking(api_key, input)
+                    .map(|value| ModelResponse {
+                        value,
+                        output_streamed: false,
+                    })
             } else {
                 self.call_openai_streaming(api_key, input, tx)
             };
 
             match result {
-                Ok(v) => return Ok(v),
+                Ok(response) => return Ok(response),
                 Err(e) => {
                     last_err = Some(e.clone());
                     if attempt < 3 {
@@ -1145,7 +1156,7 @@ impl RunAgent {
         api_key: &str,
         input: &Value,
         tx: &Sender<AgentEvent>,
-    ) -> Result<Value, String> {
+    ) -> Result<ModelResponse, String> {
         let payload = self.responses_payload(input, true);
 
         let client = reqwest::blocking::Client::builder()
@@ -1170,6 +1181,7 @@ impl RunAgent {
         let mut pending = String::new();
         let mut buf = [0u8; 8192];
         let mut completed_response: Option<Value> = None;
+        let mut output_streamed = false;
 
         loop {
             if self.cancel.is_cancelled() {
@@ -1202,7 +1214,10 @@ impl RunAgent {
                 if data == "[DONE]" {
                     let _ = tx.send(AgentEvent::StreamDone);
                     if let Some(full) = completed_response {
-                        return Ok(full);
+                        return Ok(ModelResponse {
+                            value: full,
+                            output_streamed,
+                        });
                     }
                     return Err("stream ended without completed response".into());
                 }
@@ -1215,6 +1230,9 @@ impl RunAgent {
                 match event.get("type").and_then(Value::as_str) {
                     Some("response.output_text.delta") => {
                         if let Some(delta) = event.get("delta").and_then(Value::as_str) {
+                            if !delta.is_empty() {
+                                output_streamed = true;
+                            }
                             let _ = tx.send(AgentEvent::StreamDelta(delta.to_string()));
                         }
                     }
@@ -1238,7 +1256,18 @@ impl RunAgent {
         }
 
         let _ = tx.send(AgentEvent::StreamDone);
-        completed_response.ok_or_else(|| "stream ended without response.completed".into())
+        completed_response
+            .map(|value| ModelResponse {
+                value,
+                output_streamed,
+            })
+            .ok_or_else(|| "stream ended without response.completed".into())
+    }
+}
+
+fn send_final_output_if_unstreamed(tx: &Sender<AgentEvent>, text: &str, output_streamed: bool) {
+    if !output_streamed {
+        let _ = tx.send(AgentEvent::OutputText(text.to_string()));
     }
 }
 
@@ -2499,6 +2528,27 @@ fn default_api_key_env_for(provider: &str) -> String {
 mod tests {
     use super::*;
     use uuid::Uuid;
+
+    #[test]
+    fn final_output_event_is_sent_for_unstreamed_text() {
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        send_final_output_if_unstreamed(&tx, "hi", false);
+
+        match rx.try_recv().unwrap() {
+            AgentEvent::OutputText(text) => assert_eq!(text, "hi"),
+            other => panic!("expected output text, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn final_output_event_is_not_replayed_after_stream_delta() {
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        send_final_output_if_unstreamed(&tx, "hi", true);
+
+        assert!(rx.try_recv().is_err());
+    }
 
     #[test]
     fn read_file_pre_event_focuses_repo_relative_lines() {

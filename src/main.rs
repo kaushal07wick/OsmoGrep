@@ -384,36 +384,15 @@ fn reset_streaming_output(ui: &mut crate::state::UiState) {
     ui.streaming_active = false;
     ui.streaming_buffer.clear();
     ui.streaming_transcript.clear();
-    ui.last_streamed_output = None;
     ui.streaming_lines_logged = 0;
 }
 
 fn finish_streaming_output(state: &mut AgentState) {
     if state.ui.streaming_active {
         flush_streaming_log(state);
-        let normalized = normalize_assistant_output(&state.ui.streaming_transcript);
-        state.ui.last_streamed_output = if normalized.is_empty() {
-            None
-        } else {
-            Some(normalized)
-        };
         state.ui.streaming_transcript.clear();
     }
     state.ui.streaming_active = false;
-}
-
-fn should_log_output_text(state: &mut AgentState, text: &str) -> bool {
-    let normalized = normalize_assistant_output(text);
-
-    if let Some(streamed) = state.ui.last_streamed_output.take() {
-        return streamed != normalized;
-    }
-
-    true
-}
-
-fn normalize_assistant_output(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn plan_mode_prompt(text: &str) -> String {
@@ -1633,9 +1612,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
 
                         AgentEvent::OutputText(text) => {
                             state.usage.completion_tokens += (text.len() / 4).max(1);
-                            if should_log_output_text(&mut state, &text) {
-                                log_agent_output(&mut state, &text);
-                            }
+                            log_agent_output(&mut state, &text);
                             let _ = persistence::save(&state);
                         }
 
@@ -2067,33 +2044,6 @@ mod tests {
                 .count(),
             80
         );
-    }
-
-    #[test]
-    fn suppresses_final_output_already_rendered_from_stream() {
-        let mut state = init_state();
-        state.ui.streaming_active = true;
-        state.ui.streaming_transcript = "Hi.\nWhat do you want to work on?".to_string();
-
-        finish_streaming_output(&mut state);
-
-        assert!(!should_log_output_text(
-            &mut state,
-            "Hi. What do you want to work on?"
-        ));
-        assert!(state.ui.last_streamed_output.is_none());
-    }
-
-    #[test]
-    fn logs_final_output_when_it_differs_from_stream() {
-        let mut state = init_state();
-        state.ui.streaming_active = true;
-        state.ui.streaming_transcript = "partial answer".to_string();
-
-        finish_streaming_output(&mut state);
-
-        assert!(should_log_output_text(&mut state, "final answer"));
-        assert!(state.ui.last_streamed_output.is_none());
     }
 
     #[test]
