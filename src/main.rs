@@ -1929,6 +1929,7 @@ fn init_state() -> AgentState {
 }
 struct TerminalSession {
     active: bool,
+    mouse_capture: bool,
 }
 
 impl TerminalSession {
@@ -1938,7 +1939,11 @@ impl TerminalSession {
         }
 
         let raw_result = disable_raw_mode();
-        let screen_result = execute!(writer, DisableMouseCapture, LeaveAlternateScreen, Show);
+        let screen_result = if self.mouse_capture {
+            execute!(writer, DisableMouseCapture, LeaveAlternateScreen, Show)
+        } else {
+            execute!(writer, LeaveAlternateScreen, Show)
+        };
         self.active = false;
 
         raw_result?;
@@ -1957,12 +1962,37 @@ fn setup_terminal() -> Result<TerminalSession, Box<dyn Error>> {
     enable_raw_mode()?;
 
     let mut stdout = io::stdout();
-    if let Err(err) = execute!(stdout, EnterAlternateScreen, EnableMouseCapture) {
+    if let Err(err) = execute!(stdout, EnterAlternateScreen) {
         let _ = disable_raw_mode();
         return Err(Box::new(err));
     }
 
-    Ok(TerminalSession { active: true })
+    let mouse_capture = osmogrep_mouse_capture_enabled();
+    if mouse_capture {
+        if let Err(err) = execute!(stdout, EnableMouseCapture) {
+            let _ = execute!(io::stdout(), LeaveAlternateScreen, Show);
+            let _ = disable_raw_mode();
+            return Err(Box::new(err));
+        }
+    }
+
+    Ok(TerminalSession {
+        active: true,
+        mouse_capture,
+    })
+}
+
+fn osmogrep_mouse_capture_enabled() -> bool {
+    std::env::var("OSMOGREP_MOUSE")
+        .ok()
+        .is_some_and(|raw| parse_mouse_capture_setting(&raw))
+}
+
+fn parse_mouse_capture_setting(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on" | "all" | "buttons" | "button" | "wheel" | "scroll"
+    )
 }
 
 fn teardown_terminal(
@@ -2058,6 +2088,16 @@ mod tests {
                 .count(),
             80
         );
+    }
+
+    #[test]
+    fn mouse_capture_setting_requires_explicit_enable() {
+        assert!(!parse_mouse_capture_setting(""));
+        assert!(!parse_mouse_capture_setting("off"));
+        assert!(!parse_mouse_capture_setting("false"));
+        assert!(parse_mouse_capture_setting("on"));
+        assert!(parse_mouse_capture_setting("wheel"));
+        assert!(parse_mouse_capture_setting("all"));
     }
 
     #[test]
