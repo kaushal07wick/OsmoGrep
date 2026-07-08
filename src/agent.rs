@@ -187,11 +187,9 @@ fn take_chars(text: &str, max_bytes: usize) -> String {
     out
 }
 
-fn system_prompt(_repo_root: &std::path::Path) -> Value {
-    json!({
-        "role": "system",
-        "content":
-            "You are Osmogrep, an AI coding agent working inside this repository.\n\
+fn system_prompt(repo_root: &std::path::Path) -> Value {
+    let mut content =
+        "You are Osmogrep, an AI coding agent working inside this repository.\n\
             \n\
             This repository may include a machine-generated index stored as `.context/context.json` at the repository root.\n\
             This file, if present, describes the structure of the codebase: files, symbols, and call relationships.\n\
@@ -230,7 +228,133 @@ fn system_prompt(_repo_root: &std::path::Path) -> Value {
             Leave the codebase better than you found it.\n\
             Prefer clear structure, small deterministic functions, and reliable behavior.\n\
             Make changes that are easy to understand, review, and maintain."
+            .to_string();
+
+    let workspace = workspace_fact_block(repo_root);
+    if !workspace.is_empty() {
+        content.push_str("\n\n");
+        content.push_str(&workspace);
+    }
+
+    json!({
+        "role": "system",
+        "content": content
     })
+}
+
+fn workspace_fact_block(repo_root: &std::path::Path) -> String {
+    let manifests = detect_manifests(repo_root);
+    let verify_commands = detect_verify_commands(repo_root);
+    if manifests.is_empty() && verify_commands.is_empty() {
+        return String::new();
+    }
+
+    let mut lines = vec!["Workspace facts (snapshot at run start):".to_string()];
+    lines.push(format!("- Root: {}", repo_root.display()));
+    if !manifests.is_empty() {
+        lines.push(format!("- Manifests: {}", manifests.join(", ")));
+    }
+    if !verify_commands.is_empty() {
+        lines.push(format!(
+            "- Likely verify commands: {}",
+            verify_commands.join("; ")
+        ));
+    }
+    lines.push(
+        "- Re-check files before relying on this snapshot; treat it as a starting point."
+            .to_string(),
+    );
+    lines.join("\n")
+}
+
+fn detect_manifests(repo_root: &std::path::Path) -> Vec<String> {
+    [
+        "Cargo.toml",
+        "package.json",
+        "pyproject.toml",
+        "pytest.ini",
+        "go.mod",
+        "Makefile",
+        "Dockerfile",
+    ]
+    .iter()
+    .filter(|name| repo_root.join(name).is_file())
+    .map(|name| (*name).to_string())
+    .collect()
+}
+
+fn detect_verify_commands(repo_root: &std::path::Path) -> Vec<String> {
+    let mut commands = Vec::new();
+    if repo_root.join("Cargo.toml").is_file() {
+        push_unique(&mut commands, "cargo test --color never");
+        push_unique(&mut commands, "cargo check");
+    }
+    if repo_root.join("go.mod").is_file() {
+        push_unique(&mut commands, "go test ./...");
+    }
+    if repo_root.join("pytest.ini").is_file()
+        || repo_root.join("pyproject.toml").is_file()
+        || repo_root.join("tests").is_dir()
+    {
+        push_unique(&mut commands, "pytest -q");
+    }
+    if repo_root.join("package.json").is_file() {
+        for command in package_verify_commands(repo_root) {
+            push_unique(&mut commands, &command);
+        }
+    }
+    if repo_root.join("Makefile").is_file() {
+        for command in make_verify_commands(repo_root) {
+            push_unique(&mut commands, &command);
+        }
+    }
+    commands.truncate(10);
+    commands
+}
+
+fn package_verify_commands(repo_root: &std::path::Path) -> Vec<String> {
+    let text = fs::read_to_string(repo_root.join("package.json")).unwrap_or_default();
+    let Ok(value) = serde_json::from_str::<Value>(&text) else {
+        return Vec::new();
+    };
+    let Some(scripts) = value.get("scripts").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    let package_manager = if repo_root.join("pnpm-lock.yaml").is_file() {
+        "pnpm"
+    } else if repo_root.join("bun.lockb").is_file() || repo_root.join("bun.lock").is_file() {
+        "bun"
+    } else if repo_root.join("yarn.lock").is_file() {
+        "yarn"
+    } else {
+        "npm"
+    };
+    ["test", "lint", "typecheck", "check", "build"]
+        .iter()
+        .filter(|name| scripts.contains_key(**name))
+        .map(|name| format!("{package_manager} run {name}"))
+        .collect()
+}
+
+fn make_verify_commands(repo_root: &std::path::Path) -> Vec<String> {
+    let text = fs::read_to_string(repo_root.join("Makefile")).unwrap_or_default();
+    ["test", "lint", "typecheck", "check", "build"]
+        .iter()
+        .filter(|target| {
+            text.lines().any(|line| {
+                let trimmed = line.trim_start();
+                trimmed.starts_with(&format!("{target}:"))
+                    || trimmed.starts_with(&format!("{target} :"))
+            })
+        })
+        .map(|target| format!("make {target}"))
+        .collect()
+}
+
+fn push_unique(items: &mut Vec<String>, item: &str) {
+    if !items.iter().any(|existing| existing == item) {
+        items.push(item.to_string());
+    }
 }
 
 pub struct Agent {
@@ -1472,6 +1596,43 @@ mod tests {
         assert!(!suffix.contains("should be omitted"));
         assert!(suffix.contains("instruction budget exhausted"));
         assert!(suffix.len() <= REPO_INSTRUCTION_BUDGET + 200);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn detects_workspace_verify_commands() {
+        let root = temp_root();
+        fs::write(root.join("Cargo.toml"), "[package]\nname='x'\n").unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts":{"test":"vitest","lint":"eslint .","build":"vite build"}}"#,
+        )
+        .unwrap();
+        fs::write(root.join("pnpm-lock.yaml"), "").unwrap();
+        fs::write(root.join("Makefile"), "check:\n\tcargo check\n").unwrap();
+
+        let commands = detect_verify_commands(&root);
+
+        assert!(commands.contains(&"cargo test --color never".to_string()));
+        assert!(commands.contains(&"cargo check".to_string()));
+        assert!(commands.contains(&"pnpm run test".to_string()));
+        assert!(commands.contains(&"pnpm run lint".to_string()));
+        assert!(commands.contains(&"pnpm run build".to_string()));
+        assert!(commands.contains(&"make check".to_string()));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn system_prompt_includes_workspace_fact_block() {
+        let root = temp_root();
+        fs::write(root.join("go.mod"), "module example.com/x\n").unwrap();
+
+        let prompt = system_prompt(&root);
+        let content = prompt.get("content").and_then(Value::as_str).unwrap();
+
+        assert!(content.contains("Workspace facts (snapshot at run start):"));
+        assert!(content.contains("go.mod"));
+        assert!(content.contains("go test ./..."));
         let _ = fs::remove_dir_all(root);
     }
 
