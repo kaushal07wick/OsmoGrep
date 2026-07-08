@@ -33,8 +33,12 @@ impl Tool for GitDiff {
 
     fn call(&self, args: Value) -> ToolResult {
         let path = args.get("path").and_then(Value::as_str);
+        let repo_root = args.get("_repo_root").and_then(Value::as_str);
 
         let mut cmd = Command::new("git");
+        if let Some(repo_root) = repo_root {
+            cmd.current_dir(repo_root);
+        }
         cmd.arg("diff").arg("--");
         if let Some(path) = path {
             cmd.arg(path);

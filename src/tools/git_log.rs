@@ -37,8 +37,13 @@ impl Tool for GitLog {
             .and_then(Value::as_u64)
             .unwrap_or(20)
             .min(200);
+        let repo_root = args.get("_repo_root").and_then(Value::as_str);
 
-        let out = Command::new("git")
+        let mut cmd = Command::new("git");
+        if let Some(repo_root) = repo_root {
+            cmd.current_dir(repo_root);
+        }
+        let out = cmd
             .arg("log")
             .arg(format!("-n{}", limit))
             .arg("--pretty=format:%h|%an|%ad|%s")

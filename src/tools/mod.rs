@@ -1,6 +1,6 @@
 use serde_json::Value;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 mod diagnostics;
@@ -166,6 +166,22 @@ impl ToolRegistry {
         self.call_in_repo_root(tool.as_ref(), args)
     }
 
+    pub fn parallel_safe(&self, name: &str) -> bool {
+        matches!(self.safety(name), Some(ToolSafety::Safe)) && !matches!(name, "update_plan")
+    }
+
+    pub fn call_parallel_safe(&self, name: &str, args: Value) -> ToolResult {
+        if !self.parallel_safe(name) {
+            return Err(format!("tool is not parallel safe: {}", name));
+        }
+
+        let tool = self
+            .tools
+            .get(name)
+            .ok_or_else(|| format!("unknown tool: {}", name))?;
+        tool.call(self.resolve_parallel_args(name, args))
+    }
+
     pub fn safety(&self, name: &str) -> Option<ToolSafety> {
         self.tools.get(name).map(|t| t.safety())
     }
@@ -209,6 +225,63 @@ impl ToolRegistry {
             (Err(err), Err(restore_err)) => Err(format!("{err}; {restore_err}")),
         }
     }
+
+    fn resolve_parallel_args(&self, name: &str, args: Value) -> Value {
+        let mut map = match args {
+            Value::Object(map) => map,
+            other => return other,
+        };
+
+        match name {
+            "read_file" | "search" | "regex_search" => {
+                self.resolve_path_field(&mut map, "path", false);
+            }
+            "list_dir" | "find_definition" | "find_references" | "glob_files" => {
+                self.resolve_path_field(&mut map, "path", true);
+            }
+            "git_diff" | "git_log" => {
+                map.insert(
+                    "_repo_root".to_string(),
+                    Value::String(self.repo_root.display().to_string()),
+                );
+            }
+            _ => {}
+        }
+
+        Value::Object(map)
+    }
+
+    fn resolve_path_field(
+        &self,
+        map: &mut serde_json::Map<String, Value>,
+        key: &str,
+        default_to_repo_root: bool,
+    ) {
+        match map.get(key).and_then(Value::as_str).map(str::to_string) {
+            Some(path) => {
+                map.insert(
+                    key.to_string(),
+                    Value::String(self.resolve_repo_path(&path)),
+                );
+            }
+            None if default_to_repo_root => {
+                map.insert(
+                    key.to_string(),
+                    Value::String(self.repo_root.display().to_string()),
+                );
+            }
+            None => {}
+        }
+    }
+
+    fn resolve_repo_path(&self, raw: &str) -> String {
+        let path = Path::new(raw);
+        if path.is_absolute() {
+            raw.to_string()
+        } else {
+            self.repo_root.join(path).display().to_string()
+        }
+    }
 }
 
 fn contains_any(haystack: &str, needles: &[&str]) -> bool {
@@ -237,6 +310,69 @@ mod tests {
             result.get("text").and_then(Value::as_str),
             Some("root scoped")
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn parallel_safe_calls_resolve_paths_without_changing_cwd() {
+        let root =
+            std::env::temp_dir().join(format!("osmogrep-parallel-tools-root-{}", Uuid::new_v4()));
+        let nested = root.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("readme.txt"), "parallel scoped").unwrap();
+
+        let previous = std::env::current_dir().unwrap();
+        let registry = ToolRegistry::with_root(root.clone());
+        let result = registry
+            .call_parallel_safe("read_file", json!({ "path": "nested/readme.txt" }))
+            .unwrap();
+
+        assert_eq!(
+            result.get("text").and_then(Value::as_str),
+            Some("parallel scoped")
+        );
+        assert_eq!(std::env::current_dir().unwrap(), previous);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn parallel_safe_calls_can_run_concurrently() {
+        let root = std::env::temp_dir().join(format!(
+            "osmogrep-parallel-concurrent-root-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("a.txt"), "alpha").unwrap();
+        fs::write(root.join("b.txt"), "beta").unwrap();
+
+        let registry = ToolRegistry::with_root(root.clone());
+        std::thread::scope(|scope| {
+            let read = scope
+                .spawn(|| registry.call_parallel_safe("read_file", json!({ "path": "a.txt" })));
+            let list = scope.spawn(|| registry.call_parallel_safe("list_dir", json!({})));
+
+            let read = read.join().unwrap().unwrap();
+            let list = list.join().unwrap().unwrap();
+            assert_eq!(read.get("text").and_then(Value::as_str), Some("alpha"));
+            assert_eq!(list.get("count").and_then(Value::as_u64), Some(2));
+        });
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn parallel_safe_rejects_stateful_and_dangerous_tools() {
+        let root =
+            std::env::temp_dir().join(format!("osmogrep-parallel-reject-root-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let registry = ToolRegistry::with_root(root.clone());
+
+        assert!(!registry.parallel_safe("update_plan"));
+        assert!(!registry.parallel_safe("run_shell"));
+        assert!(registry
+            .call_parallel_safe("update_plan", json!({ "action": "show" }))
+            .is_err());
+
         let _ = fs::remove_dir_all(root);
     }
 
