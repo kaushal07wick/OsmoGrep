@@ -524,6 +524,73 @@ impl AgentState {
         true
     }
 
+    pub fn kill_to_line_end(&mut self) -> bool {
+        if self.ui.input_all_selected {
+            return self.cut_input();
+        }
+
+        let cursor = clamp_char_boundary(&self.ui.input, self.ui.input_cursor);
+        if cursor >= self.ui.input.len() {
+            return false;
+        }
+
+        let (_, line_end) = current_line_bounds(&self.ui.input, cursor);
+        let kill_end = if cursor < line_end {
+            line_end
+        } else {
+            next_char_boundary(&self.ui.input, cursor)
+        };
+
+        if kill_end <= cursor {
+            return false;
+        }
+
+        self.ui.input_clipboard = self.ui.input[cursor..kill_end].to_string();
+        self.ui.input.drain(cursor..kill_end);
+        self.ui.input_cursor = cursor;
+        self.ui.history_index = None;
+        true
+    }
+
+    pub fn delete_previous_word(&mut self) -> bool {
+        if self.ui.input_all_selected {
+            return self.cut_input();
+        }
+
+        let cursor = clamp_char_boundary(&self.ui.input, self.ui.input_cursor);
+        if cursor == 0 {
+            return false;
+        }
+
+        let mut start = cursor;
+        while start > 0 {
+            let prev = previous_char_boundary(&self.ui.input, start);
+            let ch = self.ui.input[prev..start].chars().next().unwrap_or(' ');
+            if !ch.is_whitespace() {
+                break;
+            }
+            start = prev;
+        }
+        while start > 0 {
+            let prev = previous_char_boundary(&self.ui.input, start);
+            let ch = self.ui.input[prev..start].chars().next().unwrap_or(' ');
+            if ch.is_whitespace() {
+                break;
+            }
+            start = prev;
+        }
+
+        if start == cursor {
+            return false;
+        }
+
+        self.ui.input_clipboard = self.ui.input[start..cursor].to_string();
+        self.ui.input.drain(start..cursor);
+        self.ui.input_cursor = start;
+        self.ui.history_index = None;
+        true
+    }
+
     pub fn paste_input(&mut self) -> bool {
         if self.ui.input_clipboard.is_empty() {
             return false;
@@ -1000,6 +1067,42 @@ mod tests {
 
         assert!(state.paste_input());
         assert_eq!(state.ui.input, "keep this");
+    }
+
+    #[test]
+    fn kill_to_line_end_and_yank_round_trip() {
+        let mut state = agent_state_with_input("first line\nsecond line");
+        state.ui.input_cursor = "first ".len();
+
+        assert!(state.kill_to_line_end());
+        assert_eq!(state.ui.input_clipboard, "line");
+        assert_eq!(state.ui.input, "first \nsecond line");
+        assert_eq!(state.ui.input_cursor, "first ".len());
+
+        assert!(state.paste_input());
+        assert_eq!(state.ui.input, "first line\nsecond line");
+    }
+
+    #[test]
+    fn kill_to_line_end_removes_newline_at_line_end() {
+        let mut state = agent_state_with_input("first\nsecond");
+        state.ui.input_cursor = "first".len();
+
+        assert!(state.kill_to_line_end());
+        assert_eq!(state.ui.input_clipboard, "\n");
+        assert_eq!(state.ui.input, "firstsecond");
+    }
+
+    #[test]
+    fn delete_previous_word_is_utf8_safe() {
+        let mut state = agent_state_with_input("alpha  界beta");
+        state.ui.input_cursor = "alpha  界beta".len();
+
+        assert!(state.delete_previous_word());
+
+        assert_eq!(state.ui.input_clipboard, "界beta");
+        assert_eq!(state.ui.input, "alpha  ");
+        assert_eq!(state.ui.input_cursor, "alpha  ".len());
     }
 
     #[test]

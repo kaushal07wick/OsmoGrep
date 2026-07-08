@@ -338,6 +338,11 @@ enum InputControlAction {
     CutAll,
     Paste,
     ClearAll,
+    LineEnd,
+    KillToLineEnd,
+    Yank,
+    DeletePreviousWord,
+    DeleteForward,
 }
 
 fn input_control_action(k: &KeyEvent) -> Option<InputControlAction> {
@@ -352,10 +357,15 @@ fn input_control_action(k: &KeyEvent) -> Option<InputControlAction> {
     match c.to_ascii_lowercase() {
         'a' => Some(InputControlAction::SelectAll),
         'c' => Some(InputControlAction::CopyAll),
+        'd' => Some(InputControlAction::DeleteForward),
+        'e' => Some(InputControlAction::LineEnd),
+        'k' => Some(InputControlAction::KillToLineEnd),
         'o' => Some(InputControlAction::CopyOutput),
         'x' => Some(InputControlAction::CutAll),
         'v' => Some(InputControlAction::Paste),
         'u' => Some(InputControlAction::ClearAll),
+        'w' => Some(InputControlAction::DeletePreviousWord),
+        'y' => Some(InputControlAction::Yank),
         _ => None,
     }
 }
@@ -392,6 +402,27 @@ fn apply_input_control_action(state: &mut AgentState, action: InputControlAction
             if state.clear_input() {
                 crate::logger::log_status(state, "Cleared input.");
             }
+        }
+        InputControlAction::LineEnd => {
+            state.move_cursor_line_end();
+        }
+        InputControlAction::KillToLineEnd => {
+            if state.kill_to_line_end() {
+                crate::logger::log_status(state, "Killed input.");
+            }
+        }
+        InputControlAction::Yank => {
+            if state.paste_input() {
+                crate::logger::log_status(state, "Yanked input.");
+            }
+        }
+        InputControlAction::DeletePreviousWord => {
+            if state.delete_previous_word() {
+                crate::logger::log_status(state, "Deleted previous word.");
+            }
+        }
+        InputControlAction::DeleteForward => {
+            state.delete_forward();
         }
     }
 }
@@ -471,6 +502,18 @@ mod tests {
             Some(InputControlAction::CopyAll)
         );
         assert_eq!(
+            input_control_action(&ctrl('d')),
+            Some(InputControlAction::DeleteForward)
+        );
+        assert_eq!(
+            input_control_action(&ctrl('e')),
+            Some(InputControlAction::LineEnd)
+        );
+        assert_eq!(
+            input_control_action(&ctrl('k')),
+            Some(InputControlAction::KillToLineEnd)
+        );
+        assert_eq!(
             input_control_action(&ctrl('o')),
             Some(InputControlAction::CopyOutput)
         );
@@ -485,6 +528,14 @@ mod tests {
         assert_eq!(
             input_control_action(&ctrl('u')),
             Some(InputControlAction::ClearAll)
+        );
+        assert_eq!(
+            input_control_action(&ctrl('w')),
+            Some(InputControlAction::DeletePreviousWord)
+        );
+        assert_eq!(
+            input_control_action(&ctrl('y')),
+            Some(InputControlAction::Yank)
         );
     }
 
