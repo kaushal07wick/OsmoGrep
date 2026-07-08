@@ -32,6 +32,10 @@ impl Tool for GitDiff {
     }
 
     fn call(&self, args: Value) -> ToolResult {
+        self.call_cancellable(args, &|| false)
+    }
+
+    fn call_cancellable(&self, args: Value, is_cancelled: &dyn Fn() -> bool) -> ToolResult {
         let path = args.get("path").and_then(Value::as_str);
         let repo_root = args.get("_repo_root").and_then(Value::as_str);
 
@@ -44,10 +48,13 @@ impl Tool for GitDiff {
             cmd.arg(path);
         }
 
-        let out = cmd.output().map_err(|e| e.to_string())?;
+        let timeout = crate::process_runner::timeout_from_env("OSMOGREP_GIT_TIMEOUT_SECS", 120);
+        let out = crate::process_runner::run_command_cancellable(cmd, timeout, is_cancelled)?;
 
         Ok(json!({
-            "exit_code": out.status.code().unwrap_or(-1),
+            "exit_code": out.exit_code,
+            "timed_out": out.timed_out,
+            "cancelled": out.cancelled,
             "diff": truncate(&String::from_utf8_lossy(&out.stdout), 12000),
             "stderr": truncate(&String::from_utf8_lossy(&out.stderr), 2000)
         }))

@@ -32,6 +32,10 @@ impl Tool for GitLog {
     }
 
     fn call(&self, args: Value) -> ToolResult {
+        self.call_cancellable(args, &|| false)
+    }
+
+    fn call_cancellable(&self, args: Value, is_cancelled: &dyn Fn() -> bool) -> ToolResult {
         let limit = args
             .get("limit")
             .and_then(Value::as_u64)
@@ -43,13 +47,13 @@ impl Tool for GitLog {
         if let Some(repo_root) = repo_root {
             cmd.current_dir(repo_root);
         }
-        let out = cmd
-            .arg("log")
+        cmd.arg("log")
             .arg(format!("-n{}", limit))
             .arg("--pretty=format:%h|%an|%ad|%s")
-            .arg("--date=short")
-            .output()
-            .map_err(|e| e.to_string())?;
+            .arg("--date=short");
+
+        let timeout = crate::process_runner::timeout_from_env("OSMOGREP_GIT_TIMEOUT_SECS", 120);
+        let out = crate::process_runner::run_command_cancellable(cmd, timeout, is_cancelled)?;
 
         let lines = String::from_utf8_lossy(&out.stdout)
             .lines()
@@ -65,7 +69,9 @@ impl Tool for GitLog {
             .collect::<Vec<_>>();
 
         Ok(json!({
-            "exit_code": out.status.code().unwrap_or(-1),
+            "exit_code": out.exit_code,
+            "timed_out": out.timed_out,
+            "cancelled": out.cancelled,
             "commits": lines,
             "stderr": String::from_utf8_lossy(&out.stderr)
         }))

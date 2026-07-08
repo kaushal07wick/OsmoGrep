@@ -259,7 +259,12 @@ impl ToolRegistry {
             && !matches!(name, "update_plan" | "dynamic_workflow")
     }
 
-    pub fn call_parallel_safe(&self, name: &str, args: Value) -> ToolResult {
+    pub fn call_parallel_safe_cancellable(
+        &self,
+        name: &str,
+        args: Value,
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> ToolResult {
         if !self.parallel_safe(name) {
             return Err(format!("tool is not parallel safe: {}", name));
         }
@@ -268,7 +273,7 @@ impl ToolRegistry {
             .tools
             .get(name)
             .ok_or_else(|| format!("unknown tool: {}", name))?;
-        tool.call(self.resolve_parallel_args(name, args))
+        tool.call_cancellable(self.resolve_parallel_args(name, args), is_cancelled)
     }
 
     pub fn safety(&self, name: &str) -> Option<ToolSafety> {
@@ -420,7 +425,11 @@ mod tests {
         let previous = std::env::current_dir().unwrap();
         let registry = ToolRegistry::with_root(root.clone());
         let result = registry
-            .call_parallel_safe("read_file", json!({ "path": "nested/readme.txt" }))
+            .call_parallel_safe_cancellable(
+                "read_file",
+                json!({ "path": "nested/readme.txt" }),
+                &|| false,
+            )
             .unwrap();
 
         assert_eq!(
@@ -428,6 +437,28 @@ mod tests {
             Some("parallel scoped")
         );
         assert_eq!(std::env::current_dir().unwrap(), previous);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn run_shell_tool_reports_cancelled_process() {
+        let root =
+            std::env::temp_dir().join(format!("osmogrep-shell-cancel-root-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let registry = ToolRegistry::with_root(root.clone());
+
+        let result = registry
+            .call_cancellable("run_shell", json!({ "cmd": "sleep 2" }), &|| true)
+            .unwrap();
+
+        assert_eq!(result.get("cancelled").and_then(Value::as_bool), Some(true));
+        assert_ne!(result.get("exit_code").and_then(Value::as_i64), Some(0));
+        assert!(result
+            .get("stderr")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .contains("cancelled"));
+
         let _ = fs::remove_dir_all(root);
     }
 
@@ -443,9 +474,16 @@ mod tests {
 
         let registry = ToolRegistry::with_root(root.clone());
         std::thread::scope(|scope| {
-            let read = scope
-                .spawn(|| registry.call_parallel_safe("read_file", json!({ "path": "a.txt" })));
-            let list = scope.spawn(|| registry.call_parallel_safe("list_dir", json!({})));
+            let read = scope.spawn(|| {
+                registry.call_parallel_safe_cancellable(
+                    "read_file",
+                    json!({ "path": "a.txt" }),
+                    &|| false,
+                )
+            });
+            let list = scope.spawn(|| {
+                registry.call_parallel_safe_cancellable("list_dir", json!({}), &|| false)
+            });
 
             let read = read.join().unwrap().unwrap();
             let list = list.join().unwrap().unwrap();
@@ -467,7 +505,7 @@ mod tests {
         assert!(!registry.parallel_safe("dynamic_workflow"));
         assert!(!registry.parallel_safe("run_shell"));
         assert!(registry
-            .call_parallel_safe("update_plan", json!({ "action": "show" }))
+            .call_parallel_safe_cancellable("update_plan", json!({ "action": "show" }), &|| false,)
             .is_err());
 
         let _ = fs::remove_dir_all(root);

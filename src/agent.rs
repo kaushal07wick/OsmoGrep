@@ -945,10 +945,11 @@ impl RunAgent {
                 let tools = &self.tools;
                 let name = invocation.name.clone();
                 let args = invocation.args.clone();
+                let cancel = self.cancel.clone();
                 handles.push(scope.spawn(move || {
                     let started = Instant::now();
                     let result = tools
-                        .call_parallel_safe(&name, args)
+                        .call_parallel_safe_cancellable(&name, args, &|| cancel.is_cancelled())
                         .unwrap_or_else(|e| json!({ "error": e }));
                     (result, started.elapsed().as_millis())
                 }));

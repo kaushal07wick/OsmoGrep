@@ -30,6 +30,10 @@ impl Tool for Shell {
     }
 
     fn call(&self, args: Value) -> ToolResult {
+        self.call_cancellable(args, &|| false)
+    }
+
+    fn call_cancellable(&self, args: Value, is_cancelled: &dyn Fn() -> bool) -> ToolResult {
         let cmd = args
             .get("cmd")
             .and_then(Value::as_str)
@@ -48,7 +52,8 @@ impl Tool for Shell {
             .flatten();
 
         let timeout = crate::process_runner::timeout_from_env("OSMOGREP_SHELL_TIMEOUT_SECS", 120);
-        let out = crate::process_runner::run_shell_command(cmd, None, timeout)?;
+        let out =
+            crate::process_runner::run_shell_command_cancellable(cmd, None, timeout, is_cancelled)?;
         let stdout_raw = String::from_utf8_lossy(&out.stdout).to_string();
         let stderr_raw = String::from_utf8_lossy(&out.stderr).to_string();
         let exit_code = out.exit_code;
@@ -69,6 +74,7 @@ impl Tool for Shell {
             "exit_code": exit_code,
             "duration_ms": out.duration_ms,
             "timed_out": out.timed_out,
+            "cancelled": out.cancelled,
             "hook": pre_hook,
             "verification": crate::verification::to_json(&verification),
             "output_budget": {

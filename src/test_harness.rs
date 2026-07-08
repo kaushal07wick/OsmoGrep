@@ -19,14 +19,28 @@ pub struct TestRun {
     pub failed: usize,
     pub output: String,
     pub timed_out: bool,
+    pub cancelled: bool,
     pub verification: Option<VerificationEvidence>,
 }
 
 pub fn run_tests(repo_root: &Path, target: Option<&str>) -> Result<TestRun, String> {
+    run_tests_cancellable(repo_root, target, || false)
+}
+
+pub fn run_tests_cancellable(
+    repo_root: &Path,
+    target: Option<&str>,
+    is_cancelled: impl Fn() -> bool,
+) -> Result<TestRun, String> {
     let (framework, command) = detect_framework_and_command(repo_root, target)?;
 
     let timeout = crate::process_runner::timeout_from_env("OSMOGREP_TEST_TIMEOUT_SECS", 300);
-    let out = crate::process_runner::run_shell_command(&command, Some(repo_root), timeout)?;
+    let out = crate::process_runner::run_shell_command_cancellable(
+        &command,
+        Some(repo_root),
+        timeout,
+        is_cancelled,
+    )?;
     let duration_ms = out.duration_ms;
 
     let mut text = String::new();
@@ -48,11 +62,12 @@ pub fn run_tests(repo_root: &Path, target: Option<&str>) -> Result<TestRun, Stri
         command,
         exit_code,
         duration_ms,
-        success: exit_code == 0 && !out.timed_out,
+        success: exit_code == 0 && !out.timed_out && !out.cancelled,
         passed,
         failed,
         output,
         timed_out: out.timed_out,
+        cancelled: out.cancelled,
         verification,
     })
 }

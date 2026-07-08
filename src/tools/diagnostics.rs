@@ -1,7 +1,6 @@
 use regex::Regex;
 use serde_json::{json, Value};
 use std::path::Path;
-use std::process::Command;
 
 use super::{Tool, ToolResult, ToolSafety};
 
@@ -33,17 +32,24 @@ impl Tool for Diagnostics {
     }
 
     fn call(&self, args: Value) -> ToolResult {
+        self.call_cancellable(args, &|| false)
+    }
+
+    fn call_cancellable(&self, args: Value, is_cancelled: &dyn Fn() -> bool) -> ToolResult {
         let cmd = args
             .get("cmd")
             .and_then(Value::as_str)
             .map(|s| s.to_string())
             .unwrap_or_else(default_command);
 
-        let out = Command::new("sh")
-            .arg("-lc")
-            .arg(&cmd)
-            .output()
-            .map_err(|e| e.to_string())?;
+        let timeout =
+            crate::process_runner::timeout_from_env("OSMOGREP_DIAGNOSTICS_TIMEOUT_SECS", 300);
+        let out = crate::process_runner::run_shell_command_cancellable(
+            &cmd,
+            None,
+            timeout,
+            is_cancelled,
+        )?;
 
         let mut text = String::new();
         text.push_str(&String::from_utf8_lossy(&out.stdout));
@@ -58,7 +64,10 @@ impl Tool for Diagnostics {
 
         Ok(json!({
             "command": cmd,
-            "exit_code": out.status.code().unwrap_or(-1),
+            "exit_code": out.exit_code,
+            "duration_ms": out.duration_ms,
+            "timed_out": out.timed_out,
+            "cancelled": out.cancelled,
             "issue_count": issues.len(),
             "issues": issues,
             "output": truncate(&text, 12000),

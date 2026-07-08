@@ -21,25 +21,48 @@ pub fn run_shell_command(
     cwd: Option<&Path>,
     timeout: Duration,
 ) -> Result<ProcessRun, String> {
+    run_shell_command_cancellable(cmd, cwd, timeout, || false)
+}
+
+pub fn run_shell_command_cancellable(
+    cmd: &str,
+    cwd: Option<&Path>,
+    timeout: Duration,
+    is_cancelled: impl Fn() -> bool,
+) -> Result<ProcessRun, String> {
     let mut command = Command::new("sh");
     command.arg("-c").arg(cmd);
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
     }
 
-    run_command(command, timeout)
+    run_command_cancellable(command, timeout, is_cancelled)
 }
 
-pub fn run_command(mut command: Command, timeout: Duration) -> Result<ProcessRun, String> {
+pub fn run_command(command: Command, timeout: Duration) -> Result<ProcessRun, String> {
+    run_command_cancellable(command, timeout, || false)
+}
+
+pub fn run_command_cancellable(
+    mut command: Command,
+    timeout: Duration,
+    is_cancelled: impl Fn() -> bool,
+) -> Result<ProcessRun, String> {
     let started = Instant::now();
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     let mut child = command.spawn().map_err(|e| e.to_string())?;
     let mut timed_out = false;
+    let mut cancelled = false;
 
     loop {
         match child.try_wait() {
             Ok(Some(_)) => break,
+            Ok(None) if is_cancelled() => {
+                cancelled = true;
+                let _ = child.kill();
+                break;
+            }
             Ok(None) if started.elapsed() >= timeout => {
                 timed_out = true;
                 let _ = child.kill();
@@ -52,13 +75,13 @@ pub fn run_command(mut command: Command, timeout: Duration) -> Result<ProcessRun
 
     let mut out = child.wait_with_output().map_err(|e| e.to_string())?;
     if timed_out {
-        if !out.stderr.ends_with(b"\n") && !out.stderr.is_empty() {
-            out.stderr.push(b'\n');
-        }
-        out.stderr.extend_from_slice(
-            format!("[osmogrep] command timed out after {}s", timeout.as_secs()).as_bytes(),
+        append_stderr_line(
+            &mut out.stderr,
+            &format!("[osmogrep] command timed out after {}s", timeout.as_secs()),
         );
-        out.stderr.push(b'\n');
+    }
+    if cancelled {
+        append_stderr_line(&mut out.stderr, "[osmogrep] command cancelled");
     }
 
     Ok(ProcessRun {
@@ -67,7 +90,7 @@ pub fn run_command(mut command: Command, timeout: Duration) -> Result<ProcessRun
         exit_code: out.status.code().unwrap_or(-1),
         duration_ms: started.elapsed().as_millis(),
         timed_out,
-        cancelled: false,
+        cancelled,
     })
 }
 
@@ -224,6 +247,16 @@ mod tests {
         let run =
             run_command_with_stdin_cancellable(command, b"ok", Duration::from_secs(5), || true)
                 .unwrap();
+
+        assert!(run.cancelled);
+        assert_ne!(run.exit_code, 0);
+        assert!(String::from_utf8_lossy(&run.stderr).contains("cancelled"));
+    }
+
+    #[test]
+    fn cancels_shell_command_without_stdin() {
+        let run = run_shell_command_cancellable("sleep 2", None, Duration::from_secs(5), || true)
+            .unwrap();
 
         assert!(run.cancelled);
         assert_ne!(run.exit_code, 0);

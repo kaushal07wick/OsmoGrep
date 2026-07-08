@@ -30,10 +30,14 @@ impl Tool for Test {
     }
 
     fn call(&self, args: Value) -> ToolResult {
+        self.call_cancellable(args, &|| false)
+    }
+
+    fn call_cancellable(&self, args: Value, is_cancelled: &dyn Fn() -> bool) -> ToolResult {
         let target = args.get("target").and_then(Value::as_str);
         let root = std::env::current_dir().map_err(|e| e.to_string())?;
 
-        let run = crate::test_harness::run_tests(&root, target)
+        let run = crate::test_harness::run_tests_cancellable(&root, target, is_cancelled)
             .map_err(|e| format!("test harness error: {}", e))?;
 
         Ok(json!({
@@ -45,6 +49,7 @@ impl Tool for Test {
             "passed": run.passed,
             "failed": run.failed,
             "timed_out": run.timed_out,
+            "cancelled": run.cancelled,
             "output": run.output,
             "verification": crate::verification::to_json(&run.verification)
         }))
