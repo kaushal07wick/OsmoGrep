@@ -17,7 +17,7 @@ impl Tool for Patch {
         json!({
             "type": "function",
             "name": "patch",
-            "description": "Apply unified diff patch to the repository",
+            "description": "Apply a unified diff or Codex-style begin/end patch to the repository",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -42,6 +42,10 @@ impl Tool for Patch {
             .get("patch")
             .and_then(Value::as_str)
             .ok_or("missing patch")?;
+
+        if looks_like_begin_patch(patch) {
+            return apply_begin_patch(patch);
+        }
 
         let target = extract_first_target(patch);
         let before = target
@@ -108,6 +112,158 @@ impl Tool for Patch {
     }
 }
 
+fn looks_like_begin_patch(patch: &str) -> bool {
+    patch.trim_start().starts_with("*** Begin Patch")
+}
+
+fn apply_begin_patch(patch: &str) -> ToolResult {
+    let mut lines = patch.lines().peekable();
+    let Some(first) = lines.next() else {
+        return Err("empty patch".to_string());
+    };
+    if first.trim() != "*** Begin Patch" {
+        return Err("missing begin patch marker".to_string());
+    }
+
+    let mut changed: Vec<(String, String, String)> = Vec::new();
+
+    while let Some(line) = lines.next() {
+        let line = line.trim_end();
+        if line == "*** End Patch" {
+            break;
+        }
+
+        let Some(path) = line.strip_prefix("*** Update File: ").map(str::trim) else {
+            return Ok(begin_patch_error(
+                "",
+                "",
+                "",
+                format!("unsupported patch directive: {line}"),
+            ));
+        };
+
+        let before = fs::read_to_string(path).map_err(|e| format!("failed to read {path}: {e}"))?;
+        let mut after = before.clone();
+        let mut saw_hunk = false;
+
+        while let Some(next) = lines.peek().copied() {
+            if next.starts_with("*** Update File:")
+                || next.starts_with("*** Add File:")
+                || next.starts_with("*** Delete File:")
+                || next.trim_end() == "*** End Patch"
+            {
+                break;
+            }
+
+            let Some(header) = lines.next() else {
+                break;
+            };
+            if !header.starts_with("@@") {
+                continue;
+            }
+            saw_hunk = true;
+
+            let mut old_lines = Vec::new();
+            let mut new_lines = Vec::new();
+            while let Some(hunk_line) = lines.peek().copied() {
+                if hunk_line.starts_with("@@")
+                    || hunk_line.starts_with("*** Update File:")
+                    || hunk_line.starts_with("*** Add File:")
+                    || hunk_line.starts_with("*** Delete File:")
+                    || hunk_line.trim_end() == "*** End Patch"
+                {
+                    break;
+                }
+
+                let hunk_line = lines.next().unwrap_or_default();
+                if let Some(rest) = hunk_line.strip_prefix(' ') {
+                    old_lines.push(rest.to_string());
+                    new_lines.push(rest.to_string());
+                } else if let Some(rest) = hunk_line.strip_prefix('-') {
+                    old_lines.push(rest.to_string());
+                } else if let Some(rest) = hunk_line.strip_prefix('+') {
+                    new_lines.push(rest.to_string());
+                } else if hunk_line.trim().is_empty() {
+                    old_lines.push(String::new());
+                    new_lines.push(String::new());
+                }
+            }
+
+            let old = old_lines.join("\n");
+            let new = new_lines.join("\n");
+            if old.is_empty() {
+                return Ok(begin_patch_error(
+                    path,
+                    &before,
+                    &after,
+                    "update hunk has no removable/context lines",
+                ));
+            }
+            if let Some(pos) = after.find(&old) {
+                after.replace_range(pos..pos + old.len(), &new);
+            } else {
+                return Ok(begin_patch_error(
+                    path,
+                    &before,
+                    &after,
+                    "update hunk context not found",
+                ));
+            }
+        }
+
+        if !saw_hunk {
+            return Ok(begin_patch_error(
+                path,
+                &before,
+                &after,
+                "update file has no hunks",
+            ));
+        }
+
+        fs::write(path, &after).map_err(|e| format!("failed to write {path}: {e}"))?;
+        changed.push((path.to_string(), before, after));
+    }
+
+    let root = std::env::current_dir().map_err(|e| e.to_string())?;
+    let changed_paths = changed.iter().map(|(path, _, _)| path.as_str());
+    let verification_stale = crate::verification::mark_workspace_edited(&root, changed_paths);
+    let (path, before, after) = changed
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| (String::new(), String::new(), String::new()));
+
+    Ok(json!({
+        "path": path,
+        "before": before,
+        "after": after,
+        "exit_code": 0,
+        "stdout": "applied begin/end patch",
+        "stderr": "",
+        "timed_out": false,
+        "cancelled": false,
+        "verification_stale": crate::verification::staleness_to_json(&verification_stale)
+    }))
+}
+
+fn begin_patch_error(
+    path: impl Into<String>,
+    before: impl Into<String>,
+    after: impl Into<String>,
+    error: impl Into<String>,
+) -> Value {
+    json!({
+        "path": path.into(),
+        "before": before.into(),
+        "after": after.into(),
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "",
+        "timed_out": false,
+        "cancelled": false,
+        "error": error.into()
+    })
+}
+
 fn extract_first_target(patch: &str) -> Option<String> {
     let re = Regex::new(r"\+\+\+\s+[ab]/([^\n\r]+)").ok()?;
     let caps = re.captures(patch)?;
@@ -122,8 +278,10 @@ fn extract_first_target(patch: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::Patch;
-    use crate::tools::Tool;
+    use crate::tools::{Tool, ToolRegistry};
     use serde_json::json;
+    use std::fs;
+    use uuid::Uuid;
 
     #[test]
     fn invalid_patch_returns_error_field() {
@@ -135,5 +293,32 @@ mod tests {
 
         assert!(result.get("error").is_some());
         assert_ne!(result.get("exit_code").and_then(|v| v.as_i64()), Some(0));
+    }
+
+    #[test]
+    fn applies_begin_patch_update_file_hunk() {
+        let root = std::env::temp_dir().join(format!("osmogrep-begin-patch-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("README.md"), "hello\nsad\nbye\n").unwrap();
+
+        let registry = ToolRegistry::with_root(root.clone());
+        let result = registry
+            .call_cancellable(
+                "patch",
+                json!({
+                    "patch": "*** Begin Patch\n*** Update File: README.md\n@@\n hello\n-sad\n+happy\n bye\n*** End Patch\n"
+                }),
+                &|| false,
+            )
+            .unwrap();
+
+        assert!(result.get("error").is_none());
+        assert_eq!(result.get("exit_code").and_then(|v| v.as_i64()), Some(0));
+        assert_eq!(
+            fs::read_to_string(root.join("README.md")).unwrap(),
+            "hello\nhappy\nbye\n"
+        );
+
+        let _ = fs::remove_dir_all(root);
     }
 }
