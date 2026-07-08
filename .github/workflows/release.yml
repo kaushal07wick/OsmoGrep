@@ -68,6 +68,30 @@ jobs:
           $hash = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLower()
           "$hash  $archive" | Out-File -Encoding ascii "$archive.sha256"
 
+      - name: Smoke package (unix)
+        if: "!contains(matrix.target, 'windows')"
+        run: |
+          shasum -a 256 -c osmogrep-${{ matrix.target }}.tar.gz.sha256
+          mkdir -p smoke-${{ matrix.target }}
+          tar xzf osmogrep-${{ matrix.target }}.tar.gz -C smoke-${{ matrix.target }}
+          test -x smoke-${{ matrix.target }}/osmogrep
+
+      - name: Smoke package (windows)
+        if: contains(matrix.target, 'windows')
+        shell: pwsh
+        run: |
+          $archive = "osmogrep-${{ matrix.target }}.zip"
+          $expected = ((Get-Content "$archive.sha256").Trim() -split '\s+')[0]
+          $actual = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLower()
+          if ($actual -ne $expected) {
+            throw "Checksum mismatch for $archive`: expected $expected, got $actual"
+          }
+          New-Item -ItemType Directory -Force "smoke-${{ matrix.target }}" | Out-Null
+          Expand-Archive -Path $archive -DestinationPath "smoke-${{ matrix.target }}" -Force
+          if (!(Test-Path "smoke-${{ matrix.target }}/osmogrep.exe")) {
+            throw "Archive did not contain osmogrep.exe"
+          }
+
       - name: Upload artifact (unix)
         if: "!contains(matrix.target, 'windows')"
         uses: actions/upload-artifact@v4

@@ -121,9 +121,13 @@ fn install_update(info: &UpdateInfo) -> Result<(), String> {
     download(&info.asset_url, &archive_path)?;
     let checksum_path = tmp_dir.join(format!("{}.sha256", info.asset_name));
     download(&info.checksum_url, &checksum_path)?;
-    verify_checksum(&archive_path, &checksum_path, &info.asset_name)?;
-    let binary_path = unpack_archive(&archive_path, &tmp_dir)?;
-    replace_binary(&binary_path, &install_path)?;
+    install_verified_archive(
+        &archive_path,
+        &checksum_path,
+        &info.asset_name,
+        &install_path,
+        &tmp_dir,
+    )?;
     let _ = fs::remove_dir_all(tmp_dir);
     Ok(())
 }
@@ -154,6 +158,19 @@ fn verify_checksum(archive: &Path, checksum_file: &Path, asset_name: &str) -> Re
             "checksum mismatch for {asset_name}: expected {expected}, got {actual}"
         ))
     }
+}
+
+fn install_verified_archive(
+    archive: &Path,
+    checksum_file: &Path,
+    asset_name: &str,
+    install_path: &Path,
+    tmp_dir: &Path,
+) -> Result<(), String> {
+    fs::create_dir_all(tmp_dir).map_err(|e| e.to_string())?;
+    verify_checksum(archive, checksum_file, asset_name)?;
+    let binary_path = unpack_archive(archive, tmp_dir)?;
+    replace_binary(&binary_path, install_path)
 }
 
 fn expected_checksum(checksum_file: &Path, asset_name: &str) -> Result<String, String> {
@@ -386,6 +403,61 @@ mod tests {
         assert_eq!(
             expected,
             "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn installs_verified_tarball_over_existing_binary() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = env::temp_dir().join(format!("osmogrep-install-test-{}", uuid::Uuid::new_v4()));
+        let package_dir = dir.join("package");
+        let extract_dir = dir.join("extract");
+        fs::create_dir_all(&package_dir).unwrap();
+        let packaged_binary = package_dir.join("osmogrep");
+        fs::write(&packaged_binary, b"new binary").unwrap();
+        fs::set_permissions(&packaged_binary, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let archive = dir.join("osmogrep-test.tar.gz");
+        let output = Command::new("tar")
+            .arg("-czf")
+            .arg(&archive)
+            .arg("-C")
+            .arg(&package_dir)
+            .arg("osmogrep")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let checksum = dir.join("osmogrep-test.tar.gz.sha256");
+        fs::write(
+            &checksum,
+            format!("{}  osmogrep-test.tar.gz\n", sha256_file(&archive).unwrap()),
+        )
+        .unwrap();
+        let install_path = dir.join("installed-osmogrep");
+        fs::write(&install_path, b"old binary").unwrap();
+
+        install_verified_archive(
+            &archive,
+            &checksum,
+            "osmogrep-test.tar.gz",
+            &install_path,
+            &extract_dir,
+        )
+        .unwrap();
+
+        assert_eq!(fs::read(&install_path).unwrap(), b"new binary");
+        assert_eq!(
+            fs::metadata(&install_path).unwrap().permissions().mode() & 0o111,
+            0o111
         );
         let _ = fs::remove_dir_all(dir);
     }
