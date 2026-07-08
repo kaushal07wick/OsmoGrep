@@ -6,6 +6,7 @@ mod hooks;
 mod logger;
 mod mcp;
 mod persistence;
+mod process_runner;
 mod shell_guard;
 mod state;
 mod test_harness;
@@ -133,7 +134,8 @@ fn run_shell(state: &mut AgentState, cmd: &str) {
         return;
     }
 
-    match std::process::Command::new("sh").arg("-c").arg(cmd).output() {
+    let timeout = crate::process_runner::timeout_from_env("OSMOGREP_SHELL_TIMEOUT_SECS", 120);
+    match crate::process_runner::run_shell_command(cmd, Some(&state.repo_root), timeout) {
         Ok(out) => {
             let mut combined = String::new();
             for line in String::from_utf8_lossy(&out.stdout).lines() {
@@ -146,12 +148,9 @@ fn run_shell(state: &mut AgentState, cmd: &str) {
                 combined.push('\n');
                 log(state, LogLevel::Error, line);
             }
-            if let Some(ev) = crate::verification::record_command(
-                &state.repo_root,
-                cmd,
-                out.status.code().unwrap_or(-1),
-                &combined,
-            ) {
+            if let Some(ev) =
+                crate::verification::record_command(&state.repo_root, cmd, out.exit_code, &combined)
+            {
                 log(
                     state,
                     if ev.status == "passed" {
@@ -163,6 +162,13 @@ fn run_shell(state: &mut AgentState, cmd: &str) {
                         "Verification evidence [{}:{}:{}] {}",
                         ev.kind, ev.scope, ev.status, ev.canonical_command
                     ),
+                );
+            }
+            if out.timed_out {
+                log(
+                    state,
+                    LogLevel::Error,
+                    format!("Shell command timed out after {}ms", out.duration_ms),
                 );
             }
         }

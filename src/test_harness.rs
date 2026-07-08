@@ -1,7 +1,5 @@
 use std::fs;
 use std::path::Path;
-use std::process::Command;
-use std::time::Instant;
 
 use regex::Regex;
 use serde::Serialize;
@@ -20,20 +18,16 @@ pub struct TestRun {
     pub passed: usize,
     pub failed: usize,
     pub output: String,
+    pub timed_out: bool,
     pub verification: Option<VerificationEvidence>,
 }
 
 pub fn run_tests(repo_root: &Path, target: Option<&str>) -> Result<TestRun, String> {
     let (framework, command) = detect_framework_and_command(repo_root, target)?;
 
-    let started = Instant::now();
-    let out = Command::new("sh")
-        .arg("-lc")
-        .arg(&command)
-        .current_dir(repo_root)
-        .output()
-        .map_err(|e| e.to_string())?;
-    let duration_ms = started.elapsed().as_millis();
+    let timeout = crate::process_runner::timeout_from_env("OSMOGREP_TEST_TIMEOUT_SECS", 300);
+    let out = crate::process_runner::run_shell_command(&command, Some(repo_root), timeout)?;
+    let duration_ms = out.duration_ms;
 
     let mut text = String::new();
     text.push_str(&String::from_utf8_lossy(&out.stdout));
@@ -45,7 +39,7 @@ pub fn run_tests(repo_root: &Path, target: Option<&str>) -> Result<TestRun, Stri
     }
 
     let output = truncate_output(&text);
-    let exit_code = out.status.code().unwrap_or(-1);
+    let exit_code = out.exit_code;
     let (passed, failed) = parse_counts(&framework, &text);
     let verification = crate::verification::record_command(repo_root, &command, exit_code, &text);
 
@@ -54,10 +48,11 @@ pub fn run_tests(repo_root: &Path, target: Option<&str>) -> Result<TestRun, Stri
         command,
         exit_code,
         duration_ms,
-        success: out.status.success(),
+        success: exit_code == 0 && !out.timed_out,
         passed,
         failed,
         output,
+        timed_out: out.timed_out,
         verification,
     })
 }

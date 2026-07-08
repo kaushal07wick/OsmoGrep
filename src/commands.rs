@@ -353,8 +353,13 @@ fn run_test(state: &mut AgentState, cmd: &str) {
                     LogLevel::Error
                 },
                 format!(
-                    "Test run [{}] exit={} passed={} failed={} duration={}ms",
-                    run.framework, run.exit_code, run.passed, run.failed, run.duration_ms
+                    "Test run [{}] exit={} passed={} failed={} duration={}ms timed_out={}",
+                    run.framework,
+                    run.exit_code,
+                    run.passed,
+                    run.failed,
+                    run.duration_ms,
+                    run.timed_out
                 ),
             );
             for line in run

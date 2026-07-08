@@ -986,6 +986,10 @@ fn tool_result_summary(tool: &str, result: &Value) -> String {
             .map(|m| format!("edit ({m})"))
             .unwrap_or_else(|| "edit ok".to_string()),
         "run_tests" => {
+            let timed_out = result
+                .get("timed_out")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
             let success = result
                 .get("success")
                 .and_then(Value::as_bool)
@@ -1000,7 +1004,13 @@ fn tool_result_summary(tool: &str, result: &Value) -> String {
                 .unwrap_or_default();
             format!(
                 "{} passed={passed} failed={failed}",
-                if success { "passed" } else { "failed" }
+                if timed_out {
+                    "timed out"
+                } else if success {
+                    "passed"
+                } else {
+                    "failed"
+                }
             )
         }
         _ => "ok".to_string(),

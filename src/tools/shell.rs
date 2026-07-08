@@ -2,7 +2,6 @@
 
 use super::{Tool, ToolResult, ToolSafety};
 use serde_json::{json, Value};
-use std::process::Command;
 pub struct Shell;
 
 impl Tool for Shell {
@@ -48,14 +47,11 @@ impl Tool for Shell {
             .ok()
             .flatten();
 
-        let out = Command::new("sh")
-            .arg("-c")
-            .arg(cmd)
-            .output()
-            .map_err(|e| e.to_string())?;
+        let timeout = crate::process_runner::timeout_from_env("OSMOGREP_SHELL_TIMEOUT_SECS", 120);
+        let out = crate::process_runner::run_shell_command(cmd, None, timeout)?;
         let stdout_raw = String::from_utf8_lossy(&out.stdout).to_string();
         let stderr_raw = String::from_utf8_lossy(&out.stderr).to_string();
-        let exit_code = out.status.code().unwrap_or(-1);
+        let exit_code = out.exit_code;
         let mut combined = stdout_raw.clone();
         if !stderr_raw.is_empty() {
             if !combined.ends_with('\n') {
@@ -71,6 +67,8 @@ impl Tool for Shell {
             "stdout": stdout.text,
             "stderr": stderr.text,
             "exit_code": exit_code,
+            "duration_ms": out.duration_ms,
+            "timed_out": out.timed_out,
             "hook": pre_hook,
             "verification": crate::verification::to_json(&verification),
             "output_budget": {
