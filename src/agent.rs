@@ -760,10 +760,15 @@ impl RunAgent {
                         }
 
                         let started = Instant::now();
+                        let cancel = self.cancel.clone();
                         let mut result = self
                             .tools
-                            .call(&name, args.clone())
+                            .call_cancellable(&name, args.clone(), &|| cancel.is_cancelled())
                             .unwrap_or_else(|e| json!({ "error": e }));
+                        if self.cancel.is_cancelled() {
+                            ledger.error("cancelled", iteration);
+                            return Err("cancelled".into());
+                        }
                         let loop_warning = tool_guard.after_call(&name, &args, &result);
                         if let Some(warning) = loop_warning.as_ref() {
                             if let Some(map) = result.as_object_mut() {

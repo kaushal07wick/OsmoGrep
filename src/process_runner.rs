@@ -13,6 +13,7 @@ pub struct ProcessRun {
     pub exit_code: i32,
     pub duration_ms: u128,
     pub timed_out: bool,
+    pub cancelled: bool,
 }
 
 pub fn run_shell_command(
@@ -66,13 +67,15 @@ pub fn run_command(mut command: Command, timeout: Duration) -> Result<ProcessRun
         exit_code: out.status.code().unwrap_or(-1),
         duration_ms: started.elapsed().as_millis(),
         timed_out,
+        cancelled: false,
     })
 }
 
-pub fn run_command_with_stdin(
+pub fn run_command_with_stdin_cancellable(
     mut command: Command,
     stdin: &[u8],
     timeout: Duration,
+    is_cancelled: impl Fn() -> bool,
 ) -> Result<ProcessRun, String> {
     let started = Instant::now();
     command
@@ -82,6 +85,7 @@ pub fn run_command_with_stdin(
 
     let mut child = command.spawn().map_err(|e| e.to_string())?;
     let mut timed_out = false;
+    let mut cancelled = false;
     let input = stdin.to_vec();
     let writer = child.stdin.take().map(|mut child_stdin| {
         thread::spawn(move || child_stdin.write_all(&input).map_err(|e| e.to_string()))
@@ -90,6 +94,11 @@ pub fn run_command_with_stdin(
     loop {
         match child.try_wait() {
             Ok(Some(_)) => break,
+            Ok(None) if is_cancelled() => {
+                cancelled = true;
+                let _ = child.kill();
+                break;
+            }
             Ok(None) if started.elapsed() >= timeout => {
                 timed_out = true;
                 let _ = child.kill();
@@ -117,6 +126,9 @@ pub fn run_command_with_stdin(
             &format!("[osmogrep] command timed out after {}s", timeout.as_secs()),
         );
     }
+    if cancelled {
+        append_stderr_line(&mut out.stderr, "[osmogrep] command cancelled");
+    }
 
     Ok(ProcessRun {
         stdout: out.stdout,
@@ -124,6 +136,7 @@ pub fn run_command_with_stdin(
         exit_code: out.status.code().unwrap_or(-1),
         duration_ms: started.elapsed().as_millis(),
         timed_out,
+        cancelled,
     })
 }
 
@@ -171,7 +184,9 @@ mod tests {
     #[test]
     fn runs_command_with_stdin_successfully() {
         let command = Command::new("cat");
-        let run = run_command_with_stdin(command, b"ok", Duration::from_secs(5)).unwrap();
+        let run =
+            run_command_with_stdin_cancellable(command, b"ok", Duration::from_secs(5), || false)
+                .unwrap();
 
         assert_eq!(run.exit_code, 0);
         assert_eq!(String::from_utf8_lossy(&run.stdout), "ok");
@@ -191,10 +206,27 @@ mod tests {
     fn times_out_command_with_stdin() {
         let mut command = Command::new("sh");
         command.arg("-c").arg("sleep 2");
-        let run = run_command_with_stdin(command, b"ok", Duration::from_millis(100)).unwrap();
+        let run =
+            run_command_with_stdin_cancellable(command, b"ok", Duration::from_millis(100), || {
+                false
+            })
+            .unwrap();
 
         assert!(run.timed_out);
         assert_ne!(run.exit_code, 0);
         assert!(String::from_utf8_lossy(&run.stderr).contains("timed out"));
+    }
+
+    #[test]
+    fn cancels_command_with_stdin() {
+        let mut command = Command::new("sh");
+        command.arg("-c").arg("sleep 2");
+        let run =
+            run_command_with_stdin_cancellable(command, b"ok", Duration::from_secs(5), || true)
+                .unwrap();
+
+        assert!(run.cancelled);
+        assert_ne!(run.exit_code, 0);
+        assert!(String::from_utf8_lossy(&run.stderr).contains("cancelled"));
     }
 }

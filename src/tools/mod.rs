@@ -64,6 +64,9 @@ pub trait Tool: Send + Sync {
     fn schema(&self) -> Value;
     fn safety(&self) -> ToolSafety;
     fn call(&self, args: Value) -> ToolResult;
+    fn call_cancellable(&self, args: Value, _is_cancelled: &dyn Fn() -> bool) -> ToolResult {
+        self.call(args)
+    }
 }
 
 pub struct ToolRegistry {
@@ -237,13 +240,18 @@ impl ToolRegistry {
         Self { tools, repo_root }
     }
 
-    pub fn call(&self, name: &str, args: Value) -> ToolResult {
+    pub fn call_cancellable(
+        &self,
+        name: &str,
+        args: Value,
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> ToolResult {
         let tool = self
             .tools
             .get(name)
             .ok_or_else(|| format!("unknown tool: {}", name))?;
 
-        self.call_in_repo_root(tool.as_ref(), args)
+        self.call_in_repo_root(tool.as_ref(), args, is_cancelled)
     }
 
     pub fn parallel_safe(&self, name: &str) -> bool {
@@ -274,7 +282,12 @@ impl ToolRegistry {
             .collect()
     }
 
-    fn call_in_repo_root(&self, tool: &dyn Tool, args: Value) -> ToolResult {
+    fn call_in_repo_root(
+        &self,
+        tool: &dyn Tool,
+        args: Value,
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> ToolResult {
         static TOOL_CWD_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
         let _guard = TOOL_CWD_LOCK
@@ -290,7 +303,7 @@ impl ToolRegistry {
             )
         })?;
 
-        let result = tool.call(args);
+        let result = tool.call_cancellable(args, is_cancelled);
         let restore = std::env::set_current_dir(&previous).map_err(|e| {
             format!(
                 "failed to restore working directory {}: {}",
@@ -384,7 +397,9 @@ mod tests {
 
         let registry = ToolRegistry::with_root(root.clone());
         let result = registry
-            .call("read_file", json!({ "path": "only-in-root.txt" }))
+            .call_cancellable("read_file", json!({ "path": "only-in-root.txt" }), &|| {
+                false
+            })
             .unwrap();
 
         assert_eq!(
@@ -465,9 +480,10 @@ mod tests {
 
         let registry = ToolRegistry::with_root(root.clone());
         let set = registry
-            .call(
+            .call_cancellable(
                 "update_plan",
                 json!({ "action": "set", "items": ["inspect", "fix"] }),
+                &|| false,
             )
             .unwrap();
         assert_eq!(
@@ -477,7 +493,9 @@ mod tests {
         assert!(root.join(".context").join("osmogrep-plan.json").is_file());
 
         let done = registry
-            .call("update_plan", json!({ "action": "done", "id": 1 }))
+            .call_cancellable("update_plan", json!({ "action": "done", "id": 1 }), &|| {
+                false
+            })
             .unwrap();
         assert_eq!(
             done.pointer("/items/0/status").and_then(Value::as_str),
@@ -498,13 +516,14 @@ mod tests {
 
         let registry = ToolRegistry::with_root(root.clone());
         let start = registry
-            .call(
+            .call_cancellable(
                 "dynamic_workflow",
                 json!({
                     "task": "refactor parser",
                     "kind": "coding",
                     "workflow_id": "parser/work",
                 }),
+                &|| false,
             )
             .unwrap();
         let id = start
@@ -524,7 +543,7 @@ mod tests {
             .is_file());
 
         let checkpoint = registry
-            .call(
+            .call_cancellable(
                 "dynamic_workflow",
                 json!({
                     "action": "checkpoint",
@@ -532,6 +551,7 @@ mod tests {
                     "completed_steps": ["orient"],
                     "notes": ["read local instructions"],
                 }),
+                &|| false,
             )
             .unwrap();
 
@@ -549,9 +569,10 @@ mod tests {
         );
 
         let resume = registry
-            .call(
+            .call_cancellable(
                 "dynamic_workflow",
                 json!({ "action": "resume", "workflow_id": id }),
+                &|| false,
             )
             .unwrap();
 
