@@ -198,7 +198,7 @@ fn warn_if_verification_needed(state: &mut AgentState) {
         state,
         level,
         format!(
-            "Verification status is {}. Run /verify or /test before claiming the work is complete.",
+            "Verification status is {}. Fresh passing evidence is required before claiming the work is complete.",
             status.status
         ),
     );

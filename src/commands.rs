@@ -134,12 +134,6 @@ fn help(state: &mut AgentState) {
     log(state, Info, "  /voice off   Stop voice input");
     log(state, Info, "  /model       Show active provider/model");
     log(state, Info, "  /model <provider> <model> [base_url]");
-    log(state, Info, "  /test        Run auto-detected tests");
-    log(
-        state,
-        Info,
-        "  /test <arg>  Run targeted tests (framework-specific)",
-    );
     log(
         state,
         Info,
@@ -187,23 +181,7 @@ fn help(state: &mut AgentState) {
         "  /steer now <txt> Interrupt current run and relaunch with steer",
     );
     log(state, Info, "  /steer clear Remove steer instruction");
-    log(state, Info, "  /swarm <txt> Run parallel scoped sub-agents");
     log(state, Info, "  /jobs        Show background jobs");
-    log(state, Info, "  /autofix     Show auto-eval mode");
-    log(state, Info, "  /autofix on|off  Toggle auto post-run tests");
-    log(
-        state,
-        Info,
-        "  /triage [args]  One-command PR/Issue triage workflow in TUI",
-    );
-    log(state, Info, "  /gh          Show GitHub CLI/repo status");
-    log(state, Info, "  /gh prs [state] [limit]      List PRs");
-    log(state, Info, "  /gh issues [state] [limit]   List issues");
-    log(
-        state,
-        Info,
-        "  /gh triage [triage flags]    Run high-volume triage (3000 + deep review + brief)",
-    );
     log(
         state,
         Info,
@@ -215,18 +193,15 @@ fn help(state: &mut AgentState) {
         "  /nv toggle   Toggle nvim pane in current tmux window",
     );
     log(state, Info, "  /nv help     Show nvim/tmux exit shortcuts");
-    log(state, Info, "  /job test [target]   Queue test job");
-    log(state, Info, "  /job swarm <txt>     Queue swarm job");
-    log(state, Info, "  /job resume <id>     Requeue prior job");
-    log(state, Info, "  /job cancel all      Cancel queued jobs");
-    log(state, Info, "  /plan        Show plan list");
-    log(state, Info, "  /plan add <txt>      Add plan item");
-    log(state, Info, "  /plan done <id>      Mark plan item done");
-    log(state, Info, "  /plan clear          Clear plan items");
     log(state, Info, "  /quit | /q   Stop agent execution");
     log(state, Info, "  /exit        Exit Osmogrep");
     log(state, Info, "");
     log(state, Info, "Anything else is sent to the agent.");
+    log(
+        state,
+        Info,
+        "Testing, planning, review, triage, and subagents are model/harness workflows.",
+    );
     log(state, Info, "!<cmd> runs a shell command directly.");
 }
 
@@ -2372,10 +2347,6 @@ pub fn update_command_hints(state: &mut AgentState) {
             desc: "Show active provider/model",
         },
         CommandItem {
-            cmd: "/test",
-            desc: "Run auto-detected tests",
-        },
-        CommandItem {
             cmd: "/mcp",
             desc: "Show MCP status and servers",
         },
@@ -2416,36 +2387,12 @@ pub fn update_command_hints(state: &mut AgentState) {
             desc: "Set or show persistent steer instruction",
         },
         CommandItem {
-            cmd: "/swarm",
-            desc: "Run parallel scoped sub-agents",
-        },
-        CommandItem {
             cmd: "/jobs",
             desc: "Show background jobs",
         },
         CommandItem {
-            cmd: "/autofix",
-            desc: "Toggle auto post-run eval tests",
-        },
-        CommandItem {
-            cmd: "/triage",
-            desc: "Run autonomous GitHub PR/Issue triage workflow",
-        },
-        CommandItem {
-            cmd: "/gh",
-            desc: "GitHub repo status + PR/issue triage commands",
-        },
-        CommandItem {
             cmd: "/nv",
             desc: "Open Neovim split (auto tmux bootstrap)",
-        },
-        CommandItem {
-            cmd: "/job",
-            desc: "Queue background job",
-        },
-        CommandItem {
-            cmd: "/plan",
-            desc: "Show/update plan items",
         },
         CommandItem {
             cmd: "/quit",
