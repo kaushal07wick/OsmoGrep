@@ -79,6 +79,8 @@ pub struct CommandItem {
 pub struct UiState {
     // input
     pub input: String,
+    pub input_clipboard: String,
+    pub input_all_selected: bool,
     pub input_mode: InputMode,
     pub input_masked: bool,
     pub input_placeholder: Option<String>,
@@ -120,6 +122,57 @@ pub struct UiState {
     pub tmux_attach_session: Option<String>,
     pub active_edit_target: Option<String>,
     pub queued_agent_prompt: Option<String>,
+}
+
+impl Default for UiState {
+    fn default() -> Self {
+        Self {
+            input: String::new(),
+            input_clipboard: String::new(),
+            input_all_selected: false,
+            input_mode: InputMode::AgentText,
+            input_masked: false,
+            input_placeholder: None,
+            execution_pending: false,
+            should_exit: false,
+            indexing: false,
+            indexed: false,
+            history: Vec::new(),
+            history_index: None,
+            hint: None,
+            autocomplete: None,
+            diff_active: false,
+            diff_snapshot: Vec::new(),
+            command_items: Vec::new(),
+            command_selected: 0,
+            last_activity: Instant::now(),
+            exec_scroll: usize::MAX,
+            follow_tail: true,
+            active_spinner: None,
+            spinner_started_at: None,
+            agent_running: false,
+            run_phase: "idle".to_string(),
+            run_detail: None,
+            run_iteration: 0,
+            run_iteration_limit: 0,
+            current_tool: None,
+            current_tool_detail: None,
+            last_tool_status: None,
+            cancel_requested: false,
+            auto_approve: false,
+            pending_permission: None,
+            pending_update: None,
+            update_check_status: None,
+            update_install_requested: false,
+            update_skip_requested: false,
+            streaming_buffer: String::new(),
+            streaming_active: false,
+            streaming_lines_logged: 0,
+            tmux_attach_session: None,
+            active_edit_target: None,
+            queued_agent_prompt: None,
+        }
+    }
 }
 
 pub struct AgentState {
@@ -331,12 +384,73 @@ pub struct PlanItem {
 
 impl AgentState {
     pub fn push_char(&mut self, c: char) {
+        if self.ui.input_all_selected {
+            self.ui.input.clear();
+            self.ui.input_all_selected = false;
+        }
         self.ui.input.push(c);
         self.ui.history_index = None;
     }
 
     pub fn backspace(&mut self) {
+        if self.ui.input_all_selected {
+            self.ui.input.clear();
+            self.ui.input_all_selected = false;
+            self.ui.history_index = None;
+            return;
+        }
         self.ui.input.pop();
+    }
+
+    pub fn select_all_input(&mut self) -> bool {
+        if self.ui.input.is_empty() {
+            return false;
+        }
+
+        self.ui.input_all_selected = true;
+        true
+    }
+
+    pub fn copy_input(&mut self) -> bool {
+        if self.ui.input.is_empty() {
+            return false;
+        }
+
+        self.ui.input_clipboard = self.ui.input.clone();
+        true
+    }
+
+    pub fn cut_input(&mut self) -> bool {
+        if !self.copy_input() {
+            return false;
+        }
+
+        self.clear_input();
+        true
+    }
+
+    pub fn paste_input(&mut self) -> bool {
+        if self.ui.input_clipboard.is_empty() {
+            return false;
+        }
+
+        if self.ui.input_all_selected {
+            self.ui.input.clear();
+        }
+
+        let clipboard = self.ui.input_clipboard.clone();
+        self.ui.input.push_str(&clipboard);
+        self.ui.input_all_selected = false;
+        self.ui.history_index = None;
+        true
+    }
+
+    pub fn clear_input(&mut self) -> bool {
+        let changed = !self.ui.input.is_empty() || self.ui.input_all_selected;
+        self.ui.input.clear();
+        self.ui.input_all_selected = false;
+        self.ui.history_index = None;
+        changed
     }
 
     pub fn history_prev(&mut self) {
@@ -352,6 +466,7 @@ impl AgentState {
 
         self.ui.history_index = Some(idx);
         self.ui.input = self.ui.history[idx].clone();
+        self.ui.input_all_selected = false;
     }
 
     pub fn history_next(&mut self) {
@@ -359,10 +474,12 @@ impl AgentState {
             Some(i) if i + 1 < self.ui.history.len() => {
                 self.ui.history_index = Some(i + 1);
                 self.ui.input = self.ui.history[i + 1].clone();
+                self.ui.input_all_selected = false;
             }
             _ => {
                 self.ui.history_index = None;
                 self.ui.input.clear();
+                self.ui.input_all_selected = false;
             }
         }
     }
@@ -376,6 +493,7 @@ impl AgentState {
         }
 
         self.ui.input.clear();
+        self.ui.input_all_selected = false;
         self.ui.history_index = None;
         self.ui.hint = None;
         self.ui.autocomplete = None;
@@ -409,6 +527,24 @@ pub struct VoiceState {
     pub last_inserted: Option<String>,
     pub url: String,
     pub model: String,
+}
+
+impl Default for VoiceState {
+    fn default() -> Self {
+        Self {
+            visible: false,
+            enabled: false,
+            connected: false,
+            status: None,
+            partial: None,
+            last_final: None,
+            buffer: String::new(),
+            last_activity: None,
+            last_inserted: None,
+            url: String::new(),
+            model: String::new(),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -596,6 +732,73 @@ fn summarize_message(msg: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    fn agent_state_with_input(input: &str) -> AgentState {
+        AgentState {
+            ui: UiState {
+                input: input.to_string(),
+                ..UiState::default()
+            },
+            logs: LogBuffer::new(),
+            session_changes: Vec::new(),
+            reviewed_change_count: 0,
+            undo_stack: Vec::new(),
+            usage: UsageStats::default(),
+            steer: None,
+            auto_eval: false,
+            permission_profile: PermissionProfile::WorkspaceAuto,
+            jobs: Vec::new(),
+            job_queue: Vec::new(),
+            next_job_id: 1,
+            plan_items: Vec::new(),
+            session_name: None,
+            theme: UiTheme::default(),
+            accent: UiAccent::default(),
+            density: UiDensity::default(),
+            plan_mode: false,
+            started_at: Instant::now(),
+            repo_root: PathBuf::from("."),
+            voice: VoiceState::default(),
+            conversation: ConversationHistory::new(),
+        }
+    }
+
+    #[test]
+    fn select_all_replaces_input_on_next_character() {
+        let mut state = agent_state_with_input("large pasted prompt");
+
+        assert!(state.select_all_input());
+        assert!(state.ui.input_all_selected);
+
+        state.push_char('x');
+
+        assert_eq!(state.ui.input, "x");
+        assert!(!state.ui.input_all_selected);
+    }
+
+    #[test]
+    fn backspace_after_select_all_clears_entire_input() {
+        let mut state = agent_state_with_input("first line\nsecond line");
+
+        assert!(state.select_all_input());
+        state.backspace();
+
+        assert!(state.ui.input.is_empty());
+        assert!(!state.ui.input_all_selected);
+    }
+
+    #[test]
+    fn cut_and_paste_round_trips_internal_clipboard() {
+        let mut state = agent_state_with_input("keep this");
+
+        assert!(state.cut_input());
+        assert_eq!(state.ui.input_clipboard, "keep this");
+        assert!(state.ui.input.is_empty());
+
+        assert!(state.paste_input());
+        assert_eq!(state.ui.input, "keep this");
+    }
 
     #[test]
     fn parses_user_theme_controls() {

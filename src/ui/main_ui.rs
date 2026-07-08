@@ -92,6 +92,11 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
 
     let palette_active = !state.ui.command_items.is_empty();
 
+    if let Some(action) = input_control_action(&k) {
+        apply_input_control_action(state, action);
+        return;
+    }
+
     match k.code {
         /* ---------- Palette navigation ---------- */
         KeyCode::Up if palette_active => {
@@ -106,6 +111,7 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
         KeyCode::Enter if palette_active => {
             if let Some(item) = state.ui.command_items.get(state.ui.command_selected) {
                 state.ui.input = item.cmd.to_string();
+                state.ui.input_all_selected = false;
                 state.ui.input_mode = InputMode::Command; // ← CRITICAL
                 state.ui.command_items.clear();
                 state.ui.command_selected = 0;
@@ -124,6 +130,10 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
         }
 
         KeyCode::Backspace => {
+            state.backspace();
+        }
+
+        KeyCode::Delete => {
             state.backspace();
         }
 
@@ -176,6 +186,7 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
                 if !raw.is_empty() {
                     state.ui.queued_agent_prompt = Some(raw.to_string());
                     state.ui.input.clear();
+                    state.ui.input_all_selected = false;
                     crate::logger::log_status(state, "Queued follow-up prompt (tab).");
                     return;
                 }
@@ -187,6 +198,7 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
                 } else {
                     state.ui.input = ac.clone();
                 }
+                state.ui.input_all_selected = false;
             }
         }
 
@@ -242,6 +254,67 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InputControlAction {
+    SelectAll,
+    CopyAll,
+    CutAll,
+    Paste,
+    ClearAll,
+}
+
+fn input_control_action(k: &KeyEvent) -> Option<InputControlAction> {
+    if !k.modifiers.contains(KeyModifiers::CONTROL) {
+        return None;
+    }
+
+    let KeyCode::Char(c) = k.code else {
+        return None;
+    };
+
+    match c.to_ascii_lowercase() {
+        'a' => Some(InputControlAction::SelectAll),
+        'c' => Some(InputControlAction::CopyAll),
+        'x' => Some(InputControlAction::CutAll),
+        'v' => Some(InputControlAction::Paste),
+        'u' => Some(InputControlAction::ClearAll),
+        _ => None,
+    }
+}
+
+fn apply_input_control_action(state: &mut AgentState, action: InputControlAction) {
+    match action {
+        InputControlAction::SelectAll => {
+            if state.select_all_input() {
+                crate::logger::log_status(state, "Selected input.");
+            }
+        }
+        InputControlAction::CopyAll => {
+            if state.copy_input() {
+                crate::logger::log_status(state, "Copied input.");
+            } else if state.ui.agent_running {
+                state.ui.cancel_requested = true;
+                crate::logger::log_status(state, "Cancel requested.");
+            }
+        }
+        InputControlAction::CutAll => {
+            if state.cut_input() {
+                crate::logger::log_status(state, "Cut input.");
+            }
+        }
+        InputControlAction::Paste => {
+            if state.paste_input() {
+                crate::logger::log_status(state, "Pasted input.");
+            }
+        }
+        InputControlAction::ClearAll => {
+            if state.clear_input() {
+                crate::logger::log_status(state, "Cleared input.");
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum UpdatePromptAction {
     Install,
     Skip,
@@ -258,11 +331,47 @@ fn update_prompt_action(k: &KeyEvent) -> UpdatePromptAction {
 
 #[cfg(test)]
 mod tests {
-    use super::{update_prompt_action, UpdatePromptAction};
+    use super::{
+        input_control_action, update_prompt_action, InputControlAction, UpdatePromptAction,
+    };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn ctrl(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    #[test]
+    fn input_control_maps_common_line_editing_shortcuts() {
+        assert_eq!(
+            input_control_action(&ctrl('a')),
+            Some(InputControlAction::SelectAll)
+        );
+        assert_eq!(
+            input_control_action(&ctrl('c')),
+            Some(InputControlAction::CopyAll)
+        );
+        assert_eq!(
+            input_control_action(&ctrl('x')),
+            Some(InputControlAction::CutAll)
+        );
+        assert_eq!(
+            input_control_action(&ctrl('v')),
+            Some(InputControlAction::Paste)
+        );
+        assert_eq!(
+            input_control_action(&ctrl('u')),
+            Some(InputControlAction::ClearAll)
+        );
+    }
+
+    #[test]
+    fn input_control_ignores_plain_text_keys() {
+        assert_eq!(input_control_action(&key(KeyCode::Char('a'))), None);
+        assert_eq!(input_control_action(&key(KeyCode::Enter)), None);
     }
 
     #[test]

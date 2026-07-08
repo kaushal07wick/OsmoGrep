@@ -770,6 +770,7 @@ fn render_input_box(f: &mut Frame, area: Rect, state: &AgentState) {
     } else {
         state.ui.input.clone()
     };
+    let selected = state.ui.input_all_selected && !raw.is_empty();
 
     // Split into visual lines (handle wrapping)
     let visual = wrap_visual_lines(&raw, text_width);
@@ -790,12 +791,10 @@ fn render_input_box(f: &mut Frame, area: Rect, state: &AgentState) {
         if i == 0 {
             // First line with prompt
             let mut spans = vec![Span::styled(PROMPT, Style::default().fg(p.input_fg))];
-            spans.extend(render_image_alias_spans(
-                line,
-                &mut image_idx,
-                p.accent,
-                p.input_fg,
-            ));
+            let mut input_spans =
+                render_image_alias_spans(line, &mut image_idx, p.accent, p.input_fg);
+            style_selected_input(&mut input_spans, selected, p);
+            spans.extend(input_spans);
 
             // Add badge on first line if there are hidden lines
             if hidden_lines > 0 {
@@ -809,12 +808,9 @@ fn render_input_box(f: &mut Frame, area: Rect, state: &AgentState) {
             out.push(Line::from(spans));
         } else {
             // Continuation lines (no prompt)
-            out.push(Line::from(render_image_alias_spans(
-                line,
-                &mut image_idx,
-                p.accent,
-                p.input_fg,
-            )));
+            let mut spans = render_image_alias_spans(line, &mut image_idx, p.accent, p.input_fg);
+            style_selected_input(&mut spans, selected, p);
+            out.push(Line::from(spans));
         }
     }
 
@@ -829,6 +825,20 @@ fn render_input_box(f: &mut Frame, area: Rect, state: &AgentState) {
     let cursor_y = area.y + 1;
 
     f.set_cursor(cursor_x, cursor_y);
+}
+
+fn style_selected_input(spans: &mut [Span<'static>], selected: bool, p: UiPalette) {
+    if !selected {
+        return;
+    }
+
+    for span in spans {
+        span.style = span
+            .style
+            .fg(Color::Black)
+            .bg(p.accent)
+            .add_modifier(Modifier::BOLD);
+    }
 }
 
 fn wrap_visual_lines(raw: &str, width: usize) -> Vec<String> {
