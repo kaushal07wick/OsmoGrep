@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -107,6 +108,59 @@ pub fn save(state: &AgentState) -> Result<(), String> {
     fs::write(path, text).map_err(|e| e.to_string())
 }
 
+pub struct SessionSummary {
+    pub id: String,
+    pub name: Option<String>,
+    pub modified: Option<SystemTime>,
+    pub prompt_tokens: usize,
+    pub completion_tokens: usize,
+    pub plan_items: usize,
+    pub jobs: usize,
+}
+
+pub fn list_sessions() -> Result<Vec<SessionSummary>, String> {
+    list_sessions_in(&session_dir())
+}
+
+fn list_sessions_in(dir: &Path) -> Result<Vec<SessionSummary>, String> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Ok(Vec::new());
+    };
+
+    let mut sessions = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(raw) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(saved) = serde_json::from_str::<PersistedState>(&raw) else {
+            continue;
+        };
+        let modified = entry.metadata().ok().and_then(|meta| meta.modified().ok());
+        let id = path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        sessions.push(SessionSummary {
+            id,
+            name: saved.session_name,
+            modified,
+            prompt_tokens: saved.prompt_tokens,
+            completion_tokens: saved.completion_tokens,
+            plan_items: saved.plan_items.len(),
+            jobs: saved.jobs.len(),
+        });
+    }
+
+    sessions.sort_by(|a, b| b.modified.cmp(&a.modified));
+    Ok(sessions)
+}
+
 fn default_permission_profile() -> PermissionProfile {
     PermissionProfile::WorkspaceAuto
 }
@@ -120,9 +174,55 @@ fn state_file(repo_root: &Path) -> PathBuf {
     hasher.update(repo_root.to_string_lossy().as_bytes());
     let hash = format!("{:x}", hasher.finalize());
 
-    let mut base = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
-    base.push("osmogrep");
-    base.push("sessions");
-    base.push(format!("{}.json", hash));
-    base
+    session_dir().join(format!("{}.json", hash))
+}
+
+pub fn config_dir() -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("osmogrep")
+}
+
+pub fn session_dir() -> PathBuf {
+    config_dir().join("sessions")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::list_sessions_in;
+    use std::fs;
+    use uuid::Uuid;
+
+    #[test]
+    fn lists_saved_session_summaries() {
+        let dir = std::env::temp_dir().join(format!("osmogrep-sessions-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("abc123.json"),
+            r#"{
+              "session_name": "parser work",
+              "prompt_tokens": 12,
+              "completion_tokens": 30,
+              "plan_items": [
+                { "text": "inspect", "done": true, "active": false }
+              ],
+              "jobs": []
+            }"#,
+        )
+        .unwrap();
+        fs::write(dir.join("ignore.txt"), "{}").unwrap();
+
+        let sessions = list_sessions_in(&dir).unwrap();
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].id, "abc123");
+        assert_eq!(sessions[0].name.as_deref(), Some("parser work"));
+        assert_eq!(
+            sessions[0].prompt_tokens + sessions[0].completion_tokens,
+            42
+        );
+        assert_eq!(sessions[0].plan_items, 1);
+
+        let _ = fs::remove_dir_all(dir);
+    }
 }

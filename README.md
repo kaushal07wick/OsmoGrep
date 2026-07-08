@@ -182,6 +182,20 @@ https://<ngrok-url>/mic.html
 Osmogrep supports a small, explicit set of **slash commands**.
 Anything else is sent directly to the agent.
 
+### CLI Commands
+
+| Command | Description |
+| ------- | ----------- |
+| `osmogrep` | Open the TUI in the current repository |
+| `osmogrep <session-name>` | Open the TUI and name/rename the current session |
+| `osmogrep --session <session-name>` | Same as positional session naming |
+| `osmogrep run --prompt "..."` | Run the coding agent headlessly |
+| `osmogrep sessions` | List saved local sessions |
+| `osmogrep doctor` | Print install/config/session diagnostics |
+| `osmogrep version` | Print the installed version |
+| `osmogrep uninstall` | Remove the current binary after confirmation |
+| `osmogrep uninstall --yes` | Remove the current binary without prompting |
+
 ### Slash Commands
 
 | Command  | Description                      |

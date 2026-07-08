@@ -25,7 +25,7 @@ use std::{
     error::Error,
     fs, io,
     io::Write,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Command,
     sync::mpsc,
     time::{Duration, Instant},
@@ -72,16 +72,43 @@ enum JobEvent {
     about = "A lightweight Rust-based TUI Agent, for debugging, code reviews, and runtime bug catching."
 )]
 struct Cli {
+    /// Open the TUI with this session name
+    #[arg(value_name = "SESSION_NAME", conflicts_with = "session")]
+    session_name: Option<String>,
+
+    /// Open the TUI with this session name
+    #[arg(short, long, value_name = "SESSION_NAME")]
+    session: Option<String>,
+
     #[command(subcommand)]
     command: Option<CliCommand>,
 }
 
 #[derive(Subcommand)]
 enum CliCommand {
+    /// Print version information
+    Version,
+    /// Print install, config, and session diagnostics
+    Doctor,
+    /// List saved local sessions
+    Sessions,
+    /// Remove the currently running osmogrep binary after confirmation
+    Uninstall(UninstallArgs),
     /// Run the coding agent headlessly and print events to stdout
     Run(RunArgs),
     /// Analyze GitHub PRs/issues for duplicates, ranking, and scope drift
     Triage(triage::TriageArgs),
+}
+
+#[derive(Args, Debug)]
+struct UninstallArgs {
+    /// Remove without asking for confirmation
+    #[arg(short, long, default_value_t = false)]
+    yes: bool,
+
+    /// Show what would be removed without deleting it
+    #[arg(long, default_value_t = false)]
+    dry_run: bool,
 }
 
 #[derive(Args, Debug)]
@@ -459,19 +486,155 @@ fn deny_update(state: &mut AgentState) {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
-    if let Some(CliCommand::Run(args)) = cli.command {
-        let code = run_headless(args)?;
-        if code != 0 {
-            std::process::exit(code);
+    let session_name = selected_session_name(&cli);
+    match cli.command {
+        Some(CliCommand::Version) => {
+            println!("osmogrep {}", env!("CARGO_PKG_VERSION"));
         }
-        return Ok(());
+        Some(CliCommand::Doctor) => {
+            print_doctor()?;
+        }
+        Some(CliCommand::Sessions) => {
+            print_sessions()?;
+        }
+        Some(CliCommand::Uninstall(args)) => {
+            uninstall_current_binary(args)?;
+        }
+        Some(CliCommand::Run(args)) => {
+            let code = run_headless(args)?;
+            if code != 0 {
+                std::process::exit(code);
+            }
+        }
+        Some(CliCommand::Triage(args)) => {
+            triage::run(args)?;
+        }
+        None => {
+            run_tui(session_name)?;
+        }
     }
-    if let Some(CliCommand::Triage(args)) = cli.command {
-        triage::run(args)?;
+    Ok(())
+}
+
+fn selected_session_name(cli: &Cli) -> Option<String> {
+    cli.session
+        .as_deref()
+        .or(cli.session_name.as_deref())
+        .and_then(normalize_session_name)
+}
+
+fn normalize_session_name(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.chars().take(80).collect())
+    }
+}
+
+fn print_doctor() -> Result<(), Box<dyn Error>> {
+    let current_exe = std::env::current_exe()?;
+    let config_dir = persistence::config_dir();
+    let session_dir = persistence::session_dir();
+    let sessions = persistence::list_sessions().unwrap_or_default();
+
+    println!("osmogrep {}", env!("CARGO_PKG_VERSION"));
+    println!("binary: {}", current_exe.display());
+    println!("config: {}", config_dir.display());
+    println!("sessions: {}", session_dir.display());
+    println!("saved_sessions: {}", sessions.len());
+    println!("repo: {}", std::env::current_dir()?.display());
+    println!(
+        "openai_api_key: {}",
+        if std::env::var("OPENAI_API_KEY").is_ok() {
+            "set"
+        } else {
+            "missing"
+        }
+    );
+    Ok(())
+}
+
+fn print_sessions() -> Result<(), Box<dyn Error>> {
+    let sessions = persistence::list_sessions()?;
+    if sessions.is_empty() {
+        println!(
+            "No saved sessions found in {}",
+            persistence::session_dir().display()
+        );
         return Ok(());
     }
 
-    run_tui()
+    println!(
+        "{:<22} {:<28} {:>10} {:>10}",
+        "updated", "session", "tokens", "items"
+    );
+    for session in sessions {
+        let updated = session
+            .modified
+            .map(format_system_time)
+            .unwrap_or_else(|| "-".to_string());
+        let name = session.name.unwrap_or_else(|| session.id);
+        let tokens = session.prompt_tokens + session.completion_tokens;
+        let items = session.plan_items + session.jobs;
+        println!(
+            "{:<22} {:<28} {:>10} {:>10}",
+            updated,
+            truncate_cli_field(&name, 28),
+            tokens,
+            items
+        );
+    }
+    Ok(())
+}
+
+fn format_system_time(value: std::time::SystemTime) -> String {
+    let dt: chrono::DateTime<chrono::Local> = value.into();
+    dt.format("%Y-%m-%d %H:%M").to_string()
+}
+
+fn truncate_cli_field(value: &str, max: usize) -> String {
+    if value.chars().count() <= max {
+        value.to_string()
+    } else {
+        let mut out: String = value.chars().take(max.saturating_sub(1)).collect();
+        out.push('…');
+        out
+    }
+}
+
+fn uninstall_current_binary(args: UninstallArgs) -> Result<(), Box<dyn Error>> {
+    let exe = std::env::current_exe()?;
+    let exe = fs::canonicalize(&exe).unwrap_or(exe);
+    if exe.file_stem().and_then(|name| name.to_str()) != Some("osmogrep") {
+        return Err(format!(
+            "refusing to uninstall unexpected executable {}",
+            exe.display()
+        )
+        .into());
+    }
+
+    if args.dry_run {
+        println!("Would remove {}", exe.display());
+        return Ok(());
+    }
+
+    if !args.yes && !confirm_uninstall(&exe)? {
+        println!("Uninstall cancelled.");
+        return Ok(());
+    }
+
+    fs::remove_file(&exe)?;
+    println!("Removed {}", exe.display());
+    Ok(())
+}
+
+fn confirm_uninstall(path: &Path) -> Result<bool, Box<dyn Error>> {
+    print!("Remove {}? [y/N] ", path.display());
+    io::stdout().flush()?;
+    let mut answer = String::new();
+    io::stdin().read_line(&mut answer)?;
+    Ok(matches!(answer.trim(), "y" | "Y" | "yes" | "YES"))
 }
 
 fn run_headless(args: RunArgs) -> Result<i32, Box<dyn Error>> {
@@ -904,7 +1067,7 @@ fn compact_json(value: &serde_json::Value) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string())
 }
 
-fn run_tui() -> Result<(), Box<dyn Error>> {
+fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
     setup_terminal()?;
 
     let backend = CrosstermBackend::new(io::stdout());
@@ -912,6 +1075,10 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
 
     let mut state = init_state();
     persistence::load(&mut state);
+    if let Some(name) = session_name {
+        state.session_name = Some(name);
+        let _ = persistence::save(&state);
+    }
     let mut agent = Agent::new();
     if env_truthy("OSMOGREP_NV_TIPS", false) {
         log(
@@ -1846,6 +2013,48 @@ fn current_tmux_session_name() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn parses_positional_session_name_for_tui() {
+        let cli = Cli::try_parse_from(["osmogrep", "parser-work"]).unwrap();
+
+        assert_eq!(selected_session_name(&cli).as_deref(), Some("parser-work"));
+        assert!(cli.command.is_none());
+    }
+
+    #[test]
+    fn parses_session_flag_for_tui() {
+        let cli = Cli::try_parse_from(["osmogrep", "--session", "night build"]).unwrap();
+
+        assert_eq!(selected_session_name(&cli).as_deref(), Some("night build"));
+    }
+
+    #[test]
+    fn parses_uninstall_command() {
+        let cli = Cli::try_parse_from(["osmogrep", "uninstall", "--yes"]).unwrap();
+
+        match cli.command {
+            Some(CliCommand::Uninstall(args)) => assert!(args.yes),
+            _ => panic!("expected uninstall command"),
+        }
+    }
+
+    #[test]
+    fn normalizes_session_name() {
+        assert_eq!(
+            normalize_session_name("  api work  ").as_deref(),
+            Some("api work")
+        );
+        assert!(normalize_session_name("   ").is_none());
+        assert_eq!(
+            normalize_session_name(&"x".repeat(90))
+                .unwrap()
+                .chars()
+                .count(),
+            80
+        );
+    }
 
     #[test]
     fn unreviewed_changes_returns_only_new_diffs() {
