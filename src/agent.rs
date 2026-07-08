@@ -132,18 +132,59 @@ fn save_config(cfg: &Config) -> std::io::Result<()> {
     fs::write(path, toml::to_string(cfg).unwrap())
 }
 
+const REPO_INSTRUCTION_BUDGET: usize = 32 * 1024;
+const REPO_INSTRUCTION_FILES: &[&str] = &[".osmogrep.md", "AGENTS.md", "CLAUDE.md", ".cursorrules"];
+
 fn repo_instruction_suffix(repo_root: &std::path::Path) -> String {
-    let path = repo_root.join(".osmogrep.md");
-    if let Ok(text) = fs::read_to_string(path) {
-        let trimmed = text.trim();
-        if !trimmed.is_empty() {
-            return format!(
-                "\n\nRepository-specific instructions (.osmogrep.md):\n{}",
-                trimmed
-            );
+    let mut blocks = Vec::new();
+    let mut remaining = REPO_INSTRUCTION_BUDGET;
+
+    for name in REPO_INSTRUCTION_FILES {
+        if remaining == 0 {
+            break;
         }
+        let path = repo_root.join(name);
+        let Ok(text) = fs::read_to_string(path) else {
+            continue;
+        };
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let header = format!("Repository instructions ({name}):\n");
+        if header.len() >= remaining {
+            break;
+        }
+        remaining -= header.len();
+
+        let body = take_chars(trimmed, remaining);
+        remaining = remaining.saturating_sub(body.len());
+        blocks.push(format!("{header}{body}"));
     }
-    String::new()
+
+    if blocks.is_empty() {
+        return String::new();
+    }
+
+    let mut suffix = format!("\n\n{}", blocks.join("\n\n"));
+    if remaining == 0 {
+        suffix.push_str(
+            "\n\n[Repository instruction budget exhausted; remaining instruction content omitted.]",
+        );
+    }
+    suffix
+}
+
+fn take_chars(text: &str, max_bytes: usize) -> String {
+    let mut out = String::new();
+    for ch in text.chars() {
+        if out.len() + ch.len_utf8() > max_bytes {
+            break;
+        }
+        out.push(ch);
+    }
+    out
 }
 
 fn system_prompt(_repo_root: &std::path::Path) -> Value {
@@ -1373,5 +1414,57 @@ fn default_api_key_env_for(provider: &str) -> String {
         "mistral" => "MISTRAL_API_KEY".to_string(),
         "ollama" => "OLLAMA_API_KEY".to_string(),
         _ => "OPENAI_API_KEY".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    #[test]
+    fn loads_common_repository_instruction_files() {
+        let root = temp_root();
+        fs::write(root.join(".osmogrep.md"), "osmogrep rule").unwrap();
+        fs::write(root.join("AGENTS.md"), "agents rule").unwrap();
+        fs::write(root.join("CLAUDE.md"), "claude rule").unwrap();
+        fs::write(root.join(".cursorrules"), "cursor rule").unwrap();
+
+        let suffix = repo_instruction_suffix(&root);
+
+        assert!(suffix.contains("Repository instructions (.osmogrep.md):"));
+        assert!(suffix.contains("osmogrep rule"));
+        assert!(suffix.contains("Repository instructions (AGENTS.md):"));
+        assert!(suffix.contains("agents rule"));
+        assert!(suffix.contains("Repository instructions (CLAUDE.md):"));
+        assert!(suffix.contains("claude rule"));
+        assert!(suffix.contains("Repository instructions (.cursorrules):"));
+        assert!(suffix.contains("cursor rule"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn bounds_repository_instruction_context() {
+        let root = temp_root();
+        fs::write(
+            root.join(".osmogrep.md"),
+            "x".repeat(REPO_INSTRUCTION_BUDGET * 2),
+        )
+        .unwrap();
+        fs::write(root.join("AGENTS.md"), "should be omitted").unwrap();
+
+        let suffix = repo_instruction_suffix(&root);
+
+        assert!(suffix.contains("Repository instructions (.osmogrep.md):"));
+        assert!(!suffix.contains("should be omitted"));
+        assert!(suffix.contains("instruction budget exhausted"));
+        assert!(suffix.len() <= REPO_INSTRUCTION_BUDGET + 200);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn temp_root() -> PathBuf {
+        let root = std::env::temp_dir().join(format!("osmogrep-agent-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        root
     }
 }
