@@ -24,6 +24,13 @@ const FG_DIM: Color = Color::Rgb(170, 170, 170);
 const FG_MUTED: Color = Color::Rgb(120, 120, 120);
 const ACCENT_ORANGE: Color = Color::Rgb(255, 165, 80);
 const PROMPT: &str = ">_ ";
+const LOGO: [&str; 5] = [
+    " ██████  ███████ ███    ███  ██████   ██████  ██████  ███████ ██████  ",
+    "██    ██ ██      ████  ████ ██    ██ ██       ██   ██ ██      ██   ██ ",
+    "██    ██ ███████ ██ ████ ██ ██    ██ ██   ███ ██████  █████   ██████  ",
+    "██    ██      ██ ██  ██  ██ ██    ██ ██    ██ ██   ██ ██      ██      ",
+    " ██████  ███████ ██      ██  ██████   ██████  ██   ██ ███████ ██      ",
+];
 
 #[derive(Clone, Copy)]
 struct UiPalette {
@@ -79,7 +86,23 @@ fn top_padding(state: &AgentState) -> u16 {
     }
 }
 
-fn header_height(state: &AgentState, available_height: u16) -> u16 {
+fn logo_header_enabled(state: &AgentState, available_height: u16, available_width: u16) -> bool {
+    logo_header_enabled_for_density(state.density, available_height, available_width)
+}
+
+fn logo_header_enabled_for_density(
+    density: UiDensity,
+    available_height: u16,
+    available_width: u16,
+) -> bool {
+    !matches!(density, UiDensity::Compact) && available_height >= 20 && available_width >= 76
+}
+
+fn header_height(state: &AgentState, available_height: u16, available_width: u16) -> u16 {
+    if logo_header_enabled(state, available_height, available_width) {
+        return LOGO.len() as u16 + 3;
+    }
+
     match state.density {
         UiDensity::Compact => 2,
         UiDensity::Standard if available_height < 24 => 2,
@@ -111,7 +134,7 @@ pub fn draw_ui<B: Backend>(
             height: area.height.saturating_sub(top_padding),
         };
 
-        let header_height = header_height(state, padded_area.height);
+        let header_height = header_height(state, padded_area.height, padded_area.width);
         let status_height = 1;
 
         let input_width = padded_area.width.saturating_sub(4) as usize;
@@ -283,47 +306,63 @@ fn render_header(f: &mut Frame, area: Rect, state: &AgentState) {
         .map(|name| format!(" · {}", truncate_for_badge(name, 24)))
         .unwrap_or_default();
 
-    let mut lines = vec![
-        Line::from(vec![
-            Span::styled(
-                "osmogrep",
-                Style::default().fg(p.accent).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(session, Style::default().fg(p.fg_dim)),
-            Span::styled(" · ", Style::default().fg(p.fg_muted)),
-            Span::styled(run_label, Style::default().fg(p.fg_main)),
-            Span::styled(tool, Style::default().fg(p.fg_dim)),
-            Span::styled(" · ", Style::default().fg(p.fg_muted)),
-            Span::styled(
-                state.permission_profile.as_str(),
-                Style::default().fg(p.fg_dim),
-            ),
-            Span::styled(" · ", Style::default().fg(p.fg_muted)),
-            Span::styled(approval, Style::default().fg(p.fg_dim)),
-            Span::styled(" · v", Style::default().fg(p.fg_muted)),
-            Span::styled(version, Style::default().fg(p.fg_muted)),
-        ]),
-        Line::from(vec![
-            Span::styled(repo_display, Style::default().fg(p.fg_dim)),
-            Span::styled(" · ", Style::default().fg(p.fg_muted)),
-            Span::styled(branch, Style::default().fg(p.fg_dim)),
-        ]),
-    ];
+    let mut status_line = Line::from(vec![
+        Span::styled(
+            "osmogrep",
+            Style::default().fg(p.accent).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(session, Style::default().fg(p.fg_dim)),
+        Span::styled(" · ", Style::default().fg(p.fg_muted)),
+        Span::styled(run_label, Style::default().fg(p.fg_main)),
+        Span::styled(tool, Style::default().fg(p.fg_dim)),
+        Span::styled(" · ", Style::default().fg(p.fg_muted)),
+        Span::styled(
+            state.permission_profile.as_str(),
+            Style::default().fg(p.fg_dim),
+        ),
+        Span::styled(" · ", Style::default().fg(p.fg_muted)),
+        Span::styled(approval, Style::default().fg(p.fg_dim)),
+        Span::styled(" · v", Style::default().fg(p.fg_muted)),
+        Span::styled(version, Style::default().fg(p.fg_muted)),
+    ]);
+
+    let mut repo_line = Line::from(vec![
+        Span::styled(repo_display, Style::default().fg(p.fg_dim)),
+        Span::styled(" · ", Style::default().fg(p.fg_muted)),
+        Span::styled(branch, Style::default().fg(p.fg_dim)),
+    ]);
 
     if state.ui.indexing {
-        lines[1].spans.push(Span::styled(
+        repo_line.spans.push(Span::styled(
             " · indexing…",
             Style::default()
                 .fg(p.fg_muted)
                 .add_modifier(Modifier::ITALIC),
         ));
     } else if state.ui.indexed {
-        lines[1]
+        repo_line
             .spans
             .push(Span::styled(" · indexed ✓", Style::default().fg(p.fg_dim)));
     }
 
-    if area.height > 2 {
+    let mut lines = Vec::new();
+    if area.height >= LOGO.len() as u16 + 3 && area.width >= 76 {
+        lines.extend(LOGO.iter().map(|line| {
+            Line::from(Span::styled(
+                *line,
+                Style::default().fg(p.accent).add_modifier(Modifier::BOLD),
+            ))
+        }));
+        status_line.alignment = Some(Alignment::Center);
+        repo_line.alignment = Some(Alignment::Center);
+        lines.push(status_line);
+        lines.push(repo_line);
+    } else {
+        lines.push(status_line);
+        lines.push(repo_line);
+    }
+
+    if lines.len() < area.height as usize {
         lines.push(Line::from(Span::styled(
             "Type a task, /help for commands, !<cmd> for shell, Esc to cancel/quit.",
             Style::default()
@@ -1194,11 +1233,11 @@ pub fn render_command_palette(f: &mut Frame, area: Rect, state: &AgentState) {
 #[cfg(test)]
 mod tests {
     use super::{
-        clamp_scroll_offset, input_cursor_visual_position, pending_update_prompt,
-        render_plan_lines_for_items, update_status_label, wrap_lines_safely, wrap_visual_lines,
-        UiPalette,
+        clamp_scroll_offset, input_cursor_visual_position, logo_header_enabled_for_density,
+        pending_update_prompt, render_plan_lines_for_items, update_status_label, wrap_lines_safely,
+        wrap_visual_lines, UiPalette, LOGO,
     };
-    use crate::state::{PendingUpdate, PlanItem};
+    use crate::state::{PendingUpdate, PlanItem, UiDensity};
     use ratatui::{style::Color, text::Line};
 
     #[test]
@@ -1249,6 +1288,25 @@ mod tests {
     fn clamps_large_scroll_offsets_for_ratatui() {
         assert_eq!(clamp_scroll_offset(12), 12);
         assert_eq!(clamp_scroll_offset(usize::MAX), u16::MAX);
+    }
+
+    #[test]
+    fn standard_header_reserves_space_for_ascii_logo() {
+        assert!(logo_header_enabled_for_density(
+            UiDensity::Standard,
+            32,
+            120
+        ));
+        assert_eq!(LOGO.len() as u16 + 3, 8);
+    }
+
+    #[test]
+    fn compact_header_keeps_minimal_height() {
+        assert!(!logo_header_enabled_for_density(
+            UiDensity::Compact,
+            32,
+            120
+        ));
     }
 
     #[test]
