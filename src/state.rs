@@ -114,6 +114,10 @@ pub struct UiState {
     pub cancel_requested: bool,
     pub auto_approve: bool,
     pub pending_permission: Option<PendingPermission>,
+    pub pending_update: Option<PendingUpdate>,
+    pub update_check_status: Option<String>,
+    pub update_install_requested: bool,
+    pub update_skip_requested: bool,
     pub streaming_buffer: String,
     pub streaming_active: bool,
     pub streaming_lines_logged: usize,
@@ -438,6 +442,14 @@ pub struct PendingPermission {
     pub tool_name: String,
     pub args_summary: String,
     pub reply_tx: Sender<bool>,
+}
+
+pub struct PendingUpdate {
+    pub current_version: String,
+    pub latest_version: String,
+    pub asset_url: String,
+    pub asset_name: String,
+    pub installing: bool,
 }
 
 pub const MAX_CONVERSATION_TOKENS: usize = 90_000;

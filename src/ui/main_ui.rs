@@ -74,6 +74,22 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
         return;
     }
 
+    if let Some(update) = state.ui.pending_update.as_ref() {
+        if update.installing {
+            return;
+        }
+        match update_prompt_action(&k) {
+            UpdatePromptAction::Install => {
+                state.ui.update_install_requested = true;
+            }
+            UpdatePromptAction::Skip => {
+                state.ui.update_skip_requested = true;
+            }
+            UpdatePromptAction::Ignore => {}
+        }
+        return;
+    }
+
     let palette_active = !state.ui.command_items.is_empty();
 
     match k.code {
@@ -222,6 +238,67 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
         }
 
         _ => {}
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UpdatePromptAction {
+    Install,
+    Skip,
+    Ignore,
+}
+
+fn update_prompt_action(k: &KeyEvent) -> UpdatePromptAction {
+    match k.code {
+        KeyCode::Char('y') | KeyCode::Char('Y') => UpdatePromptAction::Install,
+        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => UpdatePromptAction::Skip,
+        _ => UpdatePromptAction::Ignore,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{update_prompt_action, UpdatePromptAction};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn update_prompt_accepts_yes_keys() {
+        assert_eq!(
+            update_prompt_action(&key(KeyCode::Char('y'))),
+            UpdatePromptAction::Install
+        );
+        assert_eq!(
+            update_prompt_action(&key(KeyCode::Char('Y'))),
+            UpdatePromptAction::Install
+        );
+    }
+
+    #[test]
+    fn update_prompt_accepts_no_keys() {
+        assert_eq!(
+            update_prompt_action(&key(KeyCode::Char('n'))),
+            UpdatePromptAction::Skip
+        );
+        assert_eq!(
+            update_prompt_action(&key(KeyCode::Char('N'))),
+            UpdatePromptAction::Skip
+        );
+        assert_eq!(
+            update_prompt_action(&key(KeyCode::Esc)),
+            UpdatePromptAction::Skip
+        );
+    }
+
+    #[test]
+    fn update_prompt_ignores_unrelated_keys() {
+        assert_eq!(
+            update_prompt_action(&key(KeyCode::Enter)),
+            UpdatePromptAction::Ignore
+        );
     }
 }
 

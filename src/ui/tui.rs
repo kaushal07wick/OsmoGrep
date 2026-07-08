@@ -450,6 +450,24 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
         )));
     }
 
+    if let Some(update) = &state.ui.pending_update {
+        lines.push(Line::from(""));
+        let prompt = if update.installing {
+            format!("Installing Osmogrep {}...", update.latest_version)
+        } else {
+            format!(
+                "Update Osmogrep {} -> {}? [y]es [n]o",
+                update.current_version, update.latest_version
+            )
+        };
+        lines.push(Line::from(Span::styled(
+            prompt,
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )));
+    }
+
     if state.ui.streaming_active {
         let partial = state.ui.streaming_buffer.rsplit('\n').next().unwrap_or("");
         if !partial.is_empty() {
@@ -869,6 +887,14 @@ fn render_status_bar(f: &mut Frame, area: Rect, state: &AgentState) {
             " · approval needed",
             Style::default().fg(Color::Yellow),
         ));
+    }
+    if let Some(update) = &state.ui.pending_update {
+        let label = if update.installing {
+            " · updating"
+        } else {
+            " · update available"
+        };
+        left.push(Span::styled(label, Style::default().fg(Color::Yellow)));
     }
     if state.voice.visible || state.voice.enabled || state.voice.connected {
         left.push(Span::styled(

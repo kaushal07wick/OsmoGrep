@@ -15,6 +15,7 @@ mod tool_guard;
 mod tools;
 mod triage;
 mod ui;
+mod updater;
 mod verify_stop;
 mod verification;
 mod voice;
@@ -363,6 +364,95 @@ fn plan_mode_prompt(text: &str) -> String {
          Stop after the plan unless the user exits plan mode.\n\n\
          User task:\n{text}"
     )
+}
+
+fn handle_update_event(state: &mut AgentState, evt: updater::UpdateEvent) {
+    match evt {
+        updater::UpdateEvent::Available(info) => {
+            state.ui.pending_update = Some(crate::state::PendingUpdate {
+                current_version: info.current_version.clone(),
+                latest_version: info.latest_version.clone(),
+                asset_url: info.asset_url,
+                asset_name: info.asset_name,
+                installing: false,
+            });
+            state.ui.update_check_status = Some(format!(
+                "update available: {} -> {}",
+                info.current_version, info.latest_version
+            ));
+            log(
+                state,
+                LogLevel::Warn,
+                format!(
+                    "Osmogrep update available: {} -> {}. Press y to update, n to skip.",
+                    info.current_version, info.latest_version
+                ),
+            );
+        }
+        updater::UpdateEvent::UpToDate(version) => {
+            state.ui.update_check_status = Some(format!("up to date ({version})"));
+        }
+        updater::UpdateEvent::CheckFailed(error) => {
+            state.ui.update_check_status = Some("update check failed".to_string());
+            log_status(state, format!("Update check failed: {error}"));
+        }
+        updater::UpdateEvent::InstallStarted(info) => {
+            if let Some(update) = state.ui.pending_update.as_mut() {
+                update.installing = true;
+            }
+            state.ui.update_check_status = Some(format!("installing {}", info.latest_version));
+            log_status(
+                state,
+                format!("Installing Osmogrep {}...", info.latest_version),
+            );
+        }
+        updater::UpdateEvent::Installed(info) => {
+            state.ui.pending_update = None;
+            state.ui.update_check_status = Some(format!("updated to {}", info.latest_version));
+            log(
+                state,
+                LogLevel::Success,
+                format!(
+                    "Osmogrep updated to {}. Restart the terminal session to use the new binary.",
+                    info.latest_version
+                ),
+            );
+        }
+        updater::UpdateEvent::InstallFailed(error) => {
+            if let Some(update) = state.ui.pending_update.as_mut() {
+                update.installing = false;
+            }
+            state.ui.update_check_status = Some("update install failed".to_string());
+            log(state, LogLevel::Error, format!("Update failed: {error}"));
+        }
+    }
+}
+
+fn approve_update(state: &mut AgentState, update_tx: &mpsc::Sender<updater::UpdateEvent>) {
+    let Some(update) = state.ui.pending_update.as_mut() else {
+        return;
+    };
+    if update.installing {
+        return;
+    }
+    update.installing = true;
+    let info = updater::UpdateInfo {
+        current_version: update.current_version.clone(),
+        latest_version: update.latest_version.clone(),
+        asset_url: update.asset_url.clone(),
+        asset_name: update.asset_name.clone(),
+    };
+    updater::spawn_update_install(info, update_tx.clone());
+}
+
+fn deny_update(state: &mut AgentState) {
+    if let Some(update) = state.ui.pending_update.take() {
+        state.ui.update_check_status = Some(format!("skipped {}", update.latest_version));
+        log_status(
+            state,
+            format!("Skipped Osmogrep update {}.", update.latest_version),
+        );
+    }
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -861,6 +951,8 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
     let mut agent_cancel: Option<CancelToken> = None;
     let mut agent_steer_tx: Option<mpsc::Sender<String>> = None;
     let (job_tx, job_rx) = mpsc::channel::<JobEvent>();
+    let (update_tx, update_rx) = mpsc::channel::<updater::UpdateEvent>();
+    updater::spawn_update_check(update_tx.clone());
     let mut running_jobs = 0usize;
     let mut context_rx: Option<mpsc::Receiver<ContextEvent>> = None;
     let voice_silence_ms: u64 = std::env::var("VLLM_REALTIME_SILENCE_MS")
@@ -891,6 +983,16 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
         if state.ui.should_exit {
             let _ = persistence::save(&state);
             break;
+        }
+
+        if state.ui.update_install_requested {
+            state.ui.update_install_requested = false;
+            state.ui.update_skip_requested = false;
+            approve_update(&mut state, &update_tx);
+        }
+        if state.ui.update_skip_requested {
+            state.ui.update_skip_requested = false;
+            deny_update(&mut state);
         }
 
         loop {
@@ -928,6 +1030,14 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
                         log(&mut state, LogLevel::Info, line.to_string());
                     }
                 }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => break,
+            }
+        }
+
+        loop {
+            match update_rx.try_recv() {
+                Ok(evt) => handle_update_event(&mut state, evt),
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => break,
             }
@@ -1624,6 +1734,10 @@ fn init_state() -> AgentState {
             cancel_requested: false,
             auto_approve: false,
             pending_permission: None,
+            pending_update: None,
+            update_check_status: None,
+            update_install_requested: false,
+            update_skip_requested: false,
             streaming_buffer: String::new(),
             streaming_active: false,
             streaming_lines_logged: 0,
