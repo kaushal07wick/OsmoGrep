@@ -54,6 +54,56 @@ install_dir() {
   fi
 }
 
+script_dir() {
+  dir="$(dirname "$0")"
+  (cd "$dir" && pwd -P)
+}
+
+warn_path_shadow() {
+  installed="$1"
+  resolved="$(command -v "$BIN_NAME" 2>/dev/null || true)"
+
+  if [ -n "$resolved" ] && [ "$resolved" != "$installed" ]; then
+    info "Installed $BIN_NAME to $installed"
+    info "Warning: your PATH resolves $BIN_NAME to $resolved first."
+    info "Move $(dirname "$installed") earlier in PATH or remove the older binary."
+    return 0
+  fi
+
+  info "Installed $BIN_NAME to $installed"
+}
+
+install_binary_file() {
+  src="$1"
+  dst="$(install_dir)"
+
+  mkdir -p "$dst"
+  cp "$src" "$dst/$BIN_NAME"
+  chmod +x "$dst/$BIN_NAME"
+  warn_path_shadow "$dst/$BIN_NAME"
+
+  if [ "$dst" = "$HOME/.local/bin" ]; then
+    info "Add this to PATH if needed: export PATH=\"$HOME/.local/bin:\$PATH\""
+  fi
+}
+
+install_from_checkout() {
+  repo_dir="$(script_dir)"
+
+  if [ ! -f "$repo_dir/Cargo.toml" ]; then
+    return 1
+  fi
+
+  if ! need_cmd cargo; then
+    err "Rust cargo is required to build from this checkout."
+    return 1
+  fi
+
+  info "Building fresh release binary from $repo_dir..."
+  (cd "$repo_dir" && cargo build --release --locked)
+  install_binary_file "$repo_dir/target/release/$BIN_NAME"
+}
+
 install_prebuilt() {
   target="$(arch)-$(os)"
   api="https://api.github.com/repos/$REPO/releases/latest"
@@ -85,15 +135,7 @@ install_prebuilt() {
     return 1
   fi
 
-  dst="$(install_dir)"
-  mkdir -p "$dst"
-  cp "$bin_path" "$dst/$BIN_NAME"
-  chmod +x "$dst/$BIN_NAME"
-
-  info "Installed $BIN_NAME to $dst/$BIN_NAME"
-  if [ "$dst" = "$HOME/.local/bin" ]; then
-    info "Add this to PATH if needed: export PATH=\"$HOME/.local/bin:\$PATH\""
-  fi
+  install_binary_file "$bin_path"
   return 0
 }
 
@@ -261,6 +303,12 @@ EOF
 }
 
 main() {
+  if install_from_checkout; then
+    install_runtime_deps || true
+    setup_nvim_ux || true
+    exit 0
+  fi
+
   if install_prebuilt; then
     install_runtime_deps || true
     setup_nvim_ux || true
