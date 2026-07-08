@@ -1,4 +1,5 @@
 mod agent;
+mod clipboard;
 mod commands;
 mod context;
 mod harness;

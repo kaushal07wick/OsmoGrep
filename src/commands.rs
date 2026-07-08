@@ -10,11 +10,12 @@ use std::{
 };
 
 use crate::agent::Agent;
-use crate::logger::log;
+use crate::clipboard;
+use crate::logger::{log, parse_user_input_log};
 use crate::persistence;
 use crate::state::{
-    AgentState, CommandItem, InputMode, JobKind, JobRecord, JobRequest, JobStatus, LogLevel,
-    PermissionProfile, PlanItem, UiAccent, UiDensity, UiTheme, MAX_CONVERSATION_TOKENS,
+    AgentState, CommandItem, InputMode, JobKind, JobRecord, JobRequest, JobStatus, LogBuffer,
+    LogLevel, PermissionProfile, PlanItem, UiAccent, UiDensity, UiTheme, MAX_CONVERSATION_TOKENS,
 };
 use crate::test_harness::run_tests;
 use crate::voice::VoiceCommand;
@@ -62,6 +63,10 @@ pub fn handle_command(
     }
     if cmd.starts_with("/type ") {
         set_type(state, &cmd);
+        return;
+    }
+    if cmd.starts_with("/copy ") {
+        copy_output(state, &cmd);
         return;
     }
     if cmd.starts_with("/rename ") || cmd.starts_with("/session rename ") {
@@ -135,6 +140,7 @@ pub fn handle_command(
         "/theme" => show_theme(state),
         "/color" => show_color(state),
         "/type" => show_type(state),
+        "/copy" => copy_output(state, &cmd),
         "/rename" | "/session" => show_session(state),
         "/jobs" => show_jobs(state),
         "/autofix" => show_autofix(state),
@@ -151,6 +157,10 @@ pub fn handle_command(
             log(state, LogLevel::Warn, "Unknown command. Type /help");
         }
     }
+}
+
+pub fn copy_latest_output(state: &mut AgentState) {
+    copy_output(state, "/copy");
 }
 
 fn help(state: &mut AgentState) {
@@ -179,6 +189,8 @@ fn help(state: &mut AgentState) {
     log(state, Info, "  /theme       Show or set theme (dark/light)");
     log(state, Info, "  /color       Show or set accent color");
     log(state, Info, "  /type        Show or set UI density");
+    log(state, Info, "  /copy [N]    Copy latest assistant response");
+    log(state, Info, "  /copy all    Copy the visible transcript");
     log(state, Info, "  /rename      Rename current session");
     log(
         state,
@@ -261,6 +273,142 @@ fn clear_logs(state: &mut AgentState) {
     state.ui.exec_scroll = usize::MAX;
 
     log(state, LogLevel::Info, "Logs cleared.");
+}
+
+enum CopyTarget {
+    LatestAssistant(usize),
+    Transcript,
+}
+
+fn copy_output(state: &mut AgentState, cmd: &str) {
+    let arg = cmd.strip_prefix("/copy").unwrap_or("").trim();
+    let target = match parse_copy_target(arg) {
+        Ok(target) => target,
+        Err(message) => {
+            log(state, LogLevel::Warn, message);
+            return;
+        }
+    };
+
+    let (text, description) = match target {
+        CopyTarget::LatestAssistant(nth) => {
+            let Some(text) = latest_assistant_response(&state.logs, nth) else {
+                log(
+                    state,
+                    LogLevel::Warn,
+                    "No assistant response found to copy.",
+                );
+                return;
+            };
+            (text, assistant_copy_description(nth))
+        }
+        CopyTarget::Transcript => {
+            let text = transcript_text(&state.logs);
+            if text.trim().is_empty() {
+                log(state, LogLevel::Warn, "No transcript text found to copy.");
+                return;
+            }
+            (text, "transcript".to_string())
+        }
+    };
+
+    match clipboard::copy_text_to_clipboard(&text) {
+        Ok(backend) => log(
+            state,
+            LogLevel::Success,
+            format!("Copied {description} via {}.", backend.label()),
+        ),
+        Err(err) => log(state, LogLevel::Error, format!("Copy failed: {err}")),
+    }
+}
+
+fn parse_copy_target(arg: &str) -> Result<CopyTarget, String> {
+    if arg.is_empty() || arg.eq_ignore_ascii_case("latest") {
+        return Ok(CopyTarget::LatestAssistant(1));
+    }
+
+    if matches!(
+        arg.to_ascii_lowercase().as_str(),
+        "all" | "transcript" | "main" | "screen"
+    ) {
+        return Ok(CopyTarget::Transcript);
+    }
+
+    match arg.parse::<usize>() {
+        Ok(0) => Err("Usage: /copy [N] or /copy all".to_string()),
+        Ok(nth) => Ok(CopyTarget::LatestAssistant(nth)),
+        Err(_) => Err("Usage: /copy [N] or /copy all".to_string()),
+    }
+}
+
+fn assistant_copy_description(nth: usize) -> String {
+    match nth {
+        1 => "latest assistant response".to_string(),
+        2 => "2nd latest assistant response".to_string(),
+        3 => "3rd latest assistant response".to_string(),
+        n => format!("{n}th latest assistant response"),
+    }
+}
+
+fn latest_assistant_response(logs: &LogBuffer, nth_from_latest: usize) -> Option<String> {
+    let blocks = assistant_response_blocks(logs);
+    if nth_from_latest == 0 || nth_from_latest > blocks.len() {
+        return None;
+    }
+
+    blocks.get(blocks.len() - nth_from_latest).cloned()
+}
+
+fn assistant_response_blocks(logs: &LogBuffer) -> Vec<String> {
+    let mut blocks = Vec::new();
+    let mut current = Vec::new();
+
+    for line in logs.iter() {
+        if is_assistant_copy_line(line.level, &line.text) {
+            current.push(line.text.clone());
+        } else {
+            push_copy_block(&mut blocks, &mut current);
+        }
+    }
+
+    push_copy_block(&mut blocks, &mut current);
+    blocks
+}
+
+fn push_copy_block(blocks: &mut Vec<String>, current: &mut Vec<String>) {
+    let Some(start) = current.iter().position(|line| !line.trim().is_empty()) else {
+        current.clear();
+        return;
+    };
+    let end = current
+        .iter()
+        .rposition(|line| !line.trim().is_empty())
+        .unwrap_or(start);
+    let block = current[start..=end].join("\n");
+    if !block.trim().is_empty() {
+        blocks.push(block);
+    }
+    current.clear();
+}
+
+fn is_assistant_copy_line(level: LogLevel, text: &str) -> bool {
+    level == LogLevel::Info
+        && parse_user_input_log(text).is_none()
+        && !text.starts_with("· ")
+        && !text.starts_with("● (")
+        && !text.starts_with("  └ ")
+        && !text.starts_with("└ ")
+}
+
+fn transcript_text(logs: &LogBuffer) -> String {
+    logs.iter()
+        .map(|line| {
+            parse_user_input_log(&line.text)
+                .map(|input| format!("> {input}"))
+                .unwrap_or_else(|| line.text.clone())
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn exit_app(state: &mut AgentState) {
@@ -2713,6 +2861,14 @@ fn command_palette_items() -> &'static [CommandItem] {
             desc: "Show or set UI density",
         },
         CommandItem {
+            cmd: "/copy",
+            desc: "Copy latest assistant response",
+        },
+        CommandItem {
+            cmd: "/copy all",
+            desc: "Copy visible transcript",
+        },
+        CommandItem {
             cmd: "/rename",
             desc: "Rename current session",
         },
@@ -2811,7 +2967,11 @@ fn normalize_command_prefix(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::command_hints_for;
+    use super::{
+        assistant_response_blocks, command_hints_for, latest_assistant_response, parse_copy_target,
+        transcript_text, CopyTarget,
+    };
+    use crate::state::{LogBuffer, LogLevel};
 
     #[test]
     fn command_hints_include_plan_while_typing() {
@@ -2828,6 +2988,68 @@ mod tests {
 
         assert!(items.is_empty());
         assert_eq!(selected, 0);
+    }
+
+    #[test]
+    fn command_hints_include_copy_commands() {
+        let (items, _) = command_hints_for("/cop", 0);
+
+        assert!(items.iter().any(|item| item.cmd == "/copy"));
+        assert!(items.iter().any(|item| item.cmd == "/copy all"));
+    }
+
+    #[test]
+    fn copy_target_parses_latest_number_and_transcript() {
+        assert!(matches!(
+            parse_copy_target("").unwrap(),
+            CopyTarget::LatestAssistant(1)
+        ));
+        assert!(matches!(
+            parse_copy_target("2").unwrap(),
+            CopyTarget::LatestAssistant(2)
+        ));
+        assert!(matches!(
+            parse_copy_target("all").unwrap(),
+            CopyTarget::Transcript
+        ));
+        assert!(parse_copy_target("0").is_err());
+        assert!(parse_copy_target("wat").is_err());
+    }
+
+    #[test]
+    fn assistant_blocks_skip_user_tool_and_status_lines() {
+        let mut logs = LogBuffer::new();
+        logs.push(LogLevel::Info, "USER|find the readme");
+        logs.push(LogLevel::Success, "● (ListDir) .");
+        logs.push(LogLevel::Info, "  └ ok");
+        logs.push(LogLevel::Info, "· thinking");
+        logs.push(LogLevel::Info, "README.md exists.");
+        logs.push(LogLevel::Info, "");
+        logs.push(LogLevel::Info, "- ./README.md");
+        logs.push(LogLevel::Warn, "warning outside assistant output");
+        logs.push(LogLevel::Info, "Second answer");
+
+        assert_eq!(
+            assistant_response_blocks(&logs),
+            vec!["README.md exists.\n\n- ./README.md", "Second answer"]
+        );
+        assert_eq!(
+            latest_assistant_response(&logs, 1).as_deref(),
+            Some("Second answer")
+        );
+        assert_eq!(
+            latest_assistant_response(&logs, 2).as_deref(),
+            Some("README.md exists.\n\n- ./README.md")
+        );
+    }
+
+    #[test]
+    fn transcript_text_renders_user_inputs_readably() {
+        let mut logs = LogBuffer::new();
+        logs.push(LogLevel::Info, "USER|hi");
+        logs.push(LogLevel::Info, "Hello.");
+
+        assert_eq!(transcript_text(&logs), "> hi\nHello.");
     }
 }
 

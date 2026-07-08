@@ -324,6 +324,7 @@ fn scroll_toward_tail_offset(current: usize, step: usize) -> (usize, bool) {
 enum InputControlAction {
     SelectAll,
     CopyAll,
+    CopyOutput,
     CutAll,
     Paste,
     ClearAll,
@@ -341,6 +342,7 @@ fn input_control_action(k: &KeyEvent) -> Option<InputControlAction> {
     match c.to_ascii_lowercase() {
         'a' => Some(InputControlAction::SelectAll),
         'c' => Some(InputControlAction::CopyAll),
+        'o' => Some(InputControlAction::CopyOutput),
         'x' => Some(InputControlAction::CutAll),
         'v' => Some(InputControlAction::Paste),
         'u' => Some(InputControlAction::ClearAll),
@@ -362,6 +364,9 @@ fn apply_input_control_action(state: &mut AgentState, action: InputControlAction
                 state.ui.cancel_requested = true;
                 crate::logger::log_status(state, "Cancel requested.");
             }
+        }
+        InputControlAction::CopyOutput => {
+            crate::commands::copy_latest_output(state);
         }
         InputControlAction::CutAll => {
             if state.cut_input() {
@@ -453,6 +458,10 @@ mod tests {
         assert_eq!(
             input_control_action(&ctrl('c')),
             Some(InputControlAction::CopyAll)
+        );
+        assert_eq!(
+            input_control_action(&ctrl('o')),
+            Some(InputControlAction::CopyOutput)
         );
         assert_eq!(
             input_control_action(&ctrl('x')),
