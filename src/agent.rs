@@ -500,6 +500,15 @@ struct RunAgent {
     cancel: CancelToken,
 }
 
+#[derive(Clone, Debug)]
+struct ToolInvocation {
+    item: Value,
+    name: String,
+    call_id: Value,
+    args: Value,
+    args_summary: String,
+}
+
 impl RunAgent {
     fn run(
         &self,
@@ -588,12 +597,17 @@ impl RunAgent {
 
             let mut saw_tool = false;
 
-            for item in output {
+            let mut idx = 0usize;
+            while idx < output.len() {
                 apply_pending_steer(&steer_rx, &mut persisted, &mut input, tx);
                 if self.cancel.is_cancelled() {
                     ledger.error("cancelled", iteration);
                     return Err("cancelled".into());
                 }
+
+                let batch_start = idx;
+                let item = output[idx].clone();
+                idx += 1;
 
                 match item.get("type").and_then(Value::as_str) {
                     Some("reasoning") => {
@@ -601,25 +615,31 @@ impl RunAgent {
                     }
 
                     Some("function_call") => {
+                        let batch = collect_parallel_safe_batch(output, batch_start, &self.tools)?;
+                        if batch.len() > 1 {
+                            let batch_len = batch.len();
+                            saw_tool = true;
+                            self.execute_parallel_safe_batch(
+                                batch,
+                                tx,
+                                &mut ledger,
+                                &mut tool_guard,
+                                &mut run_notes,
+                                &mut next_messages,
+                                iteration,
+                                max_iterations,
+                            );
+                            idx = batch_start + batch_len;
+                            continue;
+                        }
+
                         saw_tool = true;
 
-                        let name = item
-                            .get("name")
-                            .and_then(Value::as_str)
-                            .ok_or("function_call missing name")?
-                            .to_string();
-
-                        let call_id = item
-                            .get("call_id")
-                            .cloned()
-                            .ok_or("function_call missing call_id")?;
-
-                        let args: Value = item
-                            .get("arguments")
-                            .and_then(Value::as_str)
-                            .and_then(|s| serde_json::from_str(s).ok())
-                            .unwrap_or_else(|| json!({}));
-                        let args_summary = summarize_args(&name, &args);
+                        let invocation = parse_tool_invocation(&item)?;
+                        let name = invocation.name;
+                        let call_id = invocation.call_id;
+                        let args = invocation.args;
+                        let args_summary = invocation.args_summary;
 
                         let _ = tx.send(AgentEvent::ToolCall {
                             name: name.clone(),
@@ -821,6 +841,119 @@ impl RunAgent {
             }
 
             input = Value::Array(next_messages);
+        }
+    }
+
+    fn execute_parallel_safe_batch(
+        &self,
+        batch: Vec<ToolInvocation>,
+        tx: &Sender<AgentEvent>,
+        ledger: &mut RunLedger,
+        tool_guard: &mut ToolLoopGuard,
+        run_notes: &mut Vec<String>,
+        next_messages: &mut Vec<Value>,
+        iteration: usize,
+        max_iterations: usize,
+    ) {
+        send_run_status(
+            tx,
+            "tool",
+            format!("parallel read-only batch ({} tools)", batch.len()),
+            iteration,
+            max_iterations,
+        );
+
+        for invocation in &batch {
+            let _ = tx.send(AgentEvent::ToolCall {
+                name: invocation.name.clone(),
+                args: invocation.args.clone(),
+            });
+            ledger.tool_started(&invocation.name, &invocation.args_summary, iteration);
+        }
+
+        let results = thread::scope(|scope| {
+            let mut handles = Vec::new();
+            for invocation in &batch {
+                let tools = &self.tools;
+                let name = invocation.name.clone();
+                let args = invocation.args.clone();
+                handles.push(scope.spawn(move || {
+                    let started = Instant::now();
+                    let result = tools
+                        .call_parallel_safe(&name, args)
+                        .unwrap_or_else(|e| json!({ "error": e }));
+                    (result, started.elapsed().as_millis())
+                }));
+            }
+
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle
+                        .join()
+                        .unwrap_or_else(|_| (json!({ "error": "parallel tool panicked" }), 0))
+                })
+                .collect::<Vec<_>>()
+        });
+
+        for (invocation, (mut result, duration_ms)) in batch.into_iter().zip(results) {
+            let loop_warning = tool_guard.after_call(&invocation.name, &invocation.args, &result);
+            if let Some(warning) = loop_warning.as_ref() {
+                if let Some(map) = result.as_object_mut() {
+                    let warning_value =
+                        serde_json::to_value(warning).unwrap_or_else(|_| json!(null));
+                    map.insert("tool_loop_warning".to_string(), warning_value);
+                }
+            }
+            let ok = result.get("error").is_none();
+
+            if let (Some(before), Some(after), Some(path)) = (
+                result.get("before").and_then(Value::as_str),
+                result.get("after").and_then(Value::as_str),
+                result.get("path").and_then(Value::as_str),
+            ) {
+                let _ = tx.send(AgentEvent::ToolDiff {
+                    tool: invocation.name.clone(),
+                    target: path.to_string(),
+                    before: before.to_string(),
+                    after: after.to_string(),
+                });
+            }
+
+            let mut summary = tool_result_summary(&invocation.name, &result);
+            if let Some(warning) = loop_warning.as_ref() {
+                summary = format!("{summary}; {}", warning.message);
+            }
+            let status = if ok { "ok" } else { "error" };
+            ledger.tool_finished(
+                &invocation.name,
+                status,
+                summary.clone(),
+                duration_ms,
+                iteration,
+            );
+            send_run_status(
+                tx,
+                if ok { "tool_done" } else { "tool_error" },
+                format!("{} {status} in {duration_ms}ms", invocation.name),
+                iteration,
+                max_iterations,
+            );
+            run_notes.push(format!(
+                "- {status} `{}` ({}) in {duration_ms}ms: {}",
+                invocation.name,
+                invocation.args_summary,
+                clip(&summary)
+            ));
+
+            let _ = tx.send(AgentEvent::ToolResult { summary });
+
+            next_messages.push(invocation.item);
+            next_messages.push(json!({
+                "type": "function_call_output",
+                "call_id": invocation.call_id,
+                "output": serde_json::to_string(&result).unwrap()
+            }));
         }
     }
 
@@ -1038,6 +1171,72 @@ impl RunAgent {
             .unwrap_or_else(|| default_base_url_for(&self.model_cfg.provider));
         format!("{}/responses", base.trim_end_matches('/'))
     }
+}
+
+fn collect_parallel_safe_batch(
+    output: &[Value],
+    start: usize,
+    tools: &ToolRegistry,
+) -> Result<Vec<ToolInvocation>, String> {
+    let Some(first) = output.get(start) else {
+        return Ok(Vec::new());
+    };
+    if first.get("type").and_then(Value::as_str) != Some("function_call") {
+        return Ok(Vec::new());
+    }
+
+    let first = parse_tool_invocation(first)?;
+    if !tools.parallel_safe(&first.name) {
+        return Ok(Vec::new());
+    }
+
+    let mut batch = vec![first];
+    let mut idx = start + 1;
+    while let Some(item) = output.get(idx) {
+        if item.get("type").and_then(Value::as_str) != Some("function_call") {
+            break;
+        }
+
+        let Ok(invocation) = parse_tool_invocation(item) else {
+            break;
+        };
+        if !tools.parallel_safe(&invocation.name) {
+            break;
+        }
+
+        batch.push(invocation);
+        idx += 1;
+    }
+
+    Ok(batch)
+}
+
+fn parse_tool_invocation(item: &Value) -> Result<ToolInvocation, String> {
+    let name = item
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or("function_call missing name")?
+        .to_string();
+
+    let call_id = item
+        .get("call_id")
+        .cloned()
+        .ok_or("function_call missing call_id")?;
+
+    let args: Value = item
+        .get("arguments")
+        .and_then(Value::as_str)
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_else(|| json!({}));
+    let args_summary = summarize_args(&name, &args);
+
+    Ok(ToolInvocation {
+        item: item.clone(),
+        name,
+        call_id,
+        args,
+        args_summary,
+    })
 }
 
 fn summarize_args(tool: &str, args: &Value) -> String {
@@ -1633,6 +1832,42 @@ mod tests {
         assert!(content.contains("Workspace facts (snapshot at run start):"));
         assert!(content.contains("go.mod"));
         assert!(content.contains("go test ./..."));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn parallel_batch_collector_stops_before_dangerous_tools() {
+        let root = temp_root();
+        let registry = ToolRegistry::with_root(root.clone());
+        let output = json!([
+            {
+                "type": "function_call",
+                "name": "read_file",
+                "call_id": "call_read",
+                "arguments": "{\"path\":\"src/main.rs\"}"
+            },
+            {
+                "type": "function_call",
+                "name": "list_dir",
+                "call_id": "call_list",
+                "arguments": "{}"
+            },
+            {
+                "type": "function_call",
+                "name": "run_shell",
+                "call_id": "call_shell",
+                "arguments": "{\"cmd\":\"cargo test\"}"
+            }
+        ]);
+        let output = output.as_array().unwrap();
+
+        let batch = collect_parallel_safe_batch(output, 0, &registry).unwrap();
+        assert_eq!(batch.len(), 2);
+        assert_eq!(batch[0].name, "read_file");
+        assert_eq!(batch[1].name, "list_dir");
+
+        let dangerous = collect_parallel_safe_batch(output, 2, &registry).unwrap();
+        assert!(dangerous.is_empty());
         let _ = fs::remove_dir_all(root);
     }
 
