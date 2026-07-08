@@ -247,7 +247,8 @@ impl ToolRegistry {
     }
 
     pub fn parallel_safe(&self, name: &str) -> bool {
-        matches!(self.safety(name), Some(ToolSafety::Safe)) && !matches!(name, "update_plan")
+        matches!(self.safety(name), Some(ToolSafety::Safe))
+            && !matches!(name, "update_plan" | "dynamic_workflow")
     }
 
     pub fn call_parallel_safe(&self, name: &str, args: Value) -> ToolResult {
@@ -448,6 +449,7 @@ mod tests {
         let registry = ToolRegistry::with_root(root.clone());
 
         assert!(!registry.parallel_safe("update_plan"));
+        assert!(!registry.parallel_safe("dynamic_workflow"));
         assert!(!registry.parallel_safe("run_shell"));
         assert!(registry
             .call_parallel_safe("update_plan", json!({ "action": "show" }))
@@ -484,6 +486,82 @@ mod tests {
         assert_eq!(
             done.pointer("/items/1/status").and_then(Value::as_str),
             Some("in_progress")
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn registry_persists_and_resumes_dynamic_workflow_ledger() {
+        let root = std::env::temp_dir().join(format!("osmogrep-workflow-root-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+
+        let registry = ToolRegistry::with_root(root.clone());
+        let start = registry
+            .call(
+                "dynamic_workflow",
+                json!({
+                    "task": "refactor parser",
+                    "kind": "coding",
+                    "workflow_id": "parser/work",
+                }),
+            )
+            .unwrap();
+        let id = start
+            .pointer("/workflow/id")
+            .and_then(Value::as_str)
+            .unwrap();
+
+        assert_eq!(id, "parser-work");
+        assert_eq!(
+            start.pointer("/next_step/name").and_then(Value::as_str),
+            Some("orient")
+        );
+        assert!(root
+            .join(".context")
+            .join("osmogrep-workflows")
+            .join("parser-work.json")
+            .is_file());
+
+        let checkpoint = registry
+            .call(
+                "dynamic_workflow",
+                json!({
+                    "action": "checkpoint",
+                    "workflow_id": id,
+                    "completed_steps": ["orient"],
+                    "notes": ["read local instructions"],
+                }),
+            )
+            .unwrap();
+
+        assert_eq!(
+            checkpoint
+                .pointer("/workflow/completed_steps")
+                .and_then(Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            checkpoint
+                .pointer("/next_step/name")
+                .and_then(Value::as_str),
+            Some("map_code")
+        );
+
+        let resume = registry
+            .call(
+                "dynamic_workflow",
+                json!({ "action": "resume", "workflow_id": id }),
+            )
+            .unwrap();
+
+        assert_eq!(
+            resume.pointer("/workflow/id").and_then(Value::as_str),
+            Some(id)
+        );
+        assert_eq!(
+            resume.pointer("/ledger/notes/0").and_then(Value::as_str),
+            Some("read local instructions")
         );
 
         let _ = fs::remove_dir_all(root);
