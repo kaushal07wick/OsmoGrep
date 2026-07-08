@@ -1,10 +1,12 @@
 use std::{
     io::Write,
     path::Path,
-    process::{Command, Stdio},
+    process::{Child, Command, Stdio},
     thread,
     time::{Duration, Instant},
 };
+
+const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 #[derive(Debug, Clone)]
 pub struct ProcessRun {
@@ -52,35 +54,16 @@ pub fn run_command_cancellable(
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     let mut child = command.spawn().map_err(|e| e.to_string())?;
-    let mut timed_out = false;
-    let mut cancelled = false;
-
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if is_cancelled() => {
-                cancelled = true;
-                let _ = child.kill();
-                break;
-            }
-            Ok(None) if started.elapsed() >= timeout => {
-                timed_out = true;
-                let _ = child.kill();
-                break;
-            }
-            Ok(None) => thread::sleep(Duration::from_millis(100)),
-            Err(e) => return Err(e.to_string()),
-        }
-    }
+    let stop = wait_for_child(&mut child, started, timeout, &is_cancelled)?;
 
     let mut out = child.wait_with_output().map_err(|e| e.to_string())?;
-    if timed_out {
+    if stop.timed_out {
         append_stderr_line(
             &mut out.stderr,
             &format!("[osmogrep] command timed out after {}s", timeout.as_secs()),
         );
     }
-    if cancelled {
+    if stop.cancelled {
         append_stderr_line(&mut out.stderr, "[osmogrep] command cancelled");
     }
 
@@ -89,8 +72,8 @@ pub fn run_command_cancellable(
         stderr: out.stderr,
         exit_code: out.status.code().unwrap_or(-1),
         duration_ms: started.elapsed().as_millis(),
-        timed_out,
-        cancelled,
+        timed_out: stop.timed_out,
+        cancelled: stop.cancelled,
     })
 }
 
@@ -107,30 +90,12 @@ pub fn run_command_with_stdin_cancellable(
         .stderr(Stdio::piped());
 
     let mut child = command.spawn().map_err(|e| e.to_string())?;
-    let mut timed_out = false;
-    let mut cancelled = false;
     let input = stdin.to_vec();
     let writer = child.stdin.take().map(|mut child_stdin| {
         thread::spawn(move || child_stdin.write_all(&input).map_err(|e| e.to_string()))
     });
 
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if is_cancelled() => {
-                cancelled = true;
-                let _ = child.kill();
-                break;
-            }
-            Ok(None) if started.elapsed() >= timeout => {
-                timed_out = true;
-                let _ = child.kill();
-                break;
-            }
-            Ok(None) => thread::sleep(Duration::from_millis(100)),
-            Err(e) => return Err(e.to_string()),
-        }
-    }
+    let stop = wait_for_child(&mut child, started, timeout, &is_cancelled)?;
 
     let mut out = child.wait_with_output().map_err(|e| e.to_string())?;
     if let Some(writer) = writer {
@@ -143,13 +108,13 @@ pub fn run_command_with_stdin_cancellable(
             Err(_) => append_stderr_line(&mut out.stderr, "[osmogrep] stdin writer panicked"),
         }
     }
-    if timed_out {
+    if stop.timed_out {
         append_stderr_line(
             &mut out.stderr,
             &format!("[osmogrep] command timed out after {}s", timeout.as_secs()),
         );
     }
-    if cancelled {
+    if stop.cancelled {
         append_stderr_line(&mut out.stderr, "[osmogrep] command cancelled");
     }
 
@@ -158,9 +123,51 @@ pub fn run_command_with_stdin_cancellable(
         stderr: out.stderr,
         exit_code: out.status.code().unwrap_or(-1),
         duration_ms: started.elapsed().as_millis(),
-        timed_out,
-        cancelled,
+        timed_out: stop.timed_out,
+        cancelled: stop.cancelled,
     })
+}
+
+#[derive(Debug, Default)]
+struct ProcessStop {
+    timed_out: bool,
+    cancelled: bool,
+}
+
+fn wait_for_child(
+    child: &mut Child,
+    started: Instant,
+    timeout: Duration,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<ProcessStop, String> {
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return Ok(ProcessStop::default()),
+            Ok(None) if is_cancelled() => {
+                let _ = child.kill();
+                return Ok(ProcessStop {
+                    timed_out: false,
+                    cancelled: true,
+                });
+            }
+            Ok(None) if started.elapsed() >= timeout => {
+                let _ = child.kill();
+                return Ok(ProcessStop {
+                    timed_out: true,
+                    cancelled: false,
+                });
+            }
+            Ok(None) => thread::sleep(next_poll_delay(started, timeout)),
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+}
+
+fn next_poll_delay(started: Instant, timeout: Duration) -> Duration {
+    timeout
+        .checked_sub(started.elapsed())
+        .unwrap_or(Duration::ZERO)
+        .min(PROCESS_POLL_INTERVAL)
 }
 
 fn append_stderr_line(stderr: &mut Vec<u8>, line: &str) {
@@ -214,6 +221,23 @@ mod tests {
         assert_eq!(run.exit_code, 0);
         assert_eq!(String::from_utf8_lossy(&run.stdout), "ok");
         assert!(!run.timed_out);
+    }
+
+    #[test]
+    fn process_poll_delay_is_capped() {
+        let started = Instant::now();
+
+        assert_eq!(
+            next_poll_delay(started, Duration::from_secs(5)),
+            PROCESS_POLL_INTERVAL
+        );
+    }
+
+    #[test]
+    fn process_poll_delay_uses_remaining_timeout() {
+        let started = Instant::now() - Duration::from_millis(95);
+
+        assert!(next_poll_delay(started, Duration::from_millis(100)) <= Duration::from_millis(5));
     }
 
     #[test]
