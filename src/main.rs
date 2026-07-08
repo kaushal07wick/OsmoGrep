@@ -32,14 +32,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crossterm::{
-    cursor::Show,
-    event::{
-        self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    },
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
+use crossterm::event;
 
 use ratatui::{backend::CrosstermBackend, layout::Rect, Terminal};
 
@@ -57,7 +50,12 @@ use crate::{
         AgentState, DiffSnapshot, InputMode, JobKind, JobStatus, LogLevel, PermissionProfile,
         MAX_CONVERSATION_TOKENS,
     },
-    ui::{frame::FrameClock, main_ui::handle_event, tui::draw_ui},
+    ui::{
+        frame::FrameClock,
+        main_ui::handle_event,
+        terminal::{setup_terminal, teardown_terminal},
+        tui::draw_ui,
+    },
 };
 
 enum JobEvent {
@@ -2021,94 +2019,6 @@ fn init_state() -> AgentState {
         conversation: crate::state::ConversationHistory::new(),
     }
 }
-struct TerminalSession {
-    active: bool,
-    mouse_capture: bool,
-}
-
-impl TerminalSession {
-    fn restore_with<W: io::Write>(&mut self, mut writer: W) -> io::Result<()> {
-        if !self.active {
-            return Ok(());
-        }
-
-        let raw_result = disable_raw_mode();
-        let screen_result = if self.mouse_capture {
-            execute!(
-                writer,
-                DisableBracketedPaste,
-                DisableMouseCapture,
-                LeaveAlternateScreen,
-                Show
-            )
-        } else {
-            execute!(writer, DisableBracketedPaste, LeaveAlternateScreen, Show)
-        };
-        self.active = false;
-
-        raw_result?;
-        screen_result?;
-        Ok(())
-    }
-}
-
-impl Drop for TerminalSession {
-    fn drop(&mut self) {
-        let _ = self.restore_with(io::stdout());
-    }
-}
-
-fn setup_terminal() -> Result<TerminalSession, Box<dyn Error>> {
-    enable_raw_mode()?;
-
-    let mut stdout = io::stdout();
-    if let Err(err) = execute!(stdout, EnterAlternateScreen, EnableBracketedPaste) {
-        let _ = disable_raw_mode();
-        return Err(Box::new(err));
-    }
-
-    let mouse_capture = osmogrep_mouse_capture_enabled();
-    if mouse_capture {
-        if let Err(err) = execute!(stdout, EnableMouseCapture) {
-            let _ = execute!(
-                io::stdout(),
-                DisableBracketedPaste,
-                LeaveAlternateScreen,
-                Show
-            );
-            let _ = disable_raw_mode();
-            return Err(Box::new(err));
-        }
-    }
-
-    Ok(TerminalSession {
-        active: true,
-        mouse_capture,
-    })
-}
-
-fn osmogrep_mouse_capture_enabled() -> bool {
-    std::env::var("OSMOGREP_MOUSE")
-        .ok()
-        .is_some_and(|raw| parse_mouse_capture_setting(&raw))
-}
-
-fn parse_mouse_capture_setting(raw: &str) -> bool {
-    matches!(
-        raw.trim().to_ascii_lowercase().as_str(),
-        "1" | "true" | "yes" | "on" | "all" | "buttons" | "button" | "wheel" | "scroll"
-    )
-}
-
-fn teardown_terminal(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    terminal_session: &mut TerminalSession,
-) -> Result<(), Box<dyn Error>> {
-    terminal.show_cursor()?;
-    terminal_session.restore_with(terminal.backend_mut())?;
-    Ok(())
-}
-
 fn tool_target_path(name: &str, args: &serde_json::Value) -> Option<String> {
     let is_file_tool = matches!(
         name,
@@ -2193,16 +2103,6 @@ mod tests {
                 .count(),
             80
         );
-    }
-
-    #[test]
-    fn mouse_capture_setting_requires_explicit_enable() {
-        assert!(!parse_mouse_capture_setting(""));
-        assert!(!parse_mouse_capture_setting("off"));
-        assert!(!parse_mouse_capture_setting("false"));
-        assert!(parse_mouse_capture_setting("on"));
-        assert!(parse_mouse_capture_setting("wheel"));
-        assert!(parse_mouse_capture_setting("all"));
     }
 
     #[test]
