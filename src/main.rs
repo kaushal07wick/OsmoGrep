@@ -51,10 +51,9 @@ use crate::{
         MAX_CONVERSATION_TOKENS,
     },
     ui::{
-        frame::FrameClock,
         main_ui::handle_event,
+        runtime::TuiRuntime,
         terminal::{setup_terminal, teardown_terminal},
-        tui::draw_ui,
     },
 };
 
@@ -1156,29 +1155,25 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
 
     /* ---------- MAIN LOOP ---------- */
 
-    let mut frame_clock = FrameClock::default();
-    let mut needs_draw = true;
-    let mut input_rect = Rect::default();
-    let mut exec_rect = Rect::default();
+    let mut runtime = TuiRuntime::default();
 
     loop {
-        if needs_draw && frame_clock.draw_due(Instant::now()) {
-            let (next_input_rect, _, next_exec_rect) = draw_ui(&mut terminal, &state)?;
-            input_rect = next_input_rect;
-            exec_rect = next_exec_rect;
-            frame_clock.mark_drawn(Instant::now());
-            needs_draw = false;
-        }
+        runtime.draw_if_due(&mut terminal, &state)?;
 
-        let poll_timeout = frame_clock.poll_timeout(
-            Instant::now(),
-            needs_draw,
-            tui_live_activity(&state, agent_rx.is_some(), running_jobs),
-        );
-        if event::poll(poll_timeout)? {
+        if event::poll(runtime.poll_timeout(tui_live_activity(
+            &state,
+            agent_rx.is_some(),
+            running_jobs,
+        )))? {
             let ev = event::read()?;
-            handle_event(&mut state, ev, input_rect, Rect::default(), exec_rect);
-            needs_draw = true;
+            handle_event(
+                &mut state,
+                ev,
+                runtime.input_rect(),
+                Rect::default(),
+                runtime.exec_rect(),
+            );
+            runtime.mark_dirty();
         }
 
         if state.ui.should_exit {
@@ -1190,12 +1185,12 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
             state.ui.update_install_requested = false;
             state.ui.update_skip_requested = false;
             approve_update(&mut state, &update_tx);
-            needs_draw = true;
+            runtime.mark_dirty();
         }
         if state.ui.update_skip_requested {
             state.ui.update_skip_requested = false;
             deny_update(&mut state);
-            needs_draw = true;
+            runtime.mark_dirty();
         }
 
         loop {
@@ -1206,7 +1201,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                     output,
                     kind,
                 }) => {
-                    needs_draw = true;
+                    runtime.mark_dirty();
                     running_jobs = running_jobs.saturating_sub(1);
                     if let Some(job) = state.jobs.iter_mut().find(|j| j.id == id) {
                         job.status = if ok {
@@ -1243,7 +1238,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
             match update_rx.try_recv() {
                 Ok(evt) => {
                     handle_update_event(&mut state, evt);
-                    needs_draw = true;
+                    runtime.mark_dirty();
                 }
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => break,
@@ -1251,7 +1246,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
         }
 
         while running_jobs < 2 && !state.job_queue.is_empty() {
-            needs_draw = true;
+            runtime.mark_dirty();
             let req = state.job_queue.remove(0);
             if let Some(job) = state.jobs.iter_mut().find(|j| j.id == req.id) {
                 job.status = JobStatus::Running;
@@ -1321,14 +1316,14 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                 match rx.try_recv() {
                     Ok(evt) => match evt {
                         ContextEvent::Started => {
-                            needs_draw = true;
+                            runtime.mark_dirty();
                             state.ui.indexing = true;
                             state.ui.indexed = false;
                             state.ui.spinner_started_at = Some(Instant::now());
                         }
 
                         ContextEvent::Finished => {
-                            needs_draw = true;
+                            runtime.mark_dirty();
                             state.ui.indexing = false;
                             state.ui.indexed = true;
                             state.ui.spinner_started_at = None;
@@ -1336,7 +1331,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                         }
 
                         ContextEvent::Error(_e) => {
-                            needs_draw = true;
+                            runtime.mark_dirty();
                             state.ui.indexing = false;
                             state.ui.spinner_started_at = None;
                             done = true;
@@ -1345,7 +1340,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
 
                     Err(mpsc::TryRecvError::Empty) => break,
                     Err(mpsc::TryRecvError::Disconnected) => {
-                        needs_draw = true;
+                        runtime.mark_dirty();
                         state.ui.indexing = false;
                         state.ui.spinner_started_at = None;
                         done = true;
@@ -1362,7 +1357,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
             match voice_evt_rx.try_recv() {
                 Ok(evt) => match evt {
                     voice::VoiceEvent::Connected => {
-                        needs_draw = true;
+                        runtime.mark_dirty();
                         state.voice.visible = true;
                         state.voice.connected = true;
                         state.voice.status = Some("connected".into());
@@ -1372,7 +1367,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                         log_status(&mut state, "Voice connected.");
                     }
                     voice::VoiceEvent::Disconnected => {
-                        needs_draw = true;
+                        runtime.mark_dirty();
                         state.voice.connected = false;
                         state.voice.enabled = false;
                         state.voice.status = Some("disconnected".into());
@@ -1383,7 +1378,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                         state.voice.last_inserted = None;
                     }
                     voice::VoiceEvent::Partial(delta) => {
-                        needs_draw = true;
+                        runtime.mark_dirty();
                         state.voice.partial = Some(delta);
                         state.voice.last_final = None;
                         if let Some(delta) = state.voice.partial.as_deref() {
@@ -1398,7 +1393,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                         }
                     }
                     voice::VoiceEvent::Final(text) => {
-                        needs_draw = true;
+                        runtime.mark_dirty();
                         let final_text = if text.trim().is_empty() {
                             state.voice.buffer.clone()
                         } else {
@@ -1430,7 +1425,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                         state.voice.last_activity = Some(Instant::now());
                     }
                     voice::VoiceEvent::Error(msg) => {
-                        needs_draw = true;
+                        runtime.mark_dirty();
                         state.voice.visible = true;
                         state.voice.enabled = false;
                         state.voice.connected = false;
@@ -1441,7 +1436,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                         log(&mut state, LogLevel::Error, msg);
                     }
                     voice::VoiceEvent::Status(msg) => {
-                        needs_draw = true;
+                        runtime.mark_dirty();
                         let status = msg.clone();
                         state.voice.status = Some(msg);
                         log_status(&mut state, status);
@@ -1477,7 +1472,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                         }
                         state.voice.last_final = Some(final_text);
                         state.voice.last_inserted = Some(state.ui.input.clone());
-                        needs_draw = true;
+                        runtime.mark_dirty();
                     }
                     state.voice.buffer.clear();
                     state.voice.partial = None;
@@ -1490,7 +1485,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
             if let Some(token) = agent_cancel.as_ref() {
                 token.cancel();
                 log_status(&mut state, "Cancellation requested.");
-                needs_draw = true;
+                runtime.mark_dirty();
             }
             state.ui.cancel_requested = false;
         }
@@ -1500,7 +1495,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                 match rx.try_recv() {
                     Ok(evt) => match evt {
                         AgentEvent::ToolCall { name, args } => {
-                            needs_draw = true;
+                            runtime.mark_dirty();
                             let cmd = match args {
                                 serde_json::Value::Object(ref map) => map
                                     .values()
@@ -1518,13 +1513,13 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                         }
 
                         AgentEvent::ToolResult { summary } => {
-                            needs_draw = true;
+                            runtime.mark_dirty();
                             state.ui.last_tool_status = Some(summary.clone());
                             log_tool_result(&mut state, summary);
                         }
 
                         AgentEvent::PlanUpdate { items } => {
-                            needs_draw = true;
+                            runtime.mark_dirty();
                             let completed = items.iter().filter(|item| item.done).count();
                             let total = items.len();
                             state.plan_items = items;
@@ -1542,7 +1537,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                             reason,
                             ..
                         } => {
-                            needs_draw = true;
+                            runtime.mark_dirty();
                             state.ui.run_phase = phase.clone();
                             state.ui.active_edit_target = Some(path.clone());
                             state.ui.run_detail = Some(reason.unwrap_or_else(|| {
@@ -1557,7 +1552,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                             summary,
                             ..
                         } => {
-                            needs_draw = true;
+                            runtime.mark_dirty();
                             state.ui.run_phase = "editing".to_string();
                             state.ui.active_edit_target = Some(path.clone());
                             state.ui.current_tool_detail = Some(summary.clone());
@@ -1570,7 +1565,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                             delta_kind,
                             ..
                         } => {
-                            needs_draw = true;
+                            runtime.mark_dirty();
                             state.ui.diff_active = true;
                             state.ui.active_edit_target = Some(path.clone());
                             state.ui.diff_snapshot = vec![DiffSnapshot {
@@ -1587,7 +1582,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                             summary,
                             ..
                         } => {
-                            needs_draw = true;
+                            runtime.mark_dirty();
                             state.ui.active_edit_target = Some(path.clone());
                             state.ui.last_tool_status = Some(summary.clone());
                             log_tool_result(
@@ -1601,7 +1596,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                         }
 
                         AgentEvent::ValidationStart { command, .. } => {
-                            needs_draw = true;
+                            runtime.mark_dirty();
                             state.ui.run_phase = "validating".to_string();
                             state.ui.run_detail = Some(command.clone());
                             log_status(&mut state, format!("validating: {command}"));
@@ -1613,7 +1608,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                             summary,
                             ..
                         } => {
-                            needs_draw = true;
+                            runtime.mark_dirty();
                             state.ui.run_phase = if passed {
                                 "validated".to_string()
                             } else {
@@ -1639,7 +1634,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                             before,
                             after,
                         } => {
-                            needs_draw = true;
+                            runtime.mark_dirty();
                             let snap = DiffSnapshot {
                                 tool,
                                 target,
@@ -1662,7 +1657,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                             before,
                             after,
                         } => {
-                            needs_draw = true;
+                            runtime.mark_dirty();
                             state.ui.diff_active = true;
                             state.ui.diff_snapshot = vec![DiffSnapshot {
                                 tool: format!("preview:{tool}"),
@@ -1673,14 +1668,14 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                         }
 
                         AgentEvent::OutputText(text) => {
-                            needs_draw = true;
+                            runtime.mark_dirty();
                             state.usage.completion_tokens += (text.len() / 4).max(1);
                             log_agent_output(&mut state, &text);
                             let _ = persistence::save(&state);
                         }
 
                         AgentEvent::StreamDelta(delta) => {
-                            needs_draw = true;
+                            runtime.mark_dirty();
                             state.ui.streaming_active = true;
                             state.ui.follow_tail = true;
                             state.ui.streaming_transcript.push_str(&delta);
@@ -1689,7 +1684,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                         }
 
                         AgentEvent::StreamDone => {
-                            needs_draw = true;
+                            runtime.mark_dirty();
                             finish_streaming_output(&mut state);
                         }
 
@@ -1699,7 +1694,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                             iteration,
                             max_iterations,
                         } => {
-                            needs_draw = true;
+                            runtime.mark_dirty();
                             state.ui.run_phase = phase;
                             state.ui.run_detail = Some(detail);
                             state.ui.run_iteration = iteration;
@@ -1711,7 +1706,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                             args_summary,
                             reply_tx,
                         } => {
-                            needs_draw = true;
+                            runtime.mark_dirty();
                             if state.ui.auto_approve {
                                 let _ = reply_tx.send(true);
                                 log_status(
@@ -1729,14 +1724,14 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                         }
 
                         AgentEvent::ConversationUpdate(messages) => {
-                            needs_draw = true;
+                            runtime.mark_dirty();
                             state.conversation.set_messages(messages);
                             state.conversation.trim_to_budget(MAX_CONVERSATION_TOKENS);
                             let _ = persistence::save(&state);
                         }
 
                         AgentEvent::Cancelled => {
-                            needs_draw = true;
+                            runtime.mark_dirty();
                             finish_streaming_output(&mut state);
                             log(&mut state, LogLevel::Warn, "Agent cancelled.");
                             state.ui.spinner_started_at = None;
@@ -1753,7 +1748,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                         }
 
                         AgentEvent::Error(e) => {
-                            needs_draw = true;
+                            runtime.mark_dirty();
                             log(&mut state, LogLevel::Error, e);
                             finish_streaming_output(&mut state);
                             state.ui.spinner_started_at = None;
@@ -1770,7 +1765,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                         }
 
                         AgentEvent::Done => {
-                            needs_draw = true;
+                            runtime.mark_dirty();
                             state.ui.spinner_started_at = None;
                             state.ui.agent_running = false;
                             state.ui.run_phase = "idle".to_string();
@@ -1810,7 +1805,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
 
                     Err(mpsc::TryRecvError::Empty) => break,
                     Err(mpsc::TryRecvError::Disconnected) => {
-                        needs_draw = true;
+                        runtime.mark_dirty();
                         finish_streaming_output(&mut state);
                         state.ui.spinner_started_at = None;
                         state.ui.agent_running = false;
@@ -1829,7 +1824,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
         }
 
         if state.ui.execution_pending {
-            needs_draw = true;
+            runtime.mark_dirty();
             state.ui.execution_pending = false;
 
             let mode = state.ui.input_mode;
@@ -1907,7 +1902,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
 
         if agent_rx.is_none() {
             if let Some(next_prompt) = state.ui.queued_agent_prompt.take() {
-                needs_draw = true;
+                runtime.mark_dirty();
                 log_user_input(&mut state, &next_prompt);
                 start_agent_run(
                     &mut state,
@@ -1938,7 +1933,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                     .zip(prev_commands.iter())
                     .any(|(item, prev)| item.cmd != *prev)
             {
-                needs_draw = true;
+                runtime.mark_dirty();
             }
         }
     }

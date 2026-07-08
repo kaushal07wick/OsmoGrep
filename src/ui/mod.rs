@@ -4,5 +4,6 @@ pub mod frame;
 pub mod helper;
 pub mod main_ui;
 pub mod markdown;
+pub mod runtime;
 pub mod terminal;
 pub mod tui;
