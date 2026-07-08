@@ -79,6 +79,7 @@ pub struct CommandItem {
 pub struct UiState {
     // input
     pub input: String,
+    pub input_cursor: usize,
     pub input_clipboard: String,
     pub input_all_selected: bool,
     pub input_mode: InputMode,
@@ -131,6 +132,7 @@ impl Default for UiState {
     fn default() -> Self {
         Self {
             input: String::new(),
+            input_cursor: 0,
             input_clipboard: String::new(),
             input_all_selected: false,
             input_mode: InputMode::AgentText,
@@ -392,20 +394,100 @@ impl AgentState {
     pub fn push_char(&mut self, c: char) {
         if self.ui.input_all_selected {
             self.ui.input.clear();
+            self.ui.input_cursor = 0;
             self.ui.input_all_selected = false;
         }
-        self.ui.input.push(c);
+
+        let cursor = clamp_char_boundary(&self.ui.input, self.ui.input_cursor);
+        self.ui.input.insert(cursor, c);
+        self.ui.input_cursor = cursor + c.len_utf8();
         self.ui.history_index = None;
     }
 
     pub fn backspace(&mut self) {
         if self.ui.input_all_selected {
             self.ui.input.clear();
+            self.ui.input_cursor = 0;
             self.ui.input_all_selected = false;
             self.ui.history_index = None;
             return;
         }
-        self.ui.input.pop();
+
+        let cursor = clamp_char_boundary(&self.ui.input, self.ui.input_cursor);
+        if cursor == 0 {
+            return;
+        }
+
+        let previous = previous_char_boundary(&self.ui.input, cursor);
+        self.ui.input.drain(previous..cursor);
+        self.ui.input_cursor = previous;
+        self.ui.history_index = None;
+    }
+
+    pub fn delete_forward(&mut self) {
+        if self.ui.input_all_selected {
+            self.clear_input();
+            return;
+        }
+
+        let cursor = clamp_char_boundary(&self.ui.input, self.ui.input_cursor);
+        if cursor >= self.ui.input.len() {
+            return;
+        }
+
+        let next = next_char_boundary(&self.ui.input, cursor);
+        self.ui.input.drain(cursor..next);
+        self.ui.input_cursor = cursor;
+        self.ui.history_index = None;
+    }
+
+    pub fn move_cursor_left(&mut self) {
+        self.ui.input_all_selected = false;
+        let cursor = clamp_char_boundary(&self.ui.input, self.ui.input_cursor);
+        self.ui.input_cursor = previous_char_boundary(&self.ui.input, cursor);
+    }
+
+    pub fn move_cursor_right(&mut self) {
+        self.ui.input_all_selected = false;
+        let cursor = clamp_char_boundary(&self.ui.input, self.ui.input_cursor);
+        self.ui.input_cursor = next_char_boundary(&self.ui.input, cursor);
+    }
+
+    pub fn move_cursor_line_start(&mut self) {
+        self.ui.input_all_selected = false;
+        let cursor = clamp_char_boundary(&self.ui.input, self.ui.input_cursor);
+        self.ui.input_cursor = current_line_bounds(&self.ui.input, cursor).0;
+    }
+
+    pub fn move_cursor_line_end(&mut self) {
+        self.ui.input_all_selected = false;
+        let cursor = clamp_char_boundary(&self.ui.input, self.ui.input_cursor);
+        self.ui.input_cursor = current_line_bounds(&self.ui.input, cursor).1;
+    }
+
+    pub fn move_cursor_up(&mut self) -> bool {
+        self.move_cursor_vertical(-1)
+    }
+
+    pub fn move_cursor_down(&mut self) -> bool {
+        self.move_cursor_vertical(1)
+    }
+
+    fn move_cursor_vertical(&mut self, direction: i8) -> bool {
+        self.ui.input_all_selected = false;
+        let cursor = clamp_char_boundary(&self.ui.input, self.ui.input_cursor);
+        let (start, end) = current_line_bounds(&self.ui.input, cursor);
+        let column = self.ui.input[start..cursor].chars().count();
+
+        let Some((target_start, target_end)) =
+            adjacent_line_bounds(&self.ui.input, start, end, direction)
+        else {
+            return false;
+        };
+
+        self.ui.input_cursor =
+            byte_index_at_char_column(&self.ui.input, target_start, target_end, column);
+        true
     }
 
     pub fn select_all_input(&mut self) -> bool {
@@ -442,10 +524,13 @@ impl AgentState {
 
         if self.ui.input_all_selected {
             self.ui.input.clear();
+            self.ui.input_cursor = 0;
         }
 
         let clipboard = self.ui.input_clipboard.clone();
-        self.ui.input.push_str(&clipboard);
+        let cursor = clamp_char_boundary(&self.ui.input, self.ui.input_cursor);
+        self.ui.input.insert_str(cursor, &clipboard);
+        self.ui.input_cursor = cursor + clipboard.len();
         self.ui.input_all_selected = false;
         self.ui.history_index = None;
         true
@@ -454,6 +539,7 @@ impl AgentState {
     pub fn clear_input(&mut self) -> bool {
         let changed = !self.ui.input.is_empty() || self.ui.input_all_selected;
         self.ui.input.clear();
+        self.ui.input_cursor = 0;
         self.ui.input_all_selected = false;
         self.ui.history_index = None;
         changed
@@ -472,6 +558,7 @@ impl AgentState {
 
         self.ui.history_index = Some(idx);
         self.ui.input = self.ui.history[idx].clone();
+        self.ui.input_cursor = self.ui.input.len();
         self.ui.input_all_selected = false;
     }
 
@@ -480,11 +567,13 @@ impl AgentState {
             Some(i) if i + 1 < self.ui.history.len() => {
                 self.ui.history_index = Some(i + 1);
                 self.ui.input = self.ui.history[i + 1].clone();
+                self.ui.input_cursor = self.ui.input.len();
                 self.ui.input_all_selected = false;
             }
             _ => {
                 self.ui.history_index = None;
                 self.ui.input.clear();
+                self.ui.input_cursor = 0;
                 self.ui.input_all_selected = false;
             }
         }
@@ -499,6 +588,7 @@ impl AgentState {
         }
 
         self.ui.input.clear();
+        self.ui.input_cursor = 0;
         self.ui.input_all_selected = false;
         self.ui.history_index = None;
         self.ui.hint = None;
@@ -519,6 +609,93 @@ impl AgentState {
         self.ui.active_spinner = None;
         self.ui.spinner_started_at = None;
     }
+}
+
+fn clamp_char_boundary(value: &str, index: usize) -> usize {
+    let mut index = index.min(value.len());
+    while index > 0 && !value.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
+fn previous_char_boundary(value: &str, index: usize) -> usize {
+    let index = clamp_char_boundary(value, index);
+    if index == 0 {
+        return 0;
+    }
+
+    value[..index]
+        .char_indices()
+        .last()
+        .map(|(idx, _)| idx)
+        .unwrap_or(0)
+}
+
+fn next_char_boundary(value: &str, index: usize) -> usize {
+    let index = clamp_char_boundary(value, index);
+    if index >= value.len() {
+        return value.len();
+    }
+
+    value[index..]
+        .char_indices()
+        .nth(1)
+        .map(|(idx, _)| index + idx)
+        .unwrap_or(value.len())
+}
+
+fn current_line_bounds(value: &str, cursor: usize) -> (usize, usize) {
+    let cursor = clamp_char_boundary(value, cursor);
+    let start = value[..cursor]
+        .rfind('\n')
+        .map(|idx| idx + '\n'.len_utf8())
+        .unwrap_or(0);
+    let end = value[cursor..]
+        .find('\n')
+        .map(|idx| cursor + idx)
+        .unwrap_or(value.len());
+    (start, end)
+}
+
+fn adjacent_line_bounds(
+    value: &str,
+    start: usize,
+    end: usize,
+    direction: i8,
+) -> Option<(usize, usize)> {
+    if direction < 0 {
+        if start == 0 {
+            return None;
+        }
+
+        let previous_end = start.saturating_sub('\n'.len_utf8());
+        let previous_start = value[..previous_end]
+            .rfind('\n')
+            .map(|idx| idx + '\n'.len_utf8())
+            .unwrap_or(0);
+        Some((previous_start, previous_end))
+    } else {
+        if end >= value.len() {
+            return None;
+        }
+
+        let next_start = end + '\n'.len_utf8();
+        let next_end = value[next_start..]
+            .find('\n')
+            .map(|idx| next_start + idx)
+            .unwrap_or(value.len());
+        Some((next_start, next_end))
+    }
+}
+
+fn byte_index_at_char_column(value: &str, start: usize, end: usize, column: usize) -> usize {
+    for (current_column, (offset, _)) in value[start..end].char_indices().enumerate() {
+        if current_column == column {
+            return start + offset;
+        }
+    }
+    end
 }
 
 pub struct VoiceState {
@@ -804,6 +981,37 @@ mod tests {
 
         assert!(state.paste_input());
         assert_eq!(state.ui.input, "keep this");
+    }
+
+    #[test]
+    fn inserts_and_deletes_at_cursor_without_splitting_multibyte_chars() {
+        let mut state = agent_state_with_input("a界c");
+        state.ui.input_cursor = "a界".len();
+
+        state.push_char('b');
+        assert_eq!(state.ui.input, "a界bc");
+        assert_eq!(state.ui.input_cursor, "a界b".len());
+
+        state.move_cursor_left();
+        state.backspace();
+        assert_eq!(state.ui.input, "abc");
+        assert_eq!(state.ui.input_cursor, "a".len());
+
+        state.delete_forward();
+        assert_eq!(state.ui.input, "ac");
+        assert_eq!(state.ui.input_cursor, "a".len());
+    }
+
+    #[test]
+    fn vertical_cursor_motion_preserves_character_column() {
+        let mut state = agent_state_with_input("one\ntwo words\nthree");
+        state.ui.input_cursor = "one\ntwo".len();
+
+        assert!(state.move_cursor_down());
+        assert_eq!(state.ui.input_cursor, "one\ntwo words\nthr".len());
+
+        assert!(state.move_cursor_up());
+        assert_eq!(state.ui.input_cursor, "one\ntwo".len());
     }
 
     #[test]

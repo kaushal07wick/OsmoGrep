@@ -40,6 +40,11 @@ pub fn handle_event(
 }
 
 fn handle_key(state: &mut AgentState, k: KeyEvent) {
+    if matches!(k.code, KeyCode::Esc) && state.ui.agent_running {
+        request_agent_cancel(state);
+        return;
+    }
+
     if let Some(pending) = state.ui.pending_permission.take() {
         match k.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
@@ -111,6 +116,7 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
         KeyCode::Enter if palette_active => {
             if let Some(item) = state.ui.command_items.get(state.ui.command_selected) {
                 state.ui.input = item.cmd.to_string();
+                state.ui.input_cursor = state.ui.input.len();
                 state.ui.input_all_selected = false;
                 state.ui.input_mode = InputMode::Command; // ← CRITICAL
                 state.ui.command_items.clear();
@@ -134,7 +140,7 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
         }
 
         KeyCode::Delete => {
-            state.backspace();
+            state.delete_forward();
         }
 
         KeyCode::Enter if k.modifiers.contains(KeyModifiers::SHIFT) => {
@@ -172,11 +178,15 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
 
         /* ---------- History (disabled during palette) ---------- */
         KeyCode::Up if !palette_active => {
-            state.history_prev();
+            if !state.move_cursor_up() {
+                state.history_prev();
+            }
         }
 
         KeyCode::Down if !palette_active => {
-            state.history_next();
+            if !state.move_cursor_down() {
+                state.history_next();
+            }
         }
 
         /* ---------- Autocomplete ---------- */
@@ -186,6 +196,7 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
                 if !raw.is_empty() {
                     state.ui.queued_agent_prompt = Some(raw.to_string());
                     state.ui.input.clear();
+                    state.ui.input_cursor = 0;
                     state.ui.input_all_selected = false;
                     crate::logger::log_status(state, "Queued follow-up prompt (tab).");
                     return;
@@ -195,8 +206,10 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
                 if ac.starts_with(&state.ui.input) {
                     let suffix = &ac[state.ui.input.len()..];
                     state.ui.input.push_str(suffix);
+                    state.ui.input_cursor = state.ui.input.len();
                 } else {
                     state.ui.input = ac.clone();
+                    state.ui.input_cursor = state.ui.input.len();
                 }
                 state.ui.input_all_selected = false;
             }
@@ -220,8 +233,24 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
         }
 
         KeyCode::End => {
-            state.ui.exec_scroll = usize::MAX;
-            state.ui.follow_tail = true;
+            if state.ui.input.is_empty() {
+                state.ui.exec_scroll = usize::MAX;
+                state.ui.follow_tail = true;
+            } else {
+                state.move_cursor_line_end();
+            }
+        }
+
+        KeyCode::Home => {
+            state.move_cursor_line_start();
+        }
+
+        KeyCode::Left => {
+            state.move_cursor_left();
+        }
+
+        KeyCode::Right => {
+            state.move_cursor_right();
         }
 
         /* ---------- Exit ---------- */
@@ -235,6 +264,26 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
 
         _ => {}
     }
+}
+
+fn request_agent_cancel(state: &mut AgentState) {
+    state.ui.cancel_requested = true;
+    state.ui.command_items.clear();
+    state.ui.command_selected = 0;
+
+    if let Some(pending) = state.ui.pending_permission.take() {
+        let _ = pending.reply_tx.send(false);
+        crate::logger::log(
+            state,
+            crate::state::LogLevel::Warn,
+            format!(
+                "Cancelled pending {} {}",
+                pending.tool_name, pending.args_summary
+            ),
+        );
+    }
+
+    crate::logger::log_status(state, "Cancel requested.");
 }
 
 fn scroll_execution_back(state: &mut AgentState, step: usize) {
@@ -350,10 +399,15 @@ fn update_prompt_action(k: &KeyEvent) -> UpdatePromptAction {
 #[cfg(test)]
 mod tests {
     use super::{
-        input_control_action, scroll_back_offset, scroll_toward_tail_offset, update_prompt_action,
-        InputControlAction, UpdatePromptAction,
+        handle_key, input_control_action, scroll_back_offset, scroll_toward_tail_offset,
+        update_prompt_action, InputControlAction, UpdatePromptAction,
+    };
+    use crate::state::{
+        AgentState, ConversationHistory, LogBuffer, PermissionProfile, UiAccent, UiDensity,
+        UiState, UiTheme, UsageStats, VoiceState,
     };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::{path::PathBuf, sync::mpsc, time::Instant};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -361,6 +415,33 @@ mod tests {
 
     fn ctrl(c: char) -> KeyEvent {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    fn agent_state() -> AgentState {
+        AgentState {
+            ui: UiState::default(),
+            logs: LogBuffer::new(),
+            session_changes: Vec::new(),
+            reviewed_change_count: 0,
+            undo_stack: Vec::new(),
+            usage: UsageStats::default(),
+            steer: None,
+            auto_eval: false,
+            permission_profile: PermissionProfile::WorkspaceAuto,
+            jobs: Vec::new(),
+            job_queue: Vec::new(),
+            next_job_id: 1,
+            plan_items: Vec::new(),
+            session_name: None,
+            theme: UiTheme::default(),
+            accent: UiAccent::default(),
+            density: UiDensity::default(),
+            plan_mode: false,
+            started_at: Instant::now(),
+            repo_root: PathBuf::from("."),
+            voice: VoiceState::default(),
+            conversation: ConversationHistory::new(),
+        }
     }
 
     #[test]
@@ -445,6 +526,35 @@ mod tests {
             update_prompt_action(&key(KeyCode::Enter)),
             UpdatePromptAction::Ignore
         );
+    }
+
+    #[test]
+    fn esc_cancels_running_agent_instead_of_exiting() {
+        let mut state = agent_state();
+        state.ui.agent_running = true;
+
+        handle_key(&mut state, key(KeyCode::Esc));
+
+        assert!(state.ui.cancel_requested);
+        assert!(!state.ui.should_exit);
+    }
+
+    #[test]
+    fn esc_denies_pending_permission_while_cancelling_agent() {
+        let mut state = agent_state();
+        state.ui.agent_running = true;
+        let (tx, rx) = mpsc::channel();
+        state.ui.pending_permission = Some(crate::state::PendingPermission {
+            tool_name: "patch".to_string(),
+            args_summary: "README.md".to_string(),
+            reply_tx: tx,
+        });
+
+        handle_key(&mut state, key(KeyCode::Esc));
+
+        assert!(state.ui.cancel_requested);
+        assert!(state.ui.pending_permission.is_none());
+        assert_eq!(rx.try_recv(), Ok(false));
     }
 }
 

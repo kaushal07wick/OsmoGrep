@@ -9,7 +9,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph},
     Frame, Terminal,
 };
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthChar;
 
 use crate::ui::helper::{calculate_input_lines, render_static_command_line, running_pulse};
 use crate::{
@@ -781,13 +781,26 @@ fn render_input_box(f: &mut Frame, area: Rect, state: &AgentState) {
     };
     let selected = state.ui.input_all_selected && !raw.is_empty();
 
+    let cursor_byte = display_cursor_byte_index(state, &raw);
+    let (cursor_line, cursor_col) = input_cursor_visual_position(&raw, cursor_byte, text_width);
+
     // Split into visual lines (handle wrapping)
-    let visual = wrap_visual_lines(&raw, text_width);
+    let mut visual = wrap_visual_lines(&raw, text_width);
+    if cursor_line >= visual.len() {
+        visual.resize(cursor_line + 1, String::new());
+    }
 
     let total_lines = visual.len();
     let max_visible = (area.height - 2) as usize; // -2 for borders
     let visible_lines = total_lines.min(max_visible);
     let hidden_lines = total_lines.saturating_sub(max_visible);
+    let visual_start = if visible_lines == 0 {
+        0
+    } else if cursor_line >= visible_lines {
+        cursor_line + 1 - visible_lines
+    } else {
+        0
+    };
 
     let mut out = Vec::new();
 
@@ -796,8 +809,14 @@ fn render_input_box(f: &mut Frame, area: Rect, state: &AgentState) {
 
     // Show visible lines
     let mut image_idx = 1usize;
-    for (i, line) in visual.iter().take(visible_lines).enumerate() {
-        if i == 0 {
+    for (offset, line) in visual
+        .iter()
+        .skip(visual_start)
+        .take(visible_lines)
+        .enumerate()
+    {
+        let visual_index = visual_start + offset;
+        if visual_index == 0 {
             // First line with prompt
             let mut spans = vec![Span::styled(PROMPT, Style::default().fg(p.input_fg))];
             let mut input_spans =
@@ -806,7 +825,7 @@ fn render_input_box(f: &mut Frame, area: Rect, state: &AgentState) {
             spans.extend(input_spans);
 
             // Add badge on first line if there are hidden lines
-            if hidden_lines > 0 {
+            if offset == 0 && hidden_lines > 0 {
                 spans.push(Span::raw(" "));
                 spans.push(Span::styled(
                     format!("[pasted {} lines]", total_lines),
@@ -828,19 +847,68 @@ fn render_input_box(f: &mut Frame, area: Rect, state: &AgentState) {
 
     f.render_widget(Paragraph::new(out), area);
 
-    // Cursor position: at end of first visible line (after prompt)
-    let first_line_width = visual
-        .first()
-        .map(|s| UnicodeWidthStr::width(s.as_str()))
-        .unwrap_or(0);
+    let prompt_width = if cursor_line == 0 { PROMPT.len() } else { 0 };
+    let cursor_y_offset = cursor_line.saturating_sub(visual_start);
     let cursor_x = area
         .x
-        .saturating_add(PROMPT.len() as u16)
-        .saturating_add(first_line_width.min(text_width) as u16)
+        .saturating_add(prompt_width as u16)
+        .saturating_add(cursor_col.min(text_width) as u16)
         .min(area.x + area.width.saturating_sub(1));
-    let cursor_y = area.y + 1;
+    let cursor_y = area
+        .y
+        .saturating_add(1)
+        .saturating_add(cursor_y_offset.min(visible_lines.saturating_sub(1)) as u16);
 
     f.set_cursor(cursor_x, cursor_y);
+}
+
+fn display_cursor_byte_index(state: &AgentState, raw: &str) -> usize {
+    let input_cursor = clamp_char_boundary(&state.ui.input, state.ui.input_cursor);
+    if !matches!(state.ui.input_mode, InputMode::ApiKey) {
+        return input_cursor.min(raw.len());
+    }
+
+    let cursor_chars = state.ui.input[..input_cursor].chars().count();
+    raw.char_indices()
+        .nth(cursor_chars)
+        .map(|(idx, _)| idx)
+        .unwrap_or(raw.len())
+}
+
+fn input_cursor_visual_position(raw: &str, cursor: usize, width: usize) -> (usize, usize) {
+    let width = width.max(1);
+    let cursor = clamp_char_boundary(raw, cursor);
+    let mut line = 0usize;
+    let mut col = 0usize;
+
+    for ch in raw[..cursor].chars() {
+        if ch == '\n' {
+            line += 1;
+            col = 0;
+            continue;
+        }
+
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if col > 0 && col + ch_width > width {
+            line += 1;
+            col = 0;
+        }
+        col += ch_width;
+        if col >= width {
+            line += 1;
+            col = 0;
+        }
+    }
+
+    (line, col)
+}
+
+fn clamp_char_boundary(value: &str, index: usize) -> usize {
+    let mut index = index.min(value.len());
+    while index > 0 && !value.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
 }
 
 fn style_selected_input(spans: &mut [Span<'static>], selected: bool, p: UiPalette) {
@@ -866,7 +934,7 @@ fn wrap_visual_lines(raw: &str, width: usize) -> Vec<String> {
         return visual;
     }
 
-    for line in raw.lines() {
+    for line in raw.split('\n') {
         if line.is_empty() {
             visual.push(String::new());
             continue;
@@ -1126,8 +1194,9 @@ pub fn render_command_palette(f: &mut Frame, area: Rect, state: &AgentState) {
 #[cfg(test)]
 mod tests {
     use super::{
-        clamp_scroll_offset, pending_update_prompt, render_plan_lines_for_items,
-        update_status_label, wrap_lines_safely, wrap_visual_lines, UiPalette,
+        clamp_scroll_offset, input_cursor_visual_position, pending_update_prompt,
+        render_plan_lines_for_items, update_status_label, wrap_lines_safely, wrap_visual_lines,
+        UiPalette,
     };
     use crate::state::{PendingUpdate, PlanItem};
     use ratatui::{style::Color, text::Line};
@@ -1158,6 +1227,22 @@ mod tests {
         let lines = wrap_visual_lines("界界界", 4);
 
         assert_eq!(lines, vec!["界界".to_string(), "界".to_string()]);
+    }
+
+    #[test]
+    fn input_cursor_position_tracks_wrapped_display_width() {
+        assert_eq!(input_cursor_visual_position("abcd", 3, 2), (1, 1));
+        assert_eq!(
+            input_cursor_visual_position("界界x", "界界".len(), 4),
+            (1, 0)
+        );
+    }
+
+    #[test]
+    fn input_wrapping_preserves_trailing_empty_line() {
+        let lines = wrap_visual_lines("first\n", 10);
+
+        assert_eq!(lines, vec!["first".to_string(), String::new()]);
     }
 
     #[test]
