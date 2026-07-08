@@ -1,7 +1,7 @@
 use std::{
     env, fs,
     io::Read,
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::{Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -19,7 +19,6 @@ use crate::harness::{clip, RunLedger};
 use crate::state::{DiffSnapshot, PermissionProfile};
 use crate::tool_guard::ToolLoopGuard;
 use crate::tools::{ToolRegistry, ToolSafety, ToolScope};
-use crate::worktree::{run_worktree_swarm, WorktreeSwarmResult};
 
 #[derive(Debug)]
 pub enum AgentEvent {
@@ -489,15 +488,6 @@ impl Agent {
     pub fn run_swarm(&self, user_text: &str) -> Result<Vec<(String, String)>, String> {
         let api_key = self.api_key.as_ref().ok_or("OPENAI_API_KEY not set")?;
         run_swarm_with(self.model_cfg.clone(), api_key, user_text)
-    }
-
-    pub fn run_worktree_swarm(
-        &self,
-        repo_root: &Path,
-        user_text: &str,
-    ) -> Result<Vec<WorktreeSwarmResult>, String> {
-        let _ = self.api_key.as_ref().ok_or("OPENAI_API_KEY not set")?;
-        run_worktree_swarm(repo_root, user_text)
     }
 }
 
