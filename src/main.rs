@@ -32,7 +32,9 @@ use std::{
 };
 
 use crossterm::{
-    event, execute,
+    cursor::Show,
+    event::{self, DisableMouseCapture, EnableMouseCapture},
+    execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 
@@ -1067,7 +1069,7 @@ fn compact_json(value: &serde_json::Value) -> String {
 }
 
 fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
-    setup_terminal()?;
+    let mut terminal_session = setup_terminal()?;
 
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
@@ -1846,7 +1848,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
     let attach_session = state.ui.tmux_attach_session.clone();
     let managed_tmux = env_truthy("OSMOGREP_MANAGED_TMUX", false);
     let managed_session = std::env::var("OSMOGREP_NV_SESSION").ok();
-    teardown_terminal(&mut terminal)?;
+    teardown_terminal(&mut terminal, &mut terminal_session)?;
 
     if managed_tmux {
         let target = managed_session.or_else(current_tmux_session_name);
@@ -1902,18 +1904,50 @@ fn init_state() -> AgentState {
         conversation: crate::state::ConversationHistory::new(),
     }
 }
-fn setup_terminal() -> Result<(), Box<dyn Error>> {
+struct TerminalSession {
+    active: bool,
+}
+
+impl TerminalSession {
+    fn restore_with<W: io::Write>(&mut self, mut writer: W) -> io::Result<()> {
+        if !self.active {
+            return Ok(());
+        }
+
+        let raw_result = disable_raw_mode();
+        let screen_result = execute!(writer, DisableMouseCapture, LeaveAlternateScreen, Show);
+        self.active = false;
+
+        raw_result?;
+        screen_result?;
+        Ok(())
+    }
+}
+
+impl Drop for TerminalSession {
+    fn drop(&mut self) {
+        let _ = self.restore_with(io::stdout());
+    }
+}
+
+fn setup_terminal() -> Result<TerminalSession, Box<dyn Error>> {
     enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen)?;
-    Ok(())
+
+    let mut stdout = io::stdout();
+    if let Err(err) = execute!(stdout, EnterAlternateScreen, EnableMouseCapture) {
+        let _ = disable_raw_mode();
+        return Err(Box::new(err));
+    }
+
+    Ok(TerminalSession { active: true })
 }
 
 fn teardown_terminal(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    terminal_session: &mut TerminalSession,
 ) -> Result<(), Box<dyn Error>> {
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
+    terminal_session.restore_with(terminal.backend_mut())?;
     Ok(())
 }
 
