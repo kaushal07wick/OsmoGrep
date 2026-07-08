@@ -19,7 +19,7 @@ use crate::harness::{clip, RunLedger};
 use crate::state::{DiffSnapshot, PermissionProfile};
 use crate::tool_guard::ToolLoopGuard;
 use crate::tools::{ToolRegistry, ToolSafety, ToolScope};
-use crate::worktree::{create_role_worktree, WorktreeSession};
+use crate::worktree::{run_worktree_swarm, WorktreeSwarmResult};
 
 #[derive(Debug)]
 pub enum AgentEvent {
@@ -368,15 +368,6 @@ pub struct RunControl {
     pub steer_tx: Sender<String>,
 }
 
-#[derive(Clone, Debug)]
-pub struct WorktreeSwarmResult {
-    pub role: String,
-    pub branch: String,
-    pub path: PathBuf,
-    pub success: bool,
-    pub output: String,
-}
-
 impl Agent {
     pub fn new() -> Self {
         let cfg = load_config();
@@ -505,7 +496,7 @@ impl Agent {
         user_text: &str,
     ) -> Result<Vec<WorktreeSwarmResult>, String> {
         let _ = self.api_key.as_ref().ok_or("OPENAI_API_KEY not set")?;
-        run_worktree_swarm_with(repo_root, user_text)
+        run_worktree_swarm(repo_root, user_text)
     }
 }
 
@@ -1606,90 +1597,6 @@ fn run_swarm_with(
     Ok(out)
 }
 
-fn run_worktree_swarm_with(
-    repo_root: &Path,
-    user_text: &str,
-) -> Result<Vec<WorktreeSwarmResult>, String> {
-    let exe = env::current_exe().map_err(|e| e.to_string())?;
-    let mut sessions = Vec::new();
-    for (role, scope_prompt) in swarm_scopes() {
-        let session = create_role_worktree(repo_root, role)?;
-        sessions.push((session, scope_prompt.to_string()));
-    }
-
-    let mut handles = Vec::new();
-    for (session, scope_prompt) in sessions {
-        let exe = exe.clone();
-        let user = user_text.to_string();
-        handles.push(thread::spawn(move || {
-            let output = run_headless_worktree_subagent(&exe, &session, &scope_prompt, &user)?;
-            Ok::<WorktreeSwarmResult, String>(WorktreeSwarmResult {
-                role: session.role,
-                branch: session.branch,
-                path: session.path,
-                success: output.0,
-                output: output.1,
-            })
-        }));
-    }
-
-    let mut out = Vec::new();
-    for handle in handles {
-        out.push(
-            handle
-                .join()
-                .map_err(|_| "worktree swarm thread panicked".to_string())??,
-        );
-    }
-    Ok(out)
-}
-
-fn run_headless_worktree_subagent(
-    exe: &Path,
-    session: &WorktreeSession,
-    scope_prompt: &str,
-    user_text: &str,
-) -> Result<(bool, String), String> {
-    let prompt = build_worktree_subagent_prompt(user_text, &session.role, scope_prompt);
-    let mut command = Command::new(exe);
-    command
-        .arg("run")
-        .arg("--repo-root")
-        .arg(&session.path)
-        .arg("--prompt")
-        .arg(prompt)
-        .arg("--permission-profile")
-        .arg("workspace-auto")
-        .arg("--auto-approve")
-        .arg("--json-events");
-
-    let run = crate::process_runner::run_command(
-        command,
-        crate::process_runner::timeout_from_env("OSMOGREP_WORKTREE_AGENT_TIMEOUT_SECS", 900),
-    )?;
-
-    let mut text = String::from_utf8_lossy(&run.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&run.stderr);
-    if !stderr.trim().is_empty() {
-        if !text.ends_with('\n') {
-            text.push('\n');
-        }
-        text.push_str(stderr.trim_end());
-    }
-
-    Ok((run.exit_code == 0 && !run.timed_out, text))
-}
-
-fn build_worktree_subagent_prompt(user_text: &str, role: &str, scope_prompt: &str) -> String {
-    format!(
-        "You are the `{role}` worktree-isolated Osmogrep subagent.\n\
-         Scope: {scope_prompt}\n\
-         Work only inside your current repository root. Do not push. Make changes only if they help this scope.\n\
-         Before finishing, run the most relevant verification available in this worktree and report exact commands and outcomes.\n\n\
-         Parent task:\n{user_text}"
-    )
-}
-
 fn swarm_scopes() -> [(&'static str, &'static str); 4] {
     [
         (
@@ -2085,18 +1992,6 @@ mod tests {
         assert!(prompt.chars().count() <= REVIEW_PROMPT_BUDGET);
         assert!(prompt.contains("[truncated]"));
         assert!(prompt.contains("File: src/large.rs"));
-    }
-
-    #[test]
-    fn worktree_subagent_prompt_enforces_isolation_and_verification() {
-        let prompt =
-            build_worktree_subagent_prompt("fix the parser", "edit", "Apply minimal safe patches.");
-
-        assert!(prompt.contains("worktree-isolated"));
-        assert!(prompt.contains("Work only inside your current repository root"));
-        assert!(prompt.contains("Do not push"));
-        assert!(prompt.contains("run the most relevant verification"));
-        assert!(prompt.contains("fix the parser"));
     }
 
     fn temp_root() -> PathBuf {
