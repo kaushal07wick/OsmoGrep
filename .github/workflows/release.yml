@@ -57,19 +57,25 @@ jobs:
           cd target/${{ matrix.target }}/release
           tar czf ../../../osmogrep-${{ matrix.target }}.tar.gz osmogrep
           cd ../../..
+          shasum -a 256 osmogrep-${{ matrix.target }}.tar.gz > osmogrep-${{ matrix.target }}.tar.gz.sha256
 
       - name: Package (windows)
         if: contains(matrix.target, 'windows')
         shell: pwsh
         run: |
-          Compress-Archive -Path "target/${{ matrix.target }}/release/osmogrep.exe" -DestinationPath "osmogrep-${{ matrix.target }}.zip"
+          $archive = "osmogrep-${{ matrix.target }}.zip"
+          Compress-Archive -Path "target/${{ matrix.target }}/release/osmogrep.exe" -DestinationPath $archive
+          $hash = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLower()
+          "$hash  $archive" | Out-File -Encoding ascii "$archive.sha256"
 
       - name: Upload artifact (unix)
         if: "!contains(matrix.target, 'windows')"
         uses: actions/upload-artifact@v4
         with:
           name: osmogrep-${{ matrix.target }}
-          path: osmogrep-${{ matrix.target }}.tar.gz
+          path: |
+            osmogrep-${{ matrix.target }}.tar.gz
+            osmogrep-${{ matrix.target }}.tar.gz.sha256
           if-no-files-found: error
 
       - name: Upload artifact (windows)
@@ -77,7 +83,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: osmogrep-${{ matrix.target }}
-          path: osmogrep-${{ matrix.target }}.zip
+          path: |
+            osmogrep-${{ matrix.target }}.zip
+            osmogrep-${{ matrix.target }}.zip.sha256
           if-no-files-found: error
 
   release:
@@ -93,7 +101,11 @@ jobs:
         with:
           files: |
             osmogrep-x86_64-unknown-linux-gnu/osmogrep-x86_64-unknown-linux-gnu.tar.gz
+            osmogrep-x86_64-unknown-linux-gnu/osmogrep-x86_64-unknown-linux-gnu.tar.gz.sha256
             osmogrep-x86_64-apple-darwin/osmogrep-x86_64-apple-darwin.tar.gz
+            osmogrep-x86_64-apple-darwin/osmogrep-x86_64-apple-darwin.tar.gz.sha256
             osmogrep-aarch64-apple-darwin/osmogrep-aarch64-apple-darwin.tar.gz
+            osmogrep-aarch64-apple-darwin/osmogrep-aarch64-apple-darwin.tar.gz.sha256
             osmogrep-x86_64-pc-windows-msvc/osmogrep-x86_64-pc-windows-msvc.zip
+            osmogrep-x86_64-pc-windows-msvc/osmogrep-x86_64-pc-windows-msvc.zip.sha256
           generate_release_notes: true

@@ -7,6 +7,7 @@ use std::thread;
 use std::time::Duration;
 
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 const REPO: &str = "kaushal07wick/OsmoGrep";
 
@@ -16,6 +17,7 @@ pub struct UpdateInfo {
     pub latest_version: String,
     pub asset_url: String,
     pub asset_name: String,
+    pub checksum_url: String,
 }
 
 #[derive(Debug)]
@@ -75,15 +77,22 @@ fn check_for_update() -> Result<Option<UpdateInfo>, String> {
     let target = current_target()?;
     let asset = latest
         .assets
-        .into_iter()
-        .find(|asset| asset.name.contains(&target))
+        .iter()
+        .find(|asset| asset.name.contains(&target) && !asset.name.ends_with(".sha256"))
         .ok_or_else(|| format!("no release asset found for target {target}"))?;
+    let checksum_name = format!("{}.sha256", asset.name);
+    let checksum_asset = latest
+        .assets
+        .iter()
+        .find(|asset| asset.name == checksum_name)
+        .ok_or_else(|| format!("no checksum asset found for {}", asset.name))?;
 
     Ok(Some(UpdateInfo {
         current_version,
         latest_version,
-        asset_url: asset.browser_download_url,
-        asset_name: asset.name,
+        asset_url: asset.browser_download_url.clone(),
+        asset_name: asset.name.clone(),
+        checksum_url: checksum_asset.browser_download_url.clone(),
     }))
 }
 
@@ -110,6 +119,9 @@ fn install_update(info: &UpdateInfo) -> Result<(), String> {
     fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
     let archive_path = tmp_dir.join(&info.asset_name);
     download(&info.asset_url, &archive_path)?;
+    let checksum_path = tmp_dir.join(format!("{}.sha256", info.asset_name));
+    download(&info.checksum_url, &checksum_path)?;
+    verify_checksum(&archive_path, &checksum_path, &info.asset_name)?;
     let binary_path = unpack_archive(&archive_path, &tmp_dir)?;
     replace_binary(&binary_path, &install_path)?;
     let _ = fs::remove_dir_all(tmp_dir);
@@ -130,6 +142,51 @@ fn download(url: &str, path: &Path) -> Result<(), String> {
         .bytes()
         .map_err(|e| e.to_string())?;
     fs::write(path, bytes).map_err(|e| e.to_string())
+}
+
+fn verify_checksum(archive: &Path, checksum_file: &Path, asset_name: &str) -> Result<(), String> {
+    let expected = expected_checksum(checksum_file, asset_name)?;
+    let actual = sha256_file(archive)?;
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "checksum mismatch for {asset_name}: expected {expected}, got {actual}"
+        ))
+    }
+}
+
+fn expected_checksum(checksum_file: &Path, asset_name: &str) -> Result<String, String> {
+    let text = fs::read_to_string(checksum_file).map_err(|e| e.to_string())?;
+    for line in text.lines() {
+        let mut parts = line.split_whitespace();
+        let Some(hash) = parts.next() else {
+            continue;
+        };
+        if !is_sha256_hex(hash) {
+            continue;
+        }
+        let filename = parts.next().unwrap_or(asset_name).trim_start_matches('*');
+        if filename == asset_name {
+            return Ok(hash.to_ascii_lowercase());
+        }
+        if line.split_whitespace().count() == 1 {
+            return Ok(hash.to_ascii_lowercase());
+        }
+    }
+    Err(format!(
+        "checksum file did not contain a sha256 for {asset_name}"
+    ))
+}
+
+fn sha256_file(path: &Path) -> Result<String, String> {
+    let bytes = fs::read(path).map_err(|e| e.to_string())?;
+    let digest = Sha256::digest(bytes);
+    Ok(hex::encode(digest))
+}
+
+fn is_sha256_hex(value: &str) -> bool {
+    value.len() == 64 && value.chars().all(|ch| ch.is_ascii_hexdigit())
 }
 
 fn unpack_archive(archive: &Path, tmp_dir: &Path) -> Result<PathBuf, String> {
@@ -274,5 +331,62 @@ mod tests {
     fn normalizes_release_tag_versions() {
         assert_eq!(normalize_version("v0.4.0"), "0.4.0");
         assert_eq!(normalize_version("0.4.0"), "0.4.0");
+    }
+
+    #[test]
+    fn verifies_matching_sha256_sidecar() {
+        let dir = env::temp_dir().join(format!("osmogrep-checksum-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let archive = dir.join("osmogrep-test.tar.gz");
+        let checksum = dir.join("osmogrep-test.tar.gz.sha256");
+        fs::write(&archive, b"hello").unwrap();
+        fs::write(
+            &checksum,
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824  osmogrep-test.tar.gz\n",
+        )
+        .unwrap();
+
+        verify_checksum(&archive, &checksum, "osmogrep-test.tar.gz").unwrap();
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn rejects_mismatched_sha256_sidecar() {
+        let dir = env::temp_dir().join(format!("osmogrep-checksum-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let archive = dir.join("osmogrep-test.tar.gz");
+        let checksum = dir.join("osmogrep-test.tar.gz.sha256");
+        fs::write(&archive, b"hello").unwrap();
+        fs::write(
+            &checksum,
+            "0000000000000000000000000000000000000000000000000000000000000000  osmogrep-test.tar.gz\n",
+        )
+        .unwrap();
+
+        let error = verify_checksum(&archive, &checksum, "osmogrep-test.tar.gz").unwrap_err();
+
+        assert!(error.contains("checksum mismatch"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn parses_bare_sha256_sidecar() {
+        let dir = env::temp_dir().join(format!("osmogrep-checksum-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let checksum = dir.join("osmogrep-test.tar.gz.sha256");
+        fs::write(
+            &checksum,
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824\n",
+        )
+        .unwrap();
+
+        let expected = expected_checksum(&checksum, "osmogrep-test.tar.gz").unwrap();
+
+        assert_eq!(
+            expected,
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        );
+        let _ = fs::remove_dir_all(dir);
     }
 }

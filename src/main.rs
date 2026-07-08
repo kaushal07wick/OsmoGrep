@@ -374,6 +374,7 @@ fn handle_update_event(state: &mut AgentState, evt: updater::UpdateEvent) {
                 latest_version: info.latest_version.clone(),
                 asset_url: info.asset_url,
                 asset_name: info.asset_name,
+                checksum_url: info.checksum_url,
                 installing: false,
             });
             state.ui.update_check_status = Some(format!(
@@ -441,6 +442,7 @@ fn approve_update(state: &mut AgentState, update_tx: &mpsc::Sender<updater::Upda
         latest_version: update.latest_version.clone(),
         asset_url: update.asset_url.clone(),
         asset_name: update.asset_name.clone(),
+        checksum_url: update.checksum_url.clone(),
     };
     updater::spawn_update_install(info, update_tx.clone());
 }

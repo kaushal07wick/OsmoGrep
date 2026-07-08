@@ -449,6 +449,7 @@ pub struct PendingUpdate {
     pub latest_version: String,
     pub asset_url: String,
     pub asset_name: String,
+    pub checksum_url: String,
     pub installing: bool,
 }
 
