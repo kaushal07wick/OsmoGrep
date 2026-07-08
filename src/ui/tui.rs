@@ -468,29 +468,13 @@ fn render_input_box(f: &mut Frame, area: Rect, state: &AgentState) {
     let text_width = inner_width.saturating_sub(PROMPT.len()).max(1);
 
     let raw = if matches!(state.ui.input_mode, InputMode::ApiKey) {
-        "•".repeat(state.ui.input.len())
+        "•".repeat(state.ui.input.chars().count())
     } else {
         state.ui.input.clone()
     };
 
     // Split into visual lines (handle wrapping)
-    let mut visual = Vec::new();
-    if raw.is_empty() {
-        visual.push(String::new());
-    } else {
-        for line in raw.lines() {
-            if line.is_empty() {
-                visual.push(String::new());
-            } else {
-                let mut start = 0;
-                while start < line.len() {
-                    let end = (start + text_width).min(line.len());
-                    visual.push(line[start..end].to_string());
-                    start = end;
-                }
-            }
-        }
-    }
+    let visual = wrap_visual_lines(&raw, text_width);
 
     let total_lines = visual.len();
     let max_visible = (area.height - 2) as usize; // -2 for borders
@@ -532,11 +516,43 @@ fn render_input_box(f: &mut Frame, area: Rect, state: &AgentState) {
     f.render_widget(Paragraph::new(out).wrap(Wrap { trim: false }), area);
 
     // Cursor position: at end of first visible line (after prompt)
-    let first_line_len = visual.get(0).map(|s| s.len()).unwrap_or(0);
+    let first_line_len = visual.get(0).map(|s| s.chars().count()).unwrap_or(0);
     let cursor_x = area.x + PROMPT.len() as u16 + first_line_len as u16;
     let cursor_y = area.y + 1;
 
     f.set_cursor(cursor_x, cursor_y);
+}
+
+fn wrap_visual_lines(raw: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut visual = Vec::new();
+
+    if raw.is_empty() {
+        visual.push(String::new());
+        return visual;
+    }
+
+    for line in raw.lines() {
+        if line.is_empty() {
+            visual.push(String::new());
+            continue;
+        }
+
+        let mut wrapped = String::new();
+        let mut count = 0usize;
+        for ch in line.chars() {
+            if count == width {
+                visual.push(wrapped);
+                wrapped = String::new();
+                count = 0;
+            }
+            wrapped.push(ch);
+            count += 1;
+        }
+        visual.push(wrapped);
+    }
+
+    visual
 }
 
 fn render_image_alias_spans(line: &str, image_idx: &mut usize) -> Vec<Span<'static>> {
@@ -745,4 +761,19 @@ pub fn render_command_palette(f: &mut Frame, area: Rect, state: &AgentState) {
         .wrap(Wrap { trim: false });
 
     f.render_widget(paragraph, area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wrap_visual_lines;
+
+    #[test]
+    fn wraps_multibyte_mask_without_splitting_chars() {
+        let masked = "•".repeat(26);
+        let lines = wrap_visual_lines(&masked, 25);
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].chars().count(), 25);
+        assert_eq!(lines[1].chars().count(), 1);
+    }
 }
