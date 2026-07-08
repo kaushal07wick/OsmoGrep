@@ -19,16 +19,18 @@ pub fn run_shell_command(
     cwd: Option<&Path>,
     timeout: Duration,
 ) -> Result<ProcessRun, String> {
-    let started = Instant::now();
     let mut command = Command::new("sh");
-    command
-        .arg("-c")
-        .arg(cmd)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    command.arg("-c").arg(cmd);
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
     }
+
+    run_command(command, timeout)
+}
+
+pub fn run_command(mut command: Command, timeout: Duration) -> Result<ProcessRun, String> {
+    let started = Instant::now();
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     let mut child = command.spawn().map_err(|e| e.to_string())?;
     let mut timed_out = false;
@@ -82,6 +84,17 @@ mod tests {
     #[test]
     fn runs_shell_command_successfully() {
         let run = run_shell_command("printf ok", None, Duration::from_secs(5)).unwrap();
+
+        assert_eq!(run.exit_code, 0);
+        assert_eq!(String::from_utf8_lossy(&run.stdout), "ok");
+        assert!(!run.timed_out);
+    }
+
+    #[test]
+    fn runs_command_with_args_successfully() {
+        let mut command = Command::new("printf");
+        command.arg("ok");
+        let run = run_command(command, Duration::from_secs(5)).unwrap();
 
         assert_eq!(run.exit_code, 0);
         assert_eq!(String::from_utf8_lossy(&run.stdout), "ok");

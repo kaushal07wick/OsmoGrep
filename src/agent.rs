@@ -1665,7 +1665,8 @@ fn run_headless_worktree_subagent(
     user_text: &str,
 ) -> Result<(bool, String), String> {
     let prompt = build_worktree_subagent_prompt(user_text, &session.role, scope_prompt);
-    let out = Command::new(exe)
+    let mut command = Command::new(exe);
+    command
         .arg("run")
         .arg("--repo-root")
         .arg(&session.path)
@@ -1674,12 +1675,15 @@ fn run_headless_worktree_subagent(
         .arg("--permission-profile")
         .arg("workspace-auto")
         .arg("--auto-approve")
-        .arg("--json-events")
-        .output()
-        .map_err(|e| e.to_string())?;
+        .arg("--json-events");
 
-    let mut text = String::from_utf8_lossy(&out.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    let run = crate::process_runner::run_command(
+        command,
+        crate::process_runner::timeout_from_env("OSMOGREP_WORKTREE_AGENT_TIMEOUT_SECS", 900),
+    )?;
+
+    let mut text = String::from_utf8_lossy(&run.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&run.stderr);
     if !stderr.trim().is_empty() {
         if !text.ends_with('\n') {
             text.push('\n');
@@ -1687,7 +1691,7 @@ fn run_headless_worktree_subagent(
         text.push_str(stderr.trim_end());
     }
 
-    Ok((out.status.success(), text))
+    Ok((run.exit_code == 0 && !run.timed_out, text))
 }
 
 fn build_worktree_subagent_prompt(user_text: &str, role: &str, scope_prompt: &str) -> String {
