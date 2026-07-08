@@ -1,5 +1,4 @@
-use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::{fs, path::Path};
 
 use regex::Regex;
@@ -46,24 +45,15 @@ impl Tool for Patch {
             .and_then(|p| fs::read_to_string(p).ok())
             .unwrap_or_default();
 
-        let mut child = Command::new("git")
+        let mut command = Command::new("git");
+        command
             .arg("apply")
             .arg("--recount")
             .arg("--whitespace=nowarn")
-            .arg("-")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| e.to_string())?;
-
-        if let Some(stdin) = child.stdin.as_mut() {
-            stdin
-                .write_all(patch.as_bytes())
-                .map_err(|e| e.to_string())?;
-        }
-
-        let out = child.wait_with_output().map_err(|e| e.to_string())?;
+            .arg("-");
+        let timeout = crate::process_runner::timeout_from_env("OSMOGREP_PATCH_TIMEOUT_SECS", 15);
+        let out =
+            crate::process_runner::run_command_with_stdin(command, patch.as_bytes(), timeout)?;
 
         let after = target
             .as_ref()
@@ -71,7 +61,7 @@ impl Tool for Patch {
             .unwrap_or_default();
         let root = std::env::current_dir().map_err(|e| e.to_string())?;
         let target_path = target.clone().unwrap_or_default();
-        let verification_stale = if out.status.success() && !target_path.is_empty() {
+        let verification_stale = if out.exit_code == 0 && !target_path.is_empty() {
             crate::verification::mark_workspace_edited(&root, [target_path.as_str()])
         } else {
             None
@@ -81,9 +71,10 @@ impl Tool for Patch {
             "path": target_path,
             "before": before,
             "after": after,
-            "exit_code": out.status.code(),
+            "exit_code": out.exit_code,
             "stdout": String::from_utf8_lossy(&out.stdout),
             "stderr": String::from_utf8_lossy(&out.stderr),
+            "timed_out": out.timed_out,
             "verification_stale": crate::verification::staleness_to_json(&verification_stale)
         }))
     }
