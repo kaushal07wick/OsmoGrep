@@ -34,7 +34,9 @@ use std::{
 
 use crossterm::{
     cursor::Show,
-    event::{self, DisableMouseCapture, EnableMouseCapture},
+    event::{
+        self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -2032,9 +2034,15 @@ impl TerminalSession {
 
         let raw_result = disable_raw_mode();
         let screen_result = if self.mouse_capture {
-            execute!(writer, DisableMouseCapture, LeaveAlternateScreen, Show)
+            execute!(
+                writer,
+                DisableBracketedPaste,
+                DisableMouseCapture,
+                LeaveAlternateScreen,
+                Show
+            )
         } else {
-            execute!(writer, LeaveAlternateScreen, Show)
+            execute!(writer, DisableBracketedPaste, LeaveAlternateScreen, Show)
         };
         self.active = false;
 
@@ -2054,7 +2062,7 @@ fn setup_terminal() -> Result<TerminalSession, Box<dyn Error>> {
     enable_raw_mode()?;
 
     let mut stdout = io::stdout();
-    if let Err(err) = execute!(stdout, EnterAlternateScreen) {
+    if let Err(err) = execute!(stdout, EnterAlternateScreen, EnableBracketedPaste) {
         let _ = disable_raw_mode();
         return Err(Box::new(err));
     }
@@ -2062,7 +2070,12 @@ fn setup_terminal() -> Result<TerminalSession, Box<dyn Error>> {
     let mouse_capture = osmogrep_mouse_capture_enabled();
     if mouse_capture {
         if let Err(err) = execute!(stdout, EnableMouseCapture) {
-            let _ = execute!(io::stdout(), LeaveAlternateScreen, Show);
+            let _ = execute!(
+                io::stdout(),
+                DisableBracketedPaste,
+                LeaveAlternateScreen,
+                Show
+            );
             let _ = disable_raw_mode();
             return Err(Box::new(err));
         }

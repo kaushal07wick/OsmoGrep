@@ -390,6 +390,15 @@ pub struct PlanItem {
 
 impl AgentState {
     pub fn push_char(&mut self, c: char) {
+        let mut buf = [0; 4];
+        self.insert_text(c.encode_utf8(&mut buf));
+    }
+
+    pub fn insert_text(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+
         if self.ui.input_all_selected {
             self.ui.input.clear();
             self.ui.input_cursor = 0;
@@ -397,8 +406,8 @@ impl AgentState {
         }
 
         let cursor = clamp_char_boundary(&self.ui.input, self.ui.input_cursor);
-        self.ui.input.insert(cursor, c);
-        self.ui.input_cursor = cursor + c.len_utf8();
+        self.ui.input.insert_str(cursor, text);
+        self.ui.input_cursor = cursor + text.len();
         self.ui.history_index = None;
     }
 
@@ -955,6 +964,18 @@ mod tests {
         state.push_char('x');
 
         assert_eq!(state.ui.input, "x");
+        assert!(!state.ui.input_all_selected);
+    }
+
+    #[test]
+    fn select_all_replaces_input_on_next_text_insert() {
+        let mut state = agent_state_with_input("large pasted prompt");
+
+        assert!(state.select_all_input());
+        state.insert_text("first\nsecond");
+
+        assert_eq!(state.ui.input, "first\nsecond");
+        assert_eq!(state.ui.input_cursor, "first\nsecond".len());
         assert!(!state.ui.input_all_selected);
     }
 

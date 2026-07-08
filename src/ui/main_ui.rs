@@ -34,9 +34,19 @@ pub fn handle_event(
 ) {
     match event.into() {
         Event::Key(k) => handle_key(state, k),
+        Event::Paste(text) => handle_paste(state, &text),
         Event::Mouse(m) => handle_mouse(state, m),
         _ => {}
     }
+}
+
+fn handle_paste(state: &mut AgentState, text: &str) {
+    let text = normalize_paste_text(text);
+    state.insert_text(&text);
+}
+
+fn normalize_paste_text(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
 fn handle_key(state: &mut AgentState, k: KeyEvent) {
@@ -404,14 +414,15 @@ fn update_prompt_action(k: &KeyEvent) -> UpdatePromptAction {
 #[cfg(test)]
 mod tests {
     use super::{
-        handle_key, input_control_action, scroll_back_offset, scroll_toward_tail_offset,
-        update_prompt_action, InputControlAction, UpdatePromptAction,
+        handle_event, handle_key, input_control_action, scroll_back_offset,
+        scroll_toward_tail_offset, update_prompt_action, InputControlAction, UpdatePromptAction,
     };
     use crate::state::{
         AgentState, ConversationHistory, LogBuffer, PermissionProfile, UiAccent, UiDensity,
         UiState, UiTheme, UsageStats, VoiceState,
     };
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::layout::Rect;
     use std::{path::PathBuf, sync::mpsc, time::Instant};
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -481,6 +492,24 @@ mod tests {
     fn input_control_ignores_plain_text_keys() {
         assert_eq!(input_control_action(&key(KeyCode::Char('a'))), None);
         assert_eq!(input_control_action(&key(KeyCode::Enter)), None);
+    }
+
+    #[test]
+    fn paste_event_bulk_inserts_normalized_text_at_cursor() {
+        let mut state = agent_state();
+        state.ui.input = "ab".to_string();
+        state.ui.input_cursor = 1;
+
+        handle_event(
+            &mut state,
+            Event::Paste("x\r\ny\rz".to_string()),
+            Rect::default(),
+            Rect::default(),
+            Rect::default(),
+        );
+
+        assert_eq!(state.ui.input, "ax\ny\nzb");
+        assert_eq!(state.ui.input_cursor, "ax\ny\nz".len());
     }
 
     #[test]
