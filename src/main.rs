@@ -464,6 +464,81 @@ fn headless_json_value(evt: AgentEvent, auto_approve: bool) -> serde_json::Value
         AgentEvent::ToolResult { summary } => {
             serde_json::json!({ "type": "tool_result", "summary": summary })
         }
+        AgentEvent::FileFocus {
+            phase,
+            path,
+            line,
+            column,
+            end_line,
+            reason,
+        } => serde_json::json!({
+            "type": "file_focus",
+            "phase": phase,
+            "path": path,
+            "line": line,
+            "column": column,
+            "end_line": end_line,
+            "reason": reason
+        }),
+        AgentEvent::EditStart {
+            path,
+            start_line,
+            end_line,
+            operation,
+            summary,
+        } => serde_json::json!({
+            "type": "edit_start",
+            "path": path,
+            "start_line": start_line,
+            "end_line": end_line,
+            "operation": operation,
+            "summary": summary
+        }),
+        AgentEvent::EditDelta {
+            path,
+            line,
+            column,
+            text,
+            delta_kind,
+        } => serde_json::json!({
+            "type": "edit_delta",
+            "path": path,
+            "line": line,
+            "column": column,
+            "text": text,
+            "delta_kind": delta_kind
+        }),
+        AgentEvent::EditComplete {
+            path,
+            start_line,
+            end_line,
+            changed,
+            summary,
+        } => serde_json::json!({
+            "type": "edit_complete",
+            "path": path,
+            "start_line": start_line,
+            "end_line": end_line,
+            "changed": changed,
+            "summary": summary
+        }),
+        AgentEvent::ValidationStart { command, scope } => serde_json::json!({
+            "type": "validation_start",
+            "command": command,
+            "scope": scope
+        }),
+        AgentEvent::ValidationComplete {
+            command,
+            exit_code,
+            passed,
+            summary,
+        } => serde_json::json!({
+            "type": "validation_complete",
+            "command": command,
+            "exit_code": exit_code,
+            "passed": passed,
+            "summary": summary
+        }),
         AgentEvent::ToolDiff {
             tool,
             target,
@@ -621,6 +696,40 @@ fn emit_headless_text(evt: AgentEvent, auto_approve: bool) {
             println!("[tool] {} {}", name, compact_json(&args));
         }
         AgentEvent::ToolResult { summary } => println!("[result] {}", summary),
+        AgentEvent::FileFocus {
+            phase, path, line, ..
+        } => {
+            let suffix = line.map(|line| format!(":{line}")).unwrap_or_default();
+            println!("[focus] {phase} {path}{suffix}");
+        }
+        AgentEvent::EditStart {
+            path,
+            operation,
+            summary,
+            ..
+        } => {
+            println!("[edit] start {operation} {path}: {summary}");
+        }
+        AgentEvent::EditDelta { .. } => {}
+        AgentEvent::EditComplete {
+            path,
+            changed,
+            summary,
+            ..
+        } => {
+            println!("[edit] complete {path} changed={changed}: {summary}");
+        }
+        AgentEvent::ValidationStart { command, .. } => {
+            println!("[validation] start {command}");
+        }
+        AgentEvent::ValidationComplete {
+            command,
+            passed,
+            summary,
+            ..
+        } => {
+            println!("[validation] complete {command} passed={passed}: {summary}");
+        }
         AgentEvent::ToolDiff { tool, target, .. } => {
             println!("[diff] {} {}", tool, target);
         }
@@ -1040,6 +1149,84 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
                         AgentEvent::ToolResult { summary } => {
                             state.ui.last_tool_status = Some(summary.clone());
                             log_tool_result(&mut state, summary);
+                        }
+
+                        AgentEvent::FileFocus {
+                            phase,
+                            path,
+                            line,
+                            reason,
+                            ..
+                        } => {
+                            state.ui.run_phase = phase.clone();
+                            state.ui.active_edit_target = Some(path.clone());
+                            state.ui.run_detail = Some(reason.unwrap_or_else(|| {
+                                line.map(|line| format!("{path}:{line}"))
+                                    .unwrap_or_else(|| path.clone())
+                            }));
+                        }
+
+                        AgentEvent::EditStart {
+                            path,
+                            operation,
+                            summary,
+                            ..
+                        } => {
+                            state.ui.run_phase = "editing".to_string();
+                            state.ui.active_edit_target = Some(path.clone());
+                            state.ui.current_tool_detail = Some(summary.clone());
+                            log_status(&mut state, format!("{operation} {path}"));
+                        }
+
+                        AgentEvent::EditDelta { .. } => {}
+
+                        AgentEvent::EditComplete {
+                            path,
+                            changed,
+                            summary,
+                            ..
+                        } => {
+                            state.ui.active_edit_target = Some(path.clone());
+                            state.ui.last_tool_status = Some(summary.clone());
+                            log_tool_result(
+                                &mut state,
+                                format!(
+                                    "{} {}",
+                                    if changed { "edited" } else { "unchanged" },
+                                    path
+                                ),
+                            );
+                        }
+
+                        AgentEvent::ValidationStart { command, .. } => {
+                            state.ui.run_phase = "validating".to_string();
+                            state.ui.run_detail = Some(command.clone());
+                            log_status(&mut state, format!("validating: {command}"));
+                        }
+
+                        AgentEvent::ValidationComplete {
+                            command,
+                            passed,
+                            summary,
+                            ..
+                        } => {
+                            state.ui.run_phase = if passed {
+                                "validated".to_string()
+                            } else {
+                                "validation_failed".to_string()
+                            };
+                            state.ui.last_tool_status = Some(summary.clone());
+                            log_tool_result(
+                                &mut state,
+                                format!(
+                                    "{}: {command}",
+                                    if passed {
+                                        "validation passed"
+                                    } else {
+                                        "validation failed"
+                                    }
+                                ),
+                            );
                         }
 
                         AgentEvent::ToolDiff {
@@ -1558,6 +1745,37 @@ mod tests {
                 .pointer("/args/cmd")
                 .and_then(serde_json::Value::as_str),
             Some("echo [redacted]")
+        );
+    }
+
+    #[test]
+    fn serializes_edit_delta_headless_event() {
+        let event = headless_json_value(
+            AgentEvent::EditDelta {
+                path: "src/main.rs".to_string(),
+                line: Some(12),
+                column: Some(5),
+                text: "let theme = normalize(theme);".to_string(),
+                delta_kind: "insert".to_string(),
+            },
+            false,
+        );
+
+        assert_eq!(
+            event.get("type").and_then(serde_json::Value::as_str),
+            Some("edit_delta")
+        );
+        assert_eq!(
+            event.get("path").and_then(serde_json::Value::as_str),
+            Some("src/main.rs")
+        );
+        assert_eq!(
+            event.get("line").and_then(serde_json::Value::as_u64),
+            Some(12)
+        );
+        assert_eq!(
+            event.get("delta_kind").and_then(serde_json::Value::as_str),
+            Some("insert")
         );
     }
 

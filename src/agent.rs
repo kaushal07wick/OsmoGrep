@@ -1,7 +1,7 @@
 use std::{
     env, fs,
     io::Read,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -27,6 +27,45 @@ pub enum AgentEvent {
         args: Value,
     },
     ToolResult {
+        summary: String,
+    },
+    FileFocus {
+        phase: String,
+        path: String,
+        line: Option<u64>,
+        column: Option<u64>,
+        end_line: Option<u64>,
+        reason: Option<String>,
+    },
+    EditStart {
+        path: String,
+        start_line: Option<u64>,
+        end_line: Option<u64>,
+        operation: String,
+        summary: String,
+    },
+    EditDelta {
+        path: String,
+        line: Option<u64>,
+        column: Option<u64>,
+        text: String,
+        delta_kind: String,
+    },
+    EditComplete {
+        path: String,
+        start_line: Option<u64>,
+        end_line: Option<u64>,
+        changed: bool,
+        summary: String,
+    },
+    ValidationStart {
+        command: String,
+        scope: Vec<String>,
+    },
+    ValidationComplete {
+        command: String,
+        exit_code: Option<i64>,
+        passed: bool,
         summary: String,
     },
     ToolDiff {
@@ -622,6 +661,7 @@ impl RunAgent {
                             saw_tool = true;
                             self.execute_parallel_safe_batch(
                                 batch,
+                                &repo_root,
                                 tx,
                                 &mut ledger,
                                 &mut tool_guard,
@@ -642,9 +682,10 @@ impl RunAgent {
                         let args = invocation.args;
                         let args_summary = invocation.args_summary;
 
+                        emit_agent_events(tx, pre_tool_events(&name, &args, &repo_root));
                         let _ = tx.send(AgentEvent::ToolCall {
                             name: name.clone(),
-                            args: args.clone(),
+                            args: normalize_tool_event_args(&name, &args, &repo_root),
                         });
                         send_run_status(
                             tx,
@@ -732,7 +773,7 @@ impl RunAgent {
                         ) {
                             let _ = tx.send(AgentEvent::ToolDiff {
                                 tool: name.clone(),
-                                target: path.to_string(),
+                                target: repo_relative_path(&repo_root, path),
                                 before: before.to_string(),
                                 after: after.to_string(),
                             });
@@ -742,6 +783,10 @@ impl RunAgent {
                         if let Some(warning) = loop_warning.as_ref() {
                             summary = format!("{summary}; {}", warning.message);
                         }
+                        emit_agent_events(
+                            tx,
+                            post_tool_events(&name, &args, &result, &summary, ok, &repo_root),
+                        );
                         let status = if ok { "ok" } else { "error" };
                         ledger.tool_finished(
                             &name,
@@ -848,6 +893,7 @@ impl RunAgent {
     fn execute_parallel_safe_batch(
         &self,
         batch: Vec<ToolInvocation>,
+        repo_root: &Path,
         tx: &Sender<AgentEvent>,
         ledger: &mut RunLedger,
         tool_guard: &mut ToolLoopGuard,
@@ -865,9 +911,13 @@ impl RunAgent {
         );
 
         for invocation in &batch {
+            emit_agent_events(
+                tx,
+                pre_tool_events(&invocation.name, &invocation.args, repo_root),
+            );
             let _ = tx.send(AgentEvent::ToolCall {
                 name: invocation.name.clone(),
-                args: invocation.args.clone(),
+                args: normalize_tool_event_args(&invocation.name, &invocation.args, repo_root),
             });
             ledger.tool_started(&invocation.name, &invocation.args_summary, iteration);
         }
@@ -915,7 +965,7 @@ impl RunAgent {
             ) {
                 let _ = tx.send(AgentEvent::ToolDiff {
                     tool: invocation.name.clone(),
-                    target: path.to_string(),
+                    target: repo_relative_path(repo_root, path),
                     before: before.to_string(),
                     after: after.to_string(),
                 });
@@ -925,6 +975,17 @@ impl RunAgent {
             if let Some(warning) = loop_warning.as_ref() {
                 summary = format!("{summary}; {}", warning.message);
             }
+            emit_agent_events(
+                tx,
+                post_tool_events(
+                    &invocation.name,
+                    &invocation.args,
+                    &result,
+                    &summary,
+                    ok,
+                    repo_root,
+                ),
+            );
             let status = if ok { "ok" } else { "error" };
             ledger.tool_finished(
                 &invocation.name,
@@ -1254,6 +1315,526 @@ fn summarize_args(tool: &str, args: &Value) -> String {
             .to_string(),
         _ => serde_json::to_string(args).unwrap_or_else(|_| "{}".to_string()),
     }
+}
+
+fn emit_agent_events(tx: &Sender<AgentEvent>, events: Vec<AgentEvent>) {
+    for event in events {
+        let _ = tx.send(event);
+    }
+}
+
+fn pre_tool_events(name: &str, args: &Value, repo_root: &Path) -> Vec<AgentEvent> {
+    let mut events = Vec::new();
+
+    match name {
+        "read_file" => {
+            if let Some(path) = args.get("path").and_then(Value::as_str) {
+                let line = read_start_line(args);
+                events.push(AgentEvent::FileFocus {
+                    phase: "reading".to_string(),
+                    path: repo_relative_path(repo_root, path),
+                    line: Some(line),
+                    column: Some(1),
+                    end_line: read_end_line(args),
+                    reason: Some("read_file".to_string()),
+                });
+            }
+        }
+        "search" | "regex_search" => {
+            if let Some(path) = args.get("path").and_then(Value::as_str) {
+                let reason = args
+                    .get("pat")
+                    .and_then(Value::as_str)
+                    .map(|pat| format!("Search for `{}`", clip_event_text(pat)));
+                events.push(AgentEvent::FileFocus {
+                    phase: "searching".to_string(),
+                    path: repo_relative_path(repo_root, path),
+                    line: None,
+                    column: None,
+                    end_line: None,
+                    reason,
+                });
+            }
+        }
+        "edit_file" | "write_file" | "patch" | "notebook_edit" => {
+            if let Some(plan) = edit_event_plan(name, args, repo_root) {
+                events.push(AgentEvent::FileFocus {
+                    phase: plan.phase.clone(),
+                    path: plan.path.clone(),
+                    line: plan.start_line,
+                    column: plan.column,
+                    end_line: plan.end_line,
+                    reason: Some(plan.summary.clone()),
+                });
+                events.push(AgentEvent::EditStart {
+                    path: plan.path.clone(),
+                    start_line: plan.start_line,
+                    end_line: plan.end_line,
+                    operation: plan.operation.clone(),
+                    summary: plan.summary.clone(),
+                });
+                if !plan.delta_text.is_empty() {
+                    events.push(AgentEvent::EditDelta {
+                        path: plan.path,
+                        line: plan.start_line,
+                        column: plan.column,
+                        text: clip_event_text(&plan.delta_text),
+                        delta_kind: plan.delta_kind,
+                    });
+                }
+            }
+        }
+        _ => {}
+    }
+
+    if let Some((command, scope)) = validation_start(name, args, repo_root) {
+        if let Some(path) = scope.first() {
+            events.push(AgentEvent::FileFocus {
+                phase: "validating".to_string(),
+                path: path.clone(),
+                line: None,
+                column: None,
+                end_line: None,
+                reason: Some(command.clone()),
+            });
+        }
+        events.push(AgentEvent::ValidationStart { command, scope });
+    }
+
+    events
+}
+
+fn post_tool_events(
+    name: &str,
+    args: &Value,
+    result: &Value,
+    summary: &str,
+    ok: bool,
+    repo_root: &Path,
+) -> Vec<AgentEvent> {
+    let mut events = Vec::new();
+
+    if ok && matches!(name, "edit_file" | "write_file" | "patch" | "notebook_edit") {
+        if let Some(path) = edit_result_path(name, args, result, repo_root) {
+            let (start_line, end_line) = edit_result_span(name, args, result, repo_root);
+            let changed = ok
+                && match (
+                    result.get("before").and_then(Value::as_str),
+                    result.get("after").and_then(Value::as_str),
+                ) {
+                    (Some(before), Some(after)) => before != after,
+                    _ => ok,
+                };
+            events.push(AgentEvent::EditComplete {
+                path,
+                start_line,
+                end_line,
+                changed,
+                summary: summary.to_string(),
+            });
+        }
+    }
+
+    if let Some(command) = validation_command_from_result(name, args, result) {
+        let exit_code = result.get("exit_code").and_then(Value::as_i64);
+        let passed = ok
+            && result
+                .get("success")
+                .and_then(Value::as_bool)
+                .unwrap_or_else(|| exit_code == Some(0));
+        events.push(AgentEvent::ValidationComplete {
+            command,
+            exit_code,
+            passed,
+            summary: summary.to_string(),
+        });
+    }
+
+    events
+}
+
+fn normalize_tool_event_args(name: &str, args: &Value, repo_root: &Path) -> Value {
+    let mut map = match args.as_object() {
+        Some(map) => map.clone(),
+        None => return args.clone(),
+    };
+
+    if let Some(path) = map.get("path").and_then(Value::as_str) {
+        map.insert(
+            "path".to_string(),
+            Value::String(repo_relative_path(repo_root, path)),
+        );
+    }
+
+    match name {
+        "read_file" => {
+            map.insert("start_line".to_string(), json!(read_start_line(args)));
+            if let Some(end_line) = read_end_line(args) {
+                map.insert("end_line".to_string(), json!(end_line));
+            }
+        }
+        "edit_file" | "notebook_edit" => {
+            let (start_line, column) = args
+                .get("path")
+                .and_then(Value::as_str)
+                .zip(args.get("old").and_then(Value::as_str))
+                .and_then(|(path, old)| find_text_location(repo_root, path, old))
+                .unwrap_or((1, 1));
+            map.insert("start_line".to_string(), json!(start_line));
+            map.insert(
+                "end_line".to_string(),
+                json!(span_end_line(
+                    start_line,
+                    args.get("old").and_then(Value::as_str)
+                )),
+            );
+            map.insert("column".to_string(), json!(column));
+        }
+        "write_file" => {
+            map.insert("start_line".to_string(), json!(1));
+            let end_line =
+                text_line_count(args.get("content").and_then(Value::as_str).unwrap_or(""));
+            map.insert("end_line".to_string(), json!(end_line));
+        }
+        _ => {}
+    }
+
+    Value::Object(map)
+}
+
+#[derive(Debug)]
+struct EditEventPlan {
+    phase: String,
+    path: String,
+    start_line: Option<u64>,
+    column: Option<u64>,
+    end_line: Option<u64>,
+    operation: String,
+    summary: String,
+    delta_text: String,
+    delta_kind: String,
+}
+
+fn edit_event_plan(name: &str, args: &Value, repo_root: &Path) -> Option<EditEventPlan> {
+    match name {
+        "edit_file" | "notebook_edit" => {
+            let raw_path = args.get("path").and_then(Value::as_str)?;
+            let old = args.get("old").and_then(Value::as_str).unwrap_or("");
+            let new = args.get("new").and_then(Value::as_str).unwrap_or("");
+            let (line, column) = find_text_location(repo_root, raw_path, old).unwrap_or((1, 1));
+            let end_line = span_end_line(line, Some(old));
+            let operation = if new.is_empty() { "delete" } else { "replace" };
+            let action = if name == "notebook_edit" {
+                "Edit notebook"
+            } else {
+                "Edit file"
+            };
+            Some(EditEventPlan {
+                phase: "editing".to_string(),
+                path: repo_relative_path(repo_root, raw_path),
+                start_line: Some(line),
+                column: Some(column),
+                end_line: Some(end_line),
+                operation: operation.to_string(),
+                summary: format!("{action} {}", repo_relative_path(repo_root, raw_path)),
+                delta_text: if new.is_empty() {
+                    old.to_string()
+                } else {
+                    new.to_string()
+                },
+                delta_kind: operation.to_string(),
+            })
+        }
+        "write_file" => {
+            let raw_path = args.get("path").and_then(Value::as_str)?;
+            let content = args.get("content").and_then(Value::as_str).unwrap_or("");
+            Some(EditEventPlan {
+                phase: "writing".to_string(),
+                path: repo_relative_path(repo_root, raw_path),
+                start_line: Some(1),
+                column: Some(1),
+                end_line: Some(text_line_count(content)),
+                operation: "rewrite".to_string(),
+                summary: format!("Write {}", repo_relative_path(repo_root, raw_path)),
+                delta_text: content.to_string(),
+                delta_kind: "replace".to_string(),
+            })
+        }
+        "patch" => {
+            let patch = args.get("patch").and_then(Value::as_str)?;
+            let raw_path = extract_patch_target(patch)?;
+            let start_line = extract_patch_start_line(patch).unwrap_or(1);
+            Some(EditEventPlan {
+                phase: "editing".to_string(),
+                path: repo_relative_path(repo_root, &raw_path),
+                start_line: Some(start_line),
+                column: Some(1),
+                end_line: Some(span_end_line(start_line, Some(&patch_added_text(patch)))),
+                operation: "replace".to_string(),
+                summary: format!(
+                    "Apply patch to {}",
+                    repo_relative_path(repo_root, &raw_path)
+                ),
+                delta_text: patch_added_text(patch),
+                delta_kind: "replace".to_string(),
+            })
+        }
+        _ => None,
+    }
+}
+
+fn edit_result_path(name: &str, args: &Value, result: &Value, repo_root: &Path) -> Option<String> {
+    let path = result
+        .get("path")
+        .and_then(Value::as_str)
+        .filter(|path| !path.is_empty())
+        .map(str::to_string)
+        .or_else(|| args.get("path").and_then(Value::as_str).map(str::to_string))
+        .or_else(|| {
+            (name == "patch")
+                .then(|| args.get("patch").and_then(Value::as_str))
+                .flatten()
+                .and_then(extract_patch_target)
+        })?;
+    Some(repo_relative_path(repo_root, &path))
+}
+
+fn edit_result_span(
+    name: &str,
+    args: &Value,
+    result: &Value,
+    repo_root: &Path,
+) -> (Option<u64>, Option<u64>) {
+    if let Some(plan) = edit_event_plan(name, args, repo_root) {
+        return (plan.start_line, plan.end_line);
+    }
+
+    if let (Some(before), Some(after)) = (
+        result.get("before").and_then(Value::as_str),
+        result.get("after").and_then(Value::as_str),
+    ) {
+        let start = first_changed_line(before, after);
+        return (Some(start), Some(span_end_line(start, Some(after))));
+    }
+
+    (None, None)
+}
+
+fn validation_start(name: &str, args: &Value, repo_root: &Path) -> Option<(String, Vec<String>)> {
+    let command = validation_command_from_args(name, args)?;
+    let scope = validation_scope(name, args, repo_root);
+    Some((command, scope))
+}
+
+fn validation_command_from_args(name: &str, args: &Value) -> Option<String> {
+    match name {
+        "run_tests" => {
+            let target = args
+                .get("target")
+                .and_then(Value::as_str)
+                .filter(|target| !target.trim().is_empty())
+                .unwrap_or("repository");
+            Some(format!("run_tests {target}"))
+        }
+        "diagnostics" => Some(
+            args.get("cmd")
+                .and_then(Value::as_str)
+                .filter(|cmd| !cmd.trim().is_empty())
+                .unwrap_or("diagnostics")
+                .to_string(),
+        ),
+        "run_shell" => {
+            let cmd = args.get("cmd").and_then(Value::as_str)?;
+            looks_like_validation_command(cmd).then(|| cmd.to_string())
+        }
+        _ => None,
+    }
+}
+
+fn validation_command_from_result(name: &str, args: &Value, result: &Value) -> Option<String> {
+    match name {
+        "run_tests" | "diagnostics" => result
+            .get("command")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| validation_command_from_args(name, args)),
+        "run_shell" => validation_command_from_args(name, args),
+        _ => None,
+    }
+}
+
+fn validation_scope(name: &str, args: &Value, repo_root: &Path) -> Vec<String> {
+    match name {
+        "run_tests" => args
+            .get("target")
+            .and_then(Value::as_str)
+            .and_then(|target| scope_path_from_arg(repo_root, target))
+            .into_iter()
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn scope_path_from_arg(repo_root: &Path, raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let path = Path::new(trimmed);
+    let resolved = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        repo_root.join(path)
+    };
+    let looks_path_like = trimmed.contains('/')
+        || trimmed.contains('\\')
+        || path.extension().is_some()
+        || resolved.exists();
+    looks_path_like.then(|| repo_relative_path(repo_root, trimmed))
+}
+
+fn looks_like_validation_command(cmd: &str) -> bool {
+    let cmd = cmd.to_ascii_lowercase();
+    [
+        "cargo test",
+        "cargo check",
+        "cargo clippy",
+        "npm test",
+        "npm run test",
+        "npm run lint",
+        "pnpm test",
+        "pnpm lint",
+        "yarn test",
+        "yarn lint",
+        "pytest",
+        "ruff check",
+        "go test",
+        "make test",
+        "mvn test",
+        "gradle test",
+        "swift test",
+        "zig build test",
+        "vitest",
+        "jest",
+        "tsc",
+        "eslint",
+    ]
+    .iter()
+    .any(|needle| cmd.contains(needle))
+}
+
+fn read_start_line(args: &Value) -> u64 {
+    args.get("offset")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        .saturating_add(1)
+}
+
+fn read_end_line(args: &Value) -> Option<u64> {
+    let start = read_start_line(args);
+    let limit = args.get("limit").and_then(Value::as_u64)?;
+    Some(start.saturating_add(limit.saturating_sub(1)))
+}
+
+fn find_text_location(repo_root: &Path, raw_path: &str, needle: &str) -> Option<(u64, u64)> {
+    if needle.is_empty() {
+        return Some((1, 1));
+    }
+    let path = resolve_repo_path(repo_root, raw_path);
+    let content = fs::read_to_string(path).ok()?;
+    let idx = content.find(needle)?;
+    let prefix = &content[..idx];
+    let line = prefix.bytes().filter(|b| *b == b'\n').count() as u64 + 1;
+    let line_start = prefix.rfind('\n').map(|idx| idx + 1).unwrap_or(0);
+    let column = prefix[line_start..].chars().count() as u64 + 1;
+    Some((line, column))
+}
+
+fn first_changed_line(before: &str, after: &str) -> u64 {
+    let mut line = 1u64;
+    let mut before_lines = before.lines();
+    let mut after_lines = after.lines();
+    loop {
+        match (before_lines.next(), after_lines.next()) {
+            (Some(left), Some(right)) if left == right => line += 1,
+            _ => return line,
+        }
+    }
+}
+
+fn span_end_line(start_line: u64, text: Option<&str>) -> u64 {
+    start_line
+        .saturating_add(text_line_count(text.unwrap_or("")))
+        .saturating_sub(1)
+}
+
+fn text_line_count(text: &str) -> u64 {
+    text.lines().count().max(1) as u64
+}
+
+fn resolve_repo_path(repo_root: &Path, raw: &str) -> PathBuf {
+    let path = Path::new(raw);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        repo_root.join(path)
+    }
+}
+
+fn repo_relative_path(repo_root: &Path, raw: &str) -> String {
+    let resolved = resolve_repo_path(repo_root, raw);
+    resolved
+        .strip_prefix(repo_root)
+        .ok()
+        .unwrap_or(resolved.as_path())
+        .display()
+        .to_string()
+}
+
+fn extract_patch_target(patch: &str) -> Option<String> {
+    patch.lines().find_map(|line| {
+        let raw = line.strip_prefix("+++ ")?;
+        let path = raw.strip_prefix("b/").unwrap_or(raw).trim();
+        (!path.is_empty() && path != "/dev/null").then(|| path.to_string())
+    })
+}
+
+fn extract_patch_start_line(patch: &str) -> Option<u64> {
+    patch.lines().find_map(|line| {
+        let rest = line.strip_prefix("@@ ")?;
+        let plus = rest.split_whitespace().find(|part| part.starts_with('+'))?;
+        let start = plus.trim_start_matches('+').split(',').next().unwrap_or("");
+        start.parse::<u64>().ok()
+    })
+}
+
+fn patch_added_text(patch: &str) -> String {
+    let text = patch
+        .lines()
+        .filter_map(|line| {
+            if line.starts_with("+++") {
+                None
+            } else {
+                line.strip_prefix('+')
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if text.is_empty() {
+        patch.to_string()
+    } else {
+        text
+    }
+}
+
+fn clip_event_text(text: &str) -> String {
+    const MAX_EVENT_TEXT_CHARS: usize = 2_000;
+    if text.chars().count() <= MAX_EVENT_TEXT_CHARS {
+        return text.to_string();
+    }
+    let mut clipped: String = text.chars().take(MAX_EVENT_TEXT_CHARS).collect();
+    clipped.push_str("\n[truncated]");
+    clipped
 }
 
 fn tool_result_summary(tool: &str, result: &Value) -> String {
@@ -1837,6 +2418,204 @@ fn default_api_key_env_for(provider: &str) -> String {
 mod tests {
     use super::*;
     use uuid::Uuid;
+
+    #[test]
+    fn read_file_pre_event_focuses_repo_relative_lines() {
+        let root = temp_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/lib.rs"), "one\ntwo\nthree\nfour\n").unwrap();
+
+        let events = pre_tool_events(
+            "read_file",
+            &json!({ "path": root.join("src/lib.rs"), "offset": 1, "limit": 2 }),
+            &root,
+        );
+
+        match &events[0] {
+            AgentEvent::FileFocus {
+                phase,
+                path,
+                line,
+                column,
+                end_line,
+                ..
+            } => {
+                assert_eq!(phase, "reading");
+                assert_eq!(path, "src/lib.rs");
+                assert_eq!(*line, Some(2));
+                assert_eq!(*column, Some(1));
+                assert_eq!(*end_line, Some(3));
+            }
+            other => panic!("expected file_focus, got {other:?}"),
+        }
+
+        let normalized = normalize_tool_event_args(
+            "read_file",
+            &json!({ "path": root.join("src/lib.rs"), "offset": 1, "limit": 2 }),
+            &root,
+        );
+        assert_eq!(
+            normalized.get("path").and_then(Value::as_str),
+            Some("src/lib.rs")
+        );
+        assert_eq!(
+            normalized.get("start_line").and_then(Value::as_u64),
+            Some(2)
+        );
+        assert_eq!(normalized.get("end_line").and_then(Value::as_u64), Some(3));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn search_pre_event_focuses_search_phase() {
+        let root = temp_root();
+        fs::write(root.join("main.rs"), "let theme = true;\n").unwrap();
+
+        let events = pre_tool_events(
+            "search",
+            &json!({ "path": "main.rs", "pat": "theme" }),
+            &root,
+        );
+
+        match &events[0] {
+            AgentEvent::FileFocus {
+                phase,
+                path,
+                reason,
+                ..
+            } => {
+                assert_eq!(phase, "searching");
+                assert_eq!(path, "main.rs");
+                assert_eq!(reason.as_deref(), Some("Search for `theme`"));
+            }
+            other => panic!("expected file_focus, got {other:?}"),
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn edit_file_events_include_focus_delta_and_complete() {
+        let root = temp_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        let before = "fn main() {\n    let theme = \"light\";\n}\n";
+        let after = "fn main() {\n    let theme = \"dark\";\n}\n";
+        fs::write(root.join("src/main.rs"), before).unwrap();
+        let args = json!({
+            "path": "src/main.rs",
+            "old": "let theme = \"light\";",
+            "new": "let theme = \"dark\";"
+        });
+
+        let events = pre_tool_events("edit_file", &args, &root);
+        assert!(matches!(
+            &events[0],
+            AgentEvent::FileFocus { phase, path, line, .. }
+                if phase == "editing" && path == "src/main.rs" && *line == Some(2)
+        ));
+        assert!(matches!(
+            &events[1],
+            AgentEvent::EditStart { path, start_line, operation, .. }
+                if path == "src/main.rs" && *start_line == Some(2) && operation == "replace"
+        ));
+        assert!(matches!(
+            &events[2],
+            AgentEvent::EditDelta { path, line, text, delta_kind, .. }
+                if path == "src/main.rs"
+                    && *line == Some(2)
+                    && text == "let theme = \"dark\";"
+                    && delta_kind == "replace"
+        ));
+
+        let complete = post_tool_events(
+            "edit_file",
+            &args,
+            &json!({ "path": "src/main.rs", "before": before, "after": after }),
+            "edit (first)",
+            true,
+            &root,
+        );
+        assert!(matches!(
+            &complete[0],
+            AgentEvent::EditComplete { path, start_line, changed, .. }
+                if path == "src/main.rs" && *start_line == Some(2) && *changed
+        ));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn write_file_events_include_write_focus_and_complete() {
+        let root = temp_root();
+        let args = json!({
+            "path": "notes.txt",
+            "content": "alpha\nbeta\n"
+        });
+
+        let events = pre_tool_events("write_file", &args, &root);
+        assert!(matches!(
+            &events[0],
+            AgentEvent::FileFocus { phase, path, line, end_line, .. }
+                if phase == "writing"
+                    && path == "notes.txt"
+                    && *line == Some(1)
+                    && *end_line == Some(2)
+        ));
+        assert!(matches!(
+            &events[1],
+            AgentEvent::EditStart { path, operation, .. }
+                if path == "notes.txt" && operation == "rewrite"
+        ));
+        assert!(matches!(
+            &events[2],
+            AgentEvent::EditDelta { path, delta_kind, .. }
+                if path == "notes.txt" && delta_kind == "replace"
+        ));
+
+        let complete = post_tool_events(
+            "write_file",
+            &args,
+            &json!({ "path": "notes.txt", "before": "", "after": "alpha\nbeta\n" }),
+            "wrote 11 bytes",
+            true,
+            &root,
+        );
+        assert!(matches!(
+            &complete[0],
+            AgentEvent::EditComplete { path, changed, .. }
+                if path == "notes.txt" && *changed
+        ));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn validation_events_wrap_test_commands() {
+        let root = temp_root();
+        fs::write(root.join("Cargo.toml"), "[package]\nname='x'\n").unwrap();
+        let args = json!({ "cmd": "cargo test --color never" });
+
+        let events = pre_tool_events("run_shell", &args, &root);
+        assert!(matches!(
+            &events[0],
+            AgentEvent::ValidationStart { command, scope }
+                if command == "cargo test --color never" && scope.is_empty()
+        ));
+
+        let complete = post_tool_events(
+            "run_shell",
+            &args,
+            &json!({ "exit_code": 0, "stdout": "", "stderr": "" }),
+            "exit=0",
+            true,
+            &root,
+        );
+        assert!(matches!(
+            &complete[0],
+            AgentEvent::ValidationComplete { command, exit_code, passed, .. }
+                if command == "cargo test --color never"
+                    && *exit_code == Some(0)
+                    && *passed
+        ));
+        let _ = fs::remove_dir_all(root);
+    }
 
     #[test]
     fn loads_common_repository_instruction_files() {
