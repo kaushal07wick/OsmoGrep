@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::harness::{clip, RunLedger};
-use crate::state::{DiffSnapshot, PermissionProfile};
+use crate::state::{DiffSnapshot, PermissionProfile, PlanItem};
 use crate::tool_guard::ToolLoopGuard;
 use crate::tools::{ToolRegistry, ToolSafety, ToolScope};
 
@@ -28,6 +28,9 @@ pub enum AgentEvent {
     },
     ToolResult {
         summary: String,
+    },
+    PlanUpdate {
+        items: Vec<PlanItem>,
     },
     FileFocus {
         phase: String,
@@ -244,7 +247,7 @@ fn system_prompt(repo_root: &std::path::Path) -> Value {
             - Prefer high-leverage workflows over many tiny manual steps.\n\
             - When the task asks for current information, online research, cross-source verification, or a Claude Code-style workflow, use `dynamic_workflow` to fan out bounded research agents and bring back cited evidence instead of manually looping search/fetch calls.\n\
             - If the user ends a request with `ultracode`, treat it as an explicit dynamic-workflow sentinel: plan the workflow, delegate/fan out where useful, keep context compact, and synthesize verified results.\n\
-            - For multi-step work, keep a durable progress plan with `update_plan`; treat it as scratchpad memory and verify against real files before acting.\n\
+            - For multi-step work, keep a durable progress plan with `update_plan`; set the plan before implementation, mark each item done immediately after completing it, and keep exactly one next item in progress. Treat the plan as scratchpad memory and verify against real files before acting.\n\
             - For broad, high-risk, or ambiguous coding tasks, consider `worktree_swarm` to delegate exploration, implementation, testing, and review to isolated subagents, then integrate only verified results.\n\
             - For non-trivial coding work, run a disciplined loop: investigate, make a short plan, implement the approved slice, verify, then review residual risk.\n\
             - Treat tests, builds, diffs, and command outputs as evidence. Do not claim the repo is green unless a relevant command actually passed.\n\
@@ -788,6 +791,9 @@ impl RunAgent {
                         let mut summary = tool_result_summary(&name, &result);
                         if let Some(warning) = loop_warning.as_ref() {
                             summary = format!("{summary}; {}", warning.message);
+                        }
+                        if let Some(items) = plan_items_from_result(&name, &result) {
+                            let _ = tx.send(AgentEvent::PlanUpdate { items });
                         }
                         emit_agent_events(
                             tx,
@@ -1940,8 +1946,55 @@ fn tool_result_summary(tool: &str, result: &Value) -> String {
                 .unwrap_or_default();
             format!("{kind} agents={agents} sources={sources}")
         }
+        "update_plan" => {
+            let items = result
+                .get("items")
+                .and_then(Value::as_array)
+                .map(Vec::len)
+                .unwrap_or_default();
+            let completed = result
+                .get("items")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter(|item| {
+                            item.get("status").and_then(Value::as_str) == Some("completed")
+                        })
+                        .count()
+                })
+                .unwrap_or_default();
+            format!("plan {completed}/{items} complete")
+        }
         _ => "ok".to_string(),
     }
+}
+
+fn plan_items_from_result(tool: &str, result: &Value) -> Option<Vec<PlanItem>> {
+    if tool != "update_plan" || result.get("error").is_some() {
+        return None;
+    }
+    let items = result.get("items")?.as_array()?;
+    Some(
+        items
+            .iter()
+            .filter_map(|item| {
+                let text = item.get("text").and_then(Value::as_str)?.trim();
+                if text.is_empty() {
+                    return None;
+                }
+                let status = item
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("pending");
+                Some(PlanItem {
+                    text: text.to_string(),
+                    done: status == "completed",
+                    active: status == "in_progress",
+                })
+            })
+            .collect(),
+    )
 }
 
 fn verification_summary(result: &Value) -> Option<String> {
@@ -2637,6 +2690,29 @@ mod tests {
                     && *passed
         ));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn parses_plan_update_result_into_live_items() {
+        let items = plan_items_from_result(
+            "update_plan",
+            &json!({
+                "items": [
+                    { "id": 1, "text": "Inspect parser", "status": "completed" },
+                    { "id": 2, "text": "Patch parser", "status": "in_progress" },
+                    { "id": 3, "text": "Run tests", "status": "pending" }
+                ]
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(items.len(), 3);
+        assert!(items[0].done);
+        assert!(!items[0].active);
+        assert!(!items[1].done);
+        assert!(items[1].active);
+        assert!(!items[2].done);
+        assert!(!items[2].active);
     }
 
     #[test]

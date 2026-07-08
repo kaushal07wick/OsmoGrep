@@ -460,6 +460,11 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
         }
     }
 
+    if !state.plan_items.is_empty() {
+        lines.push(Line::from(""));
+        lines.extend(render_plan_lines(state, p));
+    }
+
     let max_scroll = lines.len().saturating_sub(height);
     let scroll = if state.ui.follow_tail {
         max_scroll
@@ -473,6 +478,47 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
             .wrap(Wrap { trim: false }),
         padded,
     );
+}
+
+fn render_plan_lines(state: &AgentState, p: UiPalette) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    let completed = state.plan_items.iter().filter(|item| item.done).count();
+    lines.push(Line::from(vec![
+        Span::styled(
+            "Plan",
+            Style::default().fg(p.fg_main).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(" · {}/{}", completed, state.plan_items.len()),
+            Style::default().fg(p.fg_muted),
+        ),
+    ]));
+
+    for item in state.plan_items.iter().take(8) {
+        let (mark, style) = if item.done {
+            ("[x]", Style::default().fg(Color::Rgb(70, 190, 120)))
+        } else if item.active {
+            (
+                "[>]",
+                Style::default().fg(p.accent).add_modifier(Modifier::BOLD),
+            )
+        } else {
+            ("[ ]", Style::default().fg(p.fg_muted))
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!("{mark} "), style),
+            Span::styled(item.text.clone(), Style::default().fg(p.fg_dim)),
+        ]));
+    }
+
+    if state.plan_items.len() > 8 {
+        lines.push(Line::from(Span::styled(
+            format!("... {} more", state.plan_items.len() - 8),
+            Style::default().fg(p.fg_muted),
+        )));
+    }
+
+    lines
 }
 
 fn render_running_badge(f: &mut Frame, area: Rect, state: &AgentState) {

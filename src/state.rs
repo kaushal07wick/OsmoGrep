@@ -325,6 +325,8 @@ pub struct JobRequest {
 pub struct PlanItem {
     pub text: String,
     pub done: bool,
+    #[serde(default)]
+    pub active: bool,
 }
 
 impl AgentState {

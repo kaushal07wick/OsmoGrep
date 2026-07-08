@@ -358,6 +358,7 @@ fn plan_mode_prompt(text: &str) -> String {
         "PLAN MODE ACTIVE.\n\
          Do not edit files, write files, apply patches, commit, install dependencies, run mutating shell commands, or take destructive actions.\n\
          You may inspect the repository with safe read/search tools and ask concise clarifying questions if needed.\n\
+         Use `update_plan` to set the concrete checklist so it appears in the UI.\n\
          Produce a concrete implementation plan with risks, verification commands to run later, and the exact files likely to change.\n\
          Stop after the plan unless the user exits plan mode.\n\n\
          User task:\n{text}"
@@ -496,6 +497,10 @@ fn headless_json_value(evt: AgentEvent, auto_approve: bool) -> serde_json::Value
         AgentEvent::ToolResult { summary } => {
             serde_json::json!({ "type": "tool_result", "summary": summary })
         }
+        AgentEvent::PlanUpdate { items } => serde_json::json!({
+            "type": "plan_update",
+            "items": items
+        }),
         AgentEvent::FileFocus {
             phase,
             path,
@@ -728,6 +733,9 @@ fn emit_headless_text(evt: AgentEvent, auto_approve: bool) {
             println!("[tool] {} {}", name, compact_json(&args));
         }
         AgentEvent::ToolResult { summary } => println!("[result] {}", summary),
+        AgentEvent::PlanUpdate { items } => {
+            println!("[plan] {} items", items.len());
+        }
         AgentEvent::FileFocus {
             phase, path, line, ..
         } => {
@@ -1181,6 +1189,17 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
                         AgentEvent::ToolResult { summary } => {
                             state.ui.last_tool_status = Some(summary.clone());
                             log_tool_result(&mut state, summary);
+                        }
+
+                        AgentEvent::PlanUpdate { items } => {
+                            let completed = items.iter().filter(|item| item.done).count();
+                            let total = items.len();
+                            state.plan_items = items;
+                            log_status(
+                                &mut state,
+                                format!("plan updated: {completed}/{total} complete"),
+                            );
+                            let _ = persistence::save(&state);
                         }
 
                         AgentEvent::FileFocus {
@@ -1822,8 +1841,40 @@ mod tests {
 
         assert!(prompt.contains("PLAN MODE ACTIVE"));
         assert!(prompt.contains("Do not edit files"));
+        assert!(prompt.contains("Use `update_plan`"));
         assert!(prompt.contains("Produce a concrete implementation plan"));
         assert!(prompt.contains("User task:\nrefactor the parser"));
+    }
+
+    #[test]
+    fn serializes_plan_update_headless_event() {
+        let event = headless_json_value(
+            AgentEvent::PlanUpdate {
+                items: vec![crate::state::PlanItem {
+                    text: "Inspect parser".to_string(),
+                    done: false,
+                    active: true,
+                }],
+            },
+            false,
+        );
+
+        assert_eq!(
+            event.get("type").and_then(serde_json::Value::as_str),
+            Some("plan_update")
+        );
+        assert_eq!(
+            event
+                .pointer("/items/0/text")
+                .and_then(serde_json::Value::as_str),
+            Some("Inspect parser")
+        );
+        assert_eq!(
+            event
+                .pointer("/items/0/active")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
     }
 
     fn diff(target: &str) -> DiffSnapshot {

@@ -1029,7 +1029,13 @@ fn show_plan(state: &mut AgentState) {
             format!(
                 "{}. [{}] {}",
                 idx + 1,
-                if item.done { "x" } else { " " },
+                if item.done {
+                    "x"
+                } else if item.active {
+                    ">"
+                } else {
+                    " "
+                },
                 item.text
             )
         })
@@ -1086,6 +1092,7 @@ fn plan_add(state: &mut AgentState, cmd: &str) {
     state.plan_items.push(PlanItem {
         text: text.to_string(),
         done: false,
+        active: state.plan_items.is_empty(),
     });
     log(state, LogLevel::Success, "Plan item added.");
     let _ = persistence::save(state);
@@ -1103,6 +1110,14 @@ fn plan_done(state: &mut AgentState, cmd: &str) {
     }
     if let Some(item) = state.plan_items.get_mut(n - 1) {
         item.done = true;
+        item.active = false;
+    }
+    if let Some(next) = state
+        .plan_items
+        .iter_mut()
+        .find(|item| !item.done && !item.active)
+    {
+        next.active = true;
     }
     log(
         state,
