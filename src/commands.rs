@@ -97,6 +97,7 @@ pub fn handle_command(
         "/approve" => toggle_auto_approve(state),
         "/model" => show_model(state, agent),
         "/test" => run_test(state, &cmd),
+        "/verify" => show_verify(state),
         "/mcp" => show_mcp(state),
         "/providers" => show_providers(state),
         "/undo" => undo_last_change(state),
@@ -138,6 +139,11 @@ fn help(state: &mut AgentState) {
         state,
         Info,
         "  /test <arg>  Run targeted tests (framework-specific)",
+    );
+    log(
+        state,
+        Info,
+        "  /verify      Show verification ledger status",
     );
     log(
         state,
@@ -447,6 +453,75 @@ fn show_session_diff(state: &mut AgentState) {
             state.ui.diff_snapshot.len()
         ),
     );
+}
+
+fn show_verify(state: &mut AgentState) {
+    let status = crate::verification::latest_status(&state.repo_root);
+    let level = match status.status.as_str() {
+        "passed" => LogLevel::Success,
+        "failed" => LogLevel::Error,
+        "stale" => LogLevel::Warn,
+        _ => LogLevel::Info,
+    };
+    log(
+        state,
+        level,
+        format!(
+            "Verification status: {}{}",
+            status.status,
+            if status.needs_verification {
+                " (needs fresh passing evidence)"
+            } else {
+                ""
+            }
+        ),
+    );
+
+    if let Some(ev) = status.evidence.as_ref() {
+        log(
+            state,
+            LogLevel::Info,
+            format!(
+                "Last evidence: {} [{}:{}:{}] exit={}",
+                ev.canonical_command, ev.kind, ev.scope, ev.status, ev.exit_code
+            ),
+        );
+    } else {
+        log(state, LogLevel::Info, "Last evidence: none recorded");
+    }
+
+    if !status.verifiable_changed_paths.is_empty() {
+        log(
+            state,
+            LogLevel::Warn,
+            format!(
+                "Changed code/config paths since evidence: {}",
+                format_path_list(&status.verifiable_changed_paths, 8)
+            ),
+        );
+    } else if !status.changed_paths.is_empty() {
+        log(
+            state,
+            LogLevel::Info,
+            format!(
+                "Changed paths since evidence are doc/data-only: {}",
+                format_path_list(&status.changed_paths, 8)
+            ),
+        );
+    }
+}
+
+fn format_path_list(paths: &[String], limit: usize) -> String {
+    let mut shown = paths
+        .iter()
+        .take(limit)
+        .map(|path| format!("`{path}`"))
+        .collect::<Vec<_>>();
+    let remaining = paths.len().saturating_sub(limit);
+    if remaining > 0 {
+        shown.push(format!("+{remaining} more"));
+    }
+    shown.join(", ")
 }
 
 fn show_steer(state: &mut AgentState) {

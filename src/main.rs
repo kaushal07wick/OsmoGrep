@@ -170,6 +170,49 @@ fn run_shell(state: &mut AgentState, cmd: &str) {
     }
 }
 
+fn warn_if_verification_needed(state: &mut AgentState) {
+    if state.session_changes.is_empty() {
+        return;
+    }
+
+    let status = crate::verification::latest_status(&state.repo_root);
+    if !status.needs_verification {
+        return;
+    }
+
+    let level = if status.status == "failed" {
+        LogLevel::Error
+    } else {
+        LogLevel::Warn
+    };
+    log(
+        state,
+        level,
+        format!(
+            "Verification status is {}. Run /verify or /test before claiming the work is complete.",
+            status.status
+        ),
+    );
+
+    if !status.verifiable_changed_paths.is_empty() {
+        let mut paths = status
+            .verifiable_changed_paths
+            .iter()
+            .take(6)
+            .map(|path| format!("`{path}`"))
+            .collect::<Vec<_>>();
+        let remaining = status.verifiable_changed_paths.len().saturating_sub(6);
+        if remaining > 0 {
+            paths.push(format!("+{remaining} more"));
+        }
+        log(
+            state,
+            LogLevel::Warn,
+            format!("Unverified paths: {}", paths.join(", ")),
+        );
+    }
+}
+
 fn start_agent_run(
     state: &mut AgentState,
     agent: &Agent,
@@ -954,6 +997,7 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
                             state.ui.current_tool_detail = None;
                             state.ui.pending_permission = None;
                             state.ui.active_edit_target = None;
+                            warn_if_verification_needed(&mut state);
                             if state.auto_eval && !state.session_changes.is_empty() {
                                 let id = state.next_job_id;
                                 state.next_job_id += 1;

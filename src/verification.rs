@@ -6,10 +6,23 @@ use std::{
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use uuid::Uuid;
 
 const OUTPUT_SUMMARY_LIMIT: usize = 2_000;
+const MAX_STATUS_PATHS: usize = 64;
+const NON_CODE_VERIFY_EXTENSIONS: &[&str] = &[
+    "md", "markdown", "mdx", "rst", "txt", "text", "adoc", "asciidoc", "org", "log", "csv", "tsv",
+];
+const NON_CODE_VERIFY_FILENAMES: &[&str] = &[
+    "license",
+    "licence",
+    "notice",
+    "authors",
+    "contributors",
+    "changelog",
+    "codeowners",
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VerificationEvidence {
@@ -31,6 +44,16 @@ pub struct VerificationStaleness {
     pub edited_at: String,
     pub root: String,
     pub changed_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerificationStatus {
+    pub status: String,
+    pub evidence: Option<VerificationEvidence>,
+    pub stale_since: Option<String>,
+    pub changed_paths: Vec<String>,
+    pub verifiable_changed_paths: Vec<String>,
+    pub needs_verification: bool,
 }
 
 pub fn record_command(
@@ -65,6 +88,63 @@ pub fn mark_workspace_edited(
     };
     append_staleness(repo_root, &stale).ok()?;
     Some(stale)
+}
+
+pub fn latest_status(repo_root: &Path) -> VerificationStatus {
+    let mut evidence: Option<VerificationEvidence> = None;
+    let mut latest_edit_at: Option<String> = None;
+    let mut changed_paths: Vec<String> = Vec::new();
+
+    let text = fs::read_to_string(ledger_path(repo_root)).unwrap_or_default();
+    for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+
+        if value.get("canonical_command").is_some() {
+            if let Ok(ev) = serde_json::from_value::<VerificationEvidence>(value) {
+                evidence = Some(ev);
+                latest_edit_at = None;
+                changed_paths.clear();
+            }
+            continue;
+        }
+
+        if value.get("type").and_then(Value::as_str) != Some("workspace_edited") {
+            continue;
+        }
+        let Ok(stale) = serde_json::from_value::<VerificationStaleness>(value) else {
+            continue;
+        };
+        latest_edit_at = Some(stale.edited_at);
+        for path in stale.changed_paths {
+            push_unique_path(&mut changed_paths, path);
+        }
+    }
+
+    let verifiable_changed_paths = filter_verifiable_paths(&changed_paths);
+    let has_stale_code = !verifiable_changed_paths.is_empty();
+    let status = if has_stale_code {
+        "stale".to_string()
+    } else if let Some(ev) = evidence.as_ref() {
+        ev.status.clone()
+    } else {
+        "unverified".to_string()
+    };
+    let needs_verification = has_stale_code
+        || evidence
+            .as_ref()
+            .map(|ev| ev.status != "passed")
+            .unwrap_or(false);
+
+    VerificationStatus {
+        status,
+        evidence,
+        stale_since: has_stale_code.then_some(latest_edit_at).flatten(),
+        changed_paths,
+        verifiable_changed_paths,
+        needs_verification,
+    }
 }
 
 pub fn classify_command(
@@ -338,6 +418,46 @@ fn looks_like_target(arg: &str) -> bool {
         || arg.starts_with("__tests__")
 }
 
+fn push_unique_path(paths: &mut Vec<String>, path: String) {
+    let trimmed = path.trim();
+    if trimmed.is_empty() || paths.iter().any(|p| p == trimmed) {
+        return;
+    }
+    if paths.len() < MAX_STATUS_PATHS {
+        paths.push(trimmed.to_string());
+    }
+}
+
+fn filter_verifiable_paths(paths: &[String]) -> Vec<String> {
+    paths
+        .iter()
+        .filter(|path| !is_non_code_verify_path(path))
+        .cloned()
+        .collect()
+}
+
+fn is_non_code_verify_path(raw: &str) -> bool {
+    let path = Path::new(raw);
+    if let Some(ext) = path.extension().and_then(|ext| ext.to_str()) {
+        if NON_CODE_VERIFY_EXTENSIONS
+            .iter()
+            .any(|candidate| ext.eq_ignore_ascii_case(candidate))
+        {
+            return true;
+        }
+    }
+
+    if path.extension().is_none() {
+        if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+            return NON_CODE_VERIFY_FILENAMES
+                .iter()
+                .any(|candidate| name.eq_ignore_ascii_case(candidate));
+        }
+    }
+
+    false
+}
+
 fn summarize_output(output: &str) -> String {
     let text = output.trim();
     if text.chars().count() <= OUTPUT_SUMMARY_LIMIT {
@@ -405,5 +525,66 @@ mod tests {
     #[test]
     fn ignores_non_verification_commands() {
         assert!(classify_command(Path::new("."), "ls -la", 0, "").is_none());
+    }
+
+    #[test]
+    fn status_marks_source_edits_stale_after_passing_evidence() {
+        let root = temp_root();
+        record_command(&root, "cargo test --color never", 0, "ok").unwrap();
+        mark_workspace_edited(&root, ["src/lib.rs"]).unwrap();
+
+        let status = latest_status(&root);
+        assert_eq!(status.status, "stale");
+        assert_eq!(status.verifiable_changed_paths, vec!["src/lib.rs"]);
+        assert!(status.needs_verification);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn status_keeps_passing_evidence_after_doc_only_edits() {
+        let root = temp_root();
+        record_command(&root, "cargo test --color never", 0, "ok").unwrap();
+        mark_workspace_edited(&root, ["README.md", "LICENSE"]).unwrap();
+
+        let status = latest_status(&root);
+        assert_eq!(status.status, "passed");
+        assert!(status.verifiable_changed_paths.is_empty());
+        assert!(!status.needs_verification);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn status_clears_stale_paths_after_new_evidence() {
+        let root = temp_root();
+        mark_workspace_edited(&root, ["src/main.rs"]).unwrap();
+        record_command(&root, "cargo check", 0, "ok").unwrap();
+
+        let status = latest_status(&root);
+        assert_eq!(status.status, "passed");
+        assert!(status.changed_paths.is_empty());
+        assert!(!status.needs_verification);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn status_reports_failed_evidence() {
+        let root = temp_root();
+        record_command(&root, "cargo test --color never", 1, "failed").unwrap();
+
+        let status = latest_status(&root);
+        assert_eq!(status.status, "failed");
+        assert!(status.needs_verification);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn temp_root() -> PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("osmogrep-verification-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        root
     }
 }
