@@ -25,16 +25,6 @@ const FG_MUTED: Color = Color::Rgb(120, 120, 120);
 const ACCENT_ORANGE: Color = Color::Rgb(255, 165, 80);
 const PROMPT: &str = ">_ ";
 
-const LOGO: [&str; 7] = [
-    " ██████  ███████ ███    ███  ██████   ██████  ██████  ███████ ██████  ",
-    "██    ██ ██      ████  ████ ██    ██ ██       ██   ██ ██      ██   ██ ",
-    "██    ██ ███████ ██ ████ ██ ██    ██ ██   ███ ██████  █████   ██████  ",
-    "██    ██      ██ ██  ██  ██ ██    ██ ██    ██ ██   ██ ██      ██      ",
-    " ██████  ███████ ██      ██  ██████   ██████  ██   ██ ███████ ██      ",
-    "                                                                      ",
-    "                                                                      ",
-];
-
 /// master ui
 pub fn draw_ui<B: Backend>(
     terminal: &mut Terminal<B>,
@@ -56,7 +46,7 @@ pub fn draw_ui<B: Backend>(
             height: area.height.saturating_sub(TOP_PADDING),
         };
 
-        let header_height = 1 + LOGO.len() as u16 + 2;
+        let header_height = if padded_area.height < 24 { 2 } else { 3 };
         let status_height = 1;
 
         let input_width = padded_area.width.saturating_sub(4) as usize;
@@ -178,11 +168,6 @@ pub fn draw_ui<B: Backend>(
 
 /// header with info
 fn render_header(f: &mut Frame, area: Rect, state: &AgentState) {
-    let mut lines: Vec<Line> = LOGO
-        .iter()
-        .map(|l| Line::from(Span::styled(*l, Style::default().fg(FG_MAIN))))
-        .collect();
-
     let branch = git_branch(&state.repo_root).unwrap_or_else(|| "detached".into());
     let version = env!("CARGO_PKG_VERSION");
     let repo_display = state
@@ -196,36 +181,80 @@ fn render_header(f: &mut Frame, area: Rect, state: &AgentState) {
         })
         .unwrap_or_else(|_| state.repo_root.display().to_string());
 
-    let mut meta_spans = vec![
-        Span::styled(repo_display, Style::default().fg(FG_DIM)),
-        Span::styled(" · ", Style::default().fg(FG_MUTED)),
-        Span::styled(branch, Style::default().fg(FG_DIM)),
-        Span::styled(" · ", Style::default().fg(FG_DIM)),
-        Span::styled(version, Style::default().fg(FG_MUTED)),
+    let budget = if state.ui.run_iteration_limit > 0 {
+        format!(
+            "{}/{}",
+            state.ui.run_iteration, state.ui.run_iteration_limit
+        )
+    } else {
+        "-".to_string()
+    };
+    let run_label = if state.ui.agent_running {
+        format!("{} {budget}", state.ui.run_phase)
+    } else {
+        "idle".to_string()
+    };
+    let approval = if state.ui.auto_approve {
+        "auto-approve"
+    } else {
+        "ask"
+    };
+    let tool = state
+        .ui
+        .current_tool
+        .as_deref()
+        .map(|t| format!(" · tool {}", truncate_for_badge(t, 28)))
+        .unwrap_or_default();
+
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled(
+                "osmogrep",
+                Style::default()
+                    .fg(ACCENT_ORANGE)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" · ", Style::default().fg(FG_MUTED)),
+            Span::styled(run_label, Style::default().fg(FG_MAIN)),
+            Span::styled(tool, Style::default().fg(FG_DIM)),
+            Span::styled(" · ", Style::default().fg(FG_MUTED)),
+            Span::styled(
+                state.permission_profile.as_str(),
+                Style::default().fg(FG_DIM),
+            ),
+            Span::styled(" · ", Style::default().fg(FG_MUTED)),
+            Span::styled(approval, Style::default().fg(FG_DIM)),
+            Span::styled(" · v", Style::default().fg(FG_MUTED)),
+            Span::styled(version, Style::default().fg(FG_MUTED)),
+        ]),
+        Line::from(vec![
+            Span::styled(repo_display, Style::default().fg(FG_DIM)),
+            Span::styled(" · ", Style::default().fg(FG_MUTED)),
+            Span::styled(branch, Style::default().fg(FG_DIM)),
+        ]),
     ];
 
     if state.ui.indexing {
-        meta_spans.push(Span::styled(
+        lines[1].spans.push(Span::styled(
             " · indexing…",
             Style::default().fg(FG_MUTED).add_modifier(Modifier::ITALIC),
         ));
     } else if state.ui.indexed {
-        meta_spans.push(Span::styled(" · indexed ✓", Style::default().fg(FG_DIM)));
+        lines[1]
+            .spans
+            .push(Span::styled(" · indexed ✓", Style::default().fg(FG_DIM)));
     }
 
-    lines.push(Line::from(meta_spans));
-    lines.push(Line::from(" "));
-
-    lines.push(Line::from(Span::styled(
-        "Type a task to make osmogrep work for you or /help (for commands) · !<cmd> runs linux shell · ",
-        Style::default()
-            .fg(FG_MUTED)
-            .add_modifier(Modifier::ITALIC),
-    )));
+    if area.height > 2 {
+        lines.push(Line::from(Span::styled(
+            "Type a task, /help for commands, !<cmd> for shell, Esc to cancel/quit.",
+            Style::default().fg(FG_MUTED).add_modifier(Modifier::ITALIC),
+        )));
+    }
 
     f.render_widget(
         Paragraph::new(lines)
-            .alignment(Alignment::Center)
+            .alignment(Alignment::Left)
             .wrap(Wrap { trim: true }),
         area,
     );
@@ -365,6 +394,32 @@ fn render_running_badge(f: &mut Frame, area: Rect, state: &AgentState) {
         return;
     }
     let pulse = running_pulse(state.ui.spinner_started_at).unwrap_or_else(|| "…".to_string());
+    let budget = if state.ui.run_iteration_limit > 0 {
+        format!(
+            " · {}/{}",
+            state.ui.run_iteration, state.ui.run_iteration_limit
+        )
+    } else {
+        String::new()
+    };
+    let phase = if state.ui.run_phase.is_empty() {
+        "running"
+    } else {
+        state.ui.run_phase.as_str()
+    };
+    let tool = state
+        .ui
+        .current_tool
+        .as_deref()
+        .map(|s| format!(" · {}", truncate_for_badge(s, 32)))
+        .or_else(|| {
+            state
+                .ui
+                .run_detail
+                .as_deref()
+                .map(|s| format!(" · {}", truncate_for_badge(s, 42)))
+        })
+        .unwrap_or_default();
     let target = state
         .ui
         .active_edit_target
@@ -377,7 +432,7 @@ fn render_running_badge(f: &mut Frame, area: Rect, state: &AgentState) {
     } else {
         format!(" · edited {}", recent)
     };
-    let text = format!("  ● running {pulse}{target}{recent}  (Esc to cancel)");
+    let text = format!("  ● {phase} {pulse}{budget}{tool}{target}{recent}  (Esc to cancel)");
     f.render_widget(
         Paragraph::new(Line::from(Span::styled(
             text,
@@ -628,11 +683,7 @@ fn render_status_bar(f: &mut Frame, area: Rect, state: &AgentState) {
         "voice off"
     };
 
-    let model_label = if state.voice.enabled {
-        "voxtral"
-    } else {
-        "openai"
-    };
+    let input_label = if state.voice.enabled { "voice" } else { "text" };
 
     let run_label = if state.ui.agent_running {
         "running"
@@ -642,10 +693,13 @@ fn render_status_bar(f: &mut Frame, area: Rect, state: &AgentState) {
     let total_tokens = state.usage.prompt_tokens + state.usage.completion_tokens;
     let est_cost = ((state.usage.prompt_tokens as f64) * 0.0000025)
         + ((state.usage.completion_tokens as f64) * 0.0000100);
-    let usage_label = format!("tokens {} ${:.4}", total_tokens, est_cost);
+    let usage_label = format!(
+        "tokens {} ctx {} ${:.4}",
+        total_tokens, state.conversation.token_estimate, est_cost
+    );
 
     let mut left = vec![
-        Span::styled(model_label, Style::default().fg(FG_DIM)),
+        Span::styled(input_label, Style::default().fg(FG_DIM)),
         Span::styled(
             format!(" · {run_label}"),
             Style::default().fg(if state.ui.agent_running {
@@ -655,6 +709,10 @@ fn render_status_bar(f: &mut Frame, area: Rect, state: &AgentState) {
             }),
         ),
         Span::styled(format!(" · {usage_label}"), Style::default().fg(FG_MUTED)),
+        Span::styled(
+            format!(" · {}", state.permission_profile.as_str()),
+            Style::default().fg(FG_DIM),
+        ),
     ];
     if state.ui.pending_permission.is_some() {
         left.push(Span::styled(

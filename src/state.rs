@@ -104,6 +104,13 @@ pub struct UiState {
     pub active_spinner: Option<String>,
     pub spinner_started_at: Option<Instant>,
     pub agent_running: bool,
+    pub run_phase: String,
+    pub run_detail: Option<String>,
+    pub run_iteration: usize,
+    pub run_iteration_limit: usize,
+    pub current_tool: Option<String>,
+    pub current_tool_detail: Option<String>,
+    pub last_tool_status: Option<String>,
     pub cancel_requested: bool,
     pub auto_approve: bool,
     pub pending_permission: Option<PendingPermission>,
@@ -335,17 +342,19 @@ impl ConversationHistory {
             "content":
                 "You are Osmogrep, an AI coding agent working inside this repository.\n\
                 \n\
-                This repository may include a machine-generated index stored as a file named `.context.json` at the repository root.\n\
+                This repository may include a machine-generated index stored as `.context/context.json` at the repository root.\n\
                 This file, if present, describes the structure of the codebase: files, symbols, and call relationships.\n\
                 \n\
                 The index is a regular file and must be discovered and read using tools.\n\
                 It may or may not exist.\n\
                 \n\
                 When working:\n\
-                - Check for the presence of `.context.json` using tools when repository structure matters.\n\
+                - Check for the presence of `.context/context.json` using tools when repository structure matters.\n\
                 - If present, read it to understand the repository before acting.\n\
                 - Use tools to inspect other files or make changes as needed.\n\
-                - If `.context.json` is missing or insufficient, proceed normally and use tools freely.\n\
+                - If `.context/context.json` is missing or insufficient, proceed normally and use tools freely.\n\
+                - For non-trivial coding work, use a disciplined loop: investigate, plan, implement, verify, and review residual risk.\n\
+                - Treat tests, builds, diffs, and command outputs as evidence. Do not claim the repo is green unless a relevant command actually passed.\n\
                 \n\
                 Philosophy:\n\
                 This repository will outlive any single contributor.\n\

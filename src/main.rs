@@ -1,6 +1,7 @@
 mod agent;
 mod commands;
 mod context;
+mod harness;
 mod hooks;
 mod logger;
 mod mcp;
@@ -111,6 +112,14 @@ fn env_truthy(key: &str, default: bool) -> bool {
     }
 }
 
+fn agent_iteration_limit() -> usize {
+    std::env::var("OSMOGREP_MAX_ITERATIONS")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(90)
+}
+
 fn run_shell(state: &mut AgentState, cmd: &str) {
     log(state, LogLevel::Info, &format!("SHELL : $ {}", cmd));
 
@@ -178,6 +187,13 @@ fn start_agent_run(
     state.ui.exec_scroll = usize::MAX;
     state.ui.spinner_started_at = Some(Instant::now());
     state.ui.agent_running = true;
+    state.ui.run_phase = "starting".to_string();
+    state.ui.run_detail = Some("building request".to_string());
+    state.ui.run_iteration = 0;
+    state.ui.run_iteration_limit = agent_iteration_limit();
+    state.ui.current_tool = None;
+    state.ui.current_tool_detail = None;
+    state.ui.last_tool_status = None;
     state.ui.streaming_active = false;
     state.ui.streaming_buffer.clear();
     state.ui.streaming_lines_logged = 0;
@@ -311,6 +327,18 @@ fn emit_headless_json(evt: AgentEvent, auto_approve: bool) {
             serde_json::json!({ "type": "stream_delta", "text": text })
         }
         AgentEvent::StreamDone => serde_json::json!({ "type": "stream_done" }),
+        AgentEvent::RunStatus {
+            phase,
+            detail,
+            iteration,
+            max_iterations,
+        } => serde_json::json!({
+            "type": "run_status",
+            "phase": phase,
+            "detail": detail,
+            "iteration": iteration,
+            "max_iterations": max_iterations
+        }),
         AgentEvent::PermissionRequest {
             tool_name,
             args_summary,
@@ -352,6 +380,14 @@ fn emit_headless_text(evt: AgentEvent, auto_approve: bool) {
         AgentEvent::OutputText(text) => println!("{}", text),
         AgentEvent::StreamDelta(text) => print!("{}", text),
         AgentEvent::StreamDone => println!(),
+        AgentEvent::RunStatus {
+            phase,
+            detail,
+            iteration,
+            max_iterations,
+        } => {
+            println!("[status] {phase} {iteration}/{max_iterations} {detail}");
+        }
         AgentEvent::PermissionRequest {
             tool_name,
             args_summary,
@@ -735,10 +771,14 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
                             };
 
                             log_tool_call(&mut state, &name, cmd);
+                            state.ui.run_phase = "tool".to_string();
+                            state.ui.current_tool = Some(name.clone());
+                            state.ui.current_tool_detail = Some(compact_json(&args));
                             state.ui.active_edit_target = tool_target_path(&name, &args);
                         }
 
                         AgentEvent::ToolResult { summary } => {
+                            state.ui.last_tool_status = Some(summary.clone());
                             log_tool_result(&mut state, summary);
                         }
 
@@ -801,6 +841,18 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
                             state.ui.streaming_active = false;
                         }
 
+                        AgentEvent::RunStatus {
+                            phase,
+                            detail,
+                            iteration,
+                            max_iterations,
+                        } => {
+                            state.ui.run_phase = phase;
+                            state.ui.run_detail = Some(detail);
+                            state.ui.run_iteration = iteration;
+                            state.ui.run_iteration_limit = max_iterations;
+                        }
+
                         AgentEvent::PermissionRequest {
                             tool_name,
                             args_summary,
@@ -834,6 +886,9 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
                             log(&mut state, LogLevel::Warn, "Agent cancelled.");
                             state.ui.spinner_started_at = None;
                             state.ui.agent_running = false;
+                            state.ui.run_phase = "cancelled".to_string();
+                            state.ui.current_tool = None;
+                            state.ui.current_tool_detail = None;
                             state.ui.pending_permission = None;
                             state.ui.active_edit_target = None;
                             agent_cancel = None;
@@ -848,6 +903,9 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
                             flush_streaming_log(&mut state);
                             state.ui.spinner_started_at = None;
                             state.ui.agent_running = false;
+                            state.ui.run_phase = "error".to_string();
+                            state.ui.current_tool = None;
+                            state.ui.current_tool_detail = None;
                             state.ui.pending_permission = None;
                             state.ui.active_edit_target = None;
                             agent_cancel = None;
@@ -859,6 +917,9 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
                         AgentEvent::Done => {
                             state.ui.spinner_started_at = None;
                             state.ui.agent_running = false;
+                            state.ui.run_phase = "idle".to_string();
+                            state.ui.current_tool = None;
+                            state.ui.current_tool_detail = None;
                             state.ui.pending_permission = None;
                             state.ui.active_edit_target = None;
                             if state.auto_eval && !state.session_changes.is_empty() {
@@ -895,6 +956,9 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
                         flush_streaming_log(&mut state);
                         state.ui.spinner_started_at = None;
                         state.ui.agent_running = false;
+                        state.ui.run_phase = "disconnected".to_string();
+                        state.ui.current_tool = None;
+                        state.ui.current_tool_detail = None;
                         state.ui.pending_permission = None;
                         state.ui.active_edit_target = None;
                         agent_cancel = None;
@@ -1050,6 +1114,13 @@ fn init_state() -> AgentState {
             active_spinner: None,
             spinner_started_at: None,
             agent_running: false,
+            run_phase: "idle".to_string(),
+            run_detail: None,
+            run_iteration: 0,
+            run_iteration_limit: 0,
+            current_tool: None,
+            current_tool_detail: None,
+            last_tool_status: None,
             cancel_requested: false,
             auto_approve: false,
             pending_permission: None,

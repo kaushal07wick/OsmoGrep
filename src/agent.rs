@@ -9,12 +9,13 @@ use std::{
         Arc,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::harness::{clip, RunLedger};
 use crate::state::PermissionProfile;
 use crate::tools::{ToolRegistry, ToolSafety};
 
@@ -42,6 +43,12 @@ pub enum AgentEvent {
     OutputText(String),
     StreamDelta(String),
     StreamDone,
+    RunStatus {
+        phase: String,
+        detail: String,
+        iteration: usize,
+        max_iterations: usize,
+    },
     PermissionRequest {
         tool_name: String,
         args_summary: String,
@@ -138,24 +145,27 @@ fn repo_instruction_suffix(repo_root: &std::path::Path) -> String {
     String::new()
 }
 
-fn system_prompt(repo_root: &std::path::Path) -> Value {
+fn system_prompt(_repo_root: &std::path::Path) -> Value {
     json!({
         "role": "system",
         "content":
             "You are Osmogrep, an AI coding agent working inside this repository.\n\
             \n\
-            This repository may include a machine-generated index stored as a file named `.context.json` at the repository root.\n\
+            This repository may include a machine-generated index stored as `.context/context.json` at the repository root.\n\
             This file, if present, describes the structure of the codebase: files, symbols, and call relationships.\n\
             \n\
             The index is a regular file and must be discovered and read using tools.\n\
             It may or may not exist.\n\
             \n\
             When working:\n\
-            - Check for the presence of `.context.json` using tools when repository structure matters.\n\
+            - Check for the presence of `.context/context.json` using tools when repository structure matters.\n\
             - If present, read it to understand the repository before acting.\n\
             - Use tools to inspect other files or make changes as needed.\n\
-            - If `.context.json` is missing or insufficient, proceed normally and use tools freely.\n\
+            - If `.context/context.json` is missing or insufficient, proceed normally and use tools freely.\n\
             - Prefer high-leverage workflows over many tiny manual steps.\n\
+            - For non-trivial coding work, run a disciplined loop: investigate, make a short plan, implement the approved slice, verify, then review residual risk.\n\
+            - Treat tests, builds, diffs, and command outputs as evidence. Do not claim the repo is green unless a relevant command actually passed.\n\
+            - If verification is not possible, say exactly what was not run and why.\n\
             - If the user asks for repository triage/review (PRs/issues), proactively use GitHub CLI (`gh`) and local triage tooling when available.\n\
             - For triage-style tasks, gather evidence first, then produce ranked recommendations with clear rationale.\n\
             \n\
@@ -332,6 +342,16 @@ impl RunAgent {
         tx: &Sender<AgentEvent>,
     ) -> Result<(), String> {
         let api_key = self.api_key.as_ref().ok_or("OPENAI_API_KEY not set")?;
+        let max_iterations = max_iterations();
+        let mut iteration = 0usize;
+        let mut run_notes: Vec<String> = Vec::new();
+        let mut ledger = RunLedger::start(
+            &repo_root,
+            user_text,
+            &self.model_cfg,
+            self.permission_profile,
+            max_iterations,
+        );
 
         let mut persisted = if prior_messages.is_empty() {
             vec![system_prompt(&repo_root)]
@@ -359,8 +379,29 @@ impl RunAgent {
         loop {
             apply_pending_steer(&steer_rx, &mut persisted, &mut input, tx);
             if self.cancel.is_cancelled() {
+                ledger.error("cancelled", iteration);
                 return Err("cancelled".into());
             }
+
+            iteration += 1;
+            if iteration > max_iterations {
+                let msg = format!("iteration budget exceeded ({max_iterations})");
+                ledger.error(&msg, iteration);
+                return Err(msg);
+            }
+
+            send_run_status(
+                tx,
+                "thinking",
+                format!("model turn {iteration}/{max_iterations}"),
+                iteration,
+                max_iterations,
+            );
+            ledger.status(
+                "thinking",
+                format!("model turn {iteration}/{max_iterations}"),
+                iteration,
+            );
 
             let resp = self.call_openai_with_retry(api_key, &input, tx)?;
 
@@ -379,6 +420,7 @@ impl RunAgent {
             for item in output {
                 apply_pending_steer(&steer_rx, &mut persisted, &mut input, tx);
                 if self.cancel.is_cancelled() {
+                    ledger.error("cancelled", iteration);
                     return Err("cancelled".into());
                 }
 
@@ -406,14 +448,27 @@ impl RunAgent {
                             .and_then(Value::as_str)
                             .and_then(|s| serde_json::from_str(s).ok())
                             .unwrap_or_else(|| json!({}));
+                        let args_summary = summarize_args(&name, &args);
 
                         let _ = tx.send(AgentEvent::ToolCall {
                             name: name.clone(),
                             args: args.clone(),
                         });
+                        send_run_status(
+                            tx,
+                            "tool",
+                            format!("{name} {args_summary}"),
+                            iteration,
+                            max_iterations,
+                        );
+                        ledger.tool_started(&name, &args_summary, iteration);
 
                         let dangerous = self.tools.safety(&name) == Some(ToolSafety::Dangerous);
                         if dangerous && self.permission_profile == PermissionProfile::ReadOnly {
+                            ledger.permission(&name, "blocked-read-only", iteration);
+                            run_notes.push(format!(
+                                "- blocked `{name}` ({args_summary}): permission profile is read-only"
+                            ));
                             next_messages.push(item.clone());
                             next_messages.push(json!({
                                 "type": "function_call_output",
@@ -441,12 +496,16 @@ impl RunAgent {
                             let (reply_tx, reply_rx) = mpsc::channel::<bool>();
                             let _ = tx.send(AgentEvent::PermissionRequest {
                                 tool_name: name.clone(),
-                                args_summary: summarize_args(&name, &args),
+                                args_summary: args_summary.clone(),
                                 reply_tx,
                             });
 
                             let allow = reply_rx.recv().map_err(|_| "permission channel closed")?;
                             if !allow {
+                                ledger.permission(&name, "denied", iteration);
+                                run_notes.push(format!(
+                                    "- denied `{name}` ({args_summary}): user denied permission"
+                                ));
                                 next_messages.push(item.clone());
                                 next_messages.push(json!({
                                     "type": "function_call_output",
@@ -455,12 +514,16 @@ impl RunAgent {
                                 }));
                                 continue;
                             }
+                            ledger.permission(&name, "approved", iteration);
                         }
 
+                        let started = Instant::now();
                         let result = self
                             .tools
                             .call(&name, args)
                             .unwrap_or_else(|e| json!({ "error": e }));
+                        let duration_ms = started.elapsed().as_millis();
+                        let ok = result.get("error").is_none();
 
                         if let (Some(before), Some(after), Some(path)) = (
                             result.get("before").and_then(Value::as_str),
@@ -475,11 +538,26 @@ impl RunAgent {
                             });
                         }
 
-                        let summary = result
-                            .get("mode")
-                            .and_then(Value::as_str)
-                            .map(|m| format!("edit ({})", m))
-                            .unwrap_or_else(|| "ok".into());
+                        let summary = tool_result_summary(&name, &result);
+                        let status = if ok { "ok" } else { "error" };
+                        ledger.tool_finished(
+                            &name,
+                            status,
+                            summary.clone(),
+                            duration_ms,
+                            iteration,
+                        );
+                        send_run_status(
+                            tx,
+                            if ok { "tool_done" } else { "tool_error" },
+                            format!("{name} {status} in {duration_ms}ms"),
+                            iteration,
+                            max_iterations,
+                        );
+                        run_notes.push(format!(
+                            "- {status} `{name}` ({args_summary}) in {duration_ms}ms: {}",
+                            clip(&summary)
+                        ));
 
                         let _ = tx.send(AgentEvent::ToolResult { summary });
 
@@ -494,7 +572,11 @@ impl RunAgent {
                     Some("output_text") => {
                         if let Some(text) = item.get("text").and_then(Value::as_str) {
                             let _ = tx.send(AgentEvent::OutputText(text.to_string()));
-                            persisted.push(json!({"role": "assistant", "content": text}));
+                            ledger.final_text(text, iteration);
+                            persisted.push(json!({
+                                "role": "assistant",
+                                "content": assistant_memory_text(text, &run_notes, &ledger)
+                            }));
                             let _ = tx.send(AgentEvent::ConversationUpdate(persisted));
                             return Ok(());
                         }
@@ -506,8 +588,15 @@ impl RunAgent {
                                 if c.get("type").and_then(Value::as_str) == Some("output_text") {
                                     if let Some(text) = c.get("text").and_then(Value::as_str) {
                                         let _ = tx.send(AgentEvent::OutputText(text.to_string()));
-                                        persisted
-                                            .push(json!({"role": "assistant", "content": text}));
+                                        ledger.final_text(text, iteration);
+                                        persisted.push(json!({
+                                            "role": "assistant",
+                                            "content": assistant_memory_text(
+                                                text,
+                                                &run_notes,
+                                                &ledger
+                                            )
+                                        }));
                                         let _ = tx.send(AgentEvent::ConversationUpdate(persisted));
                                         return Ok(());
                                     }
@@ -521,6 +610,7 @@ impl RunAgent {
             }
 
             if !saw_tool {
+                ledger.error("model returned no tool calls and no output_text", iteration);
                 return Err("model returned no tool calls and no output_text".into());
             }
 
@@ -758,6 +848,123 @@ fn summarize_args(tool: &str, args: &Value) -> String {
             .to_string(),
         _ => serde_json::to_string(args).unwrap_or_else(|_| "{}".to_string()),
     }
+}
+
+fn tool_result_summary(tool: &str, result: &Value) -> String {
+    if let Some(error) = result.get("error").and_then(Value::as_str) {
+        return format!("error: {}", clip(error));
+    }
+
+    match tool {
+        "run_shell" => {
+            let exit = result
+                .get("exit_code")
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            let stdout = result
+                .get("stdout")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
+            let stderr = result
+                .get("stderr")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
+            let detail = if !stderr.is_empty() { stderr } else { stdout };
+            if detail.is_empty() {
+                format!("exit={exit}")
+            } else {
+                format!("exit={exit}; {}", clip(detail))
+            }
+        }
+        "read_file" => {
+            let lines = result
+                .get("lines")
+                .and_then(Value::as_u64)
+                .unwrap_or_default();
+            format!("read {lines} lines")
+        }
+        "write_file" => {
+            let bytes = result
+                .get("bytes")
+                .and_then(Value::as_u64)
+                .unwrap_or_default();
+            format!("wrote {bytes} bytes")
+        }
+        "edit_file" => result
+            .get("mode")
+            .and_then(Value::as_str)
+            .map(|m| format!("edit ({m})"))
+            .unwrap_or_else(|| "edit ok".to_string()),
+        "run_tests" => {
+            let success = result
+                .get("success")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let passed = result
+                .get("passed")
+                .and_then(Value::as_u64)
+                .unwrap_or_default();
+            let failed = result
+                .get("failed")
+                .and_then(Value::as_u64)
+                .unwrap_or_default();
+            format!(
+                "{} passed={passed} failed={failed}",
+                if success { "passed" } else { "failed" }
+            )
+        }
+        _ => "ok".to_string(),
+    }
+}
+
+fn assistant_memory_text(text: &str, run_notes: &[String], ledger: &RunLedger) -> String {
+    if run_notes.is_empty() && ledger.path().is_none() {
+        return text.to_string();
+    }
+
+    let mut out = text.to_string();
+    out.push_str("\n\n[run-evidence]");
+    out.push_str(&format!("\nrun_id: {}", ledger.run_id()));
+    if let Some(path) = ledger.path() {
+        out.push_str(&format!("\nledger: {}", path.display()));
+    }
+    for note in run_notes
+        .iter()
+        .rev()
+        .take(24)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+    {
+        out.push('\n');
+        out.push_str(note);
+    }
+    out
+}
+
+fn max_iterations() -> usize {
+    env::var("OSMOGREP_MAX_ITERATIONS")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(90)
+}
+
+fn send_run_status(
+    tx: &Sender<AgentEvent>,
+    phase: impl Into<String>,
+    detail: impl Into<String>,
+    iteration: usize,
+    max_iterations: usize,
+) {
+    let _ = tx.send(AgentEvent::RunStatus {
+        phase: phase.into(),
+        detail: detail.into(),
+        iteration,
+        max_iterations,
+    });
 }
 
 fn env_truthy(key: &str, default: bool) -> bool {
