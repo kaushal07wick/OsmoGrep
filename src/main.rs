@@ -374,12 +374,46 @@ fn start_agent_run(
     state.ui.current_tool = None;
     state.ui.current_tool_detail = None;
     state.ui.last_tool_status = None;
-    state.ui.streaming_active = false;
-    state.ui.streaming_buffer.clear();
-    state.ui.streaming_lines_logged = 0;
+    reset_streaming_output(&mut state.ui);
     state.ui.active_edit_target = None;
     state.usage.prompt_tokens += (text.len() / 4).max(1);
     let _ = persistence::save(state);
+}
+
+fn reset_streaming_output(ui: &mut crate::state::UiState) {
+    ui.streaming_active = false;
+    ui.streaming_buffer.clear();
+    ui.streaming_transcript.clear();
+    ui.last_streamed_output = None;
+    ui.streaming_lines_logged = 0;
+}
+
+fn finish_streaming_output(state: &mut AgentState) {
+    if state.ui.streaming_active {
+        flush_streaming_log(state);
+        let normalized = normalize_assistant_output(&state.ui.streaming_transcript);
+        state.ui.last_streamed_output = if normalized.is_empty() {
+            None
+        } else {
+            Some(normalized)
+        };
+        state.ui.streaming_transcript.clear();
+    }
+    state.ui.streaming_active = false;
+}
+
+fn should_log_output_text(state: &mut AgentState, text: &str) -> bool {
+    let normalized = normalize_assistant_output(text);
+
+    if let Some(streamed) = state.ui.last_streamed_output.take() {
+        return streamed != normalized;
+    }
+
+    true
+}
+
+fn normalize_assistant_output(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn plan_mode_prompt(text: &str) -> String {
@@ -1599,7 +1633,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
 
                         AgentEvent::OutputText(text) => {
                             state.usage.completion_tokens += (text.len() / 4).max(1);
-                            if !state.ui.streaming_active {
+                            if should_log_output_text(&mut state, &text) {
                                 log_agent_output(&mut state, &text);
                             }
                             let _ = persistence::save(&state);
@@ -1608,15 +1642,13 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                         AgentEvent::StreamDelta(delta) => {
                             state.ui.streaming_active = true;
                             state.ui.follow_tail = true;
+                            state.ui.streaming_transcript.push_str(&delta);
                             state.ui.streaming_buffer.push_str(&delta);
                             update_streaming_log(&mut state);
                         }
 
                         AgentEvent::StreamDone => {
-                            if state.ui.streaming_active {
-                                flush_streaming_log(&mut state);
-                            }
-                            state.ui.streaming_active = false;
+                            finish_streaming_output(&mut state);
                         }
 
                         AgentEvent::RunStatus {
@@ -1659,8 +1691,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                         }
 
                         AgentEvent::Cancelled => {
-                            state.ui.streaming_active = false;
-                            flush_streaming_log(&mut state);
+                            finish_streaming_output(&mut state);
                             log(&mut state, LogLevel::Warn, "Agent cancelled.");
                             state.ui.spinner_started_at = None;
                             state.ui.agent_running = false;
@@ -1677,8 +1708,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
 
                         AgentEvent::Error(e) => {
                             log(&mut state, LogLevel::Error, e);
-                            state.ui.streaming_active = false;
-                            flush_streaming_log(&mut state);
+                            finish_streaming_output(&mut state);
                             state.ui.spinner_started_at = None;
                             state.ui.agent_running = false;
                             state.ui.run_phase = "error".to_string();
@@ -1732,8 +1762,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
 
                     Err(mpsc::TryRecvError::Empty) => break,
                     Err(mpsc::TryRecvError::Disconnected) => {
-                        state.ui.streaming_active = false;
-                        flush_streaming_log(&mut state);
+                        finish_streaming_output(&mut state);
                         state.ui.spinner_started_at = None;
                         state.ui.agent_running = false;
                         state.ui.run_phase = "disconnected".to_string();
@@ -2038,6 +2067,33 @@ mod tests {
                 .count(),
             80
         );
+    }
+
+    #[test]
+    fn suppresses_final_output_already_rendered_from_stream() {
+        let mut state = init_state();
+        state.ui.streaming_active = true;
+        state.ui.streaming_transcript = "Hi.\nWhat do you want to work on?".to_string();
+
+        finish_streaming_output(&mut state);
+
+        assert!(!should_log_output_text(
+            &mut state,
+            "Hi. What do you want to work on?"
+        ));
+        assert!(state.ui.last_streamed_output.is_none());
+    }
+
+    #[test]
+    fn logs_final_output_when_it_differs_from_stream() {
+        let mut state = init_state();
+        state.ui.streaming_active = true;
+        state.ui.streaming_transcript = "partial answer".to_string();
+
+        finish_streaming_output(&mut state);
+
+        assert!(should_log_output_text(&mut state, "final answer"));
+        assert!(state.ui.last_streamed_output.is_none());
     }
 
     #[test]
