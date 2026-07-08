@@ -384,15 +384,37 @@ fn reset_streaming_output(ui: &mut crate::state::UiState) {
     ui.streaming_active = false;
     ui.streaming_buffer.clear();
     ui.streaming_transcript.clear();
+    ui.last_rendered_output = None;
     ui.streaming_lines_logged = 0;
 }
 
 fn finish_streaming_output(state: &mut AgentState) {
     if state.ui.streaming_active {
+        let rendered = output_dedupe_key(&state.ui.streaming_transcript);
         flush_streaming_log(state);
+        if !rendered.is_empty() {
+            state.ui.last_rendered_output = Some(rendered);
+        }
         state.ui.streaming_transcript.clear();
     }
     state.ui.streaming_active = false;
+}
+
+fn log_final_output_once(state: &mut AgentState, text: &str) -> bool {
+    let rendered = output_dedupe_key(text);
+    if rendered.is_empty()
+        || state.ui.last_rendered_output.as_deref() == Some(rendered.as_str())
+    {
+        return false;
+    }
+
+    log_agent_output(state, text);
+    state.ui.last_rendered_output = Some(rendered);
+    true
+}
+
+fn output_dedupe_key(text: &str) -> String {
+    text.trim_end_matches(['\r', '\n']).to_string()
 }
 
 fn plan_mode_prompt(text: &str) -> String {
@@ -1669,8 +1691,9 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
 
                         AgentEvent::OutputText(text) => {
                             runtime.mark_dirty();
-                            state.usage.completion_tokens += (text.len() / 4).max(1);
-                            log_agent_output(&mut state, &text);
+                            if log_final_output_once(&mut state, &text) {
+                                state.usage.completion_tokens += (text.len() / 4).max(1);
+                            }
                             let _ = persistence::save(&state);
                         }
 
@@ -2118,6 +2141,33 @@ mod tests {
         let pending = unreviewed_changes(&changes, 10);
 
         assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn final_output_is_not_logged_twice_after_stream_flush() {
+        let mut state = init_state();
+        state.ui.streaming_active = true;
+        state.ui.streaming_buffer = "Hi. What do you want to work on?\n".to_string();
+        state.ui.streaming_transcript = state.ui.streaming_buffer.clone();
+
+        finish_streaming_output(&mut state);
+        let logged = state.logs.iter().count();
+
+        assert!(!log_final_output_once(
+            &mut state,
+            "Hi. What do you want to work on?"
+        ));
+        assert_eq!(state.logs.iter().count(), logged);
+    }
+
+    #[test]
+    fn repeated_final_output_is_deduped_within_run() {
+        let mut state = init_state();
+
+        assert!(log_final_output_once(&mut state, "same answer"));
+        assert!(!log_final_output_once(&mut state, "same answer\n"));
+
+        assert_eq!(state.logs.iter().count(), 1);
     }
 
     #[test]
