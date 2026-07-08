@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::harness::{clip, RunLedger};
-use crate::state::PermissionProfile;
+use crate::state::{DiffSnapshot, PermissionProfile};
 use crate::tool_guard::ToolLoopGuard;
 use crate::tools::{ToolRegistry, ToolSafety, ToolScope};
 
@@ -487,6 +487,20 @@ impl Agent {
     pub fn run_swarm(&self, user_text: &str) -> Result<Vec<(String, String)>, String> {
         let api_key = self.api_key.as_ref().ok_or("OPENAI_API_KEY not set")?;
         run_swarm_with(self.model_cfg.clone(), api_key, user_text)
+    }
+
+    pub fn review_changes(&self, changes: &[DiffSnapshot]) -> Result<String, String> {
+        if changes.is_empty() {
+            return Err("no session changes to review".to_string());
+        }
+        let api_key = self.api_key.as_ref().ok_or("OPENAI_API_KEY not set")?;
+        let prompt = build_review_prompt(changes);
+        one_shot_scoped_call(
+            &self.model_cfg,
+            api_key,
+            &prompt,
+            "Act as an independent code-review judge. Find correctness bugs, regressions, missing tests, safety issues, and unclear residual risk. Findings first; be concrete and cite files.",
+        )
     }
 }
 
@@ -1606,6 +1620,66 @@ fn run_swarm_with(
     Ok(out)
 }
 
+const REVIEW_PROMPT_BUDGET: usize = 48_000;
+const REVIEW_FILE_BUDGET: usize = 8_000;
+
+fn build_review_prompt(changes: &[DiffSnapshot]) -> String {
+    let mut prompt = String::from(
+        "Review the session changes below as a strict coding-agent judge.\n\
+         Return findings first, ordered by severity. Include file paths and concrete failure modes.\n\
+         Also call out missing verification, edge cases, and any residual risk. If there are no findings, say that clearly.\n",
+    );
+
+    for (idx, change) in changes.iter().enumerate() {
+        if prompt.chars().count() >= REVIEW_PROMPT_BUDGET {
+            prompt.push_str("\n[review input truncated: prompt budget exhausted]\n");
+            break;
+        }
+
+        let before = clip_review_text(&change.before, REVIEW_FILE_BUDGET);
+        let after = clip_review_text(&change.after, REVIEW_FILE_BUDGET);
+        let section = format!(
+            "\n--- Change {} ---\nTool: {}\nFile: {}\nBefore:\n```text\n{}\n```\nAfter:\n```text\n{}\n```\n",
+            idx + 1,
+            change.tool,
+            change.target,
+            before,
+            after
+        );
+        append_with_budget(&mut prompt, &section, REVIEW_PROMPT_BUDGET);
+    }
+
+    prompt
+}
+
+fn clip_review_text(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let head: String = text.chars().take(max_chars).collect();
+    format!("{head}\n[truncated]")
+}
+
+fn append_with_budget(target: &mut String, value: &str, max_chars: usize) {
+    let used = target.chars().count();
+    if used >= max_chars {
+        return;
+    }
+    let remaining = max_chars - used;
+    if value.chars().count() <= remaining {
+        target.push_str(value);
+    } else {
+        let marker = "\n[truncated]";
+        let marker_len = marker.chars().count();
+        if remaining > marker_len {
+            target.extend(value.chars().take(remaining - marker_len));
+            target.push_str(marker);
+        } else {
+            target.extend(value.chars().take(remaining));
+        }
+    }
+}
+
 pub fn run_swarm_job(
     model_cfg: ModelConfig,
     api_key: String,
@@ -1869,6 +1943,40 @@ mod tests {
         let dangerous = collect_parallel_safe_batch(output, 2, &registry).unwrap();
         assert!(dangerous.is_empty());
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn review_prompt_includes_findings_criteria_and_changes() {
+        let changes = vec![DiffSnapshot {
+            tool: "edit_file".to_string(),
+            target: "src/lib.rs".to_string(),
+            before: "fn value() -> i32 { 1 }".to_string(),
+            after: "fn value() -> i32 { 2 }".to_string(),
+        }];
+
+        let prompt = build_review_prompt(&changes);
+
+        assert!(prompt.contains("Return findings first"));
+        assert!(prompt.contains("missing verification"));
+        assert!(prompt.contains("File: src/lib.rs"));
+        assert!(prompt.contains("fn value() -> i32 { 1 }"));
+        assert!(prompt.contains("fn value() -> i32 { 2 }"));
+    }
+
+    #[test]
+    fn review_prompt_caps_large_change_context() {
+        let changes = vec![DiffSnapshot {
+            tool: "write_file".to_string(),
+            target: "src/large.rs".to_string(),
+            before: "a".repeat(REVIEW_FILE_BUDGET * 3),
+            after: "b".repeat(REVIEW_FILE_BUDGET * 3),
+        }];
+
+        let prompt = build_review_prompt(&changes);
+
+        assert!(prompt.chars().count() <= REVIEW_PROMPT_BUDGET);
+        assert!(prompt.contains("[truncated]"));
+        assert!(prompt.contains("File: src/large.rs"));
     }
 
     fn temp_root() -> PathBuf {
