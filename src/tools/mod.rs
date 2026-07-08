@@ -15,6 +15,7 @@ mod list_dir;
 mod mcp_call;
 mod notebook_edit;
 mod patch;
+mod plan;
 mod read;
 mod regex_search;
 mod search;
@@ -36,6 +37,7 @@ pub use list_dir::ListDir;
 pub use mcp_call::McpCall;
 pub use notebook_edit::NotebookEdit;
 pub use patch::Patch;
+pub use plan::Plan;
 pub use read::Read;
 pub use regex_search::RegexSearch;
 pub use search::Search;
@@ -87,6 +89,7 @@ impl ToolRegistry {
             Box::new(FindReferences),
             Box::new(GitCommit),
             Box::new(Patch),
+            Box::new(Plan),
             Box::new(NotebookEdit),
             Box::new(WebSearch),
             Box::new(Diagnostics),
@@ -172,6 +175,39 @@ mod tests {
             result.get("text").and_then(Value::as_str),
             Some("root scoped")
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn registry_updates_durable_plan_file() {
+        let root = std::env::temp_dir().join(format!("osmogrep-plan-root-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+
+        let registry = ToolRegistry::with_root(root.clone());
+        let set = registry
+            .call(
+                "update_plan",
+                json!({ "action": "set", "items": ["inspect", "fix"] }),
+            )
+            .unwrap();
+        assert_eq!(
+            set.pointer("/items/0/status").and_then(Value::as_str),
+            Some("in_progress")
+        );
+        assert!(root.join(".context").join("osmogrep-plan.json").is_file());
+
+        let done = registry
+            .call("update_plan", json!({ "action": "done", "id": 1 }))
+            .unwrap();
+        assert_eq!(
+            done.pointer("/items/0/status").and_then(Value::as_str),
+            Some("completed")
+        );
+        assert_eq!(
+            done.pointer("/items/1/status").and_then(Value::as_str),
+            Some("in_progress")
+        );
+
         let _ = fs::remove_dir_all(root);
     }
 }
