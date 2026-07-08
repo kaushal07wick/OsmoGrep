@@ -9,7 +9,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph},
     Frame, Terminal,
 };
-use unicode_width::UnicodeWidthChar;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::ui::helper::{
     calculate_input_lines, git_branch, render_static_command_line, running_pulse,
@@ -483,7 +483,14 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
         max_scroll.saturating_sub(state.ui.exec_scroll)
     };
 
-    f.render_widget(Paragraph::new(lines).scroll((scroll as u16, 0)), padded);
+    f.render_widget(
+        Paragraph::new(lines).scroll((clamp_scroll_offset(scroll), 0)),
+        padded,
+    );
+}
+
+fn clamp_scroll_offset(scroll: usize) -> u16 {
+    scroll.min(u16::MAX as usize) as u16
 }
 
 fn style_log_line(
@@ -820,8 +827,15 @@ fn render_input_box(f: &mut Frame, area: Rect, state: &AgentState) {
     f.render_widget(Paragraph::new(out), area);
 
     // Cursor position: at end of first visible line (after prompt)
-    let first_line_len = visual.get(0).map(|s| s.chars().count()).unwrap_or(0);
-    let cursor_x = area.x + PROMPT.len() as u16 + first_line_len as u16;
+    let first_line_width = visual
+        .first()
+        .map(|s| UnicodeWidthStr::width(s.as_str()))
+        .unwrap_or(0);
+    let cursor_x = area
+        .x
+        .saturating_add(PROMPT.len() as u16)
+        .saturating_add(first_line_width.min(text_width) as u16)
+        .min(area.x + area.width.saturating_sub(1));
     let cursor_y = area.y + 1;
 
     f.set_cursor(cursor_x, cursor_y);
@@ -857,17 +871,25 @@ fn wrap_visual_lines(raw: &str, width: usize) -> Vec<String> {
         }
 
         let mut wrapped = String::new();
-        let mut count = 0usize;
+        let mut width_used = 0usize;
         for ch in line.chars() {
-            if count == width {
+            let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+            if width_used > 0 && width_used + ch_width > width {
                 visual.push(wrapped);
                 wrapped = String::new();
-                count = 0;
+                width_used = 0;
             }
             wrapped.push(ch);
-            count += 1;
+            width_used += ch_width;
+            if width_used >= width {
+                visual.push(wrapped);
+                wrapped = String::new();
+                width_used = 0;
+            }
         }
-        visual.push(wrapped);
+        if !wrapped.is_empty() {
+            visual.push(wrapped);
+        }
     }
 
     visual
@@ -1102,8 +1124,8 @@ pub fn render_command_palette(f: &mut Frame, area: Rect, state: &AgentState) {
 #[cfg(test)]
 mod tests {
     use super::{
-        pending_update_prompt, render_plan_lines_for_items, update_status_label, wrap_lines_safely,
-        wrap_visual_lines, UiPalette,
+        clamp_scroll_offset, pending_update_prompt, render_plan_lines_for_items,
+        update_status_label, wrap_lines_safely, wrap_visual_lines, UiPalette,
     };
     use crate::state::{PendingUpdate, PlanItem};
     use ratatui::{style::Color, text::Line};
@@ -1127,6 +1149,19 @@ mod tests {
         assert_eq!(snapshot.len(), 2);
         assert_eq!(snapshot[0].chars().count(), 25);
         assert_eq!(snapshot[1].chars().count(), 1);
+    }
+
+    #[test]
+    fn wraps_input_by_terminal_display_width() {
+        let lines = wrap_visual_lines("界界界", 4);
+
+        assert_eq!(lines, vec!["界界".to_string(), "界".to_string()]);
+    }
+
+    #[test]
+    fn clamps_large_scroll_offsets_for_ratatui() {
+        assert_eq!(clamp_scroll_offset(12), 12);
+        assert_eq!(clamp_scroll_offset(usize::MAX), u16::MAX);
     }
 
     #[test]
