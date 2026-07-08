@@ -6,6 +6,7 @@ mod hooks;
 mod logger;
 mod mcp;
 mod persistence;
+mod shell_guard;
 mod state;
 mod test_harness;
 mod tool_budget;
@@ -124,6 +125,11 @@ fn agent_iteration_limit() -> usize {
 
 fn run_shell(state: &mut AgentState, cmd: &str) {
     log(state, LogLevel::Info, &format!("SHELL : $ {}", cmd));
+
+    if let Err(e) = crate::shell_guard::check_shell_command(cmd) {
+        log(state, LogLevel::Error, e);
+        return;
+    }
 
     match std::process::Command::new("sh").arg("-c").arg(cmd).output() {
         Ok(out) => {

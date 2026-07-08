@@ -35,6 +35,13 @@ impl Tool for Shell {
             .get("cmd")
             .and_then(Value::as_str)
             .ok_or("missing cmd")?;
+        if let Err(e) = crate::shell_guard::check_shell_command(cmd) {
+            return Ok(json!({
+                "error": e,
+                "blocked": true,
+                "exit_code": null
+            }));
+        }
         let root = std::env::current_dir().map_err(|e| e.to_string())?;
 
         let pre_hook = crate::hooks::run_hook("pre_shell", &[("cmd", cmd)])
