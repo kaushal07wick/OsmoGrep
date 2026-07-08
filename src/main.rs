@@ -14,6 +14,7 @@ mod tool_guard;
 mod tools;
 mod triage;
 mod ui;
+mod verify_stop;
 mod verification;
 mod voice;
 

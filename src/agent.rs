@@ -347,6 +347,7 @@ impl RunAgent {
         let mut iteration = 0usize;
         let mut run_notes: Vec<String> = Vec::new();
         let mut tool_guard = ToolLoopGuard::default();
+        let mut verify_on_stop_attempts = 0usize;
         let mut ledger = RunLedger::start(
             &repo_root,
             user_text,
@@ -378,7 +379,7 @@ impl RunAgent {
 
         let mut input = Value::Array(persisted.clone());
 
-        loop {
+        'agent_loop: loop {
             apply_pending_steer(&steer_rx, &mut persisted, &mut input, tx);
             if self.cancel.is_cancelled() {
                 ledger.error("cancelled", iteration);
@@ -584,6 +585,18 @@ impl RunAgent {
 
                     Some("output_text") => {
                         if let Some(text) = item.get("text").and_then(Value::as_str) {
+                            if queue_verify_on_stop(
+                                &repo_root,
+                                &mut verify_on_stop_attempts,
+                                text,
+                                iteration,
+                                &mut ledger,
+                                &mut run_notes,
+                                &mut next_messages,
+                            ) {
+                                input = Value::Array(next_messages);
+                                continue 'agent_loop;
+                            }
                             let _ = tx.send(AgentEvent::OutputText(text.to_string()));
                             ledger.final_text(text, iteration);
                             persisted.push(json!({
@@ -600,6 +613,18 @@ impl RunAgent {
                             for c in content {
                                 if c.get("type").and_then(Value::as_str) == Some("output_text") {
                                     if let Some(text) = c.get("text").and_then(Value::as_str) {
+                                        if queue_verify_on_stop(
+                                            &repo_root,
+                                            &mut verify_on_stop_attempts,
+                                            text,
+                                            iteration,
+                                            &mut ledger,
+                                            &mut run_notes,
+                                            &mut next_messages,
+                                        ) {
+                                            input = Value::Array(next_messages);
+                                            continue 'agent_loop;
+                                        }
                                         let _ = tx.send(AgentEvent::OutputText(text.to_string()));
                                         ledger.final_text(text, iteration);
                                         persisted.push(json!({
@@ -980,6 +1005,40 @@ fn verification_stale_summary(result: &Value) -> Option<String> {
     Some(format!(
         "workspace edited; verification stale for {changed}"
     ))
+}
+
+fn queue_verify_on_stop(
+    repo_root: &std::path::Path,
+    attempts: &mut usize,
+    final_text: &str,
+    iteration: usize,
+    ledger: &mut RunLedger,
+    run_notes: &mut Vec<String>,
+    next_messages: &mut Vec<Value>,
+) -> bool {
+    let Some(nudge) = crate::verify_stop::build_verify_on_stop_nudge(repo_root, *attempts) else {
+        return false;
+    };
+
+    *attempts += 1;
+    ledger.status(
+        "verify_on_stop",
+        format!("queued verification follow-up attempt {}", *attempts),
+        iteration,
+    );
+    run_notes.push(format!(
+        "- verify-on-stop queued attempt {} before final response",
+        *attempts
+    ));
+    next_messages.push(json!({
+        "role": "assistant",
+        "content": final_text
+    }));
+    next_messages.push(json!({
+        "role": "user",
+        "content": nudge
+    }));
+    true
 }
 
 fn assistant_memory_text(text: &str, run_notes: &[String], ledger: &RunLedger) -> String {
