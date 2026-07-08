@@ -69,14 +69,22 @@ impl Tool for Patch {
             .as_ref()
             .and_then(|p| fs::read_to_string(p).ok())
             .unwrap_or_default();
+        let root = std::env::current_dir().map_err(|e| e.to_string())?;
+        let target_path = target.clone().unwrap_or_default();
+        let verification_stale = if out.status.success() && !target_path.is_empty() {
+            crate::verification::mark_workspace_edited(&root, [target_path.as_str()])
+        } else {
+            None
+        };
 
         Ok(json!({
-            "path": target.unwrap_or_default(),
+            "path": target_path,
             "before": before,
             "after": after,
             "exit_code": out.status.code(),
             "stdout": String::from_utf8_lossy(&out.stdout),
             "stderr": String::from_utf8_lossy(&out.stderr),
+            "verification_stale": crate::verification::staleness_to_json(&verification_stale)
         }))
     }
 }

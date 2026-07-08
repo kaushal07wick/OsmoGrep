@@ -857,6 +857,9 @@ fn tool_result_summary(tool: &str, result: &Value) -> String {
     if let Some(summary) = verification_summary(result) {
         return summary;
     }
+    if let Some(summary) = verification_stale_summary(result) {
+        return summary;
+    }
 
     match tool {
         "run_shell" => {
@@ -944,6 +947,26 @@ fn verification_summary(result: &Value) -> Option<String> {
         .and_then(Value::as_str)
         .unwrap_or("command");
     Some(format!("verification {kind}:{scope}:{status} ({command})"))
+}
+
+fn verification_stale_summary(result: &Value) -> Option<String> {
+    let stale = result.get("verification_stale")?;
+    if stale.is_null() {
+        return None;
+    }
+    let paths = stale.get("changed_paths").and_then(Value::as_array)?;
+    let changed = paths
+        .iter()
+        .filter_map(Value::as_str)
+        .take(3)
+        .collect::<Vec<_>>()
+        .join(", ");
+    if changed.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "workspace edited; verification stale for {changed}"
+    ))
 }
 
 fn assistant_memory_text(text: &str, run_notes: &[String], ledger: &RunLedger) -> String {

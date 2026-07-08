@@ -69,6 +69,8 @@ impl Tool for Edit {
         };
 
         fs::write(path, &updated).map_err(|e| e.to_string())?;
+        let root = std::env::current_dir().map_err(|e| e.to_string())?;
+        let verification_stale = crate::verification::mark_workspace_edited(&root, [path]);
         let post_hook = crate::hooks::run_hook("post_edit", &[("path", path)])
             .ok()
             .flatten();
@@ -79,7 +81,8 @@ impl Tool for Edit {
             "before": src,
             "after": updated,
             "pre_hook": pre_hook,
-            "post_hook": post_hook
+            "post_hook": post_hook,
+            "verification_stale": crate::verification::staleness_to_json(&verification_stale)
         }))
     }
 }

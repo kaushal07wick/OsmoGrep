@@ -102,12 +102,15 @@ impl Tool for NotebookEdit {
             serde_json::to_string_pretty(&nb).map_err(|e| e.to_string())?,
         )
         .map_err(|e| e.to_string())?;
+        let root = std::env::current_dir().map_err(|e| e.to_string())?;
+        let verification_stale = crate::verification::mark_workspace_edited(&root, [path]);
 
         Ok(json!({
             "path": path,
             "cell_index": cell_index,
             "before": source_text,
             "after": updated,
+            "verification_stale": crate::verification::staleness_to_json(&verification_stale)
         }))
     }
 }

@@ -25,6 +25,14 @@ pub struct VerificationEvidence {
     pub output_summary: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerificationStaleness {
+    pub id: String,
+    pub edited_at: String,
+    pub root: String,
+    pub changed_paths: Vec<String>,
+}
+
 pub fn record_command(
     repo_root: &Path,
     command: &str,
@@ -34,6 +42,29 @@ pub fn record_command(
     let evidence = classify_command(repo_root, command, exit_code, output)?;
     append(repo_root, &evidence).ok()?;
     Some(evidence)
+}
+
+pub fn mark_workspace_edited(
+    repo_root: &Path,
+    paths: impl IntoIterator<Item = impl AsRef<str>>,
+) -> Option<VerificationStaleness> {
+    let changed_paths: Vec<String> = paths
+        .into_iter()
+        .map(|p| p.as_ref().trim().to_string())
+        .filter(|p| !p.is_empty())
+        .collect();
+    if changed_paths.is_empty() {
+        return None;
+    }
+
+    let stale = VerificationStaleness {
+        id: Uuid::new_v4().to_string(),
+        edited_at: Utc::now().to_rfc3339(),
+        root: repo_root.display().to_string(),
+        changed_paths,
+    };
+    append_staleness(repo_root, &stale).ok()?;
+    Some(stale)
 }
 
 pub fn classify_command(
@@ -64,6 +95,26 @@ pub fn classify_command(
 }
 
 fn append(repo_root: &Path, evidence: &VerificationEvidence) -> Result<(), String> {
+    append_json_line(
+        repo_root,
+        serde_json::to_value(evidence).map_err(|e| e.to_string())?,
+    )
+}
+
+fn append_staleness(repo_root: &Path, stale: &VerificationStaleness) -> Result<(), String> {
+    append_json_line(
+        repo_root,
+        json!({
+            "type": "workspace_edited",
+            "id": stale.id,
+            "edited_at": stale.edited_at,
+            "root": stale.root,
+            "changed_paths": stale.changed_paths,
+        }),
+    )
+}
+
+fn append_json_line(repo_root: &Path, value: serde_json::Value) -> Result<(), String> {
     let path = ledger_path(repo_root);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -74,7 +125,6 @@ fn append(repo_root: &Path, evidence: &VerificationEvidence) -> Result<(), Strin
         .append(true)
         .open(path)
         .map_err(|e| e.to_string())?;
-    let value = serde_json::to_value(evidence).map_err(|e| e.to_string())?;
     writeln!(file, "{}", value).map_err(|e| e.to_string())
 }
 
@@ -315,6 +365,13 @@ pub fn to_json(evidence: &Option<VerificationEvidence>) -> serde_json::Value {
     evidence
         .as_ref()
         .map(|e| serde_json::to_value(e).unwrap_or_else(|_| json!(null)))
+        .unwrap_or_else(|| json!(null))
+}
+
+pub fn staleness_to_json(stale: &Option<VerificationStaleness>) -> serde_json::Value {
+    stale
+        .as_ref()
+        .map(|s| serde_json::to_value(s).unwrap_or_else(|_| json!(null)))
         .unwrap_or_else(|| json!(null))
 }
 
