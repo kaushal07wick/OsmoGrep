@@ -563,14 +563,7 @@ impl RunAgent {
     }
 
     fn call_openai_blocking(&self, api_key: &str, input: &Value) -> Result<Value, String> {
-        let payload = json!({
-            "model": self.model_cfg.model,
-            "input": input,
-            "tools": self.tools.schema(),
-            "tool_choice": "auto",
-            "reasoning": { "effort": "medium" },
-            "store": true
-        });
+        let payload = self.responses_payload(input, false);
 
         let mut child = Command::new("curl")
             .arg("-s")
@@ -612,10 +605,30 @@ impl RunAgent {
 
         let (body, status) = out.rsplit_once('\n').ok_or("missing status")?;
         if status != "200" {
-            return Err(format!("API error {}", status));
+            return Err(format_api_error(status, body));
         }
 
         serde_json::from_str(body).map_err(|e| e.to_string())
+    }
+
+    fn responses_payload(&self, input: &Value, stream: bool) -> Value {
+        let mut payload = json!({
+            "model": self.model_cfg.model,
+            "input": input,
+            "tools": self.tools.schema(),
+            "tool_choice": "auto",
+            "store": true
+        });
+
+        if let Some(effort) = reasoning_effort_for(&self.model_cfg.model) {
+            payload["reasoning"] = json!({ "effort": effort });
+        }
+
+        if stream {
+            payload["stream"] = json!(true);
+        }
+
+        payload
     }
 
     fn call_openai_streaming(
@@ -624,15 +637,7 @@ impl RunAgent {
         input: &Value,
         tx: &Sender<AgentEvent>,
     ) -> Result<Value, String> {
-        let payload = json!({
-            "model": self.model_cfg.model,
-            "input": input,
-            "tools": self.tools.schema(),
-            "tool_choice": "auto",
-            "reasoning": { "effort": "medium" },
-            "store": true,
-            "stream": true,
-        });
+        let payload = self.responses_payload(input, true);
 
         let client = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(120))
@@ -647,8 +652,10 @@ impl RunAgent {
             .send()
             .map_err(|e| e.to_string())?;
 
-        if !resp.status().is_success() {
-            return Err(format!("API error {}", resp.status()));
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            return Err(format_api_error(&status.to_string(), &body));
         }
 
         let mut pending = String::new();
@@ -763,6 +770,56 @@ fn env_truthy(key: &str, default: bool) -> bool {
     }
 }
 
+fn reasoning_effort_for(model: &str) -> Option<String> {
+    if let Ok(raw) = env::var("OSMOGREP_REASONING_EFFORT") {
+        let value = raw.trim();
+        if value.is_empty()
+            || matches!(
+                value.to_ascii_lowercase().as_str(),
+                "0" | "false" | "none" | "off"
+            )
+        {
+            return None;
+        }
+        return Some(value.to_string());
+    }
+
+    let model = model.to_ascii_lowercase();
+    if model.starts_with("gpt-4o") || model.starts_with("gpt-4.1") {
+        return None;
+    }
+
+    if model.starts_with("gpt-5")
+        || model.starts_with("o1")
+        || model.starts_with("o3")
+        || model.starts_with("o4")
+    {
+        return Some("medium".to_string());
+    }
+
+    None
+}
+
+fn format_api_error(status: &str, body: &str) -> String {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return format!("API error {}", status);
+    }
+
+    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+        if let Some(message) = value
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(Value::as_str)
+        {
+            return format!("API error {}: {}", status, message);
+        }
+    }
+
+    let preview: String = trimmed.chars().take(800).collect();
+    format!("API error {}: {}", status, preview)
+}
+
 fn apply_pending_steer(
     steer_rx: &Receiver<String>,
     persisted: &mut Vec<Value>,
@@ -866,7 +923,7 @@ fn one_shot_scoped_call(
     user_text: &str,
     scope_prompt: &str,
 ) -> Result<String, String> {
-    let payload = json!({
+    let mut payload = json!({
         "model": model_cfg.model,
         "input": [
             {
@@ -878,9 +935,11 @@ fn one_shot_scoped_call(
             },
             {"role": "user", "content": user_text}
         ],
-        "reasoning": {"effort": "medium"},
         "store": false
     });
+    if let Some(effort) = reasoning_effort_for(&model_cfg.model) {
+        payload["reasoning"] = json!({ "effort": effort });
+    }
 
     let base = model_cfg
         .base_url
@@ -900,8 +959,10 @@ fn one_shot_scoped_call(
         .send()
         .map_err(|e| e.to_string())?;
 
-    if !resp.status().is_success() {
-        return Err(format!("API error {}", resp.status()));
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().unwrap_or_default();
+        return Err(format_api_error(&status.to_string(), &body));
     }
 
     let value: Value = resp.json().map_err(|e| e.to_string())?;
