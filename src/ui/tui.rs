@@ -6,9 +6,10 @@ use ratatui::{
     prelude::*,
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Paragraph},
     Frame, Terminal,
 };
+use unicode_width::UnicodeWidthChar;
 
 use crate::ui::helper::{
     calculate_input_lines, git_branch, render_static_command_line, running_pulse,
@@ -327,12 +328,7 @@ fn render_header(f: &mut Frame, area: Rect, state: &AgentState) {
         )));
     }
 
-    f.render_widget(
-        Paragraph::new(lines)
-            .alignment(Alignment::Left)
-            .wrap(Wrap { trim: true }),
-        area,
-    );
+    f.render_widget(Paragraph::new(lines).alignment(Alignment::Left), area);
 }
 
 /// main panel
@@ -475,6 +471,7 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
         lines.extend(render_plan_lines(state, p));
     }
 
+    let lines = wrap_lines_safely(lines, padded.width as usize);
     let max_scroll = lines.len().saturating_sub(height);
     let scroll = if state.ui.follow_tail {
         max_scroll
@@ -482,12 +479,7 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
         max_scroll.saturating_sub(state.ui.exec_scroll)
     };
 
-    f.render_widget(
-        Paragraph::new(lines)
-            .scroll((scroll as u16, 0))
-            .wrap(Wrap { trim: false }),
-        padded,
-    );
+    f.render_widget(Paragraph::new(lines).scroll((scroll as u16, 0)), padded);
 }
 
 fn render_plan_lines(state: &AgentState, p: UiPalette) -> Vec<Line<'static>> {
@@ -552,6 +544,58 @@ fn update_status_label(update: &PendingUpdate) -> &'static str {
     } else {
         " · update available"
     }
+}
+
+fn wrap_lines_safely(lines: Vec<Line<'_>>, width: usize) -> Vec<Line<'static>> {
+    let width = width.max(1);
+    let mut wrapped = Vec::new();
+
+    for line in lines {
+        let mut current_spans: Vec<Span<'static>> = Vec::new();
+        let mut current_text = String::new();
+        let mut current_style = Style::default();
+        let mut current_width = 0usize;
+        let mut saw_content = false;
+
+        for span in line.spans {
+            let span_style = span.style;
+            for ch in span.content.chars() {
+                let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+                if current_width > 0 && current_width + ch_width > width {
+                    flush_wrapped_span(&mut current_spans, &mut current_text, current_style);
+                    wrapped.push(Line::from(std::mem::take(&mut current_spans)));
+                    current_width = 0;
+                }
+
+                if current_text.is_empty() {
+                    current_style = span_style;
+                } else if current_style != span_style {
+                    flush_wrapped_span(&mut current_spans, &mut current_text, current_style);
+                    current_style = span_style;
+                }
+
+                current_text.push(ch);
+                current_width += ch_width;
+                saw_content = true;
+            }
+        }
+
+        flush_wrapped_span(&mut current_spans, &mut current_text, current_style);
+        if saw_content {
+            wrapped.push(Line::from(current_spans));
+        } else {
+            wrapped.push(Line::from(""));
+        }
+    }
+
+    wrapped
+}
+
+fn flush_wrapped_span(spans: &mut Vec<Span<'static>>, text: &mut String, style: Style) {
+    if text.is_empty() {
+        return;
+    }
+    spans.push(Span::styled(std::mem::take(text), style));
 }
 
 fn render_running_badge(f: &mut Frame, area: Rect, state: &AgentState) {
@@ -675,7 +719,7 @@ fn render_voice_bar(f: &mut Frame, area: Rect, state: &AgentState) {
         Span::styled("voice: ", Style::default().fg(p.fg_dim)),
         Span::styled(text, Style::default().fg(p.fg_muted)),
     ]);
-    f.render_widget(Paragraph::new(line).wrap(Wrap { trim: true }), area);
+    f.render_widget(Paragraph::new(line), area);
 }
 
 /// input box ui
@@ -744,7 +788,7 @@ fn render_input_box(f: &mut Frame, area: Rect, state: &AgentState) {
     // Bottom border
     out.push(Line::from("─".repeat(inner_width)));
 
-    f.render_widget(Paragraph::new(out).wrap(Wrap { trim: false }), area);
+    f.render_widget(Paragraph::new(out), area);
 
     // Cursor position: at end of first visible line (after prompt)
     let first_line_len = visual.get(0).map(|s| s.chars().count()).unwrap_or(0);
@@ -1007,9 +1051,7 @@ pub fn render_command_palette(f: &mut Frame, area: Rect, state: &AgentState) {
         lines.push(Line::from(Span::styled(padded, style)));
     }
 
-    let paragraph = Paragraph::new(lines)
-        .block(block)
-        .wrap(Wrap { trim: false });
+    let paragraph = Paragraph::new(lines).block(block);
 
     f.render_widget(paragraph, area);
 }
@@ -1017,8 +1059,8 @@ pub fn render_command_palette(f: &mut Frame, area: Rect, state: &AgentState) {
 #[cfg(test)]
 mod tests {
     use super::{
-        pending_update_prompt, render_plan_lines_for_items, update_status_label, wrap_visual_lines,
-        UiPalette,
+        pending_update_prompt, render_plan_lines_for_items, update_status_label, wrap_lines_safely,
+        wrap_visual_lines, UiPalette,
     };
     use crate::state::{PendingUpdate, PlanItem};
     use ratatui::{style::Color, text::Line};
@@ -1031,6 +1073,17 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].chars().count(), 25);
         assert_eq!(lines[1].chars().count(), 1);
+    }
+
+    #[test]
+    fn safely_wraps_multibyte_execution_lines() {
+        let masked = "•".repeat(26);
+        let lines = wrap_lines_safely(vec![Line::from(masked)], 25);
+        let snapshot = lines.iter().map(plain_text).collect::<Vec<_>>();
+
+        assert_eq!(snapshot.len(), 2);
+        assert_eq!(snapshot[0].chars().count(), 25);
+        assert_eq!(snapshot[1].chars().count(), 1);
     }
 
     #[test]

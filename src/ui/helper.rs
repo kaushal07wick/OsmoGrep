@@ -12,15 +12,18 @@ pub fn render_static_command_line(text: &str, term_width: usize) -> Vec<Line<'st
     let outer_margin = 2; // visual breathing room
 
     let max_width = (term_width as f32 * max_fraction) as usize;
-    let desired_width = text.len() + side_padding * 2 + outer_margin * 2;
+    let desired_width = text.chars().count() + side_padding * 2 + outer_margin * 2;
 
     let box_width = desired_width.min(max_width).min(term_width).max(10); // sanity floor
 
     let inner_width = box_width.saturating_sub(side_padding * 2 + outer_margin * 2);
 
     let mut content = text.to_string();
-    if content.len() > inner_width {
-        content.truncate(inner_width.saturating_sub(1));
+    if content.chars().count() > inner_width {
+        content = content
+            .chars()
+            .take(inner_width.saturating_sub(1))
+            .collect();
         content.push('…');
     }
 
@@ -38,7 +41,7 @@ pub fn render_static_command_line(text: &str, term_width: usize) -> Vec<Line<'st
         " ".repeat(outer_margin),
     );
 
-    let line_len = full_line.len();
+    let line_len = full_line.chars().count();
 
     vec![
         Line::from(Span::styled(
@@ -91,10 +94,36 @@ pub fn calculate_input_lines(input: &str, width: usize, prompt_len: usize) -> us
         if line.is_empty() {
             line_count += 1;
         } else {
-            let chars = line.len();
+            let chars = line.chars().count();
             line_count += (chars + text_width - 1) / text_width;
         }
     }
 
     line_count.max(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{calculate_input_lines, render_static_command_line};
+
+    #[test]
+    fn calculate_input_lines_counts_multibyte_chars_not_bytes() {
+        let masked = "•".repeat(26);
+
+        assert_eq!(calculate_input_lines(&masked, 80, 3), 1);
+        assert_eq!(calculate_input_lines(&masked, 28, 3), 2);
+    }
+
+    #[test]
+    fn render_static_command_line_truncates_multibyte_text_safely() {
+        let masked = "•".repeat(80);
+        let lines = render_static_command_line(&masked, 40);
+        let rendered = lines
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(rendered.contains('…'));
+    }
 }
