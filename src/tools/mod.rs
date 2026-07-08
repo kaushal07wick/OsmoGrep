@@ -1,5 +1,7 @@
 use serde_json::Value;
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 
 mod diagnostics;
 mod edit;
@@ -60,10 +62,11 @@ pub trait Tool: Send + Sync {
 
 pub struct ToolRegistry {
     tools: HashMap<&'static str, Box<dyn Tool>>,
+    repo_root: PathBuf,
 }
 
 impl ToolRegistry {
-    pub fn new() -> Self {
+    pub fn with_root(repo_root: PathBuf) -> Self {
         let mut tools: HashMap<&'static str, Box<dyn Tool>> = HashMap::new();
 
         let list: Vec<Box<dyn Tool>> = vec![
@@ -93,7 +96,7 @@ impl ToolRegistry {
             tools.insert(tool.name(), tool);
         }
 
-        Self { tools }
+        Self { tools, repo_root }
     }
 
     pub fn call(&self, name: &str, args: Value) -> ToolResult {
@@ -102,7 +105,7 @@ impl ToolRegistry {
             .get(name)
             .ok_or_else(|| format!("unknown tool: {}", name))?;
 
-        tool.call(args)
+        self.call_in_repo_root(tool.as_ref(), args)
     }
 
     pub fn safety(&self, name: &str) -> Option<ToolSafety> {
@@ -111,5 +114,64 @@ impl ToolRegistry {
 
     pub fn schema(&self) -> Vec<Value> {
         self.tools.values().map(|t| t.schema()).collect()
+    }
+
+    fn call_in_repo_root(&self, tool: &dyn Tool, args: Value) -> ToolResult {
+        static TOOL_CWD_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+        let _guard = TOOL_CWD_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .map_err(|_| "tool cwd lock poisoned".to_string())?;
+        let previous = std::env::current_dir().map_err(|e| e.to_string())?;
+        std::env::set_current_dir(&self.repo_root).map_err(|e| {
+            format!(
+                "failed to enter tool repo root {}: {}",
+                self.repo_root.display(),
+                e
+            )
+        })?;
+
+        let result = tool.call(args);
+        let restore = std::env::set_current_dir(&previous).map_err(|e| {
+            format!(
+                "failed to restore working directory {}: {}",
+                previous.display(),
+                e
+            )
+        });
+
+        match (result, restore) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(err), Ok(())) => Err(err),
+            (Ok(_), Err(err)) => Err(err),
+            (Err(err), Err(restore_err)) => Err(format!("{err}; {restore_err}")),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::fs;
+    use uuid::Uuid;
+
+    #[test]
+    fn registry_executes_tools_from_configured_repo_root() {
+        let root = std::env::temp_dir().join(format!("osmogrep-tools-root-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("only-in-root.txt"), "root scoped").unwrap();
+
+        let registry = ToolRegistry::with_root(root.clone());
+        let result = registry
+            .call("read_file", json!({ "path": "only-in-root.txt" }))
+            .unwrap();
+
+        assert_eq!(
+            result.get("text").and_then(Value::as_str),
+            Some("root scoped")
+        );
+        let _ = fs::remove_dir_all(root);
     }
 }

@@ -293,7 +293,7 @@ impl Agent {
 
         thread::spawn(move || {
             let runner = RunAgent {
-                tools: ToolRegistry::new(),
+                tools: ToolRegistry::with_root(repo_root.clone()),
                 model_cfg,
                 api_key,
                 auto_approve,
