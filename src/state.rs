@@ -136,11 +136,117 @@ pub struct AgentState {
     pub job_queue: Vec<JobRequest>,
     pub next_job_id: u64,
     pub plan_items: Vec<PlanItem>,
+    pub session_name: Option<String>,
+    pub theme: UiTheme,
+    pub accent: UiAccent,
+    pub density: UiDensity,
 
     pub started_at: Instant,
     pub repo_root: PathBuf,
     pub voice: VoiceState,
     pub conversation: ConversationHistory,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UiTheme {
+    Dark,
+    Light,
+}
+
+impl UiTheme {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            UiTheme::Dark => "dark",
+            UiTheme::Light => "light",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "dark" | "night" => Some(Self::Dark),
+            "light" | "day" => Some(Self::Light),
+            _ => None,
+        }
+    }
+}
+
+impl Default for UiTheme {
+    fn default() -> Self {
+        Self::Dark
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UiAccent {
+    Orange,
+    Blue,
+    Green,
+    Violet,
+    Rose,
+}
+
+impl UiAccent {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            UiAccent::Orange => "orange",
+            UiAccent::Blue => "blue",
+            UiAccent::Green => "green",
+            UiAccent::Violet => "violet",
+            UiAccent::Rose => "rose",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "orange" | "amber" => Some(Self::Orange),
+            "blue" | "cyan" => Some(Self::Blue),
+            "green" | "emerald" => Some(Self::Green),
+            "violet" | "purple" => Some(Self::Violet),
+            "rose" | "red" | "pink" => Some(Self::Rose),
+            _ => None,
+        }
+    }
+}
+
+impl Default for UiAccent {
+    fn default() -> Self {
+        Self::Orange
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UiDensity {
+    Compact,
+    Standard,
+    Spacious,
+}
+
+impl UiDensity {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            UiDensity::Compact => "compact",
+            UiDensity::Standard => "standard",
+            UiDensity::Spacious => "spacious",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "compact" | "small" | "dense" => Some(Self::Compact),
+            "standard" | "normal" | "default" => Some(Self::Standard),
+            "spacious" | "large" | "roomy" => Some(Self::Spacious),
+            _ => None,
+        }
+    }
+}
+
+impl Default for UiDensity {
+    fn default() -> Self {
+        Self::Standard
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -490,4 +596,32 @@ fn summarize_message(msg: &Value) -> Option<String> {
 
     let who = if role == "user" { "U" } else { "A" };
     Some(format!("- {}: {}", who, clipped))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_user_theme_controls() {
+        assert_eq!(UiTheme::parse("dark"), Some(UiTheme::Dark));
+        assert_eq!(UiTheme::parse("day"), Some(UiTheme::Light));
+        assert_eq!(UiTheme::parse("sepia"), None);
+    }
+
+    #[test]
+    fn parses_user_accent_controls() {
+        assert_eq!(UiAccent::parse("orange"), Some(UiAccent::Orange));
+        assert_eq!(UiAccent::parse("cyan"), Some(UiAccent::Blue));
+        assert_eq!(UiAccent::parse("pink"), Some(UiAccent::Rose));
+        assert_eq!(UiAccent::parse("mono"), None);
+    }
+
+    #[test]
+    fn parses_user_density_controls() {
+        assert_eq!(UiDensity::parse("compact"), Some(UiDensity::Compact));
+        assert_eq!(UiDensity::parse("default"), Some(UiDensity::Standard));
+        assert_eq!(UiDensity::parse("roomy"), Some(UiDensity::Spacious));
+        assert_eq!(UiDensity::parse("huge"), None);
+    }
 }

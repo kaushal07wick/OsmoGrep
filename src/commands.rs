@@ -4,14 +4,17 @@ use std::env;
 use std::fs;
 use std::process::Command;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use std::{io::Write, path::PathBuf};
+use std::{
+    io::Write,
+    path::{Path, PathBuf},
+};
 
 use crate::agent::Agent;
 use crate::logger::log;
 use crate::persistence;
 use crate::state::{
     AgentState, CommandItem, InputMode, JobKind, JobRecord, JobRequest, JobStatus, LogLevel,
-    PermissionProfile, PlanItem, MAX_CONVERSATION_TOKENS,
+    PermissionProfile, PlanItem, UiAccent, UiDensity, UiTheme, MAX_CONVERSATION_TOKENS,
 };
 use crate::test_harness::run_tests;
 use crate::voice::VoiceCommand;
@@ -47,6 +50,22 @@ pub fn handle_command(
     }
     if cmd.starts_with("/profile ") {
         set_profile(state, &cmd);
+        return;
+    }
+    if cmd.starts_with("/theme ") {
+        set_theme(state, &cmd);
+        return;
+    }
+    if cmd.starts_with("/color ") {
+        set_color(state, &cmd);
+        return;
+    }
+    if cmd.starts_with("/type ") {
+        set_type(state, &cmd);
+        return;
+    }
+    if cmd.starts_with("/rename ") || cmd.starts_with("/session rename ") {
+        rename_session(state, &cmd);
         return;
     }
     if cmd.starts_with("/swarm ") {
@@ -95,6 +114,8 @@ pub fn handle_command(
         "/key" => enter_api_key_mode(state),
         "/new" => new_conversation(state),
         "/approve" => toggle_auto_approve(state),
+        "/status" => show_status(state, agent),
+        "/account" => show_account(state, agent),
         "/model" => show_model(state, agent),
         "/test" => run_test(state, &cmd),
         "/verify" => show_verify(state),
@@ -104,8 +125,13 @@ pub fn handle_command(
         "/diff" => show_session_diff(state),
         "/steer" => show_steer(state),
         "/compact" => compact_context(state),
+        "/usage" => show_usage(state),
         "/metrics" => show_metrics(state),
         "/profile" => show_profile(state),
+        "/theme" => show_theme(state),
+        "/color" => show_color(state),
+        "/type" => show_type(state),
+        "/rename" | "/session" => show_session(state),
         "/jobs" => show_jobs(state),
         "/autofix" => show_autofix(state),
         "/triage" | "/traige" => run_triage_agent(state, &cmd),
@@ -132,8 +158,23 @@ fn help(state: &mut AgentState) {
     log(state, Info, "  /voice       Show voice status");
     log(state, Info, "  /voice on    Start voice input");
     log(state, Info, "  /voice off   Stop voice input");
+    log(
+        state,
+        Info,
+        "  /status      Show session, run, model, and repo status",
+    );
+    log(
+        state,
+        Info,
+        "  /account     Show provider/account configuration",
+    );
     log(state, Info, "  /model       Show active provider/model");
     log(state, Info, "  /model <provider> <model> [base_url]");
+    log(state, Info, "  /usage       Show token and context usage");
+    log(state, Info, "  /theme       Show or set theme (dark/light)");
+    log(state, Info, "  /color       Show or set accent color");
+    log(state, Info, "  /type        Show or set UI density");
+    log(state, Info, "  /rename      Rename current session");
     log(
         state,
         Info,
@@ -238,6 +279,69 @@ fn toggle_auto_approve(state: &mut AgentState) {
         format!(
             "Dangerous tool auto-approve: {}",
             if state.ui.auto_approve { "on" } else { "off" }
+        ),
+    );
+}
+
+fn show_status(state: &mut AgentState, agent: Option<&mut Agent>) {
+    let model = agent
+        .map(|agent| {
+            let cfg = agent.model_config();
+            format!("{}:{}", cfg.provider, cfg.model)
+        })
+        .unwrap_or_else(|| "unavailable".to_string());
+    let session = state.session_name.as_deref().unwrap_or("untitled session");
+    let branch = current_git_branch(&state.repo_root);
+    let uptime = state.started_at.elapsed().as_secs();
+    let jobs_active = state
+        .jobs
+        .iter()
+        .filter(|job| matches!(job.status, JobStatus::Queued | JobStatus::Running))
+        .count();
+
+    log(
+        state,
+        LogLevel::Info,
+        format!(
+            "Status: session=\"{}\" run={} model={} repo={} branch={} profile={} approvals={} jobs_active={} uptime={}s",
+            session,
+            if state.ui.agent_running {
+                state.ui.run_phase.as_str()
+            } else {
+                "idle"
+            },
+            model,
+            state.repo_root.display(),
+            branch.unwrap_or_else(|| "unknown".to_string()),
+            state.permission_profile.as_str(),
+            if state.ui.auto_approve { "auto" } else { "ask" },
+            jobs_active,
+            uptime
+        ),
+    );
+}
+
+fn show_account(state: &mut AgentState, agent: Option<&mut Agent>) {
+    let Some(agent) = agent else {
+        log(state, LogLevel::Warn, "Agent unavailable.");
+        return;
+    };
+    let cfg = agent.model_config();
+    let key_status = agent
+        .api_key()
+        .as_deref()
+        .map(mask_secret)
+        .unwrap_or_else(|| "missing".to_string());
+    log(
+        state,
+        LogLevel::Info,
+        format!(
+            "Account: provider={} model={} api_key={} env={} base_url={}",
+            cfg.provider,
+            cfg.model,
+            key_status,
+            cfg.api_key_env.as_deref().unwrap_or("OPENAI_API_KEY"),
+            cfg.base_url.as_deref().unwrap_or("(default)")
         ),
     );
 }
@@ -589,10 +693,26 @@ fn compact_context(state: &mut AgentState) {
     let _ = persistence::save(state);
 }
 
+fn show_usage(state: &mut AgentState) {
+    let total_tokens = state.usage.prompt_tokens + state.usage.completion_tokens;
+    let est_cost = estimated_usage_cost(state);
+    log(
+        state,
+        LogLevel::Info,
+        format!(
+            "Usage: prompt_tokens={} completion_tokens={} total_tokens={} context_tokens={} estimated_cost=${:.4}",
+            state.usage.prompt_tokens,
+            state.usage.completion_tokens,
+            total_tokens,
+            state.conversation.token_estimate,
+            est_cost
+        ),
+    );
+}
+
 fn show_metrics(state: &mut AgentState) {
     let total_tokens = state.usage.prompt_tokens + state.usage.completion_tokens;
-    let est_cost = ((state.usage.prompt_tokens as f64) * 0.0000025)
-        + ((state.usage.completion_tokens as f64) * 0.0000100);
+    let est_cost = estimated_usage_cost(state);
     let queued = state
         .jobs
         .iter()
@@ -606,6 +726,123 @@ fn show_metrics(state: &mut AgentState) {
             total_tokens, est_cost, state.conversation.token_estimate, queued
         ),
     );
+}
+
+fn show_theme(state: &mut AgentState) {
+    log(
+        state,
+        LogLevel::Info,
+        format!("Theme: {}. Use /theme <dark|light>.", state.theme.as_str()),
+    );
+}
+
+fn set_theme(state: &mut AgentState, cmd: &str) {
+    let value = cmd.strip_prefix("/theme").map(str::trim).unwrap_or("");
+    let Some(theme) = UiTheme::parse(value) else {
+        log(state, LogLevel::Warn, "Usage: /theme <dark|light>");
+        return;
+    };
+    state.theme = theme;
+    log(
+        state,
+        LogLevel::Success,
+        format!("Theme set to {}", theme.as_str()),
+    );
+    let _ = persistence::save(state);
+}
+
+fn show_color(state: &mut AgentState) {
+    log(
+        state,
+        LogLevel::Info,
+        format!(
+            "Accent color: {}. Use /color <orange|blue|green|violet|rose>.",
+            state.accent.as_str()
+        ),
+    );
+}
+
+fn set_color(state: &mut AgentState, cmd: &str) {
+    let value = cmd.strip_prefix("/color").map(str::trim).unwrap_or("");
+    let Some(accent) = UiAccent::parse(value) else {
+        log(
+            state,
+            LogLevel::Warn,
+            "Usage: /color <orange|blue|green|violet|rose>",
+        );
+        return;
+    };
+    state.accent = accent;
+    log(
+        state,
+        LogLevel::Success,
+        format!("Accent color set to {}", accent.as_str()),
+    );
+    let _ = persistence::save(state);
+}
+
+fn show_type(state: &mut AgentState) {
+    log(
+        state,
+        LogLevel::Info,
+        format!(
+            "UI type: {}. Use /type <compact|standard|spacious>.",
+            state.density.as_str()
+        ),
+    );
+}
+
+fn set_type(state: &mut AgentState, cmd: &str) {
+    let value = cmd.strip_prefix("/type").map(str::trim).unwrap_or("");
+    let Some(density) = UiDensity::parse(value) else {
+        log(
+            state,
+            LogLevel::Warn,
+            "Usage: /type <compact|standard|spacious>",
+        );
+        return;
+    };
+    state.density = density;
+    log(
+        state,
+        LogLevel::Success,
+        format!("UI type set to {}", density.as_str()),
+    );
+    let _ = persistence::save(state);
+}
+
+fn show_session(state: &mut AgentState) {
+    log(
+        state,
+        LogLevel::Info,
+        format!(
+            "Session: {}",
+            state.session_name.as_deref().unwrap_or("untitled session")
+        ),
+    );
+}
+
+fn rename_session(state: &mut AgentState, cmd: &str) {
+    let value = cmd
+        .strip_prefix("/session rename")
+        .or_else(|| cmd.strip_prefix("/rename"))
+        .map(str::trim)
+        .unwrap_or("");
+    if value.is_empty() {
+        log(state, LogLevel::Warn, "Usage: /rename <session name>");
+        return;
+    }
+
+    state.session_name = Some(value.chars().take(80).collect());
+    log(
+        state,
+        LogLevel::Success,
+        format!(
+            "Session renamed to {}",
+            state.session_name.as_deref().unwrap_or("untitled session")
+        ),
+    );
+    let _ = persistence::save(state);
 }
 
 fn show_profile(state: &mut AgentState) {
@@ -2343,8 +2580,36 @@ pub fn update_command_hints(state: &mut AgentState) {
             desc: "Stop voice input",
         },
         CommandItem {
+            cmd: "/status",
+            desc: "Show session, run, model, and repo status",
+        },
+        CommandItem {
+            cmd: "/account",
+            desc: "Show provider/account configuration",
+        },
+        CommandItem {
             cmd: "/model",
             desc: "Show active provider/model",
+        },
+        CommandItem {
+            cmd: "/usage",
+            desc: "Show token and context usage",
+        },
+        CommandItem {
+            cmd: "/theme",
+            desc: "Show or set dark/light theme",
+        },
+        CommandItem {
+            cmd: "/color",
+            desc: "Show or set accent color",
+        },
+        CommandItem {
+            cmd: "/type",
+            desc: "Show or set UI density",
+        },
+        CommandItem {
+            cmd: "/rename",
+            desc: "Rename current session",
         },
         CommandItem {
             cmd: "/mcp",
@@ -2442,4 +2707,39 @@ fn normalize_command_prefix(input: &str) -> String {
     } else {
         input.to_string()
     }
+}
+
+fn estimated_usage_cost(state: &AgentState) -> f64 {
+    ((state.usage.prompt_tokens as f64) * 0.0000025)
+        + ((state.usage.completion_tokens as f64) * 0.0000100)
+}
+
+fn mask_secret(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return "missing".to_string();
+    }
+    let suffix: String = trimmed
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("configured (...{suffix})")
+}
+
+fn current_git_branch(repo_root: &Path) -> Option<String> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .args(["branch", "--show-current"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let branch = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!branch.is_empty()).then_some(branch)
 }

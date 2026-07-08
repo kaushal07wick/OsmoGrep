@@ -1598,6 +1598,10 @@ fn init_state() -> AgentState {
         job_queue: Vec::new(),
         next_job_id: 1,
         plan_items: Vec::new(),
+        session_name: None,
+        theme: crate::state::UiTheme::default(),
+        accent: crate::state::UiAccent::default(),
+        density: crate::state::UiDensity::default(),
         started_at: Instant::now(),
         repo_root: std::env::current_dir().unwrap(),
         voice: crate::state::VoiceState {

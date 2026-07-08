@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::state::{AgentState, DiffSnapshot, JobRecord, PermissionProfile, PlanItem};
+use crate::state::{
+    AgentState, DiffSnapshot, JobRecord, PermissionProfile, PlanItem, UiAccent, UiDensity, UiTheme,
+};
 
 #[derive(Serialize, Deserialize)]
 struct PersistedState {
@@ -33,6 +35,14 @@ struct PersistedState {
     prompt_tokens: usize,
     #[serde(default)]
     completion_tokens: usize,
+    #[serde(default)]
+    session_name: Option<String>,
+    #[serde(default)]
+    theme: UiTheme,
+    #[serde(default)]
+    accent: UiAccent,
+    #[serde(default)]
+    density: UiDensity,
 }
 
 pub fn load(state: &mut AgentState) {
@@ -58,6 +68,10 @@ pub fn load(state: &mut AgentState) {
     state.undo_stack = saved.undo_stack;
     state.usage.prompt_tokens = saved.prompt_tokens;
     state.usage.completion_tokens = saved.completion_tokens;
+    state.session_name = saved.session_name;
+    state.theme = saved.theme;
+    state.accent = saved.accent;
+    state.density = saved.density;
 }
 
 pub fn save(state: &AgentState) -> Result<(), String> {
@@ -79,6 +93,10 @@ pub fn save(state: &AgentState) -> Result<(), String> {
         undo_stack: state.undo_stack.clone(),
         prompt_tokens: state.usage.prompt_tokens,
         completion_tokens: state.usage.completion_tokens,
+        session_name: state.session_name.clone(),
+        theme: state.theme,
+        accent: state.accent,
+        density: state.density,
     };
 
     let text = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
