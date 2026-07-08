@@ -104,7 +104,6 @@ pub fn handle_command(
         "/verify" => show_verify(state),
         "/mcp" => show_mcp(state),
         "/providers" => show_providers(state),
-        "/review" => run_review_now(state, agent),
         "/undo" => undo_last_change(state),
         "/diff" => show_session_diff(state),
         "/steer" => show_steer(state),
@@ -149,11 +148,6 @@ fn help(state: &mut AgentState) {
         state,
         Info,
         "  /verify      Show verification ledger status",
-    );
-    log(
-        state,
-        Info,
-        "  /review      Run LLM judge on session changes",
     );
     log(
         state,
@@ -474,35 +468,6 @@ fn show_session_diff(state: &mut AgentState) {
             state.ui.diff_snapshot.len()
         ),
     );
-}
-
-fn run_review_now(state: &mut AgentState, agent: Option<&mut Agent>) {
-    if state.session_changes.is_empty() {
-        log(state, LogLevel::Info, "No session changes to review.");
-        return;
-    }
-    let Some(agent) = agent else {
-        log(state, LogLevel::Warn, "Agent unavailable.");
-        return;
-    };
-
-    log(
-        state,
-        LogLevel::Info,
-        format!(
-            "Running LLM review on {} session change(s).",
-            state.session_changes.len()
-        ),
-    );
-    match agent.review_changes(&state.session_changes) {
-        Ok(text) => {
-            log(state, LogLevel::Success, "Review completed.");
-            for line in text.lines().take(80) {
-                log(state, LogLevel::Info, line.to_string());
-            }
-        }
-        Err(e) => log(state, LogLevel::Error, format!("Review failed: {}", e)),
-    }
 }
 
 fn show_verify(state: &mut AgentState) {
@@ -2486,10 +2451,6 @@ pub fn update_command_hints(state: &mut AgentState) {
         CommandItem {
             cmd: "/diff",
             desc: "Show all file changes this session",
-        },
-        CommandItem {
-            cmd: "/review",
-            desc: "Run LLM judge on session changes",
         },
         CommandItem {
             cmd: "/compact",

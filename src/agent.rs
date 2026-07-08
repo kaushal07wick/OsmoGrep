@@ -507,20 +507,6 @@ impl Agent {
         let _ = self.api_key.as_ref().ok_or("OPENAI_API_KEY not set")?;
         run_worktree_swarm_with(repo_root, user_text)
     }
-
-    pub fn review_changes(&self, changes: &[DiffSnapshot]) -> Result<String, String> {
-        if changes.is_empty() {
-            return Err("no session changes to review".to_string());
-        }
-        let api_key = self.api_key.as_ref().ok_or("OPENAI_API_KEY not set")?;
-        let prompt = build_review_prompt(changes);
-        one_shot_scoped_call(
-            &self.model_cfg,
-            api_key,
-            &prompt,
-            "Act as an independent code-review judge. Find correctness bugs, regressions, missing tests, safety issues, and unclear residual risk. Findings first; be concrete and cite files.",
-        )
-    }
 }
 
 struct RunAgent {
