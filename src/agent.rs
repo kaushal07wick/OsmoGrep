@@ -727,21 +727,21 @@ impl RunAgent {
                             continue;
                         }
 
+                        if let Some((target, before, after)) =
+                            preview_diff_from_args(&name, &args, &repo_root)
+                        {
+                            let _ = tx.send(AgentEvent::PreviewDiff {
+                                tool: name.clone(),
+                                target,
+                                before,
+                                after,
+                            });
+                        }
+
                         let should_prompt = dangerous
                             && self.permission_profile != PermissionProfile::FullAccess
                             && !self.auto_approve;
                         if should_prompt {
-                            if let Some((target, before, after)) =
-                                preview_diff_from_args(&name, &args)
-                            {
-                                let _ = tx.send(AgentEvent::PreviewDiff {
-                                    tool: name.clone(),
-                                    target,
-                                    before,
-                                    after,
-                                });
-                            }
-
                             let (reply_tx, reply_rx) = mpsc::channel::<bool>();
                             let _ = tx.send(AgentEvent::PermissionRequest {
                                 tool_name: name.clone(),
@@ -1840,8 +1840,13 @@ fn repo_relative_path(repo_root: &Path, raw: &str) -> String {
 
 fn extract_patch_target(patch: &str) -> Option<String> {
     patch.lines().find_map(|line| {
-        let raw = line.strip_prefix("+++ ")?;
-        let path = raw.strip_prefix("b/").unwrap_or(raw).trim();
+        let path = if let Some(raw) = line.strip_prefix("+++ ") {
+            raw.strip_prefix("b/").unwrap_or(raw).trim()
+        } else if let Some(raw) = line.strip_prefix("*** Update File: ") {
+            raw.trim()
+        } else {
+            return None;
+        };
         (!path.is_empty() && path != "/dev/null").then(|| path.to_string())
     })
 }
@@ -2468,7 +2473,11 @@ fn extract_response_text(value: &Value) -> Option<String> {
     None
 }
 
-fn preview_diff_from_args(name: &str, args: &Value) -> Option<(String, String, String)> {
+fn preview_diff_from_args(
+    name: &str,
+    args: &Value,
+    repo_root: &Path,
+) -> Option<(String, String, String)> {
     match name {
         "edit_file" => {
             let path = args.get("path").and_then(Value::as_str)?;
@@ -2479,7 +2488,7 @@ fn preview_diff_from_args(name: &str, args: &Value) -> Option<(String, String, S
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
 
-            let before = fs::read_to_string(path).ok()?;
+            let before = fs::read_to_string(resolve_repo_path(repo_root, path)).ok()?;
             if !before.contains(old) {
                 return None;
             }
@@ -2488,16 +2497,87 @@ fn preview_diff_from_args(name: &str, args: &Value) -> Option<(String, String, S
             } else {
                 before.replacen(old, new, 1)
             };
-            Some((path.to_string(), before, after))
+            Some((repo_relative_path(repo_root, path), before, after))
         }
         "write_file" => {
             let path = args.get("path").and_then(Value::as_str)?;
             let content = args.get("content").and_then(Value::as_str)?;
-            let before = fs::read_to_string(path).unwrap_or_default();
-            Some((path.to_string(), before, content.to_string()))
+            let before = fs::read_to_string(resolve_repo_path(repo_root, path)).unwrap_or_default();
+            Some((
+                repo_relative_path(repo_root, path),
+                before,
+                content.to_string(),
+            ))
+        }
+        "patch" => {
+            let patch = args.get("patch").and_then(Value::as_str)?;
+            let path = extract_patch_target(patch)?;
+            let before = fs::read_to_string(resolve_repo_path(repo_root, &path)).ok()?;
+            let after = preview_begin_patch_after(patch, &before)?;
+            Some((repo_relative_path(repo_root, &path), before, after))
         }
         _ => None,
     }
+}
+
+fn preview_begin_patch_after(patch: &str, before: &str) -> Option<String> {
+    if !patch.trim_start().starts_with("*** Begin Patch") {
+        return None;
+    }
+
+    let mut after = before.to_string();
+    let mut lines = patch.lines().peekable();
+    while let Some(line) = lines.next() {
+        if !line.starts_with("*** Update File: ") {
+            continue;
+        }
+
+        while let Some(line) = lines.peek().copied() {
+            if line.starts_with("*** End Patch") || line.starts_with("*** Update File: ") {
+                break;
+            }
+            if !line.starts_with("@@") {
+                lines.next();
+                continue;
+            }
+
+            lines.next();
+            let mut old_lines = Vec::new();
+            let mut new_lines = Vec::new();
+            while let Some(hunk_line) = lines.peek().copied() {
+                if hunk_line.starts_with("@@")
+                    || hunk_line.starts_with("*** End Patch")
+                    || hunk_line.starts_with("*** Update File: ")
+                {
+                    break;
+                }
+
+                lines.next();
+                if hunk_line.starts_with('\\') {
+                    continue;
+                }
+                let (marker, text) = hunk_line.split_at(1);
+                match marker {
+                    " " => {
+                        old_lines.push(text.to_string());
+                        new_lines.push(text.to_string());
+                    }
+                    "-" => old_lines.push(text.to_string()),
+                    "+" => new_lines.push(text.to_string()),
+                    _ => return None,
+                }
+            }
+
+            let old = old_lines.join("\n");
+            let new = new_lines.join("\n");
+            if old.is_empty() {
+                continue;
+            }
+            after = after.replacen(&old, &new, 1);
+        }
+    }
+
+    (after != before).then_some(after)
 }
 
 fn default_base_url_for(provider: &str) -> String {
@@ -2670,6 +2750,34 @@ mod tests {
             AgentEvent::EditComplete { path, start_line, changed, .. }
                 if path == "src/main.rs" && *start_line == Some(2) && *changed
         ));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn begin_patch_events_and_preview_use_update_file_target() {
+        let root = temp_root();
+        fs::write(root.join("README.md"), "hello\nsad\nbye\n").unwrap();
+        let patch =
+            "*** Begin Patch\n*** Update File: README.md\n@@\n hello\n-sad\n+happy\n bye\n*** End Patch\n";
+        let args = json!({ "patch": patch });
+
+        let events = pre_tool_events("patch", &args, &root);
+        assert!(matches!(
+            &events[0],
+            AgentEvent::FileFocus { phase, path, .. }
+                if phase == "editing" && path == "README.md"
+        ));
+        assert!(matches!(
+            &events[2],
+            AgentEvent::EditDelta { path, text, .. }
+                if path == "README.md" && text == "happy"
+        ));
+
+        let (target, before, after) = preview_diff_from_args("patch", &args, &root).unwrap();
+        assert_eq!(target, "README.md");
+        assert_eq!(before, "hello\nsad\nbye\n");
+        assert_eq!(after, "hello\nhappy\nbye\n");
+
         let _ = fs::remove_dir_all(root);
     }
 

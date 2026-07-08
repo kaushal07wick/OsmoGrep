@@ -1522,7 +1522,21 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                             log_status(&mut state, format!("{operation} {path}"));
                         }
 
-                        AgentEvent::EditDelta { .. } => {}
+                        AgentEvent::EditDelta {
+                            path,
+                            text,
+                            delta_kind,
+                            ..
+                        } => {
+                            state.ui.diff_active = true;
+                            state.ui.active_edit_target = Some(path.clone());
+                            state.ui.diff_snapshot = vec![DiffSnapshot {
+                                tool: format!("live:{delta_kind}"),
+                                target: path,
+                                before: String::new(),
+                                after: text,
+                            }];
+                        }
 
                         AgentEvent::EditComplete {
                             path,
