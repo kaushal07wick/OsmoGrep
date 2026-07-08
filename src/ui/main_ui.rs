@@ -204,35 +204,19 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
 
         /* ---------- Execution scrolling ---------- */
         KeyCode::PageUp => {
-            state.ui.exec_scroll = match state.ui.exec_scroll {
-                usize::MAX => SCROLL_PAGE_STEP,
-                v => v.saturating_add(SCROLL_PAGE_STEP),
-            };
-            state.ui.follow_tail = false;
+            scroll_execution_back(state, SCROLL_PAGE_STEP);
         }
 
         KeyCode::PageDown => {
-            state.ui.exec_scroll = state.ui.exec_scroll.saturating_sub(SCROLL_PAGE_STEP);
-            if state.ui.exec_scroll == 0 {
-                state.ui.exec_scroll = usize::MAX;
-                state.ui.follow_tail = true;
-            }
+            scroll_execution_toward_tail(state, SCROLL_PAGE_STEP);
         }
 
         KeyCode::Up if k.modifiers.contains(KeyModifiers::CONTROL) => {
-            state.ui.exec_scroll = match state.ui.exec_scroll {
-                usize::MAX => SCROLL_LINE_STEP,
-                v => v.saturating_add(SCROLL_LINE_STEP),
-            };
-            state.ui.follow_tail = false;
+            scroll_execution_back(state, SCROLL_LINE_STEP);
         }
 
         KeyCode::Down if k.modifiers.contains(KeyModifiers::CONTROL) => {
-            state.ui.exec_scroll = state.ui.exec_scroll.saturating_sub(SCROLL_LINE_STEP);
-            if state.ui.exec_scroll == 0 {
-                state.ui.exec_scroll = usize::MAX;
-                state.ui.follow_tail = true;
-            }
+            scroll_execution_toward_tail(state, SCROLL_LINE_STEP);
         }
 
         KeyCode::End => {
@@ -250,6 +234,40 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
         }
 
         _ => {}
+    }
+}
+
+fn scroll_execution_back(state: &mut AgentState, step: usize) {
+    let (offset, follow_tail) = scroll_back_offset(state.ui.exec_scroll, step);
+    state.ui.exec_scroll = offset;
+    state.ui.follow_tail = follow_tail;
+}
+
+fn scroll_execution_toward_tail(state: &mut AgentState, step: usize) {
+    let (offset, follow_tail) = scroll_toward_tail_offset(state.ui.exec_scroll, step);
+    state.ui.exec_scroll = offset;
+    state.ui.follow_tail = follow_tail;
+}
+
+fn scroll_back_offset(current: usize, step: usize) -> (usize, bool) {
+    let next = match current {
+        usize::MAX => step,
+        value => value.saturating_add(step),
+    };
+    (next, false)
+}
+
+fn scroll_toward_tail_offset(current: usize, step: usize) -> (usize, bool) {
+    let value = match current {
+        usize::MAX | 0 => return (usize::MAX, true),
+        value => value,
+    };
+
+    let next = value.saturating_sub(step);
+    if next == 0 {
+        (usize::MAX, true)
+    } else {
+        (next, false)
     }
 }
 
@@ -332,7 +350,8 @@ fn update_prompt_action(k: &KeyEvent) -> UpdatePromptAction {
 #[cfg(test)]
 mod tests {
     use super::{
-        input_control_action, update_prompt_action, InputControlAction, UpdatePromptAction,
+        input_control_action, scroll_back_offset, scroll_toward_tail_offset, update_prompt_action,
+        InputControlAction, UpdatePromptAction,
     };
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -375,6 +394,24 @@ mod tests {
     }
 
     #[test]
+    fn scroll_toward_tail_recovers_follow_mode_at_bottom() {
+        assert_eq!(scroll_toward_tail_offset(3, 6), (usize::MAX, true));
+        assert_eq!(scroll_toward_tail_offset(0, 6), (usize::MAX, true));
+        assert_eq!(scroll_toward_tail_offset(usize::MAX, 6), (usize::MAX, true));
+    }
+
+    #[test]
+    fn scroll_toward_tail_keeps_offset_when_not_at_bottom() {
+        assert_eq!(scroll_toward_tail_offset(20, 6), (14, false));
+    }
+
+    #[test]
+    fn scroll_back_leaves_follow_mode() {
+        assert_eq!(scroll_back_offset(usize::MAX, 6), (6, false));
+        assert_eq!(scroll_back_offset(12, 6), (18, false));
+    }
+
+    #[test]
     fn update_prompt_accepts_yes_keys() {
         assert_eq!(
             update_prompt_action(&key(KeyCode::Char('y'))),
@@ -414,23 +451,11 @@ mod tests {
 fn handle_mouse(state: &mut AgentState, m: MouseEvent) {
     match m.kind {
         MouseEventKind::ScrollUp => {
-            let current = match state.ui.exec_scroll {
-                usize::MAX => 0,
-                v => v,
-            };
-
-            state.ui.exec_scroll = current.saturating_add(SCROLL_WHEEL_STEP);
-            state.ui.follow_tail = false;
+            scroll_execution_back(state, SCROLL_WHEEL_STEP);
         }
 
         MouseEventKind::ScrollDown => {
-            let current = match state.ui.exec_scroll {
-                usize::MAX => 0,
-                v => v,
-            };
-
-            state.ui.exec_scroll = current.saturating_sub(SCROLL_WHEEL_STEP);
-            state.ui.follow_tail = false;
+            scroll_execution_toward_tail(state, SCROLL_WHEEL_STEP);
         }
 
         _ => {}
