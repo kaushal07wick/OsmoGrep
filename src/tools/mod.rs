@@ -23,6 +23,7 @@ mod shell;
 mod test;
 mod web_fetch;
 mod web_search;
+mod worktree_swarm;
 mod write;
 
 pub use diagnostics::Diagnostics;
@@ -45,6 +46,7 @@ pub use shell::Shell;
 pub use test::Test;
 pub use web_fetch::WebFetch;
 pub use web_search::WebSearch;
+pub use worktree_swarm::WorktreeSwarm;
 pub use write::Write;
 
 pub type ToolResult = Result<Value, String>;
@@ -73,6 +75,7 @@ pub struct ToolScope {
     include_mcp: bool,
     include_notebooks: bool,
     include_git_commit: bool,
+    include_worktree_swarm: bool,
 }
 
 impl ToolScope {
@@ -108,6 +111,21 @@ impl ToolScope {
                     " pr ",
                 ],
             ),
+            include_worktree_swarm: contains_any(
+                &lower,
+                &[
+                    "subagent",
+                    "sub-agent",
+                    "swarm",
+                    "worktree",
+                    "parallel",
+                    "deep audit",
+                    "audit",
+                    "complex",
+                    "large refactor",
+                    "multi-agent",
+                ],
+            ),
         }
     }
 
@@ -117,6 +135,7 @@ impl ToolScope {
             "mcp_call" => self.include_mcp,
             "notebook_edit" => self.include_notebooks,
             "git_commit" => self.include_git_commit,
+            "worktree_swarm" => self.include_worktree_swarm,
             _ => true,
         }
     }
@@ -148,6 +167,7 @@ impl ToolRegistry {
             Box::new(NotebookEdit),
             Box::new(WebSearch),
             Box::new(Diagnostics),
+            Box::new(WorktreeSwarm),
         ];
 
         for tool in list {
@@ -425,6 +445,7 @@ mod tests {
         assert!(!names.contains(&"mcp_call".to_string()));
         assert!(!names.contains(&"notebook_edit".to_string()));
         assert!(!names.contains(&"git_commit".to_string()));
+        assert!(!names.contains(&"worktree_swarm".to_string()));
         let _ = fs::remove_dir_all(root);
     }
 
@@ -439,6 +460,20 @@ mod tests {
 
         assert!(names.contains(&"web_search".to_string()));
         assert!(names.contains(&"web_fetch".to_string()));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn tool_scope_exposes_worktree_swarm_for_parallel_audits() {
+        let root =
+            std::env::temp_dir().join(format!("osmogrep-worktree-scope-root-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let registry = ToolRegistry::with_root(root.clone());
+        let names = schema_names(&registry.scoped_schema(&ToolScope::for_prompt(
+            "do a deep audit with parallel subagents",
+        )));
+
+        assert!(names.contains(&"worktree_swarm".to_string()));
         let _ = fs::remove_dir_all(root);
     }
 

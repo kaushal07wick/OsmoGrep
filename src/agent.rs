@@ -205,6 +205,7 @@ fn system_prompt(repo_root: &std::path::Path) -> Value {
             - If `.context/context.json` is missing or insufficient, proceed normally and use tools freely.\n\
             - Prefer high-leverage workflows over many tiny manual steps.\n\
             - For multi-step work, keep a durable progress plan with `update_plan`; treat it as scratchpad memory and verify against real files before acting.\n\
+            - For broad, high-risk, or ambiguous coding tasks, consider `worktree_swarm` to delegate exploration, implementation, testing, and review to isolated subagents, then integrate only verified results.\n\
             - For non-trivial coding work, run a disciplined loop: investigate, make a short plan, implement the approved slice, verify, then review residual risk.\n\
             - Treat tests, builds, diffs, and command outputs as evidence. Do not claim the repo is green unless a relevant command actually passed.\n\
             - If verification is not possible, say exactly what was not run and why.\n\
