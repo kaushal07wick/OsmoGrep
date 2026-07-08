@@ -445,6 +445,7 @@ fn undo_last_change(state: &mut AgentState) {
         .rposition(|s| s.target == last.target && s.after == last.after)
     {
         state.session_changes.remove(pos);
+        state.reviewed_change_count = state.reviewed_change_count.min(state.session_changes.len());
     }
 
     state.ui.diff_active = true;

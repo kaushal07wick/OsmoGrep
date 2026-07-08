@@ -26,6 +26,8 @@ struct PersistedState {
     #[serde(default)]
     session_changes: Vec<DiffSnapshot>,
     #[serde(default)]
+    reviewed_change_count: usize,
+    #[serde(default)]
     undo_stack: Vec<DiffSnapshot>,
     #[serde(default)]
     prompt_tokens: usize,
@@ -52,6 +54,7 @@ pub fn load(state: &mut AgentState) {
     state.next_job_id = saved.next_job_id.max(1);
     state.plan_items = saved.plan_items;
     state.session_changes = saved.session_changes;
+    state.reviewed_change_count = saved.reviewed_change_count.min(state.session_changes.len());
     state.undo_stack = saved.undo_stack;
     state.usage.prompt_tokens = saved.prompt_tokens;
     state.usage.completion_tokens = saved.completion_tokens;
@@ -72,6 +75,7 @@ pub fn save(state: &AgentState) -> Result<(), String> {
         next_job_id: state.next_job_id,
         plan_items: state.plan_items.clone(),
         session_changes: state.session_changes.clone(),
+        reviewed_change_count: state.reviewed_change_count.min(state.session_changes.len()),
         undo_stack: state.undo_stack.clone(),
         prompt_tokens: state.usage.prompt_tokens,
         completion_tokens: state.usage.completion_tokens,

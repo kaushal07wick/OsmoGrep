@@ -126,6 +126,7 @@ pub struct AgentState {
     pub ui: UiState,
     pub logs: LogBuffer,
     pub session_changes: Vec<DiffSnapshot>,
+    pub reviewed_change_count: usize,
     pub undo_stack: Vec<DiffSnapshot>,
     pub usage: UsageStats,
     pub steer: Option<String>,
@@ -174,6 +175,7 @@ impl PermissionProfile {
 pub enum JobKind {
     Swarm,
     Test,
+    Review,
 }
 
 impl JobKind {
@@ -181,6 +183,7 @@ impl JobKind {
         match self {
             JobKind::Swarm => "swarm",
             JobKind::Test => "test",
+            JobKind::Review => "review",
         }
     }
 }

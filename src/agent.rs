@@ -1802,6 +1802,23 @@ pub fn run_swarm_job(
     Ok(out)
 }
 
+pub fn run_review_job(
+    model_cfg: ModelConfig,
+    api_key: String,
+    changes: Vec<DiffSnapshot>,
+) -> Result<String, String> {
+    if changes.is_empty() {
+        return Err("no changes to review".to_string());
+    }
+    let prompt = build_review_prompt(&changes);
+    one_shot_scoped_call(
+        &model_cfg,
+        &api_key,
+        &prompt,
+        "Act as an independent code-review judge. Find correctness bugs, regressions, missing tests, safety issues, and unclear residual risk. Findings first; be concrete and cite files.",
+    )
+}
+
 fn one_shot_scoped_call(
     model_cfg: &ModelConfig,
     api_key: &str,

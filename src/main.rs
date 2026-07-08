@@ -222,6 +222,51 @@ fn warn_if_verification_needed(state: &mut AgentState) {
     }
 }
 
+fn queue_auto_review_if_needed(state: &mut AgentState) {
+    let changes = unreviewed_changes(&state.session_changes, state.reviewed_change_count);
+    if changes.is_empty() {
+        state.reviewed_change_count = state.reviewed_change_count.min(state.session_changes.len());
+        return;
+    }
+
+    let changes = changes.to_vec();
+    let Ok(input) = serde_json::to_string(&changes) else {
+        log(
+            state,
+            LogLevel::Error,
+            "Auto-review could not serialize session changes.",
+        );
+        return;
+    };
+
+    let id = state.next_job_id;
+    state.next_job_id += 1;
+    state.jobs.push(crate::state::JobRecord {
+        id,
+        kind: JobKind::Review,
+        input: format!("{} change(s)", changes.len()),
+        status: JobStatus::Queued,
+        output: None,
+    });
+    state.job_queue.push(crate::state::JobRequest {
+        id,
+        kind: JobKind::Review,
+        input,
+    });
+    state.reviewed_change_count = state.session_changes.len();
+    let _ = persistence::save(state);
+    log(
+        state,
+        LogLevel::Info,
+        format!("Auto-review queued as job #{}", id),
+    );
+}
+
+fn unreviewed_changes(changes: &[DiffSnapshot], reviewed_change_count: usize) -> &[DiffSnapshot] {
+    let reviewed = reviewed_change_count.min(changes.len());
+    &changes[reviewed..]
+}
+
 fn start_agent_run(
     state: &mut AgentState,
     agent: &Agent,
@@ -639,6 +684,16 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
                         },
                         None => (false, "OPENAI_API_KEY not set".to_string(), JobKind::Swarm),
                     },
+                    JobKind::Review => match api_key {
+                        Some(k) => match serde_json::from_str::<Vec<DiffSnapshot>>(&req.input) {
+                            Ok(changes) => match agent::run_review_job(model_cfg, k, changes) {
+                                Ok(s) => (true, s, JobKind::Review),
+                                Err(e) => (false, e, JobKind::Review),
+                            },
+                            Err(e) => (false, e.to_string(), JobKind::Review),
+                        },
+                        None => (false, "OPENAI_API_KEY not set".to_string(), JobKind::Review),
+                    },
                     JobKind::Test => {
                         let target = if req.input.trim().is_empty() {
                             None
@@ -1007,6 +1062,7 @@ fn run_tui() -> Result<(), Box<dyn Error>> {
                             state.ui.pending_permission = None;
                             state.ui.active_edit_target = None;
                             warn_if_verification_needed(&mut state);
+                            queue_auto_review_if_needed(&mut state);
                             if state.auto_eval && !state.session_changes.is_empty() {
                                 let id = state.next_job_id;
                                 state.next_job_id += 1;
@@ -1224,6 +1280,7 @@ fn init_state() -> AgentState {
 
         logs: crate::state::LogBuffer::new(),
         session_changes: Vec::new(),
+        reviewed_change_count: 0,
         undo_stack: Vec::new(),
         usage: crate::state::UsageStats::default(),
         steer: None,
@@ -1303,5 +1360,39 @@ fn current_tmux_session_name() -> Option<String> {
         None
     } else {
         Some(s)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unreviewed_changes_returns_only_new_diffs() {
+        let changes = vec![diff("a"), diff("b"), diff("c")];
+
+        let pending = unreviewed_changes(&changes, 1);
+
+        assert_eq!(pending.len(), 2);
+        assert_eq!(pending[0].target, "b");
+        assert_eq!(pending[1].target, "c");
+    }
+
+    #[test]
+    fn unreviewed_changes_clamps_stale_cursor() {
+        let changes = vec![diff("a")];
+
+        let pending = unreviewed_changes(&changes, 10);
+
+        assert!(pending.is_empty());
+    }
+
+    fn diff(target: &str) -> DiffSnapshot {
+        DiffSnapshot {
+            tool: "edit_file".to_string(),
+            target: target.to_string(),
+            before: "before".to_string(),
+            after: "after".to_string(),
+        }
     }
 }
