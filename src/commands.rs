@@ -84,6 +84,10 @@ pub fn handle_command(
         plan_done(state, &cmd);
         return;
     }
+    if cmd.starts_with("/plan mode ") {
+        set_plan_mode(state, &cmd);
+        return;
+    }
     if cmd.starts_with("/autofix ") {
         set_autofix(state, &cmd);
         return;
@@ -139,6 +143,7 @@ pub fn handle_command(
         "/nv" => open_nv(state, &cmd),
         "/plan" => show_plan(state),
         "/plan clear" => plan_clear(state),
+        "/plan mode" => show_plan_mode(state),
 
         "" => {}
 
@@ -222,6 +227,11 @@ fn help(state: &mut AgentState) {
         "  /steer now <txt> Interrupt current run and relaunch with steer",
     );
     log(state, Info, "  /steer clear Remove steer instruction");
+    log(
+        state,
+        Info,
+        "  /plan mode   Show or set plan-only mode (on/off)",
+    );
     log(state, Info, "  /jobs        Show background jobs");
     log(
         state,
@@ -1002,6 +1012,11 @@ fn show_jobs(state: &mut AgentState) {
 }
 
 fn show_plan(state: &mut AgentState) {
+    log(
+        state,
+        LogLevel::Info,
+        format!("Plan mode: {}", if state.plan_mode { "on" } else { "off" }),
+    );
     if state.plan_items.is_empty() {
         log(state, LogLevel::Info, "Plan is empty.");
         return;
@@ -1022,6 +1037,44 @@ fn show_plan(state: &mut AgentState) {
     for row in rows {
         log(state, LogLevel::Info, row);
     }
+}
+
+fn show_plan_mode(state: &mut AgentState) {
+    log(
+        state,
+        LogLevel::Info,
+        format!(
+            "Plan mode: {}. Use /plan mode <on|off>.",
+            if state.plan_mode { "on" } else { "off" }
+        ),
+    );
+}
+
+fn set_plan_mode(state: &mut AgentState, cmd: &str) {
+    let value = cmd.strip_prefix("/plan mode").map(str::trim).unwrap_or("");
+    let enabled = match value.to_ascii_lowercase().as_str() {
+        "on" | "true" | "yes" | "1" => true,
+        "off" | "false" | "no" | "0" => false,
+        _ => {
+            log(state, LogLevel::Warn, "Usage: /plan mode <on|off>");
+            return;
+        }
+    };
+    state.plan_mode = enabled;
+    log(
+        state,
+        LogLevel::Success,
+        format!(
+            "Plan mode {}. Agent runs will {}.",
+            if enabled { "enabled" } else { "disabled" },
+            if enabled {
+                "inspect safely and return a plan without edits"
+            } else {
+                "use the normal implementation loop"
+            }
+        ),
+    );
+    let _ = persistence::save(state);
 }
 
 fn plan_add(state: &mut AgentState, cmd: &str) {
@@ -2646,6 +2699,10 @@ pub fn update_command_hints(state: &mut AgentState) {
         CommandItem {
             cmd: "/new",
             desc: "Start a fresh conversation",
+        },
+        CommandItem {
+            cmd: "/plan mode",
+            desc: "Toggle plan-only read-only agent mode",
         },
         CommandItem {
             cmd: "/steer",

@@ -501,9 +501,13 @@ impl Agent {
         let (steer_tx, steer_rx) = mpsc::channel::<String>();
 
         thread::spawn(move || {
+            let mut tool_scope = ToolScope::for_prompt(&user_text);
+            if permission_profile == PermissionProfile::ReadOnly {
+                tool_scope = tool_scope.read_only();
+            }
             let runner = RunAgent {
                 tools: ToolRegistry::with_root(repo_root.clone()),
-                tool_scope: ToolScope::for_prompt(&user_text),
+                tool_scope,
                 model_cfg,
                 api_key,
                 auto_approve,

@@ -140,6 +140,7 @@ pub struct AgentState {
     pub theme: UiTheme,
     pub accent: UiAccent,
     pub density: UiDensity,
+    pub plan_mode: bool,
 
     pub started_at: Instant,
     pub repo_root: PathBuf,

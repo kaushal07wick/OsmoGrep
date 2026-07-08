@@ -259,7 +259,9 @@ fn render_header(f: &mut Frame, area: Rect, state: &AgentState) {
     } else {
         "idle".to_string()
     };
-    let approval = if state.ui.auto_approve {
+    let approval = if state.plan_mode {
+        "plan-mode"
+    } else if state.ui.auto_approve {
         "auto-approve"
     } else {
         "ask"
@@ -813,6 +815,9 @@ fn render_status_bar(f: &mut Frame, area: Rect, state: &AgentState) {
             Style::default().fg(p.fg_dim),
         ),
     ];
+    if state.plan_mode {
+        left.push(Span::styled(" · plan mode", Style::default().fg(p.accent)));
+    }
     if state.ui.pending_permission.is_some() {
         left.push(Span::styled(
             " · approval needed",

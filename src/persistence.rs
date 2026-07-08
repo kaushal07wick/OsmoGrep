@@ -43,6 +43,8 @@ struct PersistedState {
     accent: UiAccent,
     #[serde(default)]
     density: UiDensity,
+    #[serde(default)]
+    plan_mode: bool,
 }
 
 pub fn load(state: &mut AgentState) {
@@ -72,6 +74,7 @@ pub fn load(state: &mut AgentState) {
     state.theme = saved.theme;
     state.accent = saved.accent;
     state.density = saved.density;
+    state.plan_mode = saved.plan_mode;
 }
 
 pub fn save(state: &AgentState) -> Result<(), String> {
@@ -97,6 +100,7 @@ pub fn save(state: &AgentState) -> Result<(), String> {
         theme: state.theme,
         accent: state.accent,
         density: state.density,
+        plan_mode: state.plan_mode,
     };
 
     let text = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;

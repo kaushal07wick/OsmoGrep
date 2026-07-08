@@ -79,6 +79,7 @@ pub struct ToolScope {
     include_git_commit: bool,
     include_worktree_swarm: bool,
     include_dynamic_workflow: bool,
+    read_only: bool,
 }
 
 impl ToolScope {
@@ -147,10 +148,19 @@ impl ToolScope {
                         "current docs",
                     ],
                 ),
+            read_only: false,
         }
     }
 
+    pub fn read_only(mut self) -> Self {
+        self.read_only = true;
+        self
+    }
+
     fn allows(&self, name: &str) -> bool {
+        if self.read_only && is_mutating_tool(name) {
+            return false;
+        }
         match name {
             "web_fetch" | "web_search" => self.include_web,
             "mcp_call" => self.include_mcp,
@@ -161,6 +171,22 @@ impl ToolScope {
             _ => true,
         }
     }
+}
+
+fn is_mutating_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "run_shell"
+            | "write_file"
+            | "edit_file"
+            | "run_tests"
+            | "diagnostics"
+            | "patch"
+            | "mcp_call"
+            | "notebook_edit"
+            | "git_commit"
+            | "worktree_swarm"
+    )
 }
 
 fn has_ultracode_suffix(prompt: &str) -> bool {
@@ -521,12 +547,33 @@ mod tests {
             std::env::temp_dir().join(format!("osmogrep-ultracode-scope-root-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
         let registry = ToolRegistry::with_root(root.clone());
-        let names = schema_names(&registry.scoped_schema(&ToolScope::for_prompt(
-            "refactor the parser ultracode",
-        )));
+        let names = schema_names(
+            &registry.scoped_schema(&ToolScope::for_prompt("refactor the parser ultracode")),
+        );
 
         assert!(names.contains(&"dynamic_workflow".to_string()));
         assert!(names.contains(&"worktree_swarm".to_string()));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn read_only_scope_hides_mutating_tools() {
+        let root =
+            std::env::temp_dir().join(format!("osmogrep-readonly-scope-root-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let registry = ToolRegistry::with_root(root.clone());
+        let scope = ToolScope::for_prompt("plan a parser refactor ultracode").read_only();
+        let names = schema_names(&registry.scoped_schema(&scope));
+
+        assert!(names.contains(&"read_file".to_string()));
+        assert!(names.contains(&"search".to_string()));
+        assert!(names.contains(&"update_plan".to_string()));
+        assert!(names.contains(&"dynamic_workflow".to_string()));
+        assert!(!names.contains(&"write_file".to_string()));
+        assert!(!names.contains(&"edit_file".to_string()));
+        assert!(!names.contains(&"run_shell".to_string()));
+        assert!(!names.contains(&"run_tests".to_string()));
+        assert!(!names.contains(&"worktree_swarm".to_string()));
         let _ = fs::remove_dir_all(root);
     }
 

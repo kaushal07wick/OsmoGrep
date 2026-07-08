@@ -287,13 +287,26 @@ fn start_agent_run(
     let (tx, rx) = mpsc::channel();
     let repo_root = state.repo_root.clone();
     let prior_messages = state.conversation.messages.clone();
-    let auto_approve = state.ui.auto_approve;
+    let auto_approve = if state.plan_mode {
+        false
+    } else {
+        state.ui.auto_approve
+    };
     let steer = state.steer.clone();
-    let permission_profile = state.permission_profile;
+    let permission_profile = if state.plan_mode {
+        PermissionProfile::ReadOnly
+    } else {
+        state.permission_profile
+    };
+    let user_text = if state.plan_mode {
+        plan_mode_prompt(text)
+    } else {
+        text.to_string()
+    };
 
     let RunControl { cancel, steer_tx } = agent.spawn(
         repo_root,
-        text.to_string(),
+        user_text,
         prior_messages,
         steer,
         permission_profile,
@@ -317,8 +330,16 @@ fn start_agent_run(
     state.ui.exec_scroll = usize::MAX;
     state.ui.spinner_started_at = Some(Instant::now());
     state.ui.agent_running = true;
-    state.ui.run_phase = "starting".to_string();
-    state.ui.run_detail = Some("building request".to_string());
+    state.ui.run_phase = if state.plan_mode {
+        "planning".to_string()
+    } else {
+        "starting".to_string()
+    };
+    state.ui.run_detail = Some(if state.plan_mode {
+        "plan mode read-only".to_string()
+    } else {
+        "building request".to_string()
+    });
     state.ui.run_iteration = 0;
     state.ui.run_iteration_limit = agent_iteration_limit();
     state.ui.current_tool = None;
@@ -330,6 +351,17 @@ fn start_agent_run(
     state.ui.active_edit_target = None;
     state.usage.prompt_tokens += (text.len() / 4).max(1);
     let _ = persistence::save(state);
+}
+
+fn plan_mode_prompt(text: &str) -> String {
+    format!(
+        "PLAN MODE ACTIVE.\n\
+         Do not edit files, write files, apply patches, commit, install dependencies, run mutating shell commands, or take destructive actions.\n\
+         You may inspect the repository with safe read/search tools and ask concise clarifying questions if needed.\n\
+         Produce a concrete implementation plan with risks, verification commands to run later, and the exact files likely to change.\n\
+         Stop after the plan unless the user exits plan mode.\n\n\
+         User task:\n{text}"
+    )
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -1602,6 +1634,7 @@ fn init_state() -> AgentState {
         theme: crate::state::UiTheme::default(),
         accent: crate::state::UiAccent::default(),
         density: crate::state::UiDensity::default(),
+        plan_mode: false,
         started_at: Instant::now(),
         repo_root: std::env::current_dir().unwrap(),
         voice: crate::state::VoiceState {
@@ -1781,6 +1814,16 @@ mod tests {
             event.get("delta_kind").and_then(serde_json::Value::as_str),
             Some("insert")
         );
+    }
+
+    #[test]
+    fn plan_mode_prompt_blocks_edits_and_preserves_task() {
+        let prompt = plan_mode_prompt("refactor the parser");
+
+        assert!(prompt.contains("PLAN MODE ACTIVE"));
+        assert!(prompt.contains("Do not edit files"));
+        assert!(prompt.contains("Produce a concrete implementation plan"));
+        assert!(prompt.contains("User task:\nrefactor the parser"));
     }
 
     fn diff(target: &str) -> DiffSnapshot {
