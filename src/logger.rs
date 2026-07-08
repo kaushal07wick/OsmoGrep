@@ -45,6 +45,7 @@ fn format_tool_name(raw: &str) -> &str {
         "notebook_edit" => "Notebook",
         "web_search" => "WebSearch",
         "diagnostics" => "Diag",
+        "dynamic_workflow" => "Workflow",
         other => other,
     }
 }

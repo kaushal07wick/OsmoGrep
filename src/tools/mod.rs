@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 mod diagnostics;
+mod dynamic_workflow;
 mod edit;
 mod find_definition;
 mod find_references;
@@ -27,6 +28,7 @@ mod worktree_swarm;
 mod write;
 
 pub use diagnostics::Diagnostics;
+pub use dynamic_workflow::DynamicWorkflow;
 pub use edit::Edit;
 pub use find_definition::FindDefinition;
 pub use find_references::FindReferences;
@@ -76,6 +78,7 @@ pub struct ToolScope {
     include_notebooks: bool,
     include_git_commit: bool,
     include_worktree_swarm: bool,
+    include_dynamic_workflow: bool,
 }
 
 impl ToolScope {
@@ -89,6 +92,7 @@ impl ToolScope {
                     "https://",
                     "url",
                     "web",
+                    "online",
                     "internet",
                     "latest",
                     "current docs",
@@ -126,6 +130,20 @@ impl ToolScope {
                     "multi-agent",
                 ],
             ),
+            include_dynamic_workflow: contains_any(
+                &lower,
+                &[
+                    "dynamic workflow",
+                    "workflow",
+                    "ultracode",
+                    "deep research",
+                    "research online",
+                    "search online",
+                    "cross-check",
+                    "latest",
+                    "current docs",
+                ],
+            ),
         }
     }
 
@@ -136,6 +154,7 @@ impl ToolScope {
             "notebook_edit" => self.include_notebooks,
             "git_commit" => self.include_git_commit,
             "worktree_swarm" => self.include_worktree_swarm,
+            "dynamic_workflow" => self.include_dynamic_workflow,
             _ => true,
         }
     }
@@ -168,6 +187,7 @@ impl ToolRegistry {
             Box::new(WebSearch),
             Box::new(Diagnostics),
             Box::new(WorktreeSwarm),
+            Box::new(DynamicWorkflow),
         ];
 
         for tool in list {
@@ -446,6 +466,7 @@ mod tests {
         assert!(!names.contains(&"notebook_edit".to_string()));
         assert!(!names.contains(&"git_commit".to_string()));
         assert!(!names.contains(&"worktree_swarm".to_string()));
+        assert!(!names.contains(&"dynamic_workflow".to_string()));
         let _ = fs::remove_dir_all(root);
     }
 
@@ -458,6 +479,23 @@ mod tests {
             "fetch the latest docs from https://example.com",
         )));
 
+        assert!(names.contains(&"web_search".to_string()));
+        assert!(names.contains(&"web_fetch".to_string()));
+        assert!(names.contains(&"dynamic_workflow".to_string()));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn tool_scope_exposes_dynamic_workflow_for_deep_research() {
+        let root =
+            std::env::temp_dir().join(format!("osmogrep-workflow-scope-root-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let registry = ToolRegistry::with_root(root.clone());
+        let names = schema_names(&registry.scoped_schema(&ToolScope::for_prompt(
+            "use a dynamic workflow to do deep research online",
+        )));
+
+        assert!(names.contains(&"dynamic_workflow".to_string()));
         assert!(names.contains(&"web_search".to_string()));
         assert!(names.contains(&"web_fetch".to_string()));
         let _ = fs::remove_dir_all(root);

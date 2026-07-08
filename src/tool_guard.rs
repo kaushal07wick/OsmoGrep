@@ -133,6 +133,7 @@ fn is_idempotent_tool(tool_name: &str) -> bool {
             | "regex_search"
             | "web_fetch"
             | "web_search"
+            | "dynamic_workflow"
             | "find_definition"
             | "find_references"
             | "diagnostics"
