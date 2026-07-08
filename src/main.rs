@@ -10,6 +10,7 @@ mod shell_guard;
 mod state;
 mod test_harness;
 mod tool_budget;
+mod tool_guard;
 mod tools;
 mod triage;
 mod ui;

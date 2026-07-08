@@ -17,6 +17,7 @@ use serde_json::{json, Value};
 
 use crate::harness::{clip, RunLedger};
 use crate::state::PermissionProfile;
+use crate::tool_guard::ToolLoopGuard;
 use crate::tools::{ToolRegistry, ToolSafety};
 
 #[derive(Debug)]
@@ -345,6 +346,7 @@ impl RunAgent {
         let max_iterations = max_iterations();
         let mut iteration = 0usize;
         let mut run_notes: Vec<String> = Vec::new();
+        let mut tool_guard = ToolLoopGuard::default();
         let mut ledger = RunLedger::start(
             &repo_root,
             user_text,
@@ -518,10 +520,18 @@ impl RunAgent {
                         }
 
                         let started = Instant::now();
-                        let result = self
+                        let mut result = self
                             .tools
-                            .call(&name, args)
+                            .call(&name, args.clone())
                             .unwrap_or_else(|e| json!({ "error": e }));
+                        let loop_warning = tool_guard.after_call(&name, &args, &result);
+                        if let Some(warning) = loop_warning.as_ref() {
+                            if let Some(map) = result.as_object_mut() {
+                                let warning_value =
+                                    serde_json::to_value(warning).unwrap_or_else(|_| json!(null));
+                                map.insert("tool_loop_warning".to_string(), warning_value);
+                            }
+                        }
                         let duration_ms = started.elapsed().as_millis();
                         let ok = result.get("error").is_none();
 
@@ -538,7 +548,10 @@ impl RunAgent {
                             });
                         }
 
-                        let summary = tool_result_summary(&name, &result);
+                        let mut summary = tool_result_summary(&name, &result);
+                        if let Some(warning) = loop_warning.as_ref() {
+                            summary = format!("{summary}; {}", warning.message);
+                        }
                         let status = if ok { "ok" } else { "error" };
                         ledger.tool_finished(
                             &name,
