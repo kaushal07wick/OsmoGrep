@@ -2612,17 +2612,54 @@ fn voice_off(state: &mut AgentState, voice_tx: Option<&Sender<VoiceCommand>>) {
 }
 pub fn update_command_hints(state: &mut AgentState) {
     let input = normalize_command_prefix(state.ui.input.trim());
-
     let prev_selected = state.ui.command_selected;
+    let (items, selected) = command_hints_for(&input, prev_selected);
 
-    state.ui.command_items.clear();
+    state.ui.command_items = items;
+    state.ui.command_selected = selected;
+}
 
+fn command_hints_for(input: &str, prev_selected: usize) -> (Vec<CommandItem>, usize) {
     if !input.starts_with('/') {
-        state.ui.command_selected = 0;
-        return;
+        return (Vec::new(), 0);
     }
 
-    let all: &[CommandItem] = &[
+    let all = command_palette_items();
+    if all.iter().any(|item| item.cmd == input) {
+        return (Vec::new(), 0);
+    }
+
+    let mut items = Vec::new();
+    for item in all {
+        if input == "/" || item.cmd.starts_with(input) {
+            items.push(*item);
+        }
+    }
+
+    if items.is_empty() {
+        for item in all {
+            if item.cmd.contains(input)
+                || item
+                    .desc
+                    .to_ascii_lowercase()
+                    .contains(&input[1..].to_ascii_lowercase())
+            {
+                items.push(*item);
+            }
+        }
+    }
+
+    let selected = if items.is_empty() {
+        0
+    } else {
+        prev_selected.min(items.len() - 1)
+    };
+
+    (items, selected)
+}
+
+fn command_palette_items() -> &'static [CommandItem] {
+    &[
         CommandItem {
             cmd: "/help",
             desc: "Show available commands",
@@ -2716,6 +2753,22 @@ pub fn update_command_hints(state: &mut AgentState) {
             desc: "Start a fresh conversation",
         },
         CommandItem {
+            cmd: "/plan",
+            desc: "Show/update plan items",
+        },
+        CommandItem {
+            cmd: "/plan add",
+            desc: "Add a plan item",
+        },
+        CommandItem {
+            cmd: "/plan done",
+            desc: "Mark a plan item complete",
+        },
+        CommandItem {
+            cmd: "/plan clear",
+            desc: "Clear plan items",
+        },
+        CommandItem {
             cmd: "/plan mode",
             desc: "Toggle plan-only read-only agent mode",
         },
@@ -2743,32 +2796,7 @@ pub fn update_command_hints(state: &mut AgentState) {
             cmd: "/exit",
             desc: "Exit Osmogrep",
         },
-    ];
-
-    for item in all {
-        if input == "/" || item.cmd.starts_with(&input) {
-            state.ui.command_items.push(*item);
-        }
-    }
-
-    if state.ui.command_items.is_empty() {
-        for item in all {
-            if item.cmd.contains(&input)
-                || item
-                    .desc
-                    .to_ascii_lowercase()
-                    .contains(&input[1..].to_ascii_lowercase())
-            {
-                state.ui.command_items.push(*item);
-            }
-        }
-    }
-
-    if state.ui.command_items.is_empty() {
-        state.ui.command_selected = 0;
-    } else {
-        state.ui.command_selected = prev_selected.min(state.ui.command_items.len() - 1);
-    }
+    ]
 }
 
 fn normalize_command_prefix(input: &str) -> String {
@@ -2778,6 +2806,28 @@ fn normalize_command_prefix(input: &str) -> String {
         format!("/{}", rest)
     } else {
         input.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::command_hints_for;
+
+    #[test]
+    fn command_hints_include_plan_while_typing() {
+        let (items, selected) = command_hints_for("/pla", 0);
+
+        assert_eq!(selected, 0);
+        assert!(items.iter().any(|item| item.cmd == "/plan"));
+        assert!(items.iter().any(|item| item.cmd == "/plan mode"));
+    }
+
+    #[test]
+    fn command_hints_hide_after_exact_plan_command() {
+        let (items, selected) = command_hints_for("/plan", 4);
+
+        assert!(items.is_empty());
+        assert_eq!(selected, 0);
     }
 }
 
