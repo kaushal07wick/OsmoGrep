@@ -16,8 +16,8 @@ mod tools;
 mod triage;
 mod ui;
 mod updater;
-mod verify_stop;
 mod verification;
+mod verify_stop;
 mod voice;
 mod worktree;
 
@@ -31,7 +31,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::{
     event, execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -1123,7 +1122,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
     let (update_tx, update_rx) = mpsc::channel::<updater::UpdateEvent>();
     updater::spawn_update_check(update_tx.clone());
     let mut running_jobs = 0usize;
-    let mut context_rx: Option<mpsc::Receiver<ContextEvent>> = None;
+    let mut context_rx: Option<mpsc::Receiver<ContextEvent>>;
     let voice_silence_ms: u64 = std::env::var("VLLM_REALTIME_SILENCE_MS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
@@ -1275,7 +1274,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
             });
         }
 
-        if let Some(mut rx) = context_rx.take() {
+        if let Some(rx) = context_rx.take() {
             let mut done = false;
 
             loop {

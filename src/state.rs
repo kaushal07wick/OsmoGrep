@@ -15,7 +15,7 @@ pub enum InputMode {
     ApiKey,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LogLevel {
     Info,
     Success,
@@ -39,10 +39,6 @@ impl LogBuffer {
         Self {
             logs: VecDeque::with_capacity(MAX_LOGS),
         }
-    }
-
-    pub fn len(&self) -> usize {
-        self.logs.len()
     }
 
     pub fn clear(&mut self) {
@@ -387,29 +383,12 @@ impl AgentState {
         raw
     }
 
-    pub fn set_hint(&mut self, hint: impl Into<String>) {
-        self.ui.hint = Some(hint.into());
-    }
-
     pub fn clear_hint(&mut self) {
         self.ui.hint = None;
     }
 
-    pub fn set_autocomplete(&mut self, text: impl Into<String>) {
-        self.ui.autocomplete = Some(text.into());
-    }
-
     pub fn clear_autocomplete(&mut self) {
         self.ui.autocomplete = None;
-    }
-
-    pub fn push_log(&mut self, level: LogLevel, text: impl Into<String>) {
-        crate::logger::log(self, level, text);
-    }
-
-    pub fn start_spinner(&mut self, text: impl Into<String>) {
-        self.ui.active_spinner = Some(text.into());
-        self.ui.spinner_started_at = Some(Instant::now());
     }
 
     pub fn stop_spinner(&mut self) {

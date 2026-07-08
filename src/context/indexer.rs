@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
@@ -215,7 +215,7 @@ fn compute_repo_stats(root: &Path) -> RepoStats {
 /* ======================= INCREMENTAL ======================= */
 
 fn incremental_update(
-    root: &Path,
+    _root: &Path,
     ctx: &mut Context,
     old: &HashMap<String, String>,
     new: &HashMap<String, String>,
@@ -325,7 +325,7 @@ fn rust_doc(node: Node, src: &str) -> Option<String> {
 
 /* ======================= BUILD ======================= */
 
-fn build_context(root: &Path, stats: RepoStats, hashes: &HashMap<String, String>) -> Context {
+fn build_context(_root: &Path, stats: RepoStats, hashes: &HashMap<String, String>) -> Context {
     let mut files = Vec::new();
     let mut symbols = Vec::new();
 

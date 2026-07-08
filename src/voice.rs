@@ -25,7 +25,6 @@ const CHUNK_SAMPLES: usize = (TARGET_SAMPLE_RATE as usize * CHUNK_MS as usize) /
 pub enum VoiceCommand {
     Start { url: String, model: String },
     Stop,
-    Shutdown,
 }
 
 #[derive(Debug, Clone)]
@@ -52,7 +51,7 @@ pub fn spawn_voice_worker(
             Ok(VoiceCommand::Stop) => {
                 let _ = evt_tx.send(VoiceEvent::Status("Voice not running.".into()));
             }
-            Ok(VoiceCommand::Shutdown) | Err(_) => {
+            Err(_) => {
                 break;
             }
         }
@@ -151,11 +150,6 @@ fn run_session(
                 let _ = ws.send(Message::Text(final_commit.to_string()));
                 let _ = ws.close(None);
                 let _ = evt_tx.send(VoiceEvent::Disconnected);
-                break;
-            }
-            Ok(VoiceCommand::Shutdown) => {
-                stop.store(true, Ordering::SeqCst);
-                let _ = ws.close(None);
                 break;
             }
             Ok(VoiceCommand::Start { .. }) => {

@@ -16,7 +16,9 @@ use crate::ui::helper::{
 };
 use crate::{
     logger::parse_user_input_log,
-    state::{AgentState, InputMode, PendingUpdate, PlanItem, UiAccent, UiDensity, UiTheme},
+    state::{
+        AgentState, InputMode, LogLevel, PendingUpdate, PlanItem, UiAccent, UiDensity, UiTheme,
+    },
 };
 
 const FG_MAIN: Color = Color::Rgb(220, 220, 220);
@@ -350,6 +352,8 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
     let mut md = crate::ui::markdown::Markdown::new();
 
     for log in state.logs.iter() {
+        let level = log.level;
+        let fresh = log.at.elapsed().as_secs() <= 2;
         let text = log.text.as_str();
         if let Some(input) = parse_user_input_log(text) {
             lines.extend(render_static_command_line(input, padded.width as usize));
@@ -383,7 +387,7 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
             continue;
         }
 
-        lines.push(md.render_line(text));
+        lines.push(style_log_line(md.render_line(text), level, fresh, p));
     }
 
     if state.ui.diff_active && !state.ui.diff_snapshot.is_empty() {
@@ -480,6 +484,35 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
     };
 
     f.render_widget(Paragraph::new(lines).scroll((scroll as u16, 0)), padded);
+}
+
+fn style_log_line(
+    mut line: Line<'static>,
+    level: LogLevel,
+    fresh: bool,
+    p: UiPalette,
+) -> Line<'static> {
+    let color = match level {
+        LogLevel::Info => return line,
+        LogLevel::Success => Color::Rgb(70, 190, 120),
+        LogLevel::Warn => Color::Yellow,
+        LogLevel::Error => Color::Rgb(220, 95, 90),
+    };
+    let emphasize = fresh || matches!(level, LogLevel::Error);
+
+    for span in &mut line.spans {
+        span.style = span.style.fg(color);
+        if emphasize {
+            span.style = span.style.add_modifier(Modifier::BOLD);
+        }
+    }
+
+    if line.spans.is_empty() {
+        line.spans
+            .push(Span::styled("", Style::default().fg(p.fg_dim)));
+    }
+
+    line
 }
 
 fn render_plan_lines(state: &AgentState, p: UiPalette) -> Vec<Line<'static>> {
