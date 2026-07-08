@@ -11,6 +11,7 @@ mod test_harness;
 mod tools;
 mod triage;
 mod ui;
+mod verification;
 mod voice;
 
 use std::{
@@ -125,11 +126,35 @@ fn run_shell(state: &mut AgentState, cmd: &str) {
 
     match std::process::Command::new("sh").arg("-c").arg(cmd).output() {
         Ok(out) => {
+            let mut combined = String::new();
             for line in String::from_utf8_lossy(&out.stdout).lines() {
+                combined.push_str(line);
+                combined.push('\n');
                 log(state, LogLevel::Info, line);
             }
             for line in String::from_utf8_lossy(&out.stderr).lines() {
+                combined.push_str(line);
+                combined.push('\n');
                 log(state, LogLevel::Error, line);
+            }
+            if let Some(ev) = crate::verification::record_command(
+                &state.repo_root,
+                cmd,
+                out.status.code().unwrap_or(-1),
+                &combined,
+            ) {
+                log(
+                    state,
+                    if ev.status == "passed" {
+                        LogLevel::Success
+                    } else {
+                        LogLevel::Error
+                    },
+                    format!(
+                        "Verification evidence [{}:{}:{}] {}",
+                        ev.kind, ev.scope, ev.status, ev.canonical_command
+                    ),
+                );
             }
         }
         Err(e) => {

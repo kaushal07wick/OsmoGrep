@@ -6,6 +6,8 @@ use std::time::Instant;
 use regex::Regex;
 use serde::Serialize;
 
+use crate::verification::VerificationEvidence;
+
 const OUTPUT_LIMIT: usize = 10_000;
 
 #[derive(Debug, Clone, Serialize)]
@@ -18,6 +20,7 @@ pub struct TestRun {
     pub passed: usize,
     pub failed: usize,
     pub output: String,
+    pub verification: Option<VerificationEvidence>,
 }
 
 pub fn run_tests(repo_root: &Path, target: Option<&str>) -> Result<TestRun, String> {
@@ -44,6 +47,7 @@ pub fn run_tests(repo_root: &Path, target: Option<&str>) -> Result<TestRun, Stri
     let output = truncate_output(&text);
     let exit_code = out.status.code().unwrap_or(-1);
     let (passed, failed) = parse_counts(&framework, &text);
+    let verification = crate::verification::record_command(repo_root, &command, exit_code, &text);
 
     Ok(TestRun {
         framework,
@@ -54,6 +58,7 @@ pub fn run_tests(repo_root: &Path, target: Option<&str>) -> Result<TestRun, Stri
         passed,
         failed,
         output,
+        verification,
     })
 }
 

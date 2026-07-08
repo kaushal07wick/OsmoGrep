@@ -44,7 +44,8 @@ impl Tool for Test {
             "success": run.success,
             "passed": run.passed,
             "failed": run.failed,
-            "output": run.output
+            "output": run.output,
+            "verification": crate::verification::to_json(&run.verification)
         }))
     }
 }

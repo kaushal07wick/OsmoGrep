@@ -35,6 +35,7 @@ impl Tool for Shell {
             .get("cmd")
             .and_then(Value::as_str)
             .ok_or("missing cmd")?;
+        let root = std::env::current_dir().map_err(|e| e.to_string())?;
 
         let pre_hook = crate::hooks::run_hook("pre_shell", &[("cmd", cmd)])
             .ok()
@@ -45,12 +46,24 @@ impl Tool for Shell {
             .arg(cmd)
             .output()
             .map_err(|e| e.to_string())?;
+        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+        let exit_code = out.status.code().unwrap_or(-1);
+        let mut combined = stdout.clone();
+        if !stderr.is_empty() {
+            if !combined.ends_with('\n') {
+                combined.push('\n');
+            }
+            combined.push_str(&stderr);
+        }
+        let verification = crate::verification::record_command(&root, cmd, exit_code, &combined);
 
         Ok(json!({
-            "stdout": String::from_utf8_lossy(&out.stdout),
-            "stderr": String::from_utf8_lossy(&out.stderr),
-            "exit_code": out.status.code(),
-            "hook": pre_hook
+            "stdout": stdout,
+            "stderr": stderr,
+            "exit_code": exit_code,
+            "hook": pre_hook,
+            "verification": crate::verification::to_json(&verification)
         }))
     }
 }

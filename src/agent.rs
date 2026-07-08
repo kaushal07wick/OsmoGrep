@@ -854,6 +854,9 @@ fn tool_result_summary(tool: &str, result: &Value) -> String {
     if let Some(error) = result.get("error").and_then(Value::as_str) {
         return format!("error: {}", clip(error));
     }
+    if let Some(summary) = verification_summary(result) {
+        return summary;
+    }
 
     match tool {
         "run_shell" => {
@@ -917,6 +920,30 @@ fn tool_result_summary(tool: &str, result: &Value) -> String {
         }
         _ => "ok".to_string(),
     }
+}
+
+fn verification_summary(result: &Value) -> Option<String> {
+    let verification = result.get("verification")?;
+    if verification.is_null() {
+        return None;
+    }
+    let kind = verification
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or("verify");
+    let scope = verification
+        .get("scope")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let status = verification
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let command = verification
+        .get("canonical_command")
+        .and_then(Value::as_str)
+        .unwrap_or("command");
+    Some(format!("verification {kind}:{scope}:{status} ({command})"))
 }
 
 fn assistant_memory_text(text: &str, run_notes: &[String], ledger: &RunLedger) -> String {
