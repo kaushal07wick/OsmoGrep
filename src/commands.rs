@@ -49,6 +49,10 @@ pub fn handle_command(
         set_profile(state, &cmd);
         return;
     }
+    if cmd.starts_with("/swarm worktree ") {
+        run_worktree_swarm_now(state, &cmd, agent);
+        return;
+    }
     if cmd.starts_with("/swarm ") {
         run_swarm_now(state, &cmd, agent);
         return;
@@ -194,6 +198,11 @@ fn help(state: &mut AgentState) {
     );
     log(state, Info, "  /steer clear Remove steer instruction");
     log(state, Info, "  /swarm <txt> Run parallel scoped sub-agents");
+    log(
+        state,
+        Info,
+        "  /swarm worktree <txt> Run tool-enabled sub-agents in isolated git worktrees",
+    );
     log(state, Info, "  /jobs        Show background jobs");
     log(state, Info, "  /autofix     Show auto-eval mode");
     log(state, Info, "  /autofix on|off  Toggle auto post-run tests");
@@ -717,6 +726,58 @@ fn run_swarm_now(state: &mut AgentState, cmd: &str, agent: Option<&mut Agent>) {
             }
         }
         Err(e) => log(state, LogLevel::Error, format!("Swarm failed: {}", e)),
+    }
+}
+
+fn run_worktree_swarm_now(state: &mut AgentState, cmd: &str, agent: Option<&mut Agent>) {
+    let prompt = cmd
+        .strip_prefix("/swarm worktree")
+        .map(str::trim)
+        .unwrap_or("");
+    if prompt.is_empty() {
+        log(state, LogLevel::Warn, "Usage: /swarm worktree <task>");
+        return;
+    }
+    let Some(agent) = agent else {
+        log(state, LogLevel::Warn, "Agent unavailable.");
+        return;
+    };
+
+    log(
+        state,
+        LogLevel::Info,
+        "Starting worktree-isolated subagents.",
+    );
+    match agent.run_worktree_swarm(&state.repo_root, prompt) {
+        Ok(results) => {
+            log(state, LogLevel::Success, "Worktree swarm completed.");
+            for result in results {
+                let status = if result.success { "ok" } else { "failed" };
+                log(
+                    state,
+                    if result.success {
+                        LogLevel::Success
+                    } else {
+                        LogLevel::Error
+                    },
+                    format!(
+                        "[{}] {} branch={} path={}",
+                        result.role,
+                        status,
+                        result.branch,
+                        result.path.display()
+                    ),
+                );
+                for line in result.output.lines().take(20) {
+                    log(state, LogLevel::Info, line.to_string());
+                }
+            }
+        }
+        Err(e) => log(
+            state,
+            LogLevel::Error,
+            format!("Worktree swarm failed: {}", e),
+        ),
     }
 }
 
@@ -2456,6 +2517,10 @@ pub fn update_command_hints(state: &mut AgentState) {
         CommandItem {
             cmd: "/swarm",
             desc: "Run parallel scoped sub-agents",
+        },
+        CommandItem {
+            cmd: "/swarm worktree",
+            desc: "Run sub-agents in isolated git worktrees",
         },
         CommandItem {
             cmd: "/jobs",

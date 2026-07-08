@@ -18,6 +18,7 @@ mod ui;
 mod verify_stop;
 mod verification;
 mod voice;
+mod worktree;
 
 use std::{
     error::Error,
