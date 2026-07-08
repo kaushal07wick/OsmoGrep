@@ -243,6 +243,7 @@ fn system_prompt(repo_root: &std::path::Path) -> Value {
             - If `.context/context.json` is missing or insufficient, proceed normally and use tools freely.\n\
             - Prefer high-leverage workflows over many tiny manual steps.\n\
             - When the task asks for current information, online research, cross-source verification, or a Claude Code-style workflow, use `dynamic_workflow` to fan out bounded research agents and bring back cited evidence instead of manually looping search/fetch calls.\n\
+            - If the user ends a request with `ultracode`, treat it as an explicit dynamic-workflow sentinel: plan the workflow, delegate/fan out where useful, keep context compact, and synthesize verified results.\n\
             - For multi-step work, keep a durable progress plan with `update_plan`; treat it as scratchpad memory and verify against real files before acting.\n\
             - For broad, high-risk, or ambiguous coding tasks, consider `worktree_swarm` to delegate exploration, implementation, testing, and review to isolated subagents, then integrate only verified results.\n\
             - For non-trivial coding work, run a disciplined loop: investigate, make a short plan, implement the approved slice, verify, then review residual risk.\n\

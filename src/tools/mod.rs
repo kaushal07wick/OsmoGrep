@@ -84,6 +84,7 @@ pub struct ToolScope {
 impl ToolScope {
     pub fn for_prompt(prompt: &str) -> Self {
         let lower = prompt.to_ascii_lowercase();
+        let ultracode = has_ultracode_suffix(&lower);
         Self {
             include_web: contains_any(
                 &lower,
@@ -115,35 +116,37 @@ impl ToolScope {
                     " pr ",
                 ],
             ),
-            include_worktree_swarm: contains_any(
-                &lower,
-                &[
-                    "subagent",
-                    "sub-agent",
-                    "swarm",
-                    "worktree",
-                    "parallel",
-                    "deep audit",
-                    "audit",
-                    "complex",
-                    "large refactor",
-                    "multi-agent",
-                ],
-            ),
-            include_dynamic_workflow: contains_any(
-                &lower,
-                &[
-                    "dynamic workflow",
-                    "workflow",
-                    "ultracode",
-                    "deep research",
-                    "research online",
-                    "search online",
-                    "cross-check",
-                    "latest",
-                    "current docs",
-                ],
-            ),
+            include_worktree_swarm: ultracode
+                || contains_any(
+                    &lower,
+                    &[
+                        "subagent",
+                        "sub-agent",
+                        "swarm",
+                        "worktree",
+                        "parallel",
+                        "deep audit",
+                        "audit",
+                        "complex",
+                        "large refactor",
+                        "multi-agent",
+                    ],
+                ),
+            include_dynamic_workflow: ultracode
+                || contains_any(
+                    &lower,
+                    &[
+                        "dynamic workflow",
+                        "workflow",
+                        "ultracode",
+                        "deep research",
+                        "research online",
+                        "search online",
+                        "cross-check",
+                        "latest",
+                        "current docs",
+                    ],
+                ),
         }
     }
 
@@ -158,6 +161,17 @@ impl ToolScope {
             _ => true,
         }
     }
+}
+
+fn has_ultracode_suffix(prompt: &str) -> bool {
+    let trimmed = prompt
+        .trim()
+        .trim_end_matches(|ch: char| matches!(ch, '.' | ',' | ';' | ':' | '!' | '?'));
+    trimmed
+        .split_whitespace()
+        .last()
+        .map(|word| word == "ultracode")
+        .unwrap_or(false)
 }
 
 impl ToolRegistry {
@@ -498,6 +512,21 @@ mod tests {
         assert!(names.contains(&"dynamic_workflow".to_string()));
         assert!(names.contains(&"web_search".to_string()));
         assert!(names.contains(&"web_fetch".to_string()));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ultracode_suffix_exposes_dynamic_coding_workflows() {
+        let root =
+            std::env::temp_dir().join(format!("osmogrep-ultracode-scope-root-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let registry = ToolRegistry::with_root(root.clone());
+        let names = schema_names(&registry.scoped_schema(&ToolScope::for_prompt(
+            "refactor the parser ultracode",
+        )));
+
+        assert!(names.contains(&"dynamic_workflow".to_string()));
+        assert!(names.contains(&"worktree_swarm".to_string()));
         let _ = fs::remove_dir_all(root);
     }
 
