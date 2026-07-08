@@ -39,6 +39,7 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, layout::Rect, Terminal};
 
 use clap::{Args, Parser, Subcommand};
+use uuid::Uuid;
 
 use crate::{
     agent::{Agent, AgentEvent, CancelToken, RunControl},
@@ -373,6 +374,9 @@ fn run_headless(args: RunArgs) -> Result<i32, Box<dyn Error>> {
         return Err("OPENAI_API_KEY is not set".into());
     }
 
+    let mut emitter = HeadlessEmitter::new(args.json_events, args.auto_approve);
+    emitter.emit_run_start(&repo_root, &prompt);
+
     let (tx, rx) = mpsc::channel();
     let _control = agent.spawn(
         repo_root,
@@ -396,7 +400,7 @@ fn run_headless(args: RunArgs) -> Result<i32, Box<dyn Error>> {
 
         let done = matches!(evt, AgentEvent::Done);
         let failed = matches!(evt, AgentEvent::Error(_) | AgentEvent::Cancelled);
-        emit_headless_event(evt, args.json_events, args.auto_approve);
+        emitter.emit_event(evt);
         if failed {
             exit_code = exit_code.max(1);
         }
@@ -408,17 +412,52 @@ fn run_headless(args: RunArgs) -> Result<i32, Box<dyn Error>> {
     Ok(exit_code)
 }
 
-fn emit_headless_event(evt: AgentEvent, json_events: bool, auto_approve: bool) {
-    if json_events {
-        emit_headless_json(evt, auto_approve);
-    } else {
-        emit_headless_text(evt, auto_approve);
-    }
-    let _ = io::stdout().flush();
+struct HeadlessEmitter {
+    json_events: bool,
+    auto_approve: bool,
+    seq: u64,
+    run_id: String,
 }
 
-fn emit_headless_json(evt: AgentEvent, auto_approve: bool) {
-    let value = match evt {
+impl HeadlessEmitter {
+    fn new(json_events: bool, auto_approve: bool) -> Self {
+        Self {
+            json_events,
+            auto_approve,
+            seq: 0,
+            run_id: Uuid::new_v4().to_string(),
+        }
+    }
+
+    fn emit_run_start(&mut self, repo_root: &std::path::Path, task: &str) {
+        if self.json_events {
+            self.emit_json_value(serde_json::json!({
+                "type": "run_start",
+                "repo_root": repo_root.display().to_string(),
+                "task": task,
+            }));
+        }
+    }
+
+    fn emit_event(&mut self, evt: AgentEvent) {
+        if self.json_events {
+            self.emit_json_value(headless_json_value(evt, self.auto_approve));
+        } else {
+            emit_headless_text(evt, self.auto_approve);
+            let _ = io::stdout().flush();
+        }
+    }
+
+    fn emit_json_value(&mut self, value: serde_json::Value) {
+        self.seq += 1;
+        let value = envelope_headless_event(value, self.seq, &self.run_id);
+        println!("{}", sanitize_event_value(value));
+        let _ = io::stdout().flush();
+    }
+}
+
+fn headless_json_value(evt: AgentEvent, auto_approve: bool) -> serde_json::Value {
+    match evt {
         AgentEvent::ToolCall { name, args } => {
             serde_json::json!({ "type": "tool_call", "name": name, "args": args })
         }
@@ -490,8 +529,90 @@ fn emit_headless_json(evt: AgentEvent, auto_approve: bool) {
             serde_json::json!({ "type": "error", "message": message })
         }
         AgentEvent::Done => serde_json::json!({ "type": "done" }),
-    };
-    println!("{}", value);
+    }
+}
+
+fn envelope_headless_event(
+    mut value: serde_json::Value,
+    seq: u64,
+    run_id: &str,
+) -> serde_json::Value {
+    if let Some(obj) = value.as_object_mut() {
+        obj.insert("seq".to_string(), serde_json::json!(seq));
+        obj.insert("run_id".to_string(), serde_json::json!(run_id));
+        obj.insert("ts".to_string(), serde_json::json!(headless_timestamp()));
+    }
+    value
+}
+
+fn headless_timestamp() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
+fn sanitize_event_value(value: serde_json::Value) -> serde_json::Value {
+    sanitize_event_value_at_key(None, value)
+}
+
+fn sanitize_event_value_at_key(key: Option<&str>, value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.into_iter()
+                .map(|(key, value)| {
+                    let value = if is_secret_key(&key) {
+                        serde_json::Value::String("[redacted]".to_string())
+                    } else {
+                        sanitize_event_value_at_key(Some(&key), value)
+                    };
+                    (key, value)
+                })
+                .collect(),
+        ),
+        serde_json::Value::Array(values) => serde_json::Value::Array(
+            values
+                .into_iter()
+                .map(|value| sanitize_event_value_at_key(key, value))
+                .collect(),
+        ),
+        serde_json::Value::String(_text) if key.map(is_secret_key).unwrap_or(false) => {
+            serde_json::Value::String("[redacted]".to_string())
+        }
+        serde_json::Value::String(text) => serde_json::Value::String(mask_secret_text(&text)),
+        other => other,
+    }
+}
+
+fn is_secret_key(key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    key.contains("api_key")
+        || key.contains("apikey")
+        || key.contains("token")
+        || key.contains("secret")
+        || key.contains("authorization")
+        || key == "auth"
+        || key == "password"
+}
+
+fn mask_secret_text(text: &str) -> String {
+    let mut out = Vec::new();
+    for part in text.split_whitespace() {
+        if looks_like_secret(part) {
+            out.push("[redacted]");
+        } else {
+            out.push(part);
+        }
+    }
+    if out.is_empty() {
+        String::new()
+    } else {
+        out.join(" ")
+    }
+}
+
+fn looks_like_secret(text: &str) -> bool {
+    let trimmed = text.trim_matches(|ch: char| matches!(ch, '"' | '\'' | ',' | ';'));
+    (trimmed.starts_with("sk-") && trimmed.len() > 12)
+        || (trimmed.starts_with("ghp_") && trimmed.len() > 12)
+        || (trimmed.starts_with("github_pat_") && trimmed.len() > 20)
 }
 
 fn emit_headless_text(evt: AgentEvent, auto_approve: bool) {
@@ -1385,6 +1506,59 @@ mod tests {
         let pending = unreviewed_changes(&changes, 10);
 
         assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn envelopes_headless_events_with_sequence_run_id_and_timestamp() {
+        let event = envelope_headless_event(serde_json::json!({ "type": "done" }), 7, "run-123");
+
+        assert_eq!(
+            event.get("type").and_then(serde_json::Value::as_str),
+            Some("done")
+        );
+        assert_eq!(
+            event.get("seq").and_then(serde_json::Value::as_u64),
+            Some(7)
+        );
+        assert_eq!(
+            event.get("run_id").and_then(serde_json::Value::as_str),
+            Some("run-123")
+        );
+        assert!(event
+            .get("ts")
+            .and_then(serde_json::Value::as_str)
+            .is_some());
+    }
+
+    #[test]
+    fn sanitizes_secret_values_in_headless_events() {
+        let event = sanitize_event_value(serde_json::json!({
+            "type": "tool_call",
+            "args": {
+                "api_key": "sk-test-secret",
+                "Authorization": "Bearer token",
+                "cmd": "echo sk-proj-thisshouldnotleak"
+            }
+        }));
+
+        assert_eq!(
+            event
+                .pointer("/args/api_key")
+                .and_then(serde_json::Value::as_str),
+            Some("[redacted]")
+        );
+        assert_eq!(
+            event
+                .pointer("/args/Authorization")
+                .and_then(serde_json::Value::as_str),
+            Some("[redacted]")
+        );
+        assert_eq!(
+            event
+                .pointer("/args/cmd")
+                .and_then(serde_json::Value::as_str),
+            Some("echo [redacted]")
+        );
     }
 
     fn diff(target: &str) -> DiffSnapshot {
