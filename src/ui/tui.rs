@@ -11,9 +11,7 @@ use ratatui::{
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::ui::helper::{
-    calculate_input_lines, git_branch, render_static_command_line, running_pulse,
-};
+use crate::ui::helper::{calculate_input_lines, render_static_command_line, running_pulse};
 use crate::{
     logger::parse_user_input_log,
     state::{
@@ -236,7 +234,11 @@ pub fn draw_ui<B: Backend>(
 /// header with info
 fn render_header(f: &mut Frame, area: Rect, state: &AgentState) {
     let p = palette(state);
-    let branch = git_branch(&state.repo_root).unwrap_or_else(|| "detached".into());
+    let branch = state
+        .ui
+        .repo_branch
+        .clone()
+        .unwrap_or_else(|| "detached".into());
     let version = env!("CARGO_PKG_VERSION");
     let repo_display = state
         .repo_root

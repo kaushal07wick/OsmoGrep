@@ -122,6 +122,7 @@ pub struct UiState {
     pub tmux_attach_session: Option<String>,
     pub active_edit_target: Option<String>,
     pub queued_agent_prompt: Option<String>,
+    pub repo_branch: Option<String>,
 }
 
 impl Default for UiState {
@@ -171,6 +172,7 @@ impl Default for UiState {
             tmux_attach_session: None,
             active_edit_target: None,
             queued_agent_prompt: None,
+            repo_branch: None,
         }
     }
 }

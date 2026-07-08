@@ -1873,9 +1873,12 @@ fn init_state() -> AgentState {
         .unwrap_or_else(|_| "ws://127.0.0.1:8000/v1/realtime".into());
     let voice_model = std::env::var("VLLM_REALTIME_MODEL")
         .unwrap_or_else(|_| "mistralai/Voxtral-Mini-4B-Realtime-2602".into());
+    let repo_root = std::env::current_dir().unwrap();
+    let mut ui = crate::state::UiState::default();
+    ui.repo_branch = crate::ui::helper::git_branch(&repo_root);
 
     AgentState {
-        ui: crate::state::UiState::default(),
+        ui,
 
         logs: crate::state::LogBuffer::new(),
         session_changes: Vec::new(),
@@ -1895,7 +1898,7 @@ fn init_state() -> AgentState {
         density: crate::state::UiDensity::default(),
         plan_mode: false,
         started_at: Instant::now(),
-        repo_root: std::env::current_dir().unwrap(),
+        repo_root,
         voice: crate::state::VoiceState {
             url: voice_url,
             model: voice_model,
