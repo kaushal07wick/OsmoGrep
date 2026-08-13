@@ -1,73 +1,310 @@
-
 <p align="center">
-  <img src="osmogrep.png" alt="osmogrep" width="600"/>
+  <img src="osmogrep.png" alt="Osmogrep" width="600"/>
 </p>
 
+<p align="center">
+  <strong>A terminal coding agent that has to prove it worked.</strong>
+</p>
 
-## What Osmogrep Is
+<p align="center">
+  <a href="https://crates.io/crates/osmogrep"><img src="https://img.shields.io/crates/v/osmogrep.svg" alt="crates.io"/></a>
+  <a href="https://github.com/kaushal07wick/OsmoGrep/actions/workflows/ci.yml"><img src="https://github.com/kaushal07wick/OsmoGrep/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
+  <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT"/>
+  <img src="https://img.shields.io/badge/rust-2021-orange.svg" alt="Rust 2021"/>
+</p>
 
-Osmogrep is a Rust-native terminal UI for running autonomous AI agents, with structured logging, tool invocation, and streaming execution control.
+---
 
-* A **local-first AI agent**
-* Running **inside your terminal**
-* Operating on a **real Git repository**
-* Using **explicit, auditable tools**
+Most coding agents write code and tell you it's done. Osmogrep runs the code, keeps a
+ledger of what actually passed, and refuses to call a task finished on evidence it
+doesn't have.
 
-## Core Concepts
+It is a single Rust binary that opens a TUI in your git repository, drives an
+OpenAI-compatible model through an explicit toolset, and wraps that loop in machinery
+built for one purpose: catching bugs that only show up at runtime, then fixing them and
+proving the fix.
 
-The agent acts through tools:
+<p align="center">
+  <img src="osmogrep.gif" alt="Osmogrep demo" width="720"/>
+</p>
 
-* **Shell** — run real commands
-* **Search** — grep / ripgrep style search
-* **Read File** — inspect file contents
-* **Write File** — make concrete edits
+## Why this isn't just another coding agent
 
-## UI
+### 1. A verification ledger, not a vibe check
 
-Osmogrep ships with a **high-performance terminal UI**:
+Every shell command the agent runs is classified. `cargo test`, `pytest`,
+`go test`, `npm run lint`, `make build`, `cargo clippy`, `cargo nextest run` and friends
+are recognised — including through `env VAR=x`, `time`, `&&` chains, and
+`uv run pytest`-style wrappers — and appended to
+`.context/osmogrep-verification.jsonl` with their exit code, scope (targeted vs. full),
+and output summary.
 
-* Streaming agent output
-* Tool calls rendered hierarchically
-* Scrollable execution history
-* Clear separation between:
+Every file the agent edits is appended to the same ledger. The result is a live status:
 
-  * user input
-  * tool execution
-  * agent output
+| Status | Meaning |
+| --- | --- |
+| `passed` | The last relevant command exited 0 and nothing has changed since |
+| `failed` | The last relevant command exited non-zero |
+| `stale` | Code changed after the last passing run — the green is no longer valid |
+| `unverified` | Nothing has been run yet |
 
-## Model Support
+Doc-only edits (`.md`, `LICENSE`, `CHANGELOG`, …) do **not** invalidate a passing run.
+Touching `src/lib.rs` does. Check it any time with `/verify`.
 
-Osmogrep works with any **OpenAI-compatible API**, including:
+### 2. It gets stopped when it tries to hand back unverified work
 
-* OpenAI
-* Anthropic-compatible endpoints
-* Local models via **Ollama**
+When the model tries to finish a run with a `stale` or `failed` ledger, Osmogrep
+intercepts the stop and injects a nudge listing the exact paths that need verification,
+the last evidence it has, and an instruction to run the tests, read the failure, and fix
+the root cause. This fires at most twice per run, so the agent either produces real
+evidence or explicitly states the blocker — it never quietly declares victory.
 
-Model choice is orthogonal to execution correctness.
+### 3. It notices when it's stuck in a loop
 
-## Installation
+A tool-loop guard hashes every `(tool, arguments)` pair and its result. Two identical
+failures, three failures of the same tool, or two identical results from a read-only
+tool trigger a warning fed straight back into the conversation: *stop retrying
+unchanged, change strategy.* This is what stops the classic 40-iteration
+`cargo build` → same error → `cargo build` spiral.
 
-### From crates.io
+### 4. It runs and parses tests as first-class data
+
+`run_tests` auto-detects cargo / pytest / jest / go, runs with a cancellable timeout,
+and returns structured `passed` / `failed` counts, duration, timeout and cancellation
+flags — not just a wall of stdout. `diagnostics` runs the project's lint/check command
+and parses `file:line:col: message` into structured issues the model can act on
+directly.
+
+### 5. Every change is reviewable and reversible
+
+Each edit is captured as a before/after snapshot pushed onto a session undo stack.
+`/diff` shows everything changed this session; `/undo` reverts the last change. When a
+run ends, unreviewed changes are automatically queued as a background **review** job
+that runs an independent code-review sub-agent against the diff looking for regressions,
+edge cases, and missing tests. With `/autofix on`, a **test** job is queued alongside it.
+
+### 6. Parallel isolated agents when the task is genuinely big
+
+`worktree_swarm` creates four real `git worktree` checkouts on their own branches and
+runs four headless Osmogrep subagents in parallel — **explore**, **edit**, **test**,
+**review** — each required to run verification in its own worktree before reporting
+back. Nothing touches your working tree until you integrate the results.
+
+### 7. It reads the repo structurally, not just by grep
+
+A tree-sitter indexer (Rust + Python) builds `.context/context.json`: files, symbols,
+line spans, and a call graph with `calls` / `called_by` edges, refreshed incrementally
+as files change. `find_definition` and `find_references` sit on top of it.
+
+## Install
 
 ```bash
+# from crates.io
 cargo install osmogrep
-```
 
-### Latest from GitHub
-
-```bash
+# or latest from GitHub
 curl -fsSL https://raw.githubusercontent.com/kaushal07wick/osmogrep/master/install.sh | sh
 ```
 
-## Usage
-
-Run inside any Git repository:
+Verify the install:
 
 ```bash
+osmogrep doctor
+```
+
+## Quickstart
+
+```bash
+cd your-repo
+export OPENAI_API_KEY=sk-...   # or run osmogrep and use /key
 osmogrep
 ```
 
-Run PR/Issue triage for a GitHub repository:
+Then talk to it:
+
+```
+> the CSV importer crashes on empty rows, find it and fix it
+> add tests for the retry path in src/http.rs
+> why is test_parse_dates flaky?
+```
+
+Osmogrep will read files, run the code, read the failure, patch the root cause, re-run,
+and only then summarize — with the commands it actually ran.
+
+Headless, for CI or scripts:
+
+```bash
+osmogrep run --prompt "fix the failing tests and explain what broke" --json-events
+```
+
+Newline-delimited JSON events on stdout, with API keys and secret-looking strings masked.
+
+## Toolset
+
+The agent acts only through these tools. Every call is logged to a per-run JSONL ledger
+under `.context/osmogrep-runs/`.
+
+| Tool | What it does |
+| --- | --- |
+| `run_shell` | Run a shell command; stdout, stderr, exit code (guarded, timeout, cancellable) |
+| `run_tests` | Detect and run the project's tests; structured pass/fail counts |
+| `diagnostics` | Run lint/check and parse `file:line:col` issues |
+| `read_file` | Read with offset/limit and continuation offsets |
+| `write_file` / `edit_file` | Create or replace file content |
+| `patch` | Apply a unified diff or begin/end patch |
+| `notebook_edit` | Edit a Jupyter cell's source |
+| `search` / `regex_search` / `glob_files` / `list_dir` | Find things |
+| `find_definition` / `find_references` | Symbol-level navigation via the code index |
+| `git_diff` / `git_log` / `git_commit` | Repository history and staging |
+| `update_plan` | Durable multi-step plan at `.context/osmogrep-plan.json` |
+| `web_search` / `web_fetch` | Look things up online |
+| `dynamic_workflow` | Bounded fan-out research/audit workflow with a resumable ledger |
+| `worktree_swarm` | Four isolated worktree subagents: explore / edit / test / review |
+| `mcp_call` | Call a configured MCP server |
+
+**Tool scoping.** Osmogrep doesn't hand the model all 23 tools on every turn. It derives
+a scope from your prompt: web tools appear when you mention URLs or current docs,
+`git_commit` when you mention commits or PRs, `worktree_swarm` and `dynamic_workflow`
+for audits, parallel work, or a prompt ending in `ultracode`. Smaller toolset, better
+tool choice.
+
+**Parallel execution.** Consecutive read-only tool calls in a single model turn are
+detected and executed concurrently on scoped threads; anything that mutates state runs
+serially.
+
+**Output budgeting.** Tool results over ~100k characters are written to
+`.context/osmogrep-results/` and replaced in-context with a preview plus the file path,
+so one enormous log can't blow up the conversation.
+
+## Safety
+
+- **Permission profiles** — `read-only` (mutating tools removed from the schema
+  entirely), `workspace-auto` (default), `full-access`. Set with `/profile` or
+  `--permission-profile`.
+- **Approval prompts** — `run_shell`, `write_file`, and `edit_file` prompt before
+  executing unless `/approve` is on.
+- **Shell blocklist** — `rm -rf /`, `rm -rf ~`, `git reset --hard`, `git clean -fdx`,
+  `mkfs`, `dd of=/dev/…`, fork bombs, recursive chmod/chown on `/`, and host power
+  commands are refused before they run. Override with
+  `OSMOGREP_ALLOW_BLOCKED_SHELL=1` if you know what you're doing.
+- **Undo stack** — `/undo` reverts the last agent file change; `/diff` shows the whole
+  session.
+- **Timeouts and cancellation** — every child process runs under a timeout and is killed
+  on `Esc`.
+- **Secret masking** — headless JSON events mask API keys and secret-shaped strings.
+
+## Commands
+
+### CLI
+
+| Command | Description |
+| --- | --- |
+| `osmogrep` | Open the TUI in the current repository |
+| `osmogrep <session-name>` | Open the TUI and name/rename the session |
+| `osmogrep --session <name>` | Same, as a flag |
+| `osmogrep run --prompt "..."` | Run the agent headlessly |
+| `osmogrep run --prompt-file p.md` | Same, prompt from a file |
+| `osmogrep sessions` | List saved local sessions |
+| `osmogrep doctor` | Install/config/session diagnostics |
+| `osmogrep triage ...` | GitHub PR/issue triage (see below) |
+| `osmogrep version` | Print the installed version |
+| `osmogrep uninstall [--yes] [--dry-run]` | Remove the current binary |
+
+`run` flags: `--repo-root`, `--prompt`, `--prompt-file`, `--json-events`,
+`--permission-profile <read-only\|workspace-auto\|full-access>`, `--auto-approve`.
+
+### Slash commands
+
+| Command | Description |
+| --- | --- |
+| `/help` | Show available commands |
+| `/status` · `/usage` · `/metrics` | Session, run, model, repo status; tokens; queue metrics |
+| `/verify` | Verification status, last evidence, stale paths |
+| `/test [target]` | Run auto-detected tests, optionally targeted |
+| `/diff` · `/undo` | Session changes; revert the last one |
+| `/plan` · `/plan add` · `/plan done` · `/plan clear` · `/plan mode` | Durable plan; `mode` is read-only planning |
+| `/profile [read-only\|workspace-auto\|full-access]` | Show or set permission profile |
+| `/approve` | Toggle dangerous-tool auto-approve |
+| `/steer <text>` | Persistent instruction injected into runs (live-steers a running agent) |
+| `/jobs` · `/autofix on\|off` | Background jobs; auto-queue tests after each run |
+| `/swarm <task>` | Fan out explore/edit/test/review sub-agents |
+| `/model [provider model [base_url]]` · `/providers` · `/account` · `/key` | Model and credentials |
+| `/compact` · `/clear` · `/new` | Compress context; clear logs; fresh conversation |
+| `/triage [flags]` · `/gh [status\|prs\|issues\|triage]` | GitHub workflows |
+| `/mcp` | MCP status and servers |
+| `/voice [on\|off]` | Live voice input |
+| `/theme` · `/color` · `/type` | Dark/light, accent colour, UI density |
+| `/copy [all]` · `/rename <name>` | Copy last response or transcript; rename session |
+| `/nv [toggle\|help]` | Neovim + Osmogrep split in tmux (auto-bootstraps tmux) |
+| `/quit` · `/q` · `/exit` | Stop the running agent; exit |
+
+During a run, `Esc` cancels the agent rather than exiting the app.
+
+## Configuration
+
+### Repository instructions
+
+Osmogrep reads `.osmogrep.md`, `AGENTS.md`, `CLAUDE.md`, and `.cursorrules` from the
+repo root and appends them to the system prompt (32 KB budget, in that order). It also
+snapshots detected manifests and likely verify commands (`cargo test`, `pytest -q`,
+`pnpm run lint`, `make check`, …) into the prompt at run start.
+
+### `~/.config/osmogrep/config.toml`
+
+```toml
+[hooks]
+pre_shell = "echo running {cmd}"
+pre_edit  = "echo editing {path}"
+post_edit = "cargo check -q"
+
+[mcp]
+enabled = true
+default_server = "docs"
+
+[mcp.servers.docs]
+cmd = "node /path/to/your-mcp-bridge.js"
+timeout_ms = 30000
+```
+
+`mcp_call` passes `OSMOGREP_MCP_SERVER`, `OSMOGREP_MCP_METHOD`, and
+`OSMOGREP_MCP_ARGS` (JSON) to the server command.
+
+Sessions, undo checkpoints, and conversation state persist per-repo under
+`~/.config/osmogrep/sessions/`.
+
+### Environment variables
+
+| Variable | Purpose |
+| --- | --- |
+| `OPENAI_API_KEY` (or `GROQ_API_KEY`, `MISTRAL_API_KEY`, `OLLAMA_API_KEY`) | Provider credentials |
+| `OSMOGREP_PROVIDER` · `OSMOGREP_MODEL` · `OSMOGREP_BASE_URL` | Override model config |
+| `OSMOGREP_REASONING_EFFORT` | Reasoning effort for models that support it |
+| `OSMOGREP_MAX_ITERATIONS` | Agent loop cap |
+| `OSMOGREP_TEST_TIMEOUT_SECS` (300) · `OSMOGREP_SHELL_TIMEOUT_SECS` · `OSMOGREP_DIAGNOSTICS_TIMEOUT_SECS` · `OSMOGREP_GIT_TIMEOUT_SECS` · `OSMOGREP_PATCH_TIMEOUT_SECS` | Per-tool timeouts |
+| `OSMOGREP_TOOL_RESULT_LIMIT` (100000) · `OSMOGREP_TOOL_PREVIEW_LIMIT` (1500) | Output budgeting thresholds |
+| `OSMOGREP_WORKTREE_DIR` · `OSMOGREP_WORKTREE_AGENT_TIMEOUT_SECS` (900) | Worktree swarm |
+| `OSMOGREP_ALLOW_BLOCKED_SHELL` | Disable the shell blocklist |
+| `OSMOGREP_NO_STREAM` · `OSMOGREP_MOUSE` · `OSMOGREP_CLIPBOARD_OSC52` | UI/transport behaviour |
+| `OSMOGREP_DISABLE_UPDATE_CHECK` | Skip the update check on startup |
+
+## Models
+
+Any OpenAI-compatible `/responses` endpoint works. Built-in base URLs for `openai`,
+`groq`, and `ollama` (`http://127.0.0.1:11434/v1`); anything else via `--base_url`:
+
+```
+/model openai gpt-5
+/model ollama qwen2.5-coder:14b
+/model custom my-model https://my-gateway.internal/v1
+```
+
+Streaming is used where the provider supports it, with automatic fallback to blocking
+requests and retries.
+
+## GitHub triage
+
+Rank pull requests, detect duplicates via lexical + semantic token scoring, and flag
+scope drift against a `VISION.md`:
 
 ```bash
 osmogrep triage \
@@ -81,63 +318,26 @@ osmogrep triage \
   --out triage-report.json
 ```
 
-`GITHUB_TOKEN` is recommended for higher API limits.
-
-Apply triage actions (labels/comments) to GitHub:
+Apply labels and comments back to GitHub:
 
 ```bash
-osmogrep triage \
-  --repo owner/repo \
-  --state open \
-  --limit 3000 \
-  --incremental \
-  --vision ./VISION.md \
-  --comment-actions \
-  --apply-actions \
-  --action-limit 100 \
-  --out triage-report.json
+osmogrep triage --repo owner/repo --state open --incremental \
+  --vision ./VISION.md --comment-actions --apply-actions --action-limit 100
 ```
 
-Triage now supports:
-- Incremental runs via `--incremental` + `--state-file`
-- Duplicate detection with lexical + semantic token scoring
-- Optional action planning/execution (`label`, `comment`) with `--apply-actions`
+`GITHUB_TOKEN` is recommended for higher API limits. `/gh triage` inside the TUI uses
+high-volume defaults (`--state open --limit 3000 --deep-review-all --incremental`) and
+writes `.context/triage-report-<owner_repo>.json` plus a markdown brief.
 
-You interact with the agent directly:
+## Voice input
 
-* Ask it to inspect code
-* Search for symbols
-* Modify files
-* Run commands
-* Validate changes
-
-All actions are visible and reversible via Git.
-
-## Voice Input (vLLM Realtime + iPhone Mic)
-
-Osmogrep can accept **live voice input** via the vLLM realtime API and stream transcriptions directly into the input box.
-
-### Requirements
-
-* **GPU machine** capable of running vLLM
-* **vLLM** server with realtime support enabled
-* **iPhone** (or any browser mic) to capture audio
-* **ngrok** (or any HTTPS tunnel) for iOS mic access
-
-### vLLM Server
-
-Run vLLM with a realtime-capable model (example):
+Osmogrep can stream live transcriptions into the input box via a vLLM realtime endpoint.
+Requires a GPU host running vLLM, a browser mic (iPhone works), and an HTTPS tunnel —
+iOS requires HTTPS for `getUserMedia`.
 
 ```bash
-vllm serve mistralai/Voxtral-Mini-4B-Realtime-2602 \
-  --enable-realtime \
-  --host 0.0.0.0 \
-  --port 8000
+vllm serve mistralai/Voxtral-Mini-4B-Realtime-2602 --enable-realtime --host 0.0.0.0 --port 8000
 ```
-
-### Osmogrep Voice Proxy
-
-Osmogrep opens a websocket proxy on `7001` and forwards to vLLM:
 
 ```bash
 VLLM_REALTIME_PROXY_LISTEN=0.0.0.0:7001 \
@@ -147,131 +347,64 @@ VLLM_REALTIME_SILENCE_MS=1200 \
 osmogrep
 ```
 
-### Reverse Proxy (single HTTPS endpoint)
-
-Because iOS requires HTTPS for `getUserMedia`, run the local reverse proxy:
-
-```bash
-node tools/ws_reverse_proxy.js
-```
-
-This serves `mic.html` and proxies `/v1/realtime` to `localhost:7001`.
-
-### ngrok (HTTPS tunnel)
-
-Run a single tunnel to the reverse proxy:
+Osmogrep opens a websocket proxy on `7001` and forwards to vLLM. Because iOS requires
+HTTPS for `getUserMedia`, run the bundled reverse proxy — it serves the mic page on
+`8080` and proxies `/v1/realtime` to `7001`:
 
 ```bash
+MIC_HTML=/path/to/mic.html node tools/ws_reverse_proxy.js
 ngrok http 8080
 ```
 
-Open the HTTPS URL on iPhone:
+Open the HTTPS tunnel URL on your phone and speak. Live transcription appears above the
+input box; final sentences land in it — press Enter to send.
 
-```text
-https://<ngrok-url>/mic.html
+## What Osmogrep writes to your repo
+
+Everything lives under `.context/` — safe to gitignore:
+
+```
+.context/
+├── context.json                    # tree-sitter code index + call graph
+├── osmogrep-verification.jsonl     # verification evidence ledger
+├── osmogrep-plan.json              # durable multi-step plan
+├── osmogrep-runs/*.jsonl           # per-run tool/permission/status ledger
+├── osmogrep-results/*.txt          # oversized tool outputs
+└── osmogrep-workflows/*.json       # dynamic workflow ledgers
 ```
 
-### What You Get
+## Development
 
-* Live transcription shown above the input box
-* Final sentence **inserted directly into the input box**
-* Press **Enter** to send as a normal prompt
-
-## Commands
-
-Osmogrep supports a small, explicit set of **slash commands**.
-Anything else is sent directly to the agent.
-
-### CLI Commands
-
-| Command | Description |
-| ------- | ----------- |
-| `osmogrep` | Open the TUI in the current repository |
-| `osmogrep <session-name>` | Open the TUI and name/rename the current session |
-| `osmogrep --session <session-name>` | Same as positional session naming |
-| `osmogrep run --prompt "..."` | Run the coding agent headlessly |
-| `osmogrep sessions` | List saved local sessions |
-| `osmogrep doctor` | Print install/config/session diagnostics |
-| `osmogrep version` | Print the installed version |
-| `osmogrep uninstall` | Remove the current binary after confirmation |
-| `osmogrep uninstall --yes` | Remove the current binary without prompting |
-
-### Slash Commands
-
-| Command  | Description                      |
-| -------- | -------------------------------- |
-| `/help`  | Show available commands          |
-| `/clear` | Clear execution logs             |
-| `/key`   | Enter OpenAI API key mode        |
-| `/model` | Show/switch provider + model     |
-| `/test`  | Run auto-detected project tests  |
-| `/undo`  | Revert last agent file change    |
-| `/diff`  | Show session file changes        |
-| `/mcp`   | Show MCP status and servers      |
-| `/providers` | Show available model providers |
-| `/triage` | One-command PR/Issue triage workflow (streaming + markdown output) |
-| `/gh`    | GitHub CLI status + PR/Issue/Triage views |
-| `/new`   | Start a fresh conversation       |
-| `/approve` | Toggle dangerous tool auto-approve |
-| `/nv`    | Open Neovim + Osmogrep split in tmux |
-| `/quit`  | Stop the currently running agent |
-| `/q`     | Alias for `/quit`                |
-| `/exit`  | Exit Osmogrep                    |
-
-During agent execution:
-- `Esc` requests cancellation instead of exiting.
-- Dangerous tools (`run_shell`, `write_file`, `edit_file`) prompt for approval unless `/approve` is enabled.
-- `/model <provider> <model> [base_url]` switches runtime model config.
-- `/test <target>` runs targeted tests (e.g. `cargo test foo`, `pytest tests/test_x.py`).
-- Session state and undo checkpoints are persisted per-repo under `~/.config/osmogrep/sessions/`.
-
-`/gh triage` defaults are tuned for high-volume repos:
-- `--state open --limit 3000 --deep-review-all --incremental`
-- auto state file: `.context/triage-state-<owner_repo>.json`
-- auto report outputs:
-  - `.context/triage-report-<owner_repo>.json`
-  - `.context/triage-brief-<owner_repo>.md`
-- auto `--vision ./VISION.md` when `VISION.md` exists at repo root
-
-Agent toolset now also includes:
-`run_tests`, `list_dir`, `git_diff`, `git_log`, `regex_search`, `web_fetch`,
-`find_definition`, `find_references`, `git_commit`, `patch`, `notebook_edit`,
-`web_search`, `diagnostics`, `mcp_call`.
-
-`/nv` notes:
-- If not already inside tmux, Osmogrep bootstraps a tmux session automatically.
-- Left pane runs `nvim`; right pane runs Osmogrep.
-- Managed Neovim UX is auto-installed by `install.sh` (theme, tree, icons, treesitter, LSP setup).
-- `/nv toggle` hides/shows the nvim pane in the current tmux window.
-- Exit helpers: `/nv help` (shows `:q`, `:wq`, `:qa!`, pane navigation, tmux detach).
-
-Repository-specific behavior can be guided with `.osmogrep.md` at repo root.
-
-Hooks can be configured in `~/.config/osmogrep/config.toml`:
-
-```toml
-[hooks]
-pre_shell = "echo running {cmd}"
-pre_edit = "echo editing {path}"
-post_edit = "cargo check -q"
+```bash
+git clone https://github.com/kaushal07wick/OsmoGrep
+cd OsmoGrep
+cargo test
+cargo clippy --all-targets -- -D warnings
+cargo run
 ```
 
-MCP scaffold can also be configured in the same file:
+CI runs the test suite on Linux, macOS, and Windows.
 
-```toml
-[mcp]
-enabled = true
-default_server = "docs"
+Layout:
 
-[mcp.servers.docs]
-cmd = "node /path/to/your-mcp-bridge.js"
-timeout_ms = 30000
-```
+| Path | Role |
+| --- | --- |
+| `src/agent.rs` | Model loop, streaming, tool dispatch, event emission |
+| `src/tools/` | Tool implementations and scoping/registry |
+| `src/verification.rs` · `src/verify_stop.rs` | Evidence ledger and stop-guard |
+| `src/tool_guard.rs` · `src/shell_guard.rs` · `src/tool_budget.rs` | Loop, shell, and output guards |
+| `src/test_harness.rs` | Framework detection and result parsing |
+| `src/worktree.rs` | Isolated worktree subagents |
+| `src/context/indexer.rs` | tree-sitter index and call graph |
+| `src/triage.rs` | GitHub PR/issue triage |
+| `src/ui/` | ratatui terminal interface |
 
-The agent tool `mcp_call` passes:
-- `OSMOGREP_MCP_SERVER`
-- `OSMOGREP_MCP_METHOD`
-- `OSMOGREP_MCP_ARGS` (JSON)
+## Contributing
+
+Issues and pull requests welcome. Please keep changes focused, add a test for
+non-trivial logic, and make sure `cargo test` and `cargo clippy` are clean before
+opening a PR.
 
 ## License
-[MIT License](LICENSE).
+
+[MIT](LICENSE).
