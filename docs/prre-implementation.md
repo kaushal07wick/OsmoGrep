@@ -307,3 +307,22 @@ does **not** validate the Rust `predict --verify` normalized adapter, which is
 still unconfigured, nor hosted E2B/GitHub delivery, general detection accuracy or
 production operation. The earlier outside-folder rejection is retained above as
 an accurate record of the initial attempt, not the current VM validation status.
+
+## Centered terminal layout — 2026-11-14
+
+Replaced the edge-to-edge layout with one centered column capped at 112 terminal
+cells. The empty welcome and prompt form a vertically centered group. Active
+conversations keep a compact header and a bottom prompt within the same column.
+Removed the oversized ASCII banner, light command cards and duplicate displayed
+shell labels. Original stored log entries and execution behavior are unchanged.
+Input dividers follow the existing theme, and footer details adapt to available
+width while keeping a gap before keyboard hints. Command menus stay in bounds.
+
+The full suite passed **167 tests**. Layout checks cover idle/active placement,
+single shell entries, cursor and popup bounds at terminal sizes from 1×1 through
+240×80, plus existing Unicode wrapping checks. Actual cell-buffer previews were
+rendered and inspected. The optimized release was installed atomically and
+passed the Mac PTY lifecycle, terminal restoration, local provider/tool and MCP
+acceptance checks. Current installed SHA-256:
+`f791f286d53f83c70227216c2df7cb729f441f7df105134c4de48d64ca1e590b`.
+No live model or VM reruns were needed for this presentation-only change.

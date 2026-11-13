@@ -1,63 +1,4 @@
-use ratatui::{
-    style::{Color, Style},
-    text::{Line, Span},
-};
 use std::{process::Command, time::Instant};
-
-const FG_MAIN: Color = Color::Rgb(220, 220, 220);
-pub fn render_static_command_line(text: &str, term_width: usize) -> Vec<Line<'static>> {
-    // visual tuning knobs
-    let max_fraction = 0.55; // never exceed 55% of terminal width
-    let side_padding = 2; // spaces on left + right inside the box
-    let outer_margin = 2; // visual breathing room
-
-    let max_width = (term_width as f32 * max_fraction) as usize;
-    let desired_width = text.chars().count() + side_padding * 2 + outer_margin * 2;
-
-    let box_width = desired_width.min(max_width).min(term_width).max(10); // sanity floor
-
-    let inner_width = box_width.saturating_sub(side_padding * 2 + outer_margin * 2);
-
-    let mut content = text.to_string();
-    if content.chars().count() > inner_width {
-        content = content
-            .chars()
-            .take(inner_width.saturating_sub(1))
-            .collect();
-        content.push('…');
-    }
-
-    let line = format!(
-        "{}{: <inner_width$}{}",
-        " ".repeat(side_padding),
-        content,
-        " ".repeat(side_padding),
-    );
-
-    let full_line = format!(
-        "{}{}{}",
-        " ".repeat(outer_margin),
-        line,
-        " ".repeat(outer_margin),
-    );
-
-    let line_len = full_line.chars().count();
-
-    vec![
-        Line::from(Span::styled(
-            " ".repeat(line_len),
-            Style::default().bg(FG_MAIN),
-        )),
-        Line::from(Span::styled(
-            full_line,
-            Style::default().fg(Color::Black).bg(FG_MAIN),
-        )),
-        Line::from(Span::styled(
-            " ".repeat(line_len),
-            Style::default().bg(FG_MAIN),
-        )),
-    ]
-}
 
 pub fn running_pulse(start: Option<Instant>) -> Option<String> {
     let start = start?;
@@ -104,7 +45,7 @@ pub fn calculate_input_lines(input: &str, width: usize, prompt_len: usize) -> us
 
 #[cfg(test)]
 mod tests {
-    use super::{calculate_input_lines, render_static_command_line};
+    use super::calculate_input_lines;
 
     #[test]
     fn calculate_input_lines_counts_multibyte_chars_not_bytes() {
@@ -112,18 +53,5 @@ mod tests {
 
         assert_eq!(calculate_input_lines(&masked, 80, 3), 1);
         assert_eq!(calculate_input_lines(&masked, 28, 3), 2);
-    }
-
-    #[test]
-    fn render_static_command_line_truncates_multibyte_text_safely() {
-        let masked = "•".repeat(80);
-        let lines = render_static_command_line(&masked, 40);
-        let rendered = lines
-            .iter()
-            .flat_map(|line| line.spans.iter())
-            .map(|span| span.content.as_ref())
-            .collect::<String>();
-
-        assert!(rendered.contains('…'));
     }
 }

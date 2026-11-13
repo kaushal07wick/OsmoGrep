@@ -11,7 +11,7 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthChar;
 
-use crate::ui::helper::{calculate_input_lines, render_static_command_line, running_pulse};
+use crate::ui::helper::{calculate_input_lines, running_pulse};
 use crate::{
     logger::parse_user_input_log,
     state::{
@@ -24,13 +24,7 @@ const FG_DIM: Color = Color::Rgb(170, 170, 170);
 const FG_MUTED: Color = Color::Rgb(120, 120, 120);
 const ACCENT_ORANGE: Color = Color::Rgb(255, 165, 80);
 const PROMPT: &str = ">_ ";
-const LOGO: [&str; 5] = [
-    " ██████  ███████ ███    ███  ██████   ██████  ██████  ███████ ██████  ",
-    "██    ██ ██      ████  ████ ██    ██ ██       ██   ██ ██      ██   ██ ",
-    "██    ██ ███████ ██ ████ ██ ██    ██ ██   ███ ██████  █████   ██████  ",
-    "██    ██      ██ ██  ██  ██ ██    ██ ██    ██ ██   ██ ██      ██      ",
-    " ██████  ███████ ██      ██  ██████   ██████  ██   ██ ███████ ██      ",
-];
+const CONTENT_WIDTH: u16 = 112;
 
 #[derive(Clone, Copy)]
 struct UiPalette {
@@ -86,23 +80,30 @@ fn top_padding(state: &AgentState) -> u16 {
     }
 }
 
-fn logo_header_enabled(state: &AgentState, available_height: u16, available_width: u16) -> bool {
-    logo_header_enabled_for_density(state.density, available_height, available_width)
-}
-
-fn logo_header_enabled_for_density(
-    density: UiDensity,
-    available_height: u16,
-    available_width: u16,
-) -> bool {
-    !matches!(density, UiDensity::Compact) && available_height >= 20 && available_width >= 76
-}
-
-fn header_height(state: &AgentState, available_height: u16, available_width: u16) -> u16 {
-    if logo_header_enabled(state, available_height, available_width) {
-        return LOGO.len() as u16 + 3;
+fn centered_content(area: Rect) -> Rect {
+    let gutter = if area.width >= 60 { 2 } else { 1 };
+    let width = area.width.saturating_sub(gutter * 2).min(CONTENT_WIDTH);
+    Rect {
+        x: area.x + (area.width - width) / 2,
+        width,
+        ..area
     }
+}
 
+fn welcome_screen(state: &AgentState) -> bool {
+    state.logs.iter().next().is_none()
+        && !state.ui.agent_running
+        && !state.ui.diff_active
+        && state.plan_items.is_empty()
+        && state.ui.pending_permission.is_none()
+        && state.ui.pending_update.is_none()
+        && !(state.voice.visible || state.voice.enabled || state.voice.connected)
+}
+
+fn header_height(state: &AgentState, available_height: u16) -> u16 {
+    if welcome_screen(state) && available_height >= 14 {
+        return 5;
+    }
     match state.density {
         UiDensity::Compact => 2,
         UiDensity::Standard if available_height < 24 => 2,
@@ -112,7 +113,7 @@ fn header_height(state: &AgentState, available_height: u16, available_width: u16
     }
 }
 
-/// master ui
+/// All panels share one readable column, including cursor and popup coordinates.
 pub fn draw_ui<B: Backend>(
     terminal: &mut Terminal<B>,
     state: &AgentState,
@@ -120,135 +121,76 @@ pub fn draw_ui<B: Backend>(
     let mut input_rect = Rect::default();
     let mut exec_rect = Rect::default();
     let mut hint_rect = Rect::default();
-    let mut voice_rect = Rect::default();
-    let mut running_rect = Rect::default();
 
     terminal.draw(|f| {
         let area = f.size();
-        let top_padding = top_padding(state);
-
-        let padded_area = Rect {
-            x: area.x,
-            y: area.y + top_padding,
-            width: area.width,
-            height: area.height.saturating_sub(top_padding),
-        };
-
-        let header_height = header_height(state, padded_area.height, padded_area.width);
-        let status_height = 1;
-
-        let input_width = padded_area.width.saturating_sub(4) as usize;
-        let input_lines = calculate_input_lines(&state.ui.input, input_width, PROMPT.len());
-
-        let max_content_lines = 3;
-        let visible_lines = input_lines.min(max_content_lines);
-        let cmd_height = (visible_lines + 2) as u16;
-
-        let header_rect = Rect {
-            x: padded_area.x,
-            y: padded_area.y,
-            width: padded_area.width,
-            height: header_height,
-        };
-
-        let status_rect = Rect {
-            x: padded_area.x,
-            y: padded_area.y + padded_area.height - status_height,
-            width: padded_area.width,
-            height: status_height,
-        };
-
-        let cmd_rect = Rect {
-            x: padded_area.x,
-            y: status_rect.y.saturating_sub(cmd_height),
-            width: padded_area.width,
-            height: cmd_height,
-        };
-
+        let mut content = centered_content(area);
+        let padding = top_padding(state).min(content.height / 2);
+        content.y += padding;
+        content.height = content.height.saturating_sub(padding * 2);
+        let header_height = header_height(state, content.height);
+        let input_lines =
+            calculate_input_lines(&state.ui.input, content.width as usize, PROMPT.len());
+        let cmd_height = (input_lines.min(3) + 2) as u16;
+        if welcome_screen(state) && content.height >= 14 {
+            let height = header_height + cmd_height + 1;
+            content.y += content.height.saturating_sub(height) / 2;
+            content.height = height;
+        }
         let show_voice = state.voice.visible || state.voice.enabled || state.voice.connected;
-        if show_voice {
-            let voice_text = voice_bar_text(state);
-            let voice_lines = calculate_input_lines(&voice_text, padded_area.width as usize, 0);
-            let available = cmd_rect
-                .y
-                .saturating_sub(header_rect.y + header_rect.height);
-            let max_voice = available.max(1) as usize;
-            let voice_height = voice_lines.clamp(1, max_voice) as u16;
-            voice_rect = Rect {
-                x: padded_area.x,
-                y: cmd_rect.y.saturating_sub(voice_height),
-                width: padded_area.width,
-                height: voice_height,
-            };
-        } else {
-            voice_rect = Rect {
-                x: padded_area.x,
-                y: cmd_rect.y,
-                width: padded_area.width,
-                height: 0,
-            };
-        }
-
-        let mut exec_rect_calc = Rect {
-            x: padded_area.x,
-            y: header_rect.y + header_rect.height,
-            width: padded_area.width,
-            height: voice_rect
-                .y
-                .saturating_sub(header_rect.y + header_rect.height),
-        };
-        if state.ui.agent_running && exec_rect_calc.height > 1 {
-            running_rect = Rect {
-                x: exec_rect_calc.x,
-                y: exec_rect_calc.y + exec_rect_calc.height - 1,
-                width: exec_rect_calc.width,
-                height: 1,
-            };
-            exec_rect_calc.height = exec_rect_calc.height.saturating_sub(1);
-        } else {
-            running_rect = Rect {
-                x: exec_rect_calc.x,
-                y: exec_rect_calc.y + exec_rect_calc.height,
-                width: exec_rect_calc.width,
-                height: 0,
-            };
-        }
-
-        let palette_active = !state.ui.command_items.is_empty();
-        let palette_height = if palette_active {
-            (state.ui.command_items.len().min(10) as u16) + 2
+        let voice_height = if show_voice {
+            calculate_input_lines(&voice_bar_text(state), content.width as usize, 0).min(
+                content
+                    .height
+                    .saturating_sub(header_height + cmd_height + 1) as usize,
+            ) as u16
         } else {
             0
         };
-
-        if palette_height > 0 {
-            let palette_width = padded_area.width.saturating_sub(6).min(72).max(44);
-
-            let palette_x = cmd_rect.x + PROMPT.len() as u16 + 2; // align with text start
-
-            let palette_y = cmd_rect.y.saturating_sub(palette_height + 1);
-
-            hint_rect = Rect {
-                x: palette_x,
-                y: palette_y,
-                width: palette_width,
-                height: palette_height,
-            };
+        let panels = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(header_height),
+                Constraint::Min(0),
+                Constraint::Length(voice_height),
+                Constraint::Length(cmd_height),
+                Constraint::Length(1),
+            ])
+            .split(content);
+        let header_rect = panels[0];
+        let mut execution = panels[1];
+        let mut running = Rect {
+            y: execution.bottom(),
+            height: 0,
+            ..execution
+        };
+        if state.ui.agent_running && execution.height > 1 {
+            execution.height -= 1;
+            running.y = execution.bottom();
+            running.height = 1;
         }
+        input_rect = panels[3];
+        exec_rect = execution;
 
         render_header(f, header_rect, state);
-        render_execution(f, exec_rect_calc, state);
-        render_running_badge(f, running_rect, state);
-        render_voice_bar(f, voice_rect, state);
-        render_input_box(f, cmd_rect, state);
-        render_status_bar(f, status_rect, state);
+        render_execution(f, execution, state);
+        render_running_badge(f, running, state);
+        render_voice_bar(f, panels[2], state);
+        render_input_box(f, input_rect, state);
+        render_status_bar(f, panels[4], state);
 
-        if palette_height > 0 {
+        if !state.ui.command_items.is_empty() {
+            let height = ((state.ui.command_items.len().min(10) + 2) as u16)
+                .min(input_rect.y.saturating_sub(area.y + 1));
+            let x = (input_rect.x + PROMPT.len() as u16).min(content.right());
+            hint_rect = Rect {
+                x,
+                y: input_rect.y.saturating_sub(height + 1),
+                width: content.right().saturating_sub(x).min(72),
+                height,
+            };
             render_command_palette(f, hint_rect, state);
         }
-
-        exec_rect = exec_rect_calc;
-        input_rect = cmd_rect;
     })?;
 
     Ok((input_rect, hint_rect, exec_rect))
@@ -306,7 +248,7 @@ fn render_header(f: &mut Frame, area: Rect, state: &AgentState) {
         .map(|name| format!(" · {}", truncate_for_badge(name, 24)))
         .unwrap_or_default();
 
-    let mut status_line = Line::from(vec![
+    let status_line = Line::from(vec![
         Span::styled(
             "osmogrep",
             Style::default().fg(p.accent).add_modifier(Modifier::BOLD),
@@ -326,6 +268,15 @@ fn render_header(f: &mut Frame, area: Rect, state: &AgentState) {
         Span::styled(version, Style::default().fg(p.fg_muted)),
     ]);
 
+    let repo_display = if welcome_screen(state) {
+        state
+            .repo_root
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or(repo_display)
+    } else {
+        repo_display
+    };
     let mut repo_line = Line::from(vec![
         Span::styled(repo_display, Style::default().fg(p.fg_dim)),
         Span::styled(" · ", Style::default().fg(p.fg_muted)),
@@ -345,33 +296,33 @@ fn render_header(f: &mut Frame, area: Rect, state: &AgentState) {
             .push(Span::styled(" · indexed ✓", Style::default().fg(p.fg_dim)));
     }
 
-    let mut lines = Vec::new();
-    if area.height >= LOGO.len() as u16 + 3 && area.width >= 76 {
-        lines.extend(LOGO.iter().map(|line| {
+    let lines = if welcome_screen(state) && area.height >= 5 {
+        vec![
+            Line::from(vec![
+                Span::styled(
+                    "osmogrep",
+                    Style::default().fg(p.accent).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(format!("  v{version}"), Style::default().fg(p.fg_muted)),
+            ])
+            .alignment(Alignment::Center),
+            Line::default(),
             Line::from(Span::styled(
-                *line,
-                Style::default().fg(p.accent).add_modifier(Modifier::BOLD),
+                "What are we working on?",
+                Style::default().fg(p.fg_main).add_modifier(Modifier::BOLD),
             ))
-        }));
-        status_line.alignment = Some(Alignment::Center);
-        repo_line.alignment = Some(Alignment::Center);
-        lines.push(status_line);
-        lines.push(repo_line);
+            .alignment(Alignment::Center),
+            repo_line.alignment(Alignment::Center),
+            Line::from(Span::styled(
+                "/help commands  ·  ! shell",
+                Style::default().fg(p.fg_dim),
+            ))
+            .alignment(Alignment::Center),
+        ]
     } else {
-        lines.push(status_line);
-        lines.push(repo_line);
-    }
-
-    if lines.len() < area.height as usize {
-        lines.push(Line::from(Span::styled(
-            "Type a task, /help for commands, !<cmd> for shell, Esc to cancel/quit.",
-            Style::default()
-                .fg(p.fg_muted)
-                .add_modifier(Modifier::ITALIC),
-        )));
-    }
-
-    f.render_widget(Paragraph::new(lines).alignment(Alignment::Left), area);
+        vec![status_line, repo_line]
+    };
+    f.render_widget(Paragraph::new(lines), area);
 }
 
 /// main panel
@@ -392,12 +343,47 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
 
     let mut md = crate::ui::markdown::Markdown::new();
 
-    for log in state.logs.iter() {
+    let mut logs = state.logs.iter().peekable();
+    while let Some(log) = logs.next() {
         let level = log.level;
         let fresh = log.at.elapsed().as_secs() <= 2;
         let text = log.text.as_str();
         if let Some(input) = parse_user_input_log(text) {
-            lines.extend(render_static_command_line(input, padded.width as usize));
+            let shell = logs
+                .peek()
+                .and_then(|next| next.text.strip_prefix("SHELL : $ "))
+                == Some(input);
+            if shell {
+                logs.next();
+            }
+            lines.push(Line::default());
+            for (index, line) in input.split('\n').enumerate() {
+                let prefix = if index > 0 {
+                    "  "
+                } else if shell {
+                    "$ "
+                } else {
+                    "› "
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        prefix,
+                        Style::default().fg(p.accent).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        line.to_owned(),
+                        Style::default().fg(p.fg_main).add_modifier(Modifier::BOLD),
+                    ),
+                ]));
+            }
+            lines.push(Line::default());
+            continue;
+        }
+        if let Some(command) = text.strip_prefix("SHELL : $ ") {
+            lines.push(Line::from(vec![
+                Span::styled("$ ", Style::default().fg(p.accent)),
+                Span::styled(command.to_owned(), Style::default().fg(p.fg_main)),
+            ]));
             continue;
         }
 
@@ -805,7 +791,7 @@ fn render_voice_bar(f: &mut Frame, area: Rect, state: &AgentState) {
 
 /// input box ui
 fn render_input_box(f: &mut Frame, area: Rect, state: &AgentState) {
-    if area.height < 3 {
+    if area.height < 3 || area.width == 0 {
         return;
     }
     let p = palette(state);
@@ -844,7 +830,10 @@ fn render_input_box(f: &mut Frame, area: Rect, state: &AgentState) {
     let mut out = Vec::new();
 
     // Top border
-    out.push(Line::from("─".repeat(inner_width)));
+    out.push(Line::from(Span::styled(
+        "─".repeat(inner_width),
+        Style::default().fg(p.border),
+    )));
 
     // Show visible lines
     let mut image_idx = 1usize;
@@ -857,7 +846,13 @@ fn render_input_box(f: &mut Frame, area: Rect, state: &AgentState) {
         let visual_index = visual_start + offset;
         if visual_index == 0 {
             // First line with prompt
-            let mut spans = vec![Span::styled(PROMPT, Style::default().fg(p.input_fg))];
+            let mut spans = vec![Span::styled(PROMPT, Style::default().fg(p.accent))];
+            if raw.is_empty() && !matches!(state.ui.input_mode, InputMode::ApiKey) {
+                spans.push(Span::styled(
+                    "Ask a question or describe a change…",
+                    Style::default().fg(p.fg_muted),
+                ));
+            }
             let mut input_spans =
                 render_image_alias_spans(line, &mut image_idx, p.accent, p.input_fg);
             style_selected_input(&mut input_spans, selected, p);
@@ -882,7 +877,10 @@ fn render_input_box(f: &mut Frame, area: Rect, state: &AgentState) {
     }
 
     // Bottom border
-    out.push(Line::from("─".repeat(inner_width)));
+    out.push(Line::from(Span::styled(
+        "─".repeat(inner_width),
+        Style::default().fg(p.border),
+    )));
 
     f.render_widget(Paragraph::new(out), area);
 
@@ -1081,37 +1079,13 @@ fn render_status_bar(f: &mut Frame, area: Rect, state: &AgentState) {
         "voice off"
     };
 
-    let input_label = if state.voice.enabled { "voice" } else { "text" };
-
-    let run_label = if state.ui.agent_running {
-        "running"
-    } else {
-        "idle"
-    };
     let total_tokens = state.usage.prompt_tokens + state.usage.completion_tokens;
     let est_cost = ((state.usage.prompt_tokens as f64) * 0.0000025)
         + ((state.usage.completion_tokens as f64) * 0.0000100);
-    let usage_label = format!(
-        "tokens {} ctx {} ${:.4}",
-        total_tokens, state.conversation.token_estimate, est_cost
-    );
-
-    let mut left = vec![
-        Span::styled(input_label, Style::default().fg(p.fg_dim)),
-        Span::styled(
-            format!(" · {run_label}"),
-            Style::default().fg(if state.ui.agent_running {
-                p.accent
-            } else {
-                p.fg_main
-            }),
-        ),
-        Span::styled(format!(" · {usage_label}"), Style::default().fg(p.fg_muted)),
-        Span::styled(
-            format!(" · {}", state.permission_profile.as_str()),
-            Style::default().fg(p.fg_dim),
-        ),
-    ];
+    let mut left = vec![Span::styled(
+        state.permission_profile.as_str(),
+        Style::default().fg(p.fg_dim),
+    )];
     if state.plan_mode {
         left.push(Span::styled(" · plan mode", Style::default().fg(p.accent)));
     }
@@ -1134,18 +1108,36 @@ fn render_status_bar(f: &mut Frame, area: Rect, state: &AgentState) {
         ));
     }
 
+    let usage = if area.width >= 96 {
+        format!(
+            " · tokens {total_tokens} · ctx {} · ~${est_cost:.4}",
+            state.conversation.token_estimate
+        )
+    } else if area.width >= 72 {
+        format!(" · {total_tokens} tokens")
+    } else {
+        String::new()
+    };
+    left.push(Span::styled(usage, Style::default().fg(p.fg_muted)));
+
     let esc_action = if state.ui.agent_running {
         " cancel  "
     } else {
         " quit  "
     };
 
-    let right = vec![
-        Span::styled("[esc]", Style::default().fg(p.fg_main)),
-        Span::styled(esc_action, Style::default().fg(p.fg_muted)),
-        Span::styled("[enter]", Style::default().fg(p.fg_main)),
-        Span::styled(" run", Style::default().fg(p.fg_muted)),
-    ];
+    let right = if area.width < 32 {
+        Vec::new()
+    } else if area.width < 72 {
+        vec![Span::styled("esc / enter", Style::default().fg(p.fg_dim))]
+    } else {
+        vec![
+            Span::styled("[esc]", Style::default().fg(p.fg_main)),
+            Span::styled(esc_action, Style::default().fg(p.fg_muted)),
+            Span::styled("[enter]", Style::default().fg(p.fg_main)),
+            Span::styled(" run", Style::default().fg(p.fg_muted)),
+        ]
+    };
 
     let rw: u16 = right.iter().map(|s| s.content.len() as u16).sum();
     let right_width = rw.min(area.width);
@@ -1158,7 +1150,7 @@ fn render_status_bar(f: &mut Frame, area: Rect, state: &AgentState) {
     let left_rect = Rect {
         x: area.x,
         y: area.y,
-        width: area.width.saturating_sub(right_width),
+        width: area.width.saturating_sub(right_width + 2),
         height: area.height,
     };
 
@@ -1233,11 +1225,16 @@ pub fn render_command_palette(f: &mut Frame, area: Rect, state: &AgentState) {
 #[cfg(test)]
 mod tests {
     use super::{
-        clamp_scroll_offset, input_cursor_visual_position, logo_header_enabled_for_density,
-        pending_update_prompt, render_plan_lines_for_items, update_status_label, wrap_lines_safely,
-        wrap_visual_lines, UiPalette, LOGO,
+        centered_content, clamp_scroll_offset, draw_ui, header_height,
+        input_cursor_visual_position, pending_update_prompt, render_plan_lines_for_items,
+        update_status_label, wrap_lines_safely, wrap_visual_lines, UiPalette, CONTENT_WIDTH,
     };
     use crate::state::{PendingUpdate, PlanItem, UiDensity};
+    use ratatui::{
+        backend::{Backend, TestBackend},
+        layout::Rect,
+        Terminal,
+    };
     use ratatui::{style::Color, text::Line};
 
     #[test]
@@ -1291,22 +1288,94 @@ mod tests {
     }
 
     #[test]
-    fn standard_header_reserves_space_for_ascii_logo() {
-        assert!(logo_header_enabled_for_density(
-            UiDensity::Standard,
-            32,
-            120
-        ));
-        assert_eq!(LOGO.len() as u16 + 3, 8);
+    fn layout_centers_a_readable_column_and_fills_narrow_terminals() {
+        assert_eq!(
+            centered_content(Rect::new(0, 0, 180, 50)),
+            Rect::new(34, 0, CONTENT_WIDTH, 50)
+        );
+        assert_eq!(
+            centered_content(Rect::new(0, 0, 40, 20)),
+            Rect::new(1, 0, 38, 20)
+        );
     }
 
     #[test]
-    fn compact_header_keeps_minimal_height() {
-        assert!(!logo_header_enabled_for_density(
-            UiDensity::Compact,
-            32,
-            120
-        ));
+    fn idle_prompt_sits_with_the_welcome_text_and_active_prompt_anchors_below_output() {
+        let mut state = crate::init_state();
+        let mut terminal = Terminal::new(TestBackend::new(180, 50)).unwrap();
+        let (idle, _, _) = draw_ui(&mut terminal, &state).unwrap();
+        save_preview(&terminal, "welcome");
+        assert!((20..30).contains(&idle.y));
+        assert_eq!(idle.x, 34);
+        state
+            .logs
+            .push(crate::state::LogLevel::Info, "A conversation has started.");
+        let (active, _, execution) = draw_ui(&mut terminal, &state).unwrap();
+        assert!(active.y > 40);
+        assert_eq!(active.x, execution.x);
+        assert_eq!(active.width, CONTENT_WIDTH);
+        assert_eq!(execution.width, active.width);
+        state.density = UiDensity::Compact;
+        assert_eq!(header_height(&state, 50), 2);
+    }
+
+    #[test]
+    fn shell_history_has_one_themed_command_and_no_light_cards() {
+        let mut state = crate::init_state();
+        crate::logger::log_user_input(&mut state, "ls -al");
+        state
+            .logs
+            .push(crate::state::LogLevel::Info, "SHELL : $ ls -al");
+        state
+            .logs
+            .push(crate::state::LogLevel::Info, "src  Cargo.toml");
+        let mut terminal = Terminal::new(TestBackend::new(160, 40)).unwrap();
+        draw_ui(&mut terminal, &state).unwrap();
+        let buffer = terminal.backend().buffer();
+        save_preview(&terminal, "shell");
+        let rows: Vec<String> = (0..40)
+            .map(|y| (0..160).map(|x| buffer.get(x, y).symbol()).collect())
+            .collect();
+        assert_eq!(
+            rows.iter().filter(|line| line.contains("ls -al")).count(),
+            1
+        );
+        assert!(!rows.iter().any(|line| line.contains("SHELL :")));
+        assert!(rows.iter().any(|line| line.contains("$ ls -al")));
+        assert!(buffer
+            .content
+            .iter()
+            .all(|cell| cell.bg != Color::Rgb(220, 220, 220)));
+    }
+
+    #[test]
+    fn rendering_and_popups_stay_inside_small_and_wide_terminals() {
+        for (width, height) in [(1, 1), (20, 5), (40, 12), (80, 24), (160, 50), (240, 80)] {
+            let mut state = crate::init_state();
+            state.ui.input = "/h".into();
+            state.ui.input_cursor = 2;
+            state.ui.command_items = vec![
+                crate::state::CommandItem {
+                    cmd: "/help",
+                    desc: "Show commands"
+                };
+                10
+            ];
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            let (input, hint, output) = draw_ui(&mut terminal, &state).unwrap();
+            if width == 80 {
+                save_preview(&terminal, "narrow-palette");
+            }
+            for rect in [input, hint, output] {
+                assert!(rect.right() <= width, "{width}x{height}: {rect:?}");
+                assert!(rect.bottom() <= height, "{width}x{height}: {rect:?}");
+            }
+            if input.height >= 3 && input.width > 0 {
+                let (x, y) = terminal.backend_mut().get_cursor().unwrap();
+                assert!(x >= input.x && x < input.right());
+                assert!(y >= input.y && y < input.bottom());
+            }
+        }
     }
 
     #[test]
@@ -1376,6 +1445,19 @@ mod tests {
             input_fg: Color::White,
             border: Color::Gray,
         }
+    }
+
+    fn save_preview(terminal: &Terminal<TestBackend>, name: &str) {
+        let Ok(directory) = std::env::var("OSMOGREP_TUI_PREVIEW_DIR") else {
+            return;
+        };
+        let buffer = terminal.backend().buffer();
+        let cells = buffer.content.iter().map(|cell| serde_json::json!({
+            "text":cell.symbol(), "fg":format!("{:?}",cell.fg), "bg":format!("{:?}",cell.bg),
+        })).collect::<Vec<_>>();
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(std::path::Path::new(&directory).join(format!("{name}.json")),
+            serde_json::to_vec(&serde_json::json!({"width":buffer.area.width,"height":buffer.area.height,"cells":cells})).unwrap()).unwrap();
     }
 
     fn plain_text(line: &Line<'_>) -> String {
