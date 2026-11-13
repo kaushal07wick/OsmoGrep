@@ -172,12 +172,31 @@ export function render(v: View): Rendered {
     }
   }
   if (v.commands.length) {
-    const count = Math.min(10, v.commands.length, Math.max(0, composerY - execution.y - 2));
-    const first = Math.max(0, v.selectedCommand - count + 1);
+    const bottom = composerY - (status ? 2 : 1);
+    const available = Math.max(0, bottom - execution.y), chrome = available >= 5 ? 3 : 0;
+    const count = Math.min(6, v.commands.length, Math.max(0, available - chrome));
+    const selected = Math.max(0, Math.min(v.commands.length - 1, v.selectedCommand));
+    const first = Math.max(0, Math.min(selected - Math.floor(count / 2), v.commands.length - count));
+    const menuWidth = Math.max(1, Math.min(86, width - pad * 2)), menuY = bottom - count - chrome;
+    const surface = light ? '\x1b[48;2;240;240;240m' : '\x1b[48;2;22;22;22m';
+    const highlight = light ? '\x1b[48;2;222;222;222m' : '\x1b[48;2;42;42;42m';
+    const paint = (y: number, text: string, selected = false) => {
+      const line = clip(text, menuWidth);
+      put(y, (selected ? highlight : surface) + line + ' '.repeat(Math.max(0, menuWidth - visibleWidth(line))) + reset, gutter + pad, menuWidth);
+    };
+    if (count && chrome) {
+      const title = '  Commands', position = `${selected + 1} / ${v.commands.length}  `;
+      paint(menuY, dim + (menuWidth >= 28 ? title + ' '.repeat(Math.max(1, menuWidth - title.length - position.length)) + position : title));
+      paint(menuY + 1, '');
+      paint(bottom - 1, dim + '  ↑↓ navigate · enter run · esc close');
+    }
+    const commandWidth = Math.min(26, Math.floor(menuWidth * .4), Math.max(...v.commands.map(item => visibleWidth(clean(item.cmd)))));
     for (let i = 0; i < count; i++) {
-      const index = first + i, item = v.commands[index]!;
-      const text = clean(item.cmd).padEnd(18) + clean(item.desc);
-      put(composerY - count - 1 + i, (index === v.selectedCommand ? '\x1b[7m' : dim) + clip(text, Math.min(80, width)) + reset);
+      const index = first + i, item = v.commands[index]!, active = index === selected;
+      const command = clip(clean(item.cmd), commandWidth);
+      const label = menuWidth >= 44 ? command + ' '.repeat(commandWidth - visibleWidth(command) + 3) : clean(item.cmd);
+      const description = menuWidth >= 44 ? (active ? fg : dim) + clean(item.desc) : '';
+      paint(menuY + (chrome ? 2 : 0) + i, (active ? accent + ' › ' + bold(label) : fg + '   ' + label) + description, active);
     }
   }
   const rootBackground = light ? '\x1b[48;2;250;250;250m' : '\x1b[48;2;0;0;0m';

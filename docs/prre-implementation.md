@@ -475,3 +475,27 @@ PATH. SHA-256:
 `4c391f69cf37c07441aaee11db85540f3d3ba311126d69858e79113a8d7d1e99`.
 Raw terminal evidence remains under ignored `.context/header-logo-release-validation/`.
 Live model quality and hosted PR/E2B delivery were not retested for this UI change.
+
+## Command picker refresh — 2026-11-14
+
+Replaced the bare ten-row command table and bright inverse selection with a
+compact charcoal card aligned above the composer. It displays up to six matches,
+an accent arrow and soft selected surface, readable descriptions, a position
+counter and keyboard hints. The selected match stays in view during scrolling.
+Small terminals omit descriptions and decorative rows as space decreases;
+light mode uses corresponding light surfaces. Existing Rust filtering and
+keyboard execution remain the source of truth.
+
+All **16 TypeScript tests**, **177 Rust tests**, the TypeScript build and optimized
+Rust build passed. Added checks cover selection visibility, Unicode commands,
+narrow terminals, light mode and keeping approval prompts and the editor visible.
+The Mac PTY check passed all ten checks, including opening the new card, arrow
+navigation and local execution of `/help`, alongside editing, images, resize,
+animation cutoff, shell execution, renderer recovery and terminal restoration.
+The initial test expected the help heading to remain onscreen; corrected it to
+check the visible final paragraph after the heading scrolled out of view.
+Visually inspected the generated menu layout. Installed the byte-identical
+release atomically with a backup and verified it is first on PATH. SHA-256:
+`0e6bb27927f917d56c617e4a11debd703a23fb159b3c26b4d42ccbe9cb642c15`.
+Raw evidence is ignored under `.context/command-picker-validation/`.
+No live provider or hosted E2B checks were repeated for this presentation change.

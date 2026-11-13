@@ -115,6 +115,16 @@ try:
     drain(.4)
     assert b'234;88;12' not in transcript[settled:], 'header animation must stop after ten seconds'
     result['header_logo_animates_then_stops'] = True
+    paste('/')
+    wait_for(lambda: b'Commands' in transcript and b'navigate' in transcript)
+    send(b'\x1b[B' * 2)
+    assert b'\x1b[48;2;42;42;42m' in transcript
+    send(b'\x1b[A' * 2)
+    send(b'\r')
+    # The help heading scrolls above the viewport; check its visible final paragraph.
+    wait_for(lambda: b'Anything else is sent to the agent.' in transcript)
+    assert not requests, 'selecting /help must execute locally'
+    result['command_picker_navigation_and_execution'] = True
     paste('hello world')
     send(b'\x1b[D'*5)
     send(b'\x1b[1;2C'*5)

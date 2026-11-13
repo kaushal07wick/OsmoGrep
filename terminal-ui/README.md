@@ -29,6 +29,9 @@ that fallback explicitly. Noninteractive commands don't start Node.
 
 ## Composer
 
+- Typing `/` opens a compact command card above the composer. Up/down moves the
+  soft accent selection; Enter runs the selected command. Six entries remain
+  visible at a time, with a position counter and keyboard hints when space allows.
 - A continuous charcoal panel provides blank rows above and below the draft,
   horizontal padding and a gap before the footer. Dark-mode surroundings stay black.
 - Type or paste multiline text; the composer expands to eight visible lines,

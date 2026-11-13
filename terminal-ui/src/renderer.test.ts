@@ -158,3 +158,34 @@ test('existing density and named-session settings are reflected', () => {
   assert.match(stripTerminalSequences(spacious.rows[2]!),/osmogrep.*parser work/);
   assert.ok(spacious.execution.y > compact.execution.y);
 });
+
+test('command picker uses a bounded dark card and keeps selection visible while scrolling', () => {
+  const v = fixture(); v.input = '/'; v.cursor = 1;
+  v.commands = Array.from({length:20}, (_,i) => ({cmd:`/command-${i}`,desc:`Description ${i}`}));
+  v.selectedCommand = 14; v.permission = 'Pending approval';
+  const f = render(v), text = f.rows.map(stripTerminalSequences).join('\n');
+  assert.match(text, /Commands.*15 \/ 20/);
+  assert.match(text, /› \/command-14\s+Description 14/);
+  assert.match(text, /↑↓ navigate.*enter run/);
+  assert.match(text, /Pending approval/);
+  assert.equal(text.match(/Description \d+/g)?.length, 6);
+  assert.ok(!text.includes('Description 0'));
+  assert.ok(!f.rows.join('').includes('\x1b[7m'));
+  const selected = f.rows.find(row => row.includes('Description 14'))!;
+  assert.ok(selected.includes('\x1b[48;2;42;42;42m'));
+  assert.ok(f.rows.indexOf(selected) < f.input.y - 1);
+  v.commands = [{cmd:'/key',desc:'Configure credentials'}];v.selectedCommand = 0;
+  assert.match(render(v).rows.map(stripTerminalSequences).join('\n'), /1 \/ 1/);
+});
+
+test('command picker fits small terminals, preserves the editor and supports light theme', () => {
+  for (const theme of ['dark','light']) for (const [width,height] of [[1,1],[20,5],[40,12],[60,18],[160,44]]) {
+    const v = {...fixture(),width:width!,height:height!,theme,input:'/',cursor:1,selectedCommand:2};
+    v.commands = [{cmd:'/help',desc:'Help'}, {cmd:'/日本語-long-command',desc:'Unicode description'}, {cmd:'/key',desc:'Set API key'}];
+    const f = render(v);
+    assert.ok(f.rows.every(row => visibleWidth(row) === width));
+    assert.ok(f.cursor.y >= f.input.y && f.cursor.y < f.input.y+f.input.height);
+    if (height! >= 12) assert.match(f.rows.map(stripTerminalSequences).join('\n'), /› \/key/);
+    if (theme === 'light' && height === 44) assert.ok(f.rows.join('').includes('\x1b[48;2;222;222;222m'));
+  }
+});
