@@ -3,6 +3,7 @@ use std::{error::Error, io};
 use crossterm::{
     cursor::Show,
     event::{DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture},
+    event::{KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -25,11 +26,18 @@ impl TerminalSession {
                 writer,
                 DisableBracketedPaste,
                 DisableMouseCapture,
+                PopKeyboardEnhancementFlags,
                 LeaveAlternateScreen,
                 Show
             )
         } else {
-            execute!(writer, DisableBracketedPaste, LeaveAlternateScreen, Show)
+            execute!(
+                writer,
+                DisableBracketedPaste,
+                PopKeyboardEnhancementFlags,
+                LeaveAlternateScreen,
+                Show
+            )
         };
         self.active = false;
 
@@ -49,7 +57,19 @@ pub fn setup_terminal() -> Result<TerminalSession, Box<dyn Error>> {
     enable_raw_mode()?;
 
     let mut stdout = io::stdout();
-    if let Err(err) = execute!(stdout, EnterAlternateScreen, EnableBracketedPaste) {
+    if let Err(err) = execute!(
+        stdout,
+        EnterAlternateScreen,
+        EnableBracketedPaste,
+        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+    ) {
+        let _ = execute!(
+            io::stdout(),
+            PopKeyboardEnhancementFlags,
+            DisableBracketedPaste,
+            LeaveAlternateScreen,
+            Show
+        );
         let _ = disable_raw_mode();
         return Err(Box::new(err));
     }
@@ -60,6 +80,7 @@ pub fn setup_terminal() -> Result<TerminalSession, Box<dyn Error>> {
             let _ = execute!(
                 io::stdout(),
                 DisableBracketedPaste,
+                PopKeyboardEnhancementFlags,
                 LeaveAlternateScreen,
                 Show
             );

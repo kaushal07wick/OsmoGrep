@@ -234,7 +234,7 @@ fn take_chars(text: &str, max_bytes: usize) -> String {
     out
 }
 
-fn system_prompt(repo_root: &std::path::Path) -> Value {
+pub(crate) fn system_prompt(repo_root: &std::path::Path) -> Value {
     let mut content =
         "You are Osmogrep, an AI coding agent working inside this repository.\n\
             \n\

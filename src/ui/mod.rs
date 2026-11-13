@@ -7,3 +7,4 @@ pub mod markdown;
 pub mod runtime;
 pub mod terminal;
 pub mod tui;
+mod typescript;

@@ -42,6 +42,14 @@ pub fn handle_event(
 
 fn handle_paste(state: &mut AgentState, text: &str) {
     let text = normalize_paste_text(text);
+    if state.ui.input_mode != InputMode::ApiKey {
+        if let Some(path) = crate::attachments::dropped_image(&text, &state.repo_root) {
+            if let Err(error) = crate::attachments::attach(state, &path) {
+                state.logs.push(crate::state::LogLevel::Warn, error);
+            }
+            return;
+        }
+    }
     state.insert_text(&text);
 }
 
@@ -106,6 +114,32 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
     }
 
     let palette_active = !state.ui.command_items.is_empty();
+    let navigation = matches!(
+        k.code,
+        KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down | KeyCode::Home | KeyCode::End
+    );
+    if navigation {
+        if k.modifiers.contains(KeyModifiers::SHIFT) {
+            state
+                .ui
+                .input_selection_anchor
+                .get_or_insert(state.ui.input_cursor);
+        } else {
+            if let Some(range) = state.input_selection() {
+                if matches!(k.code, KeyCode::Left | KeyCode::Right) {
+                    state.ui.input_cursor = if k.code == KeyCode::Left {
+                        range.start
+                    } else {
+                        range.end
+                    };
+                    state.ui.input_all_selected = false;
+                    state.ui.input_selection_anchor = None;
+                    return;
+                }
+            }
+            state.ui.input_selection_anchor = None;
+        }
+    }
 
     if let Some(action) = input_control_action(&k) {
         apply_input_control_action(state, action);
@@ -113,6 +147,30 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
     }
 
     match k.code {
+        KeyCode::Left
+            if k.modifiers
+                .intersects(KeyModifiers::ALT | KeyModifiers::CONTROL) =>
+        {
+            state.move_cursor_word(-1)
+        }
+        KeyCode::Right
+            if k.modifiers
+                .intersects(KeyModifiers::ALT | KeyModifiers::CONTROL) =>
+        {
+            state.move_cursor_word(1)
+        }
+        KeyCode::Char('b') if k.modifiers.contains(KeyModifiers::ALT) => state.move_cursor_word(-1),
+        KeyCode::Char('f') if k.modifiers.contains(KeyModifiers::ALT) => state.move_cursor_word(1),
+        KeyCode::Up if k.modifiers.contains(KeyModifiers::CONTROL) => {
+            scroll_execution_back(state, SCROLL_LINE_STEP)
+        }
+        KeyCode::Down if k.modifiers.contains(KeyModifiers::CONTROL) => {
+            scroll_execution_toward_tail(state, SCROLL_LINE_STEP)
+        }
+        KeyCode::Home if k.modifiers.contains(KeyModifiers::CONTROL) => state.ui.input_cursor = 0,
+        KeyCode::End if k.modifiers.contains(KeyModifiers::CONTROL) => {
+            state.ui.input_cursor = state.ui.input.len()
+        }
         /* ---------- Palette navigation ---------- */
         KeyCode::Up if palette_active => {
             state.ui.command_selected = state.ui.command_selected.saturating_sub(1);
@@ -188,13 +246,13 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
 
         /* ---------- History (disabled during palette) ---------- */
         KeyCode::Up if !palette_active => {
-            if !state.move_cursor_up() {
+            if !state.move_cursor_up() && !k.modifiers.contains(KeyModifiers::SHIFT) {
                 state.history_prev();
             }
         }
 
         KeyCode::Down if !palette_active => {
-            if !state.move_cursor_down() {
+            if !state.move_cursor_down() && !k.modifiers.contains(KeyModifiers::SHIFT) {
                 state.history_next();
             }
         }
@@ -232,14 +290,6 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
 
         KeyCode::PageDown => {
             scroll_execution_toward_tail(state, SCROLL_PAGE_STEP);
-        }
-
-        KeyCode::Up if k.modifiers.contains(KeyModifiers::CONTROL) => {
-            scroll_execution_back(state, SCROLL_LINE_STEP);
-        }
-
-        KeyCode::Down if k.modifiers.contains(KeyModifiers::CONTROL) => {
-            scroll_execution_toward_tail(state, SCROLL_LINE_STEP);
         }
 
         KeyCode::End => {
@@ -379,6 +429,7 @@ fn apply_input_control_action(state: &mut AgentState, action: InputControlAction
         }
         InputControlAction::CopyAll => {
             if state.copy_input() {
+                let _ = crate::clipboard::copy_text_to_clipboard(&state.ui.input_clipboard);
                 crate::logger::log_status(state, "Copied input.");
             } else if state.ui.agent_running {
                 state.ui.cancel_requested = true;
@@ -390,13 +441,12 @@ fn apply_input_control_action(state: &mut AgentState, action: InputControlAction
         }
         InputControlAction::CutAll => {
             if state.cut_input() {
+                let _ = crate::clipboard::copy_text_to_clipboard(&state.ui.input_clipboard);
                 crate::logger::log_status(state, "Cut input.");
             }
         }
         InputControlAction::Paste => {
-            if state.paste_input() {
-                crate::logger::log_status(state, "Pasted input.");
-            }
+            crate::attachments::paste(state);
         }
         InputControlAction::ClearAll => {
             if state.clear_input() {
@@ -458,6 +508,21 @@ mod tests {
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn shift_arrows_select_text_and_typing_replaces_it() {
+        let mut state = agent_state();
+        state.insert_text("one 界two");
+        for _ in 0..4 {
+            handle_key(
+                &mut state,
+                KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT),
+            );
+        }
+        assert_eq!(&state.ui.input[state.input_selection().unwrap()], "界two");
+        handle_key(&mut state, key(KeyCode::Char('x')));
+        assert_eq!(state.ui.input, "one x");
     }
 
     fn ctrl(c: char) -> KeyEvent {

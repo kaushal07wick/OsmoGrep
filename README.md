@@ -131,6 +131,18 @@ Then talk to it:
 Osmogrep will read files, run the code, read the failure, patch the root cause, re-run,
 and only then summarize — with the commands it actually ran.
 
+The terminal presentation runs in TypeScript when Node.js 22.19+ is available,
+with a compact header, full-width transcript, startup animation and bottom
+composer. Rust retains the existing agent, tools, permissions and commands.
+Missing Node or a renderer failure restores the native Rust UI;
+`OSMOGREP_UI=native osmogrep` selects it explicitly.
+
+The composer supports multiline drafts, Shift+arrow selection, Ctrl+C/X/V
+copy/cut/paste and image attachments with thumbnails on supported terminals.
+Drag in an image path, or use Ctrl+V for a copied image on macOS.
+See the [terminal UI and composer guide](terminal-ui/README.md) for shortcuts,
+image limits and development instructions.
+
 Headless, for CI or scripts:
 
 ```bash
@@ -405,7 +417,8 @@ Layout:
 | `src/worktree.rs` | Isolated worktree subagents |
 | `src/context/indexer.rs` | tree-sitter index and call graph |
 | `src/triage.rs` | GitHub PR/issue triage |
-| `src/ui/` | ratatui terminal interface |
+| `src/ui/` | TypeScript presentation bridge and native ratatui fallback |
+| `terminal-ui/` | TypeScript renderer, animation, composer layout and UI tests |
 
 ## Contributing
 

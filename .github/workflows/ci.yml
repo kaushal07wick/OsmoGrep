@@ -12,6 +12,24 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  terminal-ui:
+    name: TypeScript terminal UI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terminal-ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+          cache: npm
+          cache-dependency-path: terminal-ui/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm test
+      - run: npm run build
+      - run: git diff --exit-code -- bundle/renderer.mjs
+
   test:
     name: test (${{ matrix.os }})
     strategy:

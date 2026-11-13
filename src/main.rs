@@ -1,4 +1,5 @@
 mod agent;
+mod attachments;
 mod clipboard;
 mod commands;
 mod context;
@@ -324,7 +325,13 @@ fn start_agent_run(
 
     let (tx, rx) = mpsc::channel();
     let repo_root = state.repo_root.clone();
-    let prior_messages = state.conversation.messages.clone();
+    let mut prior_messages = state.conversation.messages.clone();
+    if let Some(images) = attachments::message_for(state, text) {
+        if prior_messages.is_empty() {
+            prior_messages.push(agent::system_prompt(&state.repo_root));
+        }
+        prior_messages.push(images);
+    }
     let auto_approve = if state.plan_mode {
         false
     } else {
@@ -1199,7 +1206,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
     let mut runtime = TuiRuntime::default();
 
     loop {
-        runtime.draw_if_due(&mut terminal, &state)?;
+        runtime.draw_if_due(&mut terminal, &mut state, agent.model_config())?;
 
         if event::poll(runtime.poll_timeout(tui_live_activity(
             &state,
@@ -1909,7 +1916,13 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                 InputMode::AgentText => {
                     if !text.is_empty() {
                         if agent_rx.is_some() {
-                            if let Some(tx) = agent_steer_tx.as_ref() {
+                            if state.ui.attachments.iter().any(|a| text.contains(&a.label)) {
+                                state.ui.queued_agent_prompt = Some(text.to_string());
+                                log_status(
+                                    &mut state,
+                                    "Queued image message after the current run.",
+                                );
+                            } else if let Some(tx) = agent_steer_tx.as_ref() {
                                 let _ = tx.send(text.to_string());
                                 log_status(&mut state, "Steer sent to running agent.");
                             } else {
@@ -1983,6 +1996,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
     let attach_session = state.ui.tmux_attach_session.clone();
     let managed_tmux = env_truthy("OSMOGREP_MANAGED_TMUX", false);
     let managed_session = std::env::var("OSMOGREP_NV_SESSION").ok();
+    drop(runtime);
     teardown_terminal(&mut terminal, &mut terminal_session)?;
 
     if managed_tmux {

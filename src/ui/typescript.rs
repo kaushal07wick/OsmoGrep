@@ -1,0 +1,340 @@
+//! Optional presentation process. The Rust runtime retains all input and agent execution.
+use std::{
+    fs,
+    io::{self, BufRead, BufReader, Read, Write},
+    path::PathBuf,
+    process::{Child, Command, Stdio},
+    sync::mpsc::{self, Receiver, SyncSender},
+    time::Duration,
+};
+
+use crossterm::{
+    cursor::MoveTo,
+    queue,
+    style::Print,
+    terminal::{Clear, ClearType},
+};
+use ratatui::layout::Rect;
+use serde::Deserialize;
+use serde_json::{json, Value};
+
+use crate::{
+    agent::ModelConfig,
+    state::{AgentState, InputMode},
+};
+
+const BUNDLE: &str = include_str!("../../terminal-ui/bundle/renderer.mjs");
+const FRAME_TIMEOUT: Duration = Duration::from_millis(1500);
+
+#[derive(Deserialize)]
+struct Region {
+    x: u16,
+    y: u16,
+    width: u16,
+    height: u16,
+}
+impl Region {
+    fn rect(&self) -> Rect {
+        Rect::new(self.x, self.y, self.width, self.height)
+    }
+    fn inside(&self, w: u16, h: u16) -> bool {
+        self.x as u32 + self.width as u32 <= w as u32
+            && self.y as u32 + self.height as u32 <= h as u32
+    }
+}
+#[derive(Deserialize)]
+struct Point {
+    x: u16,
+    y: u16,
+}
+#[derive(Deserialize)]
+struct Preview {
+    id: u32,
+    x: u16,
+    y: u16,
+    sequence: String,
+}
+#[derive(Deserialize)]
+struct Frame {
+    id: u64,
+    rows: Vec<String>,
+    input: Region,
+    execution: Region,
+    #[serde(rename = "editorWidth")]
+    editor_width: u16,
+    cursor: Point,
+    images: Vec<Preview>,
+}
+
+pub struct TypeScriptUi {
+    child: Child,
+    input: SyncSender<Value>,
+    frames: Receiver<Result<String, String>>,
+    directory: PathBuf,
+    sequence: u64,
+    previous: Vec<String>,
+    images: Vec<u32>,
+    size: (u16, u16),
+}
+
+impl TypeScriptUi {
+    pub fn start() -> Result<Self, String> {
+        let node = Command::new("node")
+            .arg("--version")
+            .output()
+            .map_err(|_| "Node.js 22.19+ unavailable")?;
+        let version = String::from_utf8_lossy(&node.stdout);
+        let mut parts = version.trim().trim_start_matches('v').split('.');
+        let major: u32 = parts.next().unwrap_or("").parse().unwrap_or(0);
+        let minor: u32 = parts.next().unwrap_or("").parse().unwrap_or(0);
+        if !node.status.success() || major < 22 || major == 22 && minor < 19 {
+            return Err("TypeScript UI requires Node.js 22.19+".into());
+        }
+        let directory = std::env::temp_dir().join(format!("osmogrep-ui-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&directory).map_err(|e| e.to_string())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
+                .map_err(|e| e.to_string())?;
+        }
+        let result = Self::spawn(directory.clone());
+        if result.is_err() {
+            let _ = fs::remove_dir_all(directory);
+        }
+        result
+    }
+
+    fn spawn(directory: PathBuf) -> Result<Self, String> {
+        let script = directory.join("renderer.mjs");
+        fs::write(&script, BUNDLE).map_err(|e| e.to_string())?;
+        let mut command = Command::new("node");
+        command
+            .arg(script)
+            .env_clear()
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        for key in [
+            "PATH",
+            "TERM",
+            "TERM_PROGRAM",
+            "COLORTERM",
+            "LANG",
+            "NO_COLOR",
+            "KITTY_WINDOW_ID",
+            "GHOSTTY_RESOURCES_DIR",
+            "TMUX",
+            "ITERM_SESSION_ID",
+            "WEZTERM_PANE",
+            "ORCA_IMAGE_PROTOCOL",
+        ] {
+            if let Some(value) = std::env::var_os(key) {
+                command.env(key, value);
+            }
+        }
+        let mut child = command.spawn().map_err(|e| e.to_string())?;
+        let mut input = child.stdin.take().unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let (tx, frames) = mpsc::sync_channel(1);
+        let (requests, pending) = mpsc::sync_channel::<Value>(1);
+        let errors = tx.clone();
+        std::thread::spawn(move || {
+            while let Ok(value) = pending.recv() {
+                let result = serde_json::to_writer(&mut input, &value)
+                    .map_err(io::Error::other)
+                    .and_then(|_| input.write_all(b"\n"))
+                    .and_then(|_| input.flush());
+                if let Err(error) = result {
+                    let _ = errors.send(Err(error.to_string()));
+                    break;
+                }
+            }
+        });
+        std::thread::spawn(move || {
+            let mut reader = BufReader::new(stdout);
+            loop {
+                let mut line = String::new();
+                let result = reader.by_ref().take(16 * 1024 * 1024).read_line(&mut line);
+                match result {
+                    Ok(0) => break,
+                    Ok(_) if line.ends_with('\n') => {
+                        if tx.send(Ok(line)).is_err() {
+                            break;
+                        }
+                    }
+                    _ => {
+                        let _ = tx.send(Err("Invalid TypeScript UI response".into()));
+                        break;
+                    }
+                }
+            }
+        });
+        Ok(Self {
+            child,
+            input: requests,
+            frames,
+            directory,
+            sequence: 0,
+            previous: Vec::new(),
+            images: Vec::new(),
+            size: (0, 0),
+        })
+    }
+
+    pub fn draw(
+        &mut self,
+        state: &AgentState,
+        model: &ModelConfig,
+        width: u16,
+        height: u16,
+    ) -> Result<(Rect, Rect, usize), String> {
+        self.sequence += 1;
+        self.input
+            .try_send(view(state, model, self.sequence, width, height))
+            .map_err(|e| e.to_string())?;
+        let raw = self
+            .frames
+            .recv_timeout(FRAME_TIMEOUT)
+            .map_err(|_| "TypeScript UI stopped responding")??;
+        let frame: Frame = serde_json::from_str(&raw).map_err(|_| "Invalid TypeScript UI frame")?;
+        if frame.id != self.sequence
+            || frame.rows.len() != height as usize
+            || !frame.input.inside(width, height)
+            || !frame.execution.inside(width, height)
+            || frame.cursor.x >= width
+            || frame.cursor.y >= height
+            || frame.editor_width == 0
+            || frame.editor_width > frame.input.width
+            || frame.rows.iter().any(|s| s.contains(['\n', '\r']))
+        {
+            return Err("TypeScript UI frame outside terminal bounds".into());
+        }
+        let mut output = io::stdout().lock();
+        output
+            .write_all(b"\x1b[?2026h\x1b[?25l")
+            .map_err(|e| e.to_string())?;
+        for id in self.images.drain(..) {
+            write!(output, "\x1b_Ga=d,d=i,i={id},q=2;\x1b\\").map_err(|e| e.to_string())?;
+        }
+        let resized = self.size != (width, height);
+        if resized {
+            queue!(output, Clear(ClearType::All)).map_err(|e| e.to_string())?;
+        }
+        for (y, row) in frame.rows.iter().enumerate() {
+            if resized || self.previous.get(y) != Some(row) {
+                queue!(
+                    output,
+                    MoveTo(0, y as u16),
+                    Print("\x1b[0m"),
+                    Clear(ClearType::UntilNewLine),
+                    Print(row),
+                    Print("\x1b[0m")
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+        for image in frame.images {
+            if image.x < width && image.y < height {
+                queue!(output, MoveTo(image.x, image.y), Print(image.sequence))
+                    .map_err(|e| e.to_string())?;
+                self.images.push(image.id);
+            }
+        }
+        queue!(
+            output,
+            MoveTo(frame.cursor.x, frame.cursor.y),
+            Print("\x1b[0m\x1b[?25h\x1b[?2026l")
+        )
+        .map_err(|e| e.to_string())?;
+        output.flush().map_err(|e| e.to_string())?;
+        self.previous = frame.rows;
+        self.size = (width, height);
+        Ok((
+            frame.input.rect(),
+            frame.execution.rect(),
+            frame.editor_width as usize,
+        ))
+    }
+}
+
+impl Drop for TypeScriptUi {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = fs::remove_dir_all(&self.directory);
+    }
+}
+
+fn view(state: &AgentState, model: &ModelConfig, id: u64, width: u16, height: u16) -> Value {
+    let ui = &state.ui;
+    let cursor = ui
+        .input
+        .char_indices()
+        .take_while(|(i, _)| *i < ui.input_cursor.min(ui.input.len()))
+        .count();
+    let input = if ui.input_mode == InputMode::ApiKey {
+        "•".repeat(ui.input.chars().count())
+    } else {
+        ui.input.clone()
+    };
+    let selection = state.input_selection().map(|r| {
+        (
+            ui.input[..r.start].chars().count(),
+            ui.input[..r.end].chars().count(),
+        )
+    });
+    let cwd = state
+        .repo_root
+        .strip_prefix(dirs::home_dir().unwrap_or_default())
+        .map(|p| format!("~/{}", p.display()))
+        .unwrap_or_else(|_| state.repo_root.display().to_string());
+    let diffs: Vec<_> = if ui.diff_active {
+        ui.diff_snapshot.iter().map(|d| {
+        let diff = super::diff::Diff::from_texts(d.target.clone(), &d.before, &d.after);
+        json!({ "file":diff.file, "lines":diff.lines.iter().map(|l| json!({"text":l.text,"kind":format!("{:?}",l.kind)})).collect::<Vec<_>>() })
+    }).collect()
+    } else {
+        Vec::new()
+    };
+    json!({
+        "id":id, "width":width, "height":height, "version":env!("CARGO_PKG_VERSION"),
+        "cwd":cwd, "model":model.model, "provider":model.provider,
+        "branch":ui.repo_branch.as_deref().unwrap_or(""), "indexed":ui.indexed, "indexing":ui.indexing,
+        "theme":state.theme.as_str(), "accent":state.accent.as_str(), "density":state.density.as_str(), "session":state.session_name,
+        "elapsed":state.started_at.elapsed().as_millis() as u64,
+        "profile":state.permission_profile.as_str(), "autoApprove":ui.auto_approve, "planMode":state.plan_mode,
+        "logs":state.logs.iter().map(|l|json!({"text":l.text,"level":format!("{:?}",l.level)})).collect::<Vec<_>>(),
+        "plan":state.plan_items, "diffs":diffs, "input":input, "cursor":cursor, "selection":selection,
+        "masked":ui.input_mode == InputMode::ApiKey, "inputMode":format!("{:?}",ui.input_mode),
+        "attachments":ui.attachments.iter().filter(|a|ui.input.contains(&a.label)).map(|a|json!({"id":a.id,"label":a.label,"thumbnail":a.thumbnail,"width":a.width,"height":a.height})).collect::<Vec<_>>(),
+        "running":ui.agent_running, "phase":ui.run_phase, "tool":ui.current_tool,
+        "followTail":ui.follow_tail, "scroll":ui.exec_scroll.min(u32::MAX as usize),
+        "stream":if ui.streaming_active {ui.streaming_buffer.rsplit('\n').next().unwrap_or("")} else {""},
+        "permission":ui.pending_permission.as_ref().map(|p|format!("Allow {} ({})? [y]es [n]o [a]lways", p.tool_name,p.args_summary)),
+        "update":ui.pending_update.as_ref().map(super::tui::pending_update_prompt),
+        "voice":if state.voice.visible || state.voice.enabled || state.voice.connected {Some(super::tui::voice_bar_text(state))} else {None},
+        "commands":ui.command_items.iter().map(|c|json!({"cmd":c.cmd,"desc":c.desc})).collect::<Vec<_>>(),
+        "selectedCommand":ui.command_selected, "tokens":state.usage.prompt_tokens+state.usage.completion_tokens,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn secret_entry_is_masked_before_crossing_the_presentation_boundary() {
+        let mut state = crate::init_state();
+        state.ui.input_mode = InputMode::ApiKey;
+        state.ui.input = "sk-example-secret".into();
+        state.ui.input_cursor = state.ui.input.len();
+        let model = ModelConfig {
+            base_url: Some("https://private.example".into()),
+            ..ModelConfig::default()
+        };
+        let frame = view(&state, &model, 1, 160, 44);
+        assert_eq!(frame["input"], "•".repeat(state.ui.input.chars().count()));
+        assert!(!frame.to_string().contains("sk-example-secret"));
+        assert!(!frame.to_string().contains("private.example"));
+    }
+}

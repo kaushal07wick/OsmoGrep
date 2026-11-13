@@ -1539,6 +1539,7 @@ dependencies = [
  "dirs",
  "glob",
  "hex",
+ "image",
  "ratatui",
  "regex",
  "reqwest",

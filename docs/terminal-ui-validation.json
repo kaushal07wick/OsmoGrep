@@ -1,0 +1,39 @@
+{
+  "scope": "Local macOS validation of TypeScript presentation and existing Rust backend",
+  "date": "2026-11-14",
+  "rust_tests_passed": 177,
+  "typescript_tests_passed": 12,
+  "node": "v26.13.1",
+  "installed_sha256": "9b9ab543c0f2f9d0172af8651b378e7a161c3ffc2834e423103edf34ac344c5e",
+  "installed_first_on_path": true,
+  "mac_pty_acceptance": {
+    "typescript_renderer_started": true,
+    "large_multiline_draft_editing": true,
+    "real_thumbnail_sequence": true,
+    "original_image_bytes_reached_provider": true,
+    "terminal_resize": true,
+    "existing_shell_command": true,
+    "renderer_crash_recovers_to_native_ui": true,
+    "terminal_state_restored": true
+  },
+  "existing_interface_acceptance": {
+    "graph_query": true,
+    "report_reopen": true,
+    "history_query": true,
+    "stdio_mcp": true,
+    "root_spoof_rejected": true,
+    "agent_read_file": true,
+    "agent_graph_tool": true,
+    "agent_provider": "local deterministic mock",
+    "tui_started": true,
+    "tui_help": true,
+    "tui_quit_preserves_app": true,
+    "tui_exit_exit_code": 0,
+    "terminal_flags_restored": true
+  },
+  "clipboard_image_api": "Passed using a private named macOS pasteboard; user clipboard unchanged",
+  "model_evidence": "Original generated PNG bytes observed at local deterministic provider boundary",
+  "live_vision_model_checked": false,
+  "hosted_pr_e2b_retested": false,
+  "other_operating_systems_tested_locally": false
+}

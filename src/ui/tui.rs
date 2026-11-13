@@ -561,7 +561,7 @@ fn render_plan_lines_for_items(plan_items: &[PlanItem], p: UiPalette) -> Vec<Lin
     lines
 }
 
-fn pending_update_prompt(update: &PendingUpdate) -> String {
+pub(super) fn pending_update_prompt(update: &PendingUpdate) -> String {
     if update.installing {
         format!("Installing Osmogrep {}...", update.latest_version)
     } else {
@@ -712,7 +712,7 @@ fn recent_edited_summary(state: &AgentState, max: usize) -> String {
         .join(", ")
 }
 
-fn voice_bar_text(state: &AgentState) -> String {
+pub(super) fn voice_bar_text(state: &AgentState) -> String {
     let status = if state.voice.connected {
         "VOICE"
     } else if state.voice.enabled {

@@ -355,3 +355,69 @@ conversation and command-menu layout. Installed SHA-256:
 `cf4604671a1b8159946f89a597294e851016c2e72def891022944226469b8069`.
 Live providers, VM verification and hosted delivery were not rerun for this UI
 correction. Existing sessions must exit and relaunch to load the new binary.
+
+## TypeScript terminal presentation and image composer — 2026-11-14
+
+The earlier centered and growing layouts were rejected. The user selected
+Claude Code as the reference and supplied its actual startup/composer alongside
+Codex's animation and image preview. The default presentation now uses a compact
+brand/model/directory block at the upper left, the terminal's full width and a
+bottom composer. A local point-cloud animation occupies the empty startup view
+for 2.2 seconds, then stops. Typing or conversation hides it.
+
+`terminal-ui/` contains the TypeScript source, tests and generated self-contained
+JavaScript bundle. It reuses Pi's terminal display components, not Pi's agent.
+Rust retains the existing event loop, input buffer, session history, tools,
+permissions, model providers, cancellation, background jobs and command handling.
+The Node child receives display snapshots and returns styled rows and geometry;
+it cannot request tool execution or approval. The bundle is embedded in the Rust
+binary and extracted into a private temporary directory for the UI process.
+No runtime npm installation or background service is required.
+
+Node.js 22.19+ enables the TypeScript renderer. Missing Node, invalid geometry,
+renderer failure or a timed-out response restores the native Rust UI with a
+visible warning. Request writes happen off the UI thread so a hung child cannot
+block cancellation indefinitely. The parent owns terminal restoration and kills
+its child on exit. Provider credentials are excluded from the child's environment;
+API-key entry is masked before serialization. Repository terminal control codes
+are removed before rendering. Existing light/dark themes, accent, density, session
+names, command menus, plans, diffs, permission/update prompts and voice display
+are represented in the new presentation.
+
+Composer changes include partial Shift+arrow selection, replacement/cut/paste,
+system clipboard integration on Mac, Unicode-safe cursor boundaries and movement
+through wrapped rows. Long drafts retain their full text while the visible area
+scrolls. Keyboard enhancement negotiation makes Shift+Enter distinguishable on
+supporting terminals, and is popped during cleanup.
+
+Image labels now correspond to real immutable image data. Dragged image paths
+and Mac clipboard images produce PNG thumbnails, displayed with the terminal's
+graphics protocol when available. Selected originals become `input_image`
+content through the existing provider call; image messages during a running
+turn are queued. Decoder limits, eight-image count and 20 MiB/image limits bound
+image handling. No original image is sent to the presentation process.
+
+Validation: **177 Rust tests** and **12 TypeScript tests** passed. Rust checks
+include actual macOS clipboard image extraction through a private named
+pasteboard, leaving the user's clipboard untouched. UI tests cover geometry,
+Unicode and large drafts, selection, image placements, terminal-control stripping,
+animation, themes, density, session names, diffs and prompts. The optimized build
+was checked to embed the exact current generated JavaScript bundle. A GitHub CI
+job now checks the TypeScript tests and reproducibility of the bundled output.
+
+The Mac PTY acceptance script in `terminal-ui/scripts/mac-acceptance.py` uses a
+local deterministic model endpoint and a generated solid-color PNG. It checks
+the real TypeScript process, multiline editing, graphics sequences, original
+image bytes at the model boundary, resize, shell execution and recovery after
+killing only its own renderer child. This is distinct from live vision-model
+quality and from the hosted PR/E2B verification path, which were not rerun.
+
+Installed-release validation passed both the new Mac PTY acceptance script and
+the existing CLI/graph/report/MCP/tool compatibility harness. The shell check
+created and checked a file in the controlled temporary repository; the image
+check compared original PNG bytes at the local provider boundary. Renderer
+crash recovery and terminal flag restoration passed. Installation was atomic,
+kept a backup, and verified `~/.local/bin/osmogrep` is first on PATH. Installed
+SHA-256: `9b9ab543c0f2f9d0172af8651b378e7a161c3ffc2834e423103edf34ac344c5e`.
+The redacted [validation summary](terminal-ui-validation.json) contains results;
+raw local terminal transcripts remain under ignored `.context/` directories.

@@ -77,11 +77,15 @@ pub struct CommandItem {
 }
 
 pub struct UiState {
+    pub attachments: Vec<crate::attachments::Attachment>,
+    pub next_attachment_id: u32,
     // input
     pub input: String,
     pub input_cursor: usize,
     pub input_clipboard: String,
     pub input_all_selected: bool,
+    pub input_selection_anchor: Option<usize>,
+    pub input_wrap_width: usize,
     pub input_mode: InputMode,
     pub input_masked: bool,
     pub input_placeholder: Option<String>,
@@ -131,10 +135,14 @@ pub struct UiState {
 impl Default for UiState {
     fn default() -> Self {
         Self {
+            attachments: Vec::new(),
+            next_attachment_id: 1,
             input: String::new(),
             input_cursor: 0,
             input_clipboard: String::new(),
             input_all_selected: false,
+            input_selection_anchor: None,
+            input_wrap_width: 0,
             input_mode: InputMode::AgentText,
             input_masked: false,
             input_placeholder: None,
@@ -400,12 +408,7 @@ impl AgentState {
         if text.is_empty() {
             return;
         }
-
-        if self.ui.input_all_selected {
-            self.ui.input.clear();
-            self.ui.input_cursor = 0;
-            self.ui.input_all_selected = false;
-        }
+        self.delete_input_selection();
 
         let cursor = clamp_char_boundary(&self.ui.input, self.ui.input_cursor);
         self.ui.input.insert_str(cursor, text);
@@ -414,11 +417,7 @@ impl AgentState {
     }
 
     pub fn backspace(&mut self) {
-        if self.ui.input_all_selected {
-            self.ui.input.clear();
-            self.ui.input_cursor = 0;
-            self.ui.input_all_selected = false;
-            self.ui.history_index = None;
+        if self.delete_input_selection() {
             return;
         }
 
@@ -434,8 +433,7 @@ impl AgentState {
     }
 
     pub fn delete_forward(&mut self) {
-        if self.ui.input_all_selected {
-            self.clear_input();
+        if self.delete_input_selection() {
             return;
         }
 
@@ -485,6 +483,30 @@ impl AgentState {
     fn move_cursor_vertical(&mut self, direction: i8) -> bool {
         self.ui.input_all_selected = false;
         let cursor = clamp_char_boundary(&self.ui.input, self.ui.input_cursor);
+        if self.ui.input_wrap_width > 0 {
+            let positions = input_display_positions(&self.ui.input, self.ui.input_wrap_width);
+            let (_, row, col) = positions
+                .iter()
+                .find(|p| p.0 == cursor)
+                .copied()
+                .unwrap_or((0, 0, 0));
+            let target = if direction < 0 {
+                row.checked_sub(1)
+            } else {
+                Some(row + 1)
+            };
+            let next = target.and_then(|target| {
+                positions
+                    .iter()
+                    .filter(|p| p.1 == target && p.2 <= col)
+                    .last()
+            });
+            if let Some(next) = next {
+                self.ui.input_cursor = next.0;
+                return true;
+            }
+            return false;
+        }
         let (start, end) = current_line_bounds(&self.ui.input, cursor);
         let column = self.ui.input[start..cursor].chars().count();
 
@@ -505,7 +527,58 @@ impl AgentState {
         }
 
         self.ui.input_all_selected = true;
+        self.ui.input_selection_anchor = None;
         true
+    }
+
+    pub fn input_selection(&self) -> Option<std::ops::Range<usize>> {
+        if self.ui.input_all_selected {
+            return Some(0..self.ui.input.len());
+        }
+        let anchor = clamp_char_boundary(&self.ui.input, self.ui.input_selection_anchor?);
+        let cursor = clamp_char_boundary(&self.ui.input, self.ui.input_cursor);
+        (anchor != cursor).then_some(anchor.min(cursor)..anchor.max(cursor))
+    }
+
+    fn delete_input_selection(&mut self) -> bool {
+        let Some(range) = self.input_selection() else {
+            self.ui.input_selection_anchor = None;
+            return false;
+        };
+        self.ui.input_cursor = range.start;
+        self.ui.input.replace_range(range, "");
+        self.ui.input_selection_anchor = None;
+        self.ui.input_all_selected = false;
+        self.ui.history_index = None;
+        true
+    }
+
+    pub fn move_cursor_word(&mut self, direction: i8) {
+        let mut index = clamp_char_boundary(&self.ui.input, self.ui.input_cursor);
+        let mut word = false;
+        loop {
+            let next = if direction < 0 {
+                previous_char_boundary(&self.ui.input, index)
+            } else {
+                next_char_boundary(&self.ui.input, index)
+            };
+            if next == index {
+                break;
+            }
+            let ch = self.ui.input[index.min(next)..index.max(next)]
+                .chars()
+                .next()
+                .unwrap();
+            if ch.is_whitespace() && word {
+                break;
+            }
+            if !ch.is_whitespace() {
+                word = true;
+            }
+            index = next;
+        }
+        self.ui.input_cursor = index;
+        self.ui.input_all_selected = false;
     }
 
     pub fn copy_input(&mut self) -> bool {
@@ -513,7 +586,10 @@ impl AgentState {
             return false;
         }
 
-        self.ui.input_clipboard = self.ui.input.clone();
+        self.ui.input_clipboard = self
+            .input_selection()
+            .map(|r| self.ui.input[r].to_owned())
+            .unwrap_or_else(|| self.ui.input.clone());
         true
     }
 
@@ -522,12 +598,14 @@ impl AgentState {
             return false;
         }
 
-        self.clear_input();
+        if !self.delete_input_selection() {
+            self.clear_input();
+        }
         true
     }
 
     pub fn kill_to_line_end(&mut self) -> bool {
-        if self.ui.input_all_selected {
+        if self.input_selection().is_some() {
             return self.cut_input();
         }
 
@@ -555,7 +633,7 @@ impl AgentState {
     }
 
     pub fn delete_previous_word(&mut self) -> bool {
-        if self.ui.input_all_selected {
+        if self.input_selection().is_some() {
             return self.cut_input();
         }
 
@@ -598,21 +676,13 @@ impl AgentState {
             return false;
         }
 
-        if self.ui.input_all_selected {
-            self.ui.input.clear();
-            self.ui.input_cursor = 0;
-        }
-
         let clipboard = self.ui.input_clipboard.clone();
-        let cursor = clamp_char_boundary(&self.ui.input, self.ui.input_cursor);
-        self.ui.input.insert_str(cursor, &clipboard);
-        self.ui.input_cursor = cursor + clipboard.len();
-        self.ui.input_all_selected = false;
-        self.ui.history_index = None;
+        self.insert_text(&clipboard);
         true
     }
 
     pub fn clear_input(&mut self) -> bool {
+        self.ui.input_selection_anchor = None;
         let changed = !self.ui.input.is_empty() || self.ui.input_all_selected;
         self.ui.input.clear();
         self.ui.input_cursor = 0;
@@ -656,6 +726,7 @@ impl AgentState {
     }
 
     pub fn commit_input(&mut self) -> String {
+        self.ui.input_selection_anchor = None;
         let raw = self.ui.input.clone();
         let trimmed = raw.trim();
 
@@ -964,6 +1035,33 @@ fn estimate_message_tokens(msg: &Value) -> usize {
     (content.len() / 4).max(1)
 }
 
+fn input_display_positions(text: &str, width: usize) -> Vec<(usize, usize, usize)> {
+    use unicode_width::UnicodeWidthChar;
+    let width = width.max(1);
+    let (mut row, mut col) = (0, 0);
+    let mut positions = vec![(0, 0, 0)];
+    for (byte, ch) in text.char_indices() {
+        let cells = ch.width().unwrap_or(0);
+        if ch != '\n' && col > 0 && col + cells > width {
+            row += 1;
+            col = 0;
+            *positions.last_mut().unwrap() = (byte, row, col);
+        }
+        if ch == '\n' {
+            row += 1;
+            col = 0;
+        } else {
+            col += cells;
+            if col >= width {
+                row += 1;
+                col = 0;
+            }
+        }
+        positions.push((byte + ch.len_utf8(), row, col));
+    }
+    positions
+}
+
 fn summarize_message(msg: &Value) -> Option<String> {
     let role = msg.get("role").and_then(Value::as_str)?;
     if role == "system" {
@@ -992,6 +1090,52 @@ fn summarize_message(msg: &Value) -> Option<String> {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn partial_unicode_selection_cuts_and_replaces_at_the_cursor() {
+        let mut state = agent_state_with_input("before 界middle after");
+        state.ui.input_selection_anchor = Some("before ".len());
+        state.ui.input_cursor = "before 界middle".len();
+        assert!(state.cut_input());
+        assert_eq!(state.ui.input_clipboard, "界middle");
+        assert_eq!(state.ui.input, "before  after");
+        state.insert_text("replacement");
+        assert_eq!(state.ui.input, "before replacement after");
+        state.ui.input_selection_anchor = Some(0);
+        state.ui.input_cursor = "before".len();
+        state.insert_text("new");
+        assert_eq!(state.ui.input, "new replacement after");
+    }
+
+    #[test]
+    fn large_drafts_remain_editable_at_start_middle_and_end() {
+        let mut state = agent_state_with_input(&"line 界\n".repeat(25_000));
+        let length = state.ui.input.len();
+        state.ui.input_cursor = length;
+        state.insert_text("end");
+        state.ui.input_cursor = 0;
+        state.insert_text("start");
+        state.ui.input_cursor = "startline 界\n".len();
+        state.insert_text("middle");
+        assert_eq!(state.ui.input.len(), length + 14);
+        assert!(state.ui.input.starts_with("startline 界\nmiddle"));
+        assert!(state.ui.input.ends_with("end"));
+    }
+
+    #[test]
+    fn arrows_edit_wrapped_rows_instead_of_replacing_draft_with_history() {
+        let mut state = agent_state_with_input("123456789abcdef");
+        state.ui.input_wrap_width = 5;
+        state.ui.input_cursor = 12;
+        assert!(state.move_cursor_up());
+        assert_eq!(state.ui.input_cursor, 7);
+        assert!(state.move_cursor_up());
+        assert_eq!(state.ui.input_cursor, 2);
+        assert!(state.move_cursor_down());
+        assert_eq!(state.ui.input_cursor, 7);
+        state.insert_text("X");
+        assert_eq!(state.ui.input, "1234567X89abcdef");
+    }
 
     fn agent_state_with_input(input: &str) -> AgentState {
         AgentState {
