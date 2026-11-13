@@ -447,3 +447,31 @@ recovery and terminal restoration. Installed SHA-256:
 `3e3bec94780d1657d5344473bb52a93038ad5cb359c3359523ab291fec2da98e`.
 The artwork is adapted to terminal character cells; web fonts, browser canvas
 resolution and pointer-following effects are not reproduced.
+
+## Header animation and composer correction — 2026-11-14
+
+The large sampled illustration was rejected. Removed its playback, compressed
+frames and drawing-code extraction. The actual website pixel ring now stays in
+the header while its orange segment travels around the outline for the first
+ten seconds, then rests in its original position. Typing does not displace the
+logo or conversation. Removed the full-width dotted texture. The importer now
+only reads the website SVG pixels; it no longer evaluates JavaScript assets.
+
+Replaced the composer's thin strip and horizontal rules with one continuous
+charcoal surface, blank rows above and below the draft, more horizontal padding
+and a gap before the footer. Existing multiline editing, selection, image
+previews, permissions and cancellation continue through the same interfaces.
+Checked the generated layout and successive logo phases visually.
+
+Validation: **177 Rust tests**, **14 TypeScript UI tests**, the TypeScript build
+and optimized Rust build passed. The real Mac PTY acceptance test passed all
+nine checks, including visible header animation followed by no further accent
+updates after ten seconds, large draft editing, thumbnail sequences, original
+image bytes at the local mock provider, resizing, shell execution, renderer
+crash recovery and terminal restoration. It ran against the optimized release;
+the installed executable is byte-identical and passed `--version` and `--help`.
+Installation was atomic with a backup, and `~/.local/bin/osmogrep` is first on
+PATH. SHA-256:
+`4c391f69cf37c07441aaee11db85540f3d3ba311126d69858e79113a8d7d1e99`.
+Raw terminal evidence remains under ignored `.context/header-logo-release-validation/`.
+Live model quality and hosted PR/E2B delivery were not retested for this UI change.

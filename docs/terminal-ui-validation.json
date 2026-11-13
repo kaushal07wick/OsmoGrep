@@ -2,12 +2,13 @@
   "scope": "Local macOS validation of TypeScript presentation and existing Rust backend",
   "date": "2026-11-14",
   "rust_tests_passed": 177,
-  "typescript_tests_passed": 13,
+  "typescript_tests_passed": 14,
   "node": "v26.13.1",
-  "installed_sha256": "3e3bec94780d1657d5344473bb52a93038ad5cb359c3359523ab291fec2da98e",
+  "installed_sha256": "4c391f69cf37c07441aaee11db85540f3d3ba311126d69858e79113a8d7d1e99",
   "installed_first_on_path": true,
   "mac_pty_acceptance": {
     "typescript_renderer_started": true,
+    "header_logo_animates_then_stops": true,
     "large_multiline_draft_editing": true,
     "real_thumbnail_sequence": true,
     "original_image_bytes_reached_provider": true,
@@ -38,5 +39,8 @@
   "other_operating_systems_tested_locally": false,
   "existing_interface_acceptance_source_commit": "8ceef29",
   "brand_source": "https://osmogrep.com/",
-  "brand_provenance": "terminal-ui/brand/provenance.json"
+  "brand_provenance": "terminal-ui/brand/provenance.json",
+  "pty_binary": "Optimized release, byte-identical to installed binary",
+  "installed_cli_version_and_help": true,
+  "layout": "Fixed header logo animates for ten seconds; continuous padded composer; black conversation canvas"
 }

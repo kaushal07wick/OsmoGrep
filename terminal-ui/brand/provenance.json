@@ -1,16 +1,7 @@
 {
   "source": "https://osmogrep.com/",
-  "captured": "2026-11-13T20:43:26.499Z",
-  "scene": "Woodpecker taps a tree, finds a bug and catches it; sampled from the deployed hero geometry.",
+  "captured": "2026-11-13T20:54:34.259Z",
   "homepage_sha256": "d903caf51919a45b6d6ed4e03772101841ea5a3797167fb182a914552cadf025",
-  "scene_chunk_sha256": "5b4bbf512c001ed5dd7d514394f557f46756f07ffc08f347d4d4968cb2c71beb",
-  "stylesheet_sha256": "1c3c9d3c4527f7aa8147010e3a9b3f7a4cd53ded64444913102e71cbb9e3c42a",
   "logo": "Exact deployed 11×10 SVG pixel grid, adapted to light ink on black.",
-  "texture": "Engraved feather and woodgrain densities sampled from the same live scene.",
-  "terminal_sampling": {
-    "width": 64,
-    "height": 28,
-    "fps": 8,
-    "frames": 80
-  }
+  "animation": "Terminal adaptation: orange segment orbits the fixed header ring for ten seconds, then returns to its deployed position."
 }

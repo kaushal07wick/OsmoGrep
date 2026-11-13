@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setCapabilities, stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui';
 import { clean, render, type View } from './renderer.ts';
-import { introDuration, websiteMark, websiteScene } from './brand.ts';
+import { introDuration, websiteMark } from './brand.ts';
 import { siteLogo } from './site-art.ts';
 
 export function fixture(): View {
@@ -18,7 +18,7 @@ export function fixture(): View {
 test('matches the reference geometry at idle and during conversation', () => {
   const v = fixture(), idle = render(v);
   assert.equal(idle.input.x, 1); assert.equal(idle.input.width, 158);
-  assert.equal(idle.input.y + idle.input.height, 43);
+  assert.equal(idle.input.y + idle.input.height, 42);
   assert.match(stripTerminalSequences(idle.rows[1]!), /osmogrep.*test/);
   v.logs = [{ text: 'USER|Explain the code', level: 'Info' }, { text: 'A paragraph.\n\nAnother paragraph.', level: 'Info' }];
   const active = render(v);
@@ -42,7 +42,7 @@ test('long text scrolls to the cursor without losing the draft', () => {
   assert.ok(frame.cursor.y >= frame.input.y && frame.cursor.y < frame.input.y + frame.input.height);
   v.cursor = 3;
   const edited = render(v);
-  assert.equal(edited.cursor.x, 7);
+  assert.equal(edited.cursor.x, 8);
   assert.equal(v.input.length, 'hello 界\n'.length * 25_000);
 });
 test('untrusted terminal controls cannot change the terminal', () => {
@@ -55,24 +55,58 @@ test('shell commands appear once', () => {
   const text = render(v).rows.map(stripTerminalSequences).join('\n');
   assert.equal(text.match(/ls -al/g)?.length, 1); assert.ok(!text.includes('SHELL :'));
 });
-test('deployed logo and engraved woodpecker frames preserve their geometry', () => {
+test('logo animation moves its accent without changing the deployed silhouette', () => {
   assert.deepEqual(siteLogo,['...iiiii...','.iiiiiiiii.','.ii.....ii.','ii.......ii','ii.......aa','ii.......aa','ii.......ii','.ii.....ii.','.iiiiiiiii.','...iiiii...']);
   assert.ok(websiteMark().every(row=>visibleWidth(row)===7));
   assert.ok(websiteMark().join('').includes('234;88;12'));
-  assert.notDeepEqual(websiteScene(0),websiteScene(5400));
-  assert.ok(websiteScene(5400).every(row=>visibleWidth(row)===64));
-  assert.equal(websiteScene(0).length,28);
+  const still = websiteMark();
+  assert.notDeepEqual(websiteMark(false, 0), websiteMark(false, 500));
+  for (let ms = 0; ms <= introDuration; ms += 125) {
+    const frame = websiteMark(false, ms);
+    // Mixed foreground/background halves still fill the same terminal cell.
+    const silhouette = (rows: string[]) => rows.map(row => stripTerminalSequences(row).replace(/[▀▄█]/g, '█'));
+    assert.deepEqual(silhouette(frame), silhouette(still));
+    assert.ok(frame.every(row => visibleWidth(row) === 7));
+  }
+  assert.deepEqual(websiteMark(false, introDuration), still);
+  assert.deepEqual(websiteMark(false, introDuration + 500), still);
 });
-test('website animation stops at its budget and disappears when editing starts', () => {
+test('only the header logo animates for ten seconds, including while editing', () => {
   const v=fixture();
-  assert.equal(render(v).animate,true);
+  const first=render(v);
+  assert.equal(first.animate,true);
+  v.elapsed=500;
+  const next=render(v);
+  assert.notDeepEqual(first.rows.slice(1,4),next.rows.slice(1,4));
+  assert.deepEqual(first.rows.slice(4),next.rows.slice(4));
+  assert.ok(next.rows.slice(next.execution.y,next.execution.y+next.execution.height).every(row => stripTerminalSequences(row).trim() === ''));
   v.elapsed=introDuration;
   assert.equal(render(v).animate,false);
   v.elapsed=0;v.input='typing';
+  assert.equal(render(v).animate,true);
+  v.density='compact';
   assert.equal(render(v).animate,false);
   const text=render(v).rows.map(stripTerminalSequences).join('\n');
   assert.ok(!text.includes('Catch the bug.'));
   assert.ok(render(v).rows.every(row=>row.startsWith('\x1b[48;2;0;0;0m')));
+});
+test('composer has a continuous padded surface with room around text and footer', () => {
+  const v = fixture(), f = render(v);
+  assert.equal(f.input.height, 3);
+  assert.equal(f.cursor.y, f.input.y + 1);
+  assert.equal(f.cursor.x, f.input.x + 4);
+  for (let y=f.input.y; y<f.input.y+f.input.height; y++) {
+    assert.ok(f.rows[y]!.includes('\x1b[48;2;30;30;30m'));
+    assert.ok(!stripTerminalSequences(f.rows[y]!).includes('─'));
+  }
+  assert.equal(stripTerminalSequences(f.rows[f.input.y]!).trim(), '');
+  assert.equal(stripTerminalSequences(f.rows[f.input.y+2]!).trim(), '');
+  assert.equal(stripTerminalSequences(f.rows[v.height-2]!).trim(), '');
+  v.input='first\nsecond\nthird';v.cursor=Array.from(v.input).length;
+  const expanded=render(v);
+  assert.equal(expanded.input.height, 5);
+  assert.equal(expanded.cursor.y, expanded.input.y+3);
+  assert.equal(expanded.editorWidth, expanded.input.width-6);
 });
 test('selected input is highlighted and secret entry has no placeholder', () => {
   const v = fixture(); v.input = 'abc'; v.cursor = 2; v.selection = [1,2];

@@ -107,6 +107,14 @@ try:
     wait_for(lambda:b'osmogrep' in transcript and b'local-ui-test-model' in transcript)
     assert b'Native UI restored' not in transcript
     result['typescript_renderer_started'] = True
+    first = len(transcript)
+    drain(.7)
+    assert b'234;88;12' in transcript[first:], 'header accent must animate after startup'
+    drain(10)
+    settled = len(transcript)
+    drain(.4)
+    assert b'234;88;12' not in transcript[settled:], 'header animation must stop after ten seconds'
+    result['header_logo_animates_then_stops'] = True
     paste('hello world')
     send(b'\x1b[D'*5)
     send(b'\x1b[1;2C'*5)

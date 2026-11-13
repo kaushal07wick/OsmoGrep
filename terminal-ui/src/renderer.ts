@@ -1,5 +1,5 @@
 import { Image, Markdown, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
-import { brandOrange, brandTexture, introDuration, websiteMark, websiteScene } from './brand.ts';
+import { introDuration, websiteMark } from './brand.ts';
 
 export interface Rect { x: number; y: number; width: number; height: number }
 export interface Attachment { id: number; label: string; thumbnail: string; width: number; height: number }
@@ -54,7 +54,6 @@ export function render(v: View): Rendered {
   const gutter = w >= 40 ? 1 : 0, width = Math.max(1, w - gutter * 2);
   const light = v.theme === 'light';
   const fg = light ? rgb(35, 35, 35) : rgb(233, 229, 220);
-  const brand = rgb(...brandOrange as [number,number,number]);
   const dim = light ? rgb(95, 95, 95) : rgb(145, 145, 145);
   const border = light ? rgb(190, 190, 190) : rgb(65, 65, 65);
   const accents = light
@@ -80,22 +79,23 @@ export function render(v: View): Rendered {
     dim + clean(`${v.model} · ${v.provider}`) + reset,
     dim + clean(v.cwd) + (v.branch ? ` · ${clean(v.branch)}` : '') + (v.indexing ? ' · indexing…' : v.indexed ? ' · indexed ✓' : '') + reset,
   ];
-  const mark = websiteMark(light);
+  const mark = websiteMark(light, v.elapsed);
+  const animateLogo = headerHeight >= 4 && width >= 40 && v.elapsed < introDuration;
   if (headerHeight >= 4 && width >= 40) {
     header.forEach((line, i) => put(headerY + i, mark[i] + '  ' + line));
-    put(headerY + headerHeight - 1, brandTexture(width));
   } else if (headerHeight) {
     put(headerY, header[0]!); put(headerY + 1, dim + clean(v.cwd) + reset);
   }
 
-  const pad = width >= 20 ? 1 : 0, textWidth = Math.max(1, width - pad * 2 - 2);
+  const pad = width >= 40 ? 2 : width >= 20 ? 1 : 0, textWidth = Math.max(1, width - pad * 2 - 2);
   const value = clean(v.input);
   const input = inputLines(value, Math.min(v.cursor, Array.from(value).length), textWidth);
   const attached = v.attachments.filter(a => value.includes(a.label));
   const previewHeight = attached.length && h >= 20 ? 5 : 0;
   const visible = Math.min(input.lines.length, Math.max(1, Math.min(8, Math.floor(h / 3) - previewHeight)));
-  const composerHeight = Math.min(h, visible + 2 + previewHeight);
-  const footerHeight = h > composerHeight + headerHeight + headerY ? 1 : 0;
+  const verticalPad = h >= 8 ? 1 : 0;
+  const composerHeight = Math.min(h, visible + verticalPad * 2 + previewHeight);
+  const footerHeight = h > composerHeight + headerHeight + headerY + 1 ? 2 : 0;
   const composerY = Math.max(0, h - footerHeight - composerHeight);
   const inputRect = { x: gutter, y: composerY, width, height: composerHeight };
   const execution = { x: gutter, y: headerY + headerHeight, width, height: Math.max(0, composerY - headerY - headerHeight - (v.running || v.permission || v.update || v.voice ? 1 : 0)) };
@@ -129,20 +129,9 @@ export function render(v: View): Rendered {
   const start = v.followTail ? maxScroll : Math.max(0, maxScroll - v.scroll);
   transcript.slice(start, start + execution.height).forEach((line, i) => put(execution.y + i, line, gutter + pad, width - pad * 2));
 
-  const showIntro = !v.logs.length && !value && !v.running && !v.plan.length && !v.diffs.length
-    && !v.permission && !v.update && !v.voice && !v.commands.length && execution.height >= 31 && width >= 64;
-  if (showIntro) {
-    const picture = websiteScene(v.elapsed,light);
-    const y = execution.y + Math.floor((execution.height - 31) / 2);
-    const x = gutter + Math.floor((width - 64) / 2);
-    picture.forEach((line, i) => put(y + i, line, x, 64));
-    put(y + 29, brand + 'Catch the bug.' + reset + fg + ' Ship the fix.' + reset, gutter + Math.max(0,Math.floor((width-28)/2)),28);
-  }
   const status = v.permission ?? v.update ?? v.voice ?? (v.running ? `${['✻', '✼', '✶', '✳'][Math.floor(v.elapsed / 130) % 4]} ${v.tool ?? v.phase}…  esc to interrupt` : '');
   if (status) put(composerY - 1, accent + clean(status) + reset);
   for (let y = composerY; y < composerY + composerHeight; y++) put(y, bg + ' '.repeat(width) + reset);
-  put(composerY, border + '─'.repeat(width) + reset);
-  if (composerHeight >= 2) put(composerY + composerHeight - 1, border + '─'.repeat(width) + reset);
   const images: Rendered['images'] = [];
   if (previewHeight) {
     let x = gutter + pad + 2;
@@ -152,14 +141,14 @@ export function render(v: View): Rendered {
       const image = new Image(a.thumbnail, 'image/png', { fallbackColor: tint(dim) }, { imageId: graphicId, maxWidthCells: 14, maxHeightCells: 4 });
       const picture = image.render(16);
       if (picture.some(s => s.includes('\x1b_G') || s.includes('\x1b]1337;'))) {
-        images.push({ id: graphicId, x, y: composerY + 1, sequence: picture.join('') });
+        images.push({ id: graphicId, x, y: composerY + verticalPad, sequence: picture.join('') });
       } else { put(composerY + 2, bg + dim + a.label + reset, x, 16); }
       x += 18;
     }
   }
   const topLine = Math.max(0, input.position.y - visible + 1);
-  const textY = composerY + 1 + previewHeight;
-  for (let i = 0; i < visible && textY + i < composerY + composerHeight - 1; i++) {
+  const textY = composerY + verticalPad + previewHeight;
+  for (let i = 0; i < visible && textY + i < composerY + composerHeight - verticalPad; i++) {
     const index = topLine + i; const line = input.lines[index] ?? '';
     const range = input.ranges[index] ?? [0, 0];
     const selected = v.selection;
@@ -170,7 +159,7 @@ export function render(v: View): Rendered {
     }
     if (!value && !v.masked) styled = dim + 'Try "explain this codebase"' + fg;
     const prefix = index === 0 ? '❯ ' : '  ';
-    const content = ' '.repeat(pad) + fg + prefix + styled;
+    const content = ' '.repeat(pad) + accent + prefix + fg + styled;
     put(textY + i, bg + content + ' '.repeat(Math.max(0, width - visibleWidth(content))) + reset);
   }
   if (footerHeight) {
@@ -197,7 +186,7 @@ export function render(v: View): Rendered {
       const clipped = clip(row, w);
       return rootBackground + fg + clipped.replaceAll(reset, reset + rootBackground + fg)
         + ' '.repeat(Math.max(0, w - visibleWidth(clipped))) + reset;
-    }), input: inputRect, execution, editorWidth: textWidth, animate: v.running || showIntro && v.elapsed < introDuration,
+    }), input: inputRect, execution, editorWidth: textWidth, animate: v.running || animateLogo,
     cursor: { x: Math.min(w - 1, gutter + pad + 2 + input.position.x), y: Math.min(h - 1, textY + input.position.y - topLine) },
     images,
   };
