@@ -1,0 +1,4 @@
+{
+  "install": null,
+  "test": "PYTHONDONTWRITEBYTECODE=1 python3 test_original.py"
+}

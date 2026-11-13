@@ -2405,6 +2405,16 @@ fn one_shot_scoped_call(
     user_text: &str,
     scope_prompt: &str,
 ) -> Result<String, String> {
+    scoped_call_with_usage(model_cfg, api_key, user_text, scope_prompt, None).map(|(text, _)| text)
+}
+
+pub(crate) fn scoped_call_with_usage(
+    model_cfg: &ModelConfig,
+    api_key: &str,
+    user_text: &str,
+    scope_prompt: &str,
+    max_output_tokens: Option<usize>,
+) -> Result<(String, Option<usize>), String> {
     let mut payload = json!({
         "model": model_cfg.model,
         "input": [
@@ -2421,6 +2431,10 @@ fn one_shot_scoped_call(
     });
     if let Some(effort) = reasoning_effort_for(&model_cfg.model) {
         payload["reasoning"] = json!({ "effort": effort });
+    }
+
+    if let Some(limit) = max_output_tokens {
+        payload["max_output_tokens"] = json!(limit);
     }
 
     let base = model_cfg
@@ -2448,7 +2462,10 @@ fn one_shot_scoped_call(
     }
 
     let value: Value = resp.json().map_err(|e| e.to_string())?;
-    extract_response_text(&value).ok_or_else(|| "no output_text in swarm response".to_string())
+    let text = extract_response_text(&value)
+        .ok_or_else(|| "no output_text in model response".to_string())?;
+    let tokens = value["usage"]["total_tokens"].as_u64().map(|n| n as usize);
+    Ok((text, tokens))
 }
 
 fn extract_response_text(value: &Value) -> Option<String> {
@@ -3030,5 +3047,55 @@ mod tests {
         let root = std::env::temp_dir().join(format!("osmogrep-agent-test-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
         root
+    }
+
+    #[test]
+    fn bounded_provider_call_preserves_shared_request_and_reports_usage() {
+        use std::io::{BufRead, BufReader, Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut input = BufReader::new(stream.try_clone().unwrap());
+            let mut length = 0;
+            loop {
+                let mut line = String::new();
+                input.read_line(&mut line).unwrap();
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some((key, value)) = line.split_once(':') {
+                    if key.eq_ignore_ascii_case("content-length") {
+                        length = value.trim().parse::<usize>().unwrap();
+                    }
+                }
+            }
+            let mut body = vec![0; length];
+            input.read_exact(&mut body).unwrap();
+            let request: Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(request["max_output_tokens"], 128);
+            assert_eq!(request["store"], false);
+            let response=json!({"output":[{"type":"output_text","text":"test result"}],"usage":{"total_tokens":42}}).to_string();
+            write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",response.len(),response).unwrap();
+        });
+        let config = ModelConfig {
+            model: "test-model".into(),
+            base_url: Some(format!("http://{address}")),
+            ..ModelConfig::default()
+        };
+        let (text, tokens) = scoped_call_with_usage(
+            &config,
+            "local-test-key",
+            "bounded input",
+            "test scope",
+            Some(128),
+        )
+        .unwrap();
+        assert_eq!(text, "test result");
+        assert_eq!(tokens, Some(42));
+        server.join().unwrap();
     }
 }

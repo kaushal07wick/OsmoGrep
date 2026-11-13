@@ -50,6 +50,15 @@ pub fn list_servers() -> Vec<String> {
 }
 
 pub fn call(server: Option<&str>, method: &str, args: &Value) -> Result<Value, String> {
+    call_with_timeout(server, method, args, Duration::from_secs(120))
+}
+
+pub fn call_with_timeout(
+    server: Option<&str>,
+    method: &str,
+    args: &Value,
+    limit: Duration,
+) -> Result<Value, String> {
     let cfg = load_config().ok_or("MCP config not found")?;
     if !cfg.enabled.unwrap_or(false) {
         return Err("MCP is disabled. Set [mcp].enabled = true".to_string());
@@ -68,7 +77,11 @@ pub fn call(server: Option<&str>, method: &str, args: &Value) -> Result<Value, S
         .ok_or_else(|| format!("Unknown MCP server: {}", target))?
         .clone();
 
-    let timeout = Duration::from_millis(scfg.timeout_ms.unwrap_or(30_000).clamp(1_000, 120_000));
+    let timeout =
+        Duration::from_millis(scfg.timeout_ms.unwrap_or(30_000).clamp(1_000, 120_000)).min(limit);
+    if timeout.is_zero() {
+        return Err("MCP execution deadline exceeded".into());
+    }
 
     // Scaffold protocol: run configured command with method/args available as env vars.
     // This keeps integration simple while allowing external MCP bridges.
@@ -82,34 +95,28 @@ pub fn call(server: Option<&str>, method: &str, args: &Value) -> Result<Value, S
             serde_json::to_string(args).unwrap_or_else(|_| "{}".into()),
         );
 
-    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
-    let start = std::time::Instant::now();
+    let out = run_bridge(cmd, timeout)?;
+    Ok(serde_json::json!({
+        "server": target,
+        "method": method,
+        "exit_code": out.exit_code,
+        "stdout": String::from_utf8_lossy(&out.stdout),
+        "stderr": truncate(&String::from_utf8_lossy(&out.stderr), 4000),
+    }))
+}
 
-    loop {
-        if let Ok(Some(_)) = child.try_wait() {
-            let out = child.wait_with_output().map_err(|e| e.to_string())?;
-            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-
-            return Ok(serde_json::json!({
-                "server": target,
-                "method": method,
-                "exit_code": out.status.code().unwrap_or(-1),
-                "stdout": truncate(&stdout, 12000),
-                "stderr": truncate(&stderr, 4000),
-            }));
-        }
-
-        if start.elapsed() > timeout {
-            let _ = child.kill();
-            return Err(format!(
-                "MCP call timed out after {}ms",
-                timeout.as_millis()
-            ));
-        }
-
-        std::thread::sleep(Duration::from_millis(50));
+fn run_bridge(
+    cmd: Command,
+    timeout: Duration,
+) -> Result<crate::process_runner::ProcessRun, String> {
+    let out = crate::process_runner::run_command(cmd, timeout)?;
+    if out.timed_out || out.cancelled {
+        return Err("MCP bridge timed out or was cancelled".into());
     }
+    if out.stdout.len() > 4 * 1024 * 1024 {
+        return Err("MCP bridge response exceeds 4 MiB".into());
+    }
+    Ok(out)
 }
 
 fn truncate(s: &str, n: usize) -> String {
@@ -118,5 +125,19 @@ fn truncate(s: &str, n: usize) -> String {
     } else {
         let head: String = s.chars().take(n).collect();
         format!("{}\n...truncated...", head)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bridge_captures_machine_readable_stdout() {
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "printf '{\"session\":\"vm-test\"}'"]);
+        let result = run_bridge(cmd, Duration::from_secs(2)).unwrap();
+        let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(value["session"], "vm-test");
     }
 }

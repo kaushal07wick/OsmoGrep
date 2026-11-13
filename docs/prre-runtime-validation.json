@@ -1,0 +1,49 @@
+{
+  "kind": "controlled_isolated_vm_verification",
+  "verified": true,
+  "classification": "introduced-regression-repaired",
+  "recorded_at": "2026-11-13T18:31:51.855Z",
+  "base_revision": "cb58ba07d6184b101bac1293cd914bf2262ba8b7",
+  "execution_path": "Existing OsmoGrep VM MCP tools; Rust normalized verification bridge not configured or validated",
+  "reproducer_sha256": "8a8ce5853ebbca942bd5eb6894f85fb6359f49866e83e8f8a894d8fb205df89b",
+  "command": "PYTHONDONTWRITEBYTECODE=1 python3 osmogrep_repro_pool.py",
+  "first_comparison": {
+    "base_exit_code": 0,
+    "candidate_exit_code": 1
+  },
+  "after_repair": {
+    "base_exit_code": 0,
+    "candidate_exit_code": 0
+  },
+  "initial_original_suites": {
+    "base": "passed",
+    "candidate": "passed"
+  },
+  "final_original_suites": {
+    "base": "passed",
+    "candidate": "passed"
+  },
+  "original_tests_integrity": "unchanged",
+  "repair": "Restore pool capacity from 8 to 16 while retaining 16 workers",
+  "session_closed": true,
+  "oracle": "Pre-existing controlled CONTRACT.md:3; nonblocking acquisition during barrier overlap",
+  "artifacts": [
+    {
+      "file": "result.json",
+      "sha256": "d9906f295d010b0b233b5977b69fb88241e9b4505638613ac00880f9e8414e81"
+    },
+    {
+      "file": "replay.json",
+      "sha256": "38cf6cdfd2a0027d5efc78c72a978dd15d10982ab48ec1b3c2a236741d7c71cd"
+    },
+    {
+      "file": "fix.patch",
+      "sha256": "94adf6818af221cfd402b9a5dddbbf9ed13d54eedd688a7e68bd8500d62f293b"
+    }
+  ],
+  "limitations": [
+    "One controlled synthetic scenario, not general repository accuracy.",
+    "Raw replay artifacts remain in ignored local storage.",
+    "No hosted GitHub delivery or production execution tested."
+  ]
+}

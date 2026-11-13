@@ -4,6 +4,7 @@ mod commands;
 mod context;
 mod harness;
 mod hooks;
+mod intelligence;
 mod logger;
 mod mcp;
 mod persistence;
@@ -99,6 +100,14 @@ enum CliCommand {
     Run(RunArgs),
     /// Analyze GitHub PRs/issues for duplicates, ranking, and scope drift
     Triage(triage::TriageArgs),
+    /// Index committed code into the optional revision-aware intelligence graph
+    Index(intelligence::cli::IndexArgs),
+    /// Query optional code, runtime and historical relationships
+    Context(intelligence::cli::ContextArgs),
+    /// Selectively analyze changes and shared-resource PR interactions
+    Predict(intelligence::cli::PredictArgs),
+    /// Serve optional repository-scoped intelligence tools over stdio MCP
+    IntelligenceMcp(intelligence::cli::McpArgs),
 }
 
 #[derive(Args, Debug)]
@@ -402,9 +411,7 @@ fn finish_streaming_output(state: &mut AgentState) {
 
 fn log_final_output_once(state: &mut AgentState, text: &str) -> bool {
     let rendered = output_dedupe_key(text);
-    if rendered.is_empty()
-        || state.ui.last_rendered_output.as_deref() == Some(rendered.as_str())
-    {
+    if rendered.is_empty() || state.ui.last_rendered_output.as_deref() == Some(rendered.as_str()) {
         return false;
     }
 
@@ -544,6 +551,18 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         Some(CliCommand::Triage(args)) => {
             triage::run(args)?;
+        }
+        Some(CliCommand::Index(args)) => {
+            intelligence::cli::index(args).map_err(|e| e as Box<dyn Error>)?
+        }
+        Some(CliCommand::Context(args)) => {
+            intelligence::cli::context(args).map_err(|e| e as Box<dyn Error>)?
+        }
+        Some(CliCommand::Predict(args)) => {
+            intelligence::cli::predict(args).map_err(|e| e as Box<dyn Error>)?
+        }
+        Some(CliCommand::IntelligenceMcp(args)) => {
+            intelligence::cli::mcp(args).map_err(|e| e as Box<dyn Error>)?
         }
         None => {
             run_tui(session_name)?;
@@ -2081,6 +2100,30 @@ fn current_tmux_session_name() -> Option<String> {
 mod tests {
     use super::*;
     use clap::Parser;
+
+    #[test]
+    fn intelligence_commands_preserve_existing_cli_forms() {
+        for args in [
+            vec!["version"],
+            vec!["doctor"],
+            vec!["sessions"],
+            vec!["uninstall", "--dry-run"],
+            vec!["run", "--prompt", "inspect", "--json-events"],
+            vec!["triage", "--repo", "owner/repo"],
+            vec!["index", "--commit", "HEAD"],
+            vec!["context", "impact", "--commit", "HEAD"],
+            vec!["predict", "--mode", "screen"],
+            vec!["predict", "--prs", "142,147"],
+            vec!["predict", "report", "run-id"],
+            vec!["intelligence-mcp"],
+        ] {
+            let mut argv = vec!["osmogrep"];
+            argv.extend(args);
+            assert!(Cli::try_parse_from(argv).is_ok());
+        }
+        assert!(Cli::try_parse_from(["osmogrep", "predict", "--generate-experiment"]).is_err());
+        assert!(Cli::try_parse_from(["osmogrep", "predict", "--left", "HEAD"]).is_err());
+    }
 
     #[test]
     fn parses_positional_session_name_for_tui() {

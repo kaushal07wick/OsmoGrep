@@ -1,0 +1,57 @@
+{
+  "kind": "mac_installed_release_validation",
+  "recorded_local_date": "2026-11-14",
+  "os": "Darwin",
+  "architecture": "arm64",
+  "installed_binary": "~/.local/bin/osmogrep",
+  "sha256": "fd7ede0df75b949665e247be4c4884edff99baf1558b74acabbb2d14a262fff8",
+  "version": "0.3.4",
+  "source_build": "cargo build --release --locked",
+  "unit_tests": {
+    "passed": 166,
+    "failed": 0
+  },
+  "installed_checks": {
+    "graph_query": true,
+    "report_reopen": true,
+    "history_query": true,
+    "stdio_mcp": true,
+    "root_spoof_rejected": true,
+    "agent_read_file": true,
+    "agent_graph_tool": true,
+    "agent_provider": "local deterministic mock",
+    "tui_started": true,
+    "tui_help": true,
+    "tui_quit_preserves_app": true,
+    "tui_exit_exit_code": 0,
+    "terminal_flags_restored": true
+  },
+  "real_provider_graph_tools": {
+    "kind": "installed_real_provider_graph_tools",
+    "passed": true,
+    "exit_code": 0,
+    "sentinel_received": true,
+    "tool_calls": [
+      "query_code_graph",
+      "read_file"
+    ],
+    "error_count": 0
+  },
+  "compatibility_commands": {
+    "sessions": 0,
+    "uninstall --dry-run": 0,
+    "triage --help": 0,
+    "index --help": 0,
+    "context --help": 0,
+    "predict --help": 0,
+    "intelligence-mcp --help": 0
+  },
+  "controlled_analysis_cases_passed": 5,
+  "controlled_vm_validation": "prre-runtime-validation.json",
+  "credentials_or_provider_config_modified": false,
+  "limitations": [
+    "Rust predict --verify normalized bridge is not configured or live-validated.",
+    "Hosted E2B/GitHub delivery and public-repository detection accuracy remain unvalidated.",
+    "Automatic causal hypotheses currently cover declared capacity/concurrency invariants."
+  ]
+}

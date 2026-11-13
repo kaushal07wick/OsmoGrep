@@ -1,0 +1,28 @@
+schema_version = 1
+
+[[resources]]
+id = "db"
+kind = "connection_pool"
+capacity = 16
+
+[[services]]
+id = "worker"
+resources = ["db"]
+files = ["worker.py"]
+concurrency = 8
+
+[[invariants]]
+id = "all-workers-acquire"
+kind = "capacity_covers_concurrency"
+resource = "db"
+services = ["worker"]
+assumption = "All workers hold one connection until every worker reaches the barrier; acquisition is nonblocking."
+oracle = "Every configured worker can acquire a connection during the overlap."
+source = "CONTRACT.md:3"
+
+[recipe]
+test = "PYTHONDONTWRITEBYTECODE=1 python3 test_original.py"
+timeout_secs = 30
+cpu_limit = 1
+memory_mb = 256
+network_allowlist = []

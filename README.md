@@ -213,6 +213,13 @@ so one enormous log can't blow up the conversation.
 `run` flags: `--repo-root`, `--prompt`, `--prompt-file`, `--json-events`,
 `--permission-profile <read-only\|workspace-auto\|full-access>`, `--auto-approve`.
 
+Optional regression intelligence adds `index`, `context`, `predict`, and
+`intelligence-mcp`. It provides a revision-aware SQLite graph, deterministic
+runtime screening and declared resource-capacity interaction hypotheses. See
+[usage, architecture and integration limits](docs/prre.md) and the
+[implementation log](docs/prre-implementation.md). Hosted verification and live
+GitHub delivery remain integration-pending; normal coding does not require it.
+
 ### Slash commands
 
 | Command | Description |
@@ -236,7 +243,8 @@ so one enormous log can't blow up the conversation.
 | `/theme` · `/color` · `/type` | Dark/light, accent colour, UI density |
 | `/copy [all]` · `/rename <name>` | Copy last response or transcript; rename session |
 | `/nv [toggle\|help]` | Neovim + Osmogrep split in tmux (auto-bootstraps tmux) |
-| `/quit` · `/q` · `/exit` | Stop the running agent; exit |
+| `/quit` · `/q` | Stop the running agent |
+| `/exit` | Exit OsmoGrep |
 
 During a run, `Esc` cancels the agent rather than exiting the app.
 

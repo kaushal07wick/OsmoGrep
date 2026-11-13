@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
+mod code_graph;
 mod diagnostics;
 mod dynamic_workflow;
 mod edit;
@@ -27,6 +28,7 @@ mod web_search;
 mod worktree_swarm;
 mod write;
 
+pub use code_graph::CodeGraph;
 pub use diagnostics::Diagnostics;
 pub use dynamic_workflow::DynamicWorkflow;
 pub use edit::Edit;
@@ -82,6 +84,7 @@ pub struct ToolScope {
     include_git_commit: bool,
     include_worktree_swarm: bool,
     include_dynamic_workflow: bool,
+    include_intelligence: bool,
     read_only: bool,
 }
 
@@ -107,6 +110,18 @@ impl ToolScope {
                 ],
             ),
             include_mcp: lower.contains("mcp"),
+            include_intelligence: contains_any(
+                &lower,
+                &[
+                    "code graph",
+                    "query_code_graph",
+                    "runtime risk",
+                    "predict",
+                    "regression history",
+                    "change impact",
+                    "dependency impact",
+                ],
+            ),
             include_notebooks: contains_any(&lower, &["notebook", ".ipynb", "jupyter"]),
             include_git_commit: contains_any(
                 &lower,
@@ -171,6 +186,7 @@ impl ToolScope {
             "git_commit" => self.include_git_commit,
             "worktree_swarm" => self.include_worktree_swarm,
             "dynamic_workflow" => self.include_dynamic_workflow,
+            "query_code_graph" => self.include_intelligence,
             _ => true,
         }
     }
@@ -231,6 +247,9 @@ impl ToolRegistry {
             Box::new(Diagnostics),
             Box::new(WorktreeSwarm),
             Box::new(DynamicWorkflow),
+            Box::new(code_graph::CodeGraph {
+                root: repo_root.clone(),
+            }),
         ];
 
         for tool in list {
@@ -395,6 +414,18 @@ mod tests {
     use serde_json::json;
     use std::fs;
     use uuid::Uuid;
+
+    #[test]
+    fn graph_tool_is_available_when_requested_by_exact_name() {
+        assert!(
+            ToolScope::for_prompt("Use query_code_graph for this revision")
+                .allows("query_code_graph")
+        );
+        assert!(ToolScope::for_prompt("Use query_code_graph")
+            .read_only()
+            .allows("query_code_graph"));
+        assert!(!ToolScope::for_prompt("fix the function").allows("query_code_graph"));
+    }
 
     #[test]
     fn registry_executes_tools_from_configured_repo_root() {

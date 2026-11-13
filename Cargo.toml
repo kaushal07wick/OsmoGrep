@@ -53,3 +53,4 @@ cpal = "0.15"
 crossbeam-channel = "0.5"
 tungstenite = { version = "0.24", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
 url = "2.5"
+rusqlite = { version = "0.42", features = ["bundled"] }

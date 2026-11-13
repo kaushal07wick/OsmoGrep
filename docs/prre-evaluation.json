@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "kind": "controlled_analysis_evaluation",
+  "repository": "/private/tmp/osmogrep-prre-final-20261113/repository",
+  "base": "021fc2b65d6bd873ca78f1c887dbf6dc086a595d",
+  "pr_a": "1f1868110b22e65b1fdf041bbea7a3517a870584",
+  "pr_b": "4d179e6b47108ce379cb87d94a0ad8f2d01dcf00",
+  "combined": "c3c95bac2d2e94cd3ea53c79751e550d0823210b",
+  "cases": [
+    {
+      "case": "docs",
+      "expected_hypotheses": 0,
+      "actual_hypotheses": 0,
+      "latency_ms": 106.94
+    },
+    {
+      "case": "pool_alone",
+      "expected_hypotheses": 0,
+      "actual_hypotheses": 0,
+      "latency_ms": 559.59
+    },
+    {
+      "case": "workers_alone",
+      "expected_hypotheses": 0,
+      "actual_hypotheses": 0,
+      "latency_ms": 545.92
+    },
+    {
+      "case": "interacting_pair",
+      "expected_hypotheses": 1,
+      "actual_hypotheses": 1,
+      "latency_ms": 974.28
+    },
+    {
+      "case": "irrelevant_pair",
+      "expected_hypotheses": 0,
+      "actual_hypotheses": 0,
+      "latency_ms": 614.24
+    }
+  ],
+  "sample_size": 5,
+  "indexing": [
+    {
+      "pass": "cold",
+      "latency_ms": 1271.27,
+      "parsed_files": 3,
+      "reused_files": 0,
+      "revision": "021fc2b65d6bd873ca78f1c887dbf6dc086a595d",
+      "unsupported_files": 0
+    },
+    {
+      "pass": "warm",
+      "latency_ms": 87.55,
+      "parsed_files": 0,
+      "reused_files": 3,
+      "revision": "021fc2b65d6bd873ca78f1c887dbf6dc086a595d",
+      "unsupported_files": 0
+    }
+  ],
+  "graph_bytes": 225280,
+  "model_calls": 0,
+  "model_tokens": 0,
+  "sandbox_experiments": 0,
+  "cpu_user_seconds": 0.562297,
+  "cpu_system_seconds": 0.649734,
+  "peak_child_rss_bytes": 17448960,
+  "runtime_verification": "pending: use authorized OsmoGrep VM service with experiment.json",
+  "limitations": [
+    "Synthetic cases from one controlled repository; not an accuracy estimate on public repositories.",
+    "No runtime code, original suite, model or production experiment executed by this script."
+  ]
+}

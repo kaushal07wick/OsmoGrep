@@ -70,6 +70,18 @@ struct Meta {
 
 /* ======================= PUBLIC ENTRY ======================= */
 
+/// Shared extraction for the optional committed-revision graph; no cache writes.
+pub fn extract_symbols(source: &str, path: &str) -> Vec<Symbol> {
+    let mut symbols = Vec::new();
+    match Path::new(path).extension().and_then(|s| s.to_str()) {
+        Some("rs") => extract_rust(source, path, &mut symbols),
+        Some("py") => extract_python(source, path, &mut symbols),
+        _ => {}
+    }
+    finalize_calls(&mut symbols);
+    symbols
+}
+
 pub fn load_or_build(root: impl AsRef<Path>) -> Context {
     let root = root.as_ref();
     let ctx_dir = root.join(CONTEXT_DIR);
