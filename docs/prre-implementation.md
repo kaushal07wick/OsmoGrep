@@ -326,3 +326,32 @@ passed the Mac PTY lifecycle, terminal restoration, local provider/tool and MCP
 acceptance checks. Current installed SHA-256:
 `f791f286d53f83c70227216c2df7cb729f441f7df105134c4de48d64ca1e590b`.
 No live model or VM reruns were needed for this presentation-only change.
+
+## Terminal-agent layout correction — 2026-11-14
+
+The vertically centered welcome above was rejected in visual review. Restored
+a compact, left-aligned session header at the top of the readable column. The
+composer follows the transcript as it grows, then remains at the bottom while
+long transcripts scroll. Startup and active conversation use the same layout;
+removed the welcome heading and its special placement. Slash menus reserve room
+above the composer. Version and approval state remain visible in the header,
+with directory, branch and index status beneath. Shell entries retain their
+single themed command line.
+
+Visual transcript inspection also exposed multiline log records joining
+paragraphs. Render each source line separately so paragraphs, blank lines and
+fenced code retain their structure. Stored logs and execution are unchanged.
+
+The full suite passed **168 tests**, including transcript growth, scrolling,
+menu bounds and paragraph/code preservation. Release build passed. Changed-file
+formatting and diff whitespace checks passed; the whole-repository formatter
+still reports pre-existing formatting differences in `src/commands.rs`.
+
+Installed the optimized release atomically at `~/.local/bin/osmogrep`, verified
+it is first on PATH, and reran the Mac PTY lifecycle/terminal restoration,
+local mocked provider/tool, graph/report reopening and MCP acceptance checks.
+All passed. Actual cell-buffer previews were inspected for startup,
+conversation and command-menu layout. Installed SHA-256:
+`cf4604671a1b8159946f89a597294e851016c2e72def891022944226469b8069`.
+Live providers, VM verification and hosted delivery were not rerun for this UI
+correction. Existing sessions must exit and relaunch to load the new binary.

@@ -90,20 +90,7 @@ fn centered_content(area: Rect) -> Rect {
     }
 }
 
-fn welcome_screen(state: &AgentState) -> bool {
-    state.logs.iter().next().is_none()
-        && !state.ui.agent_running
-        && !state.ui.diff_active
-        && state.plan_items.is_empty()
-        && state.ui.pending_permission.is_none()
-        && state.ui.pending_update.is_none()
-        && !(state.voice.visible || state.voice.enabled || state.voice.connected)
-}
-
 fn header_height(state: &AgentState, available_height: u16) -> u16 {
-    if welcome_screen(state) && available_height >= 14 {
-        return 5;
-    }
     match state.density {
         UiDensity::Compact => 2,
         UiDensity::Standard if available_height < 24 => 2,
@@ -132,11 +119,6 @@ pub fn draw_ui<B: Backend>(
         let input_lines =
             calculate_input_lines(&state.ui.input, content.width as usize, PROMPT.len());
         let cmd_height = (input_lines.min(3) + 2) as u16;
-        if welcome_screen(state) && content.height >= 14 {
-            let height = header_height + cmd_height + 1;
-            content.y += content.height.saturating_sub(height) / 2;
-            content.height = height;
-        }
         let show_voice = state.voice.visible || state.voice.enabled || state.voice.connected;
         let voice_height = if show_voice {
             calculate_input_lines(&voice_bar_text(state), content.width as usize, 0).min(
@@ -147,6 +129,22 @@ pub fn draw_ui<B: Backend>(
         } else {
             0
         };
+        let lines = execution_lines(state, content.width.saturating_sub(4));
+        let mut transcript_height = if lines.is_empty() {
+            1
+        } else {
+            u16::try_from(lines.len())
+                .unwrap_or(u16::MAX)
+                .saturating_add(2)
+        }
+        .saturating_add(u16::from(state.ui.agent_running));
+        if !state.ui.command_items.is_empty() {
+            transcript_height =
+                transcript_height.max((state.ui.command_items.len().min(10) + 3) as u16);
+        }
+        content.height = content
+            .height
+            .min(transcript_height.saturating_add(header_height + voice_height + cmd_height + 1));
         let panels = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -173,7 +171,7 @@ pub fn draw_ui<B: Backend>(
         exec_rect = execution;
 
         render_header(f, header_rect, state);
-        render_execution(f, execution, state);
+        render_execution(f, execution, state, lines);
         render_running_badge(f, running, state);
         render_voice_bar(f, panels[2], state);
         render_input_box(f, input_rect, state);
@@ -225,9 +223,9 @@ fn render_header(f: &mut Frame, area: Rect, state: &AgentState) {
         "-".to_string()
     };
     let run_label = if state.ui.agent_running {
-        format!("{} {budget}", state.ui.run_phase)
+        format!(" · {} {budget}", state.ui.run_phase)
     } else {
-        "idle".to_string()
+        String::new()
     };
     let approval = if state.plan_mode {
         "plan-mode"
@@ -253,30 +251,14 @@ fn render_header(f: &mut Frame, area: Rect, state: &AgentState) {
             "osmogrep",
             Style::default().fg(p.accent).add_modifier(Modifier::BOLD),
         ),
+        Span::styled(format!(" v{version}"), Style::default().fg(p.fg_muted)),
         Span::styled(session, Style::default().fg(p.fg_dim)),
-        Span::styled(" · ", Style::default().fg(p.fg_muted)),
         Span::styled(run_label, Style::default().fg(p.fg_main)),
         Span::styled(tool, Style::default().fg(p.fg_dim)),
         Span::styled(" · ", Style::default().fg(p.fg_muted)),
-        Span::styled(
-            state.permission_profile.as_str(),
-            Style::default().fg(p.fg_dim),
-        ),
-        Span::styled(" · ", Style::default().fg(p.fg_muted)),
         Span::styled(approval, Style::default().fg(p.fg_dim)),
-        Span::styled(" · v", Style::default().fg(p.fg_muted)),
-        Span::styled(version, Style::default().fg(p.fg_muted)),
     ]);
 
-    let repo_display = if welcome_screen(state) {
-        state
-            .repo_root
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or(repo_display)
-    } else {
-        repo_display
-    };
     let mut repo_line = Line::from(vec![
         Span::styled(repo_display, Style::default().fg(p.fg_dim)),
         Span::styled(" · ", Style::default().fg(p.fg_muted)),
@@ -296,49 +278,19 @@ fn render_header(f: &mut Frame, area: Rect, state: &AgentState) {
             .push(Span::styled(" · indexed ✓", Style::default().fg(p.fg_dim)));
     }
 
-    let lines = if welcome_screen(state) && area.height >= 5 {
-        vec![
-            Line::from(vec![
-                Span::styled(
-                    "osmogrep",
-                    Style::default().fg(p.accent).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(format!("  v{version}"), Style::default().fg(p.fg_muted)),
-            ])
-            .alignment(Alignment::Center),
-            Line::default(),
-            Line::from(Span::styled(
-                "What are we working on?",
-                Style::default().fg(p.fg_main).add_modifier(Modifier::BOLD),
-            ))
-            .alignment(Alignment::Center),
-            repo_line.alignment(Alignment::Center),
-            Line::from(Span::styled(
-                "/help commands  ·  ! shell",
-                Style::default().fg(p.fg_dim),
-            ))
-            .alignment(Alignment::Center),
-        ]
-    } else {
-        vec![status_line, repo_line]
-    };
+    let lines = vec![
+        status_line,
+        repo_line,
+        Line::from(Span::styled(
+            "/help commands  ·  ! shell",
+            Style::default().fg(p.fg_muted),
+        )),
+    ];
     f.render_widget(Paragraph::new(lines), area);
 }
 
-/// main panel
-fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
-    if area.width < 4 || area.height < 3 {
-        return;
-    }
+fn execution_lines(state: &AgentState, width: u16) -> Vec<Line<'static>> {
     let p = palette(state);
-    let padded = Rect {
-        x: area.x + 2,
-        y: area.y + 1,
-        width: area.width.saturating_sub(4),
-        height: area.height.saturating_sub(2),
-    };
-
-    let height = padded.height.max(1) as usize;
     let mut lines: Vec<Line> = Vec::new();
 
     let mut md = crate::ui::markdown::Markdown::new();
@@ -414,7 +366,9 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
             continue;
         }
 
-        lines.push(style_log_line(md.render_line(text), level, fresh, p));
+        for line in text.split('\n') {
+            lines.push(style_log_line(md.render_line(line), level, fresh, p));
+        }
     }
 
     if state.ui.diff_active && !state.ui.diff_snapshot.is_empty() {
@@ -454,10 +408,10 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
         )));
 
         for (idx, diff) in rendered_diffs.iter().enumerate() {
-            lines.extend(crate::ui::diff::render_diff(diff, padded.width));
+            lines.extend(crate::ui::diff::render_diff(diff, width));
             if idx + 1 < state.ui.diff_snapshot.len() {
                 lines.push(Line::from(Span::styled(
-                    "─".repeat(padded.width.saturating_sub(1) as usize),
+                    "─".repeat(width.saturating_sub(1) as usize),
                     Style::default().fg(Color::Rgb(70, 70, 70)),
                 )));
             }
@@ -502,7 +456,20 @@ fn render_execution(f: &mut Frame, area: Rect, state: &AgentState) {
         lines.extend(render_plan_lines(state, p));
     }
 
-    let lines = wrap_lines_safely(lines, padded.width as usize);
+    wrap_lines_safely(lines, width as usize)
+}
+
+fn render_execution(f: &mut Frame, area: Rect, state: &AgentState, lines: Vec<Line<'static>>) {
+    if area.width < 4 || area.height < 3 {
+        return;
+    }
+    let padded = Rect {
+        x: area.x + 2,
+        y: area.y + 1,
+        width: area.width.saturating_sub(4),
+        height: area.height.saturating_sub(2),
+    };
+    let height = padded.height.max(1) as usize;
     let max_scroll = lines.len().saturating_sub(height);
     let scroll = if state.ui.follow_tail {
         max_scroll
@@ -1300,21 +1267,41 @@ mod tests {
     }
 
     #[test]
-    fn idle_prompt_sits_with_the_welcome_text_and_active_prompt_anchors_below_output() {
+    fn session_grows_from_top_and_scrolls_when_transcript_fills_terminal() {
         let mut state = crate::init_state();
         let mut terminal = Terminal::new(TestBackend::new(180, 50)).unwrap();
         let (idle, _, _) = draw_ui(&mut terminal, &state).unwrap();
-        save_preview(&terminal, "welcome");
-        assert!((20..30).contains(&idle.y));
+        save_preview(&terminal, "session");
+        assert!(idle.y < 10);
         assert_eq!(idle.x, 34);
+        let buffer = terminal.backend().buffer();
+        let header: String = (0..180).map(|x| buffer.get(x, 1).symbol()).collect();
+        assert!(header.trim_start().starts_with("osmogrep v"));
+        let screen: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
+        assert!(!screen.contains("What are we working on?"));
+        crate::logger::log_user_input(&mut state, "Explain how this repository is organized.");
         state
             .logs
-            .push(crate::state::LogLevel::Info, "A conversation has started.");
+            .push(crate::state::LogLevel::Info, "● read_file src/main.rs");
+        state.logs.push(
+            crate::state::LogLevel::Info,
+            "The Rust agent lives in `src/`. Terminal rendering is in `src/ui/` and repository intelligence is in `src/intelligence/`.\n\nThe existing agent and the optional intelligence layer share tool execution.",
+        );
         let (active, _, execution) = draw_ui(&mut terminal, &state).unwrap();
-        assert!(active.y > 40);
+        save_preview(&terminal, "conversation");
+        assert!(active.y > idle.y);
+        assert!(active.y < 20);
         assert_eq!(active.x, execution.x);
         assert_eq!(active.width, CONTENT_WIDTH);
         assert_eq!(execution.width, active.width);
+        for _ in 0..100 {
+            state
+                .logs
+                .push(crate::state::LogLevel::Info, "More output.");
+        }
+        let (full, _, _) = draw_ui(&mut terminal, &state).unwrap();
+        assert!(full.y > 40);
+        assert!(full.bottom() <= 50);
         state.density = UiDensity::Compact;
         assert_eq!(header_height(&state, 50), 2);
     }
@@ -1349,6 +1336,36 @@ mod tests {
     }
 
     #[test]
+    fn transcript_preserves_paragraphs_and_multiline_code() {
+        let mut state = crate::init_state();
+        state.logs.push(
+            crate::state::LogLevel::Info,
+            "First paragraph.\n\nSecond paragraph.\n```rust\nfn main() {}\n```",
+        );
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        draw_ui(&mut terminal, &state).unwrap();
+        let buffer = terminal.backend().buffer();
+        let rows: Vec<String> = (0..24)
+            .map(|y| {
+                (0..80)
+                    .map(|x| buffer.get(x, y).symbol())
+                    .collect::<String>()
+                    .trim()
+                    .to_owned()
+            })
+            .collect();
+        let first = rows
+            .iter()
+            .position(|row| row == "First paragraph.")
+            .unwrap();
+        assert_eq!(rows[first + 1], "");
+        assert_eq!(rows[first + 2], "Second paragraph.");
+        assert_eq!(rows[first + 3], "```rust");
+        assert_eq!(rows[first + 4], "fn main() {}");
+        assert_eq!(rows[first + 5], "```");
+    }
+
+    #[test]
     fn rendering_and_popups_stay_inside_small_and_wide_terminals() {
         for (width, height) in [(1, 1), (20, 5), (40, 12), (80, 24), (160, 50), (240, 80)] {
             let mut state = crate::init_state();
@@ -1365,6 +1382,9 @@ mod tests {
             let (input, hint, output) = draw_ui(&mut terminal, &state).unwrap();
             if width == 80 {
                 save_preview(&terminal, "narrow-palette");
+            }
+            if width >= 80 && height >= 24 {
+                assert!(hint.y >= 3, "menu must leave the session header visible");
             }
             for rect in [input, hint, output] {
                 assert!(rect.right() <= width, "{width}x{height}: {rect:?}");
