@@ -1,4 +1,5 @@
 import { Image, Markdown, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
+import { brandOrange, brandTexture, introDuration, websiteMark, websiteScene } from './brand.ts';
 
 export interface Rect { x: number; y: number; width: number; height: number }
 export interface Attachment { id: number; label: string; thumbnail: string; width: number; height: number }
@@ -16,6 +17,7 @@ export interface View {
 export interface Rendered {
   id: number; rows: string[]; input: Rect; execution: Rect; cursor: { x: number; y: number };
   editorWidth: number;
+  animate: boolean;
   images: { id: number; x: number; y: number; sequence: string }[];
 }
 const reset = '\x1b[0m';
@@ -25,29 +27,6 @@ export function clean(s: string): string {
   return stripTerminalSequences(s).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '').replace(/\t/g, '    ');
 }
 const clip = (s: string, width: number) => width > 0 ? truncateToWidth(s, width, '') : '';
-
-export function orb(angle: number, columns = 30, rows = 13): string[] {
-  const depth = new Float64Array(columns * rows).fill(-Infinity);
-  const pixels = Array<string>(columns * rows).fill(' ');
-  for (let a = 0; a < Math.PI * 2; a += .055) {
-    for (let b = 0; b < Math.PI * 2; b += .12) {
-      const radius = 1.6 + .58 * Math.cos(b);
-      const x = radius * Math.cos(a), y = radius * Math.sin(a), z = .58 * Math.sin(b);
-      const rx = x * Math.cos(angle) + z * Math.sin(angle);
-      const rz = z * Math.cos(angle) - x * Math.sin(angle);
-      const ry = y * .65 - rz * .76, zz = y * .76 + rz * .65;
-      const scale = 1 / (5 - zz);
-      const px = Math.round(columns / 2 + rx * scale * columns * .85);
-      const py = Math.round(rows / 2 + ry * scale * rows * .85);
-      const index = py * columns + px;
-      if (px < 0 || px >= columns || py < 0 || py >= rows || zz <= depth[index]!) continue;
-      depth[index] = zz;
-      const light = Math.max(0, Math.min(1, (zz + 2) / 4));
-      pixels[index] = rgb(Math.round(55 + light * 170), Math.round(85 + light * 150), Math.round(125 + light * 125)) + '·' + reset;
-    }
-  }
-  return Array.from({ length: rows }, (_, y) => pixels.slice(y * columns, (y + 1) * columns).join(''));
-}
 
 // Code-point offsets match the Rust editor's Unicode boundary-safe cursor.
 function inputLines(text: string, cursor: number, width: number) {
@@ -74,7 +53,8 @@ export function render(v: View): Rendered {
   const w = Math.max(1, Math.min(1000, v.width)), h = Math.max(1, Math.min(500, v.height));
   const gutter = w >= 40 ? 1 : 0, width = Math.max(1, w - gutter * 2);
   const light = v.theme === 'light';
-  const fg = light ? rgb(35, 35, 35) : rgb(220, 220, 220);
+  const fg = light ? rgb(35, 35, 35) : rgb(233, 229, 220);
+  const brand = rgb(...brandOrange as [number,number,number]);
   const dim = light ? rgb(95, 95, 95) : rgb(145, 145, 145);
   const border = light ? rgb(190, 190, 190) : rgb(65, 65, 65);
   const accents = light
@@ -96,13 +76,14 @@ export function render(v: View): Rendered {
   const headerY = h < 15 || v.density === 'compact' ? 0 : v.density === 'spacious' ? 2 : 1;
   const headerHeight = h >= 15 && v.density !== 'compact' ? (v.density === 'spacious' ? 5 : 4) : h >= 8 ? 2 : 0;
   const header = [
-    fg + bold('OsmoGrep') + reset + dim + ` v${clean(v.version)}` + (v.session ? ` · ${clean(v.session)}` : '') + reset,
+    fg + bold('osmogrep') + reset + dim + ` v${clean(v.version)}` + (v.session ? ` · ${clean(v.session)}` : '') + reset,
     dim + clean(`${v.model} · ${v.provider}`) + reset,
     dim + clean(v.cwd) + (v.branch ? ` · ${clean(v.branch)}` : '') + (v.indexing ? ' · indexing…' : v.indexed ? ' · indexed ✓' : '') + reset,
   ];
-  const mark = [' ▄██▄  ', '██  ██ ', ' ▀██▀╲ '];
+  const mark = websiteMark(light);
   if (headerHeight >= 4 && width >= 40) {
-    header.forEach((line, i) => put(headerY + i, accent + mark[i] + reset + '  ' + line));
+    header.forEach((line, i) => put(headerY + i, mark[i] + '  ' + line));
+    put(headerY + headerHeight - 1, brandTexture(width));
   } else if (headerHeight) {
     put(headerY, header[0]!); put(headerY + 1, dim + clean(v.cwd) + reset);
   }
@@ -148,11 +129,14 @@ export function render(v: View): Rendered {
   const start = v.followTail ? maxScroll : Math.max(0, maxScroll - v.scroll);
   transcript.slice(start, start + execution.height).forEach((line, i) => put(execution.y + i, line, gutter + pad, width - pad * 2));
 
-  if (!v.logs.length && !value && !v.running && execution.height >= 17 && width >= 64) {
-    const picture = orb(Math.min(v.elapsed, 2200) / 900);
-    const y = execution.y + Math.floor((execution.height - picture.length) / 2);
-    const x = gutter + Math.floor((width - 30) / 2);
-    picture.forEach((line, i) => put(y + i, line, x, 30));
+  const showIntro = !v.logs.length && !value && !v.running && !v.plan.length && !v.diffs.length
+    && !v.permission && !v.update && !v.voice && !v.commands.length && execution.height >= 31 && width >= 64;
+  if (showIntro) {
+    const picture = websiteScene(v.elapsed,light);
+    const y = execution.y + Math.floor((execution.height - 31) / 2);
+    const x = gutter + Math.floor((width - 64) / 2);
+    picture.forEach((line, i) => put(y + i, line, x, 64));
+    put(y + 29, brand + 'Catch the bug.' + reset + fg + ' Ship the fix.' + reset, gutter + Math.max(0,Math.floor((width-28)/2)),28);
   }
   const status = v.permission ?? v.update ?? v.voice ?? (v.running ? `${['✻', '✼', '✶', '✳'][Math.floor(v.elapsed / 130) % 4]} ${v.tool ?? v.phase}…  esc to interrupt` : '');
   if (status) put(composerY - 1, accent + clean(status) + reset);
@@ -207,13 +191,13 @@ export function render(v: View): Rendered {
       put(composerY - count - 1 + i, (index === v.selectedCommand ? '\x1b[7m' : dim) + clip(text, Math.min(80, width)) + reset);
     }
   }
-  const rootBackground = '\x1b[48;2;250;250;250m';
+  const rootBackground = light ? '\x1b[48;2;250;250;250m' : '\x1b[48;2;0;0;0m';
   return {
     id: v.id, rows: rows.map(row => {
       const clipped = clip(row, w);
-      return light ? rootBackground + fg + clipped.replaceAll(reset, reset + rootBackground + fg)
-        + ' '.repeat(Math.max(0, w - visibleWidth(clipped))) + reset : clipped;
-    }), input: inputRect, execution, editorWidth: textWidth,
+      return rootBackground + fg + clipped.replaceAll(reset, reset + rootBackground + fg)
+        + ' '.repeat(Math.max(0, w - visibleWidth(clipped))) + reset;
+    }), input: inputRect, execution, editorWidth: textWidth, animate: v.running || showIntro && v.elapsed < introDuration,
     cursor: { x: Math.min(w - 1, gutter + pad + 2 + input.position.x), y: Math.min(h - 1, textY + input.position.y - topLine) },
     images,
   };

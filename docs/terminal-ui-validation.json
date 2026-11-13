@@ -2,9 +2,9 @@
   "scope": "Local macOS validation of TypeScript presentation and existing Rust backend",
   "date": "2026-11-14",
   "rust_tests_passed": 177,
-  "typescript_tests_passed": 12,
+  "typescript_tests_passed": 13,
   "node": "v26.13.1",
-  "installed_sha256": "9b9ab543c0f2f9d0172af8651b378e7a161c3ffc2834e423103edf34ac344c5e",
+  "installed_sha256": "3e3bec94780d1657d5344473bb52a93038ad5cb359c3359523ab291fec2da98e",
   "installed_first_on_path": true,
   "mac_pty_acceptance": {
     "typescript_renderer_started": true,
@@ -35,5 +35,8 @@
   "model_evidence": "Original generated PNG bytes observed at local deterministic provider boundary",
   "live_vision_model_checked": false,
   "hosted_pr_e2b_retested": false,
-  "other_operating_systems_tested_locally": false
+  "other_operating_systems_tested_locally": false,
+  "existing_interface_acceptance_source_commit": "8ceef29",
+  "brand_source": "https://osmogrep.com/",
+  "brand_provenance": "terminal-ui/brand/provenance.json"
 }

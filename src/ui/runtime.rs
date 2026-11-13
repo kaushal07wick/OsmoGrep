@@ -53,11 +53,6 @@ impl TuiRuntime {
         model: &ModelConfig,
     ) -> Result<(), Box<dyn Error>> {
         let now = std::time::Instant::now();
-        self.animating = self.typescript.is_some()
-            && (state.ui.agent_running
-                || state.started_at.elapsed() < Duration::from_millis(2200)
-                    && state.logs.iter().next().is_none()
-                    && state.ui.input.is_empty());
         if (!self.dirty && !self.animating) || !self.frame.draw_due(now) {
             return Ok(());
         }
@@ -72,10 +67,11 @@ impl TuiRuntime {
         if let Some(ui) = self.typescript.as_mut() {
             let size = terminal.size()?;
             match ui.draw(state, model, size.width, size.height) {
-                Ok((input, exec, editor_width)) => {
+                Ok((input, exec, editor_width, animate)) => {
                     self.input_rect = input;
                     self.exec_rect = exec;
                     state.ui.input_wrap_width = editor_width;
+                    self.animating = animate;
                     self.last_visual = Some(now);
                     self.frame.mark_drawn(now);
                     self.dirty = false;

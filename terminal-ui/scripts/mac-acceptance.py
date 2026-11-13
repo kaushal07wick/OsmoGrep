@@ -104,7 +104,7 @@ def wait_for(check, seconds=12):
 
 result = {}
 try:
-    wait_for(lambda:b'OsmoGrep' in transcript and b'local-ui-test-model' in transcript)
+    wait_for(lambda:b'osmogrep' in transcript and b'local-ui-test-model' in transcript)
     assert b'Native UI restored' not in transcript
     result['typescript_renderer_started'] = True
     paste('hello world')

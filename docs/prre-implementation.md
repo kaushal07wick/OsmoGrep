@@ -421,3 +421,29 @@ kept a backup, and verified `~/.local/bin/osmogrep` is first on PATH. Installed
 SHA-256: `9b9ab543c0f2f9d0172af8651b378e7a161c3ffc2834e423103edf34ac344c5e`.
 The redacted [validation summary](terminal-ui-validation.json) contains results;
 raw local terminal transcripts remain under ignored `.context/` directories.
+
+## Live website branding — 2026-11-14
+
+The user clarified that the local website checkout was outdated. Fetched the
+current `https://osmogrep.com/` HTML, deployed JavaScript and stylesheets, and
+inspected the live page in a headless browser. The current brand uses a pixel
+ring with an orange segment, lowercase wordmark, engraved textures and an ASCII
+woodpecker finding and catching a bug. The preliminary orange terminal-mark
+interpretation was discarded before installation.
+
+Copied the deployed SVG pixel grid and sampled the real hero animation into 80
+compact terminal frames. `terminal-ui/brand/provenance.json` records the source
+hashes; the offline importer preserves the drawing geometry and woodgrain.
+Runtime playback only decodes the small bundled data and draws terminal cells,
+with warm light ink on a black dark-mode canvas. The illustration plays once,
+stops after ten seconds, and is hidden by drafts, conversations, menus, plans,
+diffs and dialogs. The existing layout, editor and execution behavior remain.
+
+All **177 Rust tests** and **13 TypeScript UI tests** passed. The optimized
+release embeds the exact new bundle. Installed it atomically with a backup,
+then passed the Mac PTY acceptance checks for editing, image bytes at the local
+provider boundary, graphics output, resizing, shell execution, renderer crash
+recovery and terminal restoration. Installed SHA-256:
+`3e3bec94780d1657d5344473bb52a93038ad5cb359c3359523ab291fec2da98e`.
+The artwork is adapted to terminal character cells; web fonts, browser canvas
+resolution and pointer-following effects are not reproduced.

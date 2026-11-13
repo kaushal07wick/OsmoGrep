@@ -7,9 +7,19 @@ layout reuse `@earendil-works/pi-tui`.
 
 The UI follows the supplied Claude Code reference: compact brand/model/directory
 at the upper left, full-width transcript, fixed bottom composer and a small
-permissions footer. A rotating point-cloud ring fills the empty startup view;
-it stops after 2.2 seconds and disappears when a draft or conversation starts.
-Animation doesn't represent agent progress and makes no model calls.
+permissions footer. Branding comes from the live **osmogrep.com** deployment:
+the pixel-ring logo, lowercase wordmark, warm orange accents and engraved ASCII
+woodpecker catching a bug. The canvas stays black in dark mode. A single ten-second
+illustration plays in sufficiently large empty terminals, then rests; typing,
+conversation, plans and dialogs hide it. It makes no model calls. Frames are
+precomputed, so the live site's dense canvas geometry never runs in the terminal.
+
+`brand/provenance.json` records the live asset hashes. `brand/logo.svg` preserves
+the deployed mark; `src/site-art.ts` holds compact sampled animation data.
+To refresh them after inspecting a new website deployment, download its homepage,
+hero page JavaScript chunk and stylesheet, then run
+`node scripts/import-site-brand.mjs homepage.html page-chunk.js stylesheet.css`.
+The importer is a development tool; running OsmoGrep never contacts the website.
 
 `osmogrep` selects this renderer when Node.js **22.19+** is available. The
 JavaScript bundle is embedded in the Rust binary, extracted into a private

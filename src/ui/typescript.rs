@@ -62,6 +62,7 @@ struct Frame {
     execution: Region,
     #[serde(rename = "editorWidth")]
     editor_width: u16,
+    animate: bool,
     cursor: Point,
     images: Vec<Preview>,
 }
@@ -188,7 +189,7 @@ impl TypeScriptUi {
         model: &ModelConfig,
         width: u16,
         height: u16,
-    ) -> Result<(Rect, Rect, usize), String> {
+    ) -> Result<(Rect, Rect, usize, bool), String> {
         self.sequence += 1;
         self.input
             .try_send(view(state, model, self.sequence, width, height))
@@ -254,6 +255,7 @@ impl TypeScriptUi {
             frame.input.rect(),
             frame.execution.rect(),
             frame.editor_width as usize,
+            frame.animate,
         ))
     }
 }

@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setCapabilities, stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui';
-import { clean, orb, render, type View } from './renderer.ts';
+import { clean, render, type View } from './renderer.ts';
+import { introDuration, websiteMark, websiteScene } from './brand.ts';
+import { siteLogo } from './site-art.ts';
 
 export function fixture(): View {
   return {
@@ -17,7 +19,7 @@ test('matches the reference geometry at idle and during conversation', () => {
   const v = fixture(), idle = render(v);
   assert.equal(idle.input.x, 1); assert.equal(idle.input.width, 158);
   assert.equal(idle.input.y + idle.input.height, 43);
-  assert.match(stripTerminalSequences(idle.rows[1]!), /OsmoGrep.*test/);
+  assert.match(stripTerminalSequences(idle.rows[1]!), /osmogrep.*test/);
   v.logs = [{ text: 'USER|Explain the code', level: 'Info' }, { text: 'A paragraph.\n\nAnother paragraph.', level: 'Info' }];
   const active = render(v);
   assert.deepEqual(idle.input, active.input);
@@ -53,9 +55,24 @@ test('shell commands appear once', () => {
   const text = render(v).rows.map(stripTerminalSequences).join('\n');
   assert.equal(text.match(/ls -al/g)?.length, 1); assert.ok(!text.includes('SHELL :'));
 });
-test('orb changes with time and always stays inside its dimensions', () => {
-  assert.notDeepEqual(orb(0), orb(1));
-  assert.ok(orb(0).every(row => visibleWidth(row) === 30));
+test('deployed logo and engraved woodpecker frames preserve their geometry', () => {
+  assert.deepEqual(siteLogo,['...iiiii...','.iiiiiiiii.','.ii.....ii.','ii.......ii','ii.......aa','ii.......aa','ii.......ii','.ii.....ii.','.iiiiiiiii.','...iiiii...']);
+  assert.ok(websiteMark().every(row=>visibleWidth(row)===7));
+  assert.ok(websiteMark().join('').includes('234;88;12'));
+  assert.notDeepEqual(websiteScene(0),websiteScene(5400));
+  assert.ok(websiteScene(5400).every(row=>visibleWidth(row)===64));
+  assert.equal(websiteScene(0).length,28);
+});
+test('website animation stops at its budget and disappears when editing starts', () => {
+  const v=fixture();
+  assert.equal(render(v).animate,true);
+  v.elapsed=introDuration;
+  assert.equal(render(v).animate,false);
+  v.elapsed=0;v.input='typing';
+  assert.equal(render(v).animate,false);
+  const text=render(v).rows.map(stripTerminalSequences).join('\n');
+  assert.ok(!text.includes('Catch the bug.'));
+  assert.ok(render(v).rows.every(row=>row.startsWith('\x1b[48;2;0;0;0m')));
 });
 test('selected input is highlighted and secret entry has no placeholder', () => {
   const v = fixture(); v.input = 'abc'; v.cursor = 2; v.selection = [1,2];
@@ -101,9 +118,9 @@ test('light theme paints a light surface with readable dark text', () => {
 test('existing density and named-session settings are reflected', () => {
   const v = fixture(); v.density = 'compact'; v.session = 'parser work';
   const compact = render(v);
-  assert.match(stripTerminalSequences(compact.rows[0]!),/OsmoGrep.*parser work/);
+  assert.match(stripTerminalSequences(compact.rows[0]!),/osmogrep.*parser work/);
   v.density = 'spacious';
   const spacious = render(v);
-  assert.match(stripTerminalSequences(spacious.rows[2]!),/OsmoGrep.*parser work/);
+  assert.match(stripTerminalSequences(spacious.rows[2]!),/osmogrep.*parser work/);
   assert.ok(spacious.execution.y > compact.execution.y);
 });
