@@ -5,6 +5,7 @@ import { clean, render, type View } from './renderer.ts';
 import { introDuration, websiteMark } from './brand.ts';
 import { siteLogo } from './site-art.ts';
 import { introFrame, introPng } from './intro.ts';
+import {lifeStates,scenePoints,scenes} from './scenes.ts';
 import { crc32, inflateSync } from 'node:zlib';
 
 setCapabilities({images:null,trueColor:true,hyperlinks:false});
@@ -87,21 +88,28 @@ test('central intro settles at ten seconds and yields to drafts and conversation
   assert.ok(render(v).rows.every(row=>row.startsWith('\x1b[48;2;0;0;0m')));
 });
 
-test('ring unfolds into an origami bird, folds its wings once and returns to its original pose', () => {
-  const start=introFrame(0,60,28), bird=introFrame(4200,60,28), end=introFrame(introDuration,60,28);
-  assert.deepEqual(start,end);
-  assert.deepEqual(end,introFrame(introDuration+500,60,28));
-  assert.notDeepEqual(start,introFrame(2500,60,28));
-  assert.notDeepEqual(start,bird);
-  assert.notDeepEqual(bird,introFrame(5300,60,28));
-  assert.deepEqual(bird,introFrame(6400,60,28));
-  assert.deepEqual(start,introFrame(1000,60,28));
-  assert.ok(bird.some(row=>row.includes('164;62;8')), 'beak carries the muted orange accent');
-  for(const frame of [start,bird,end]) {
-    assert.equal(frame.length,28);
-    assert.ok(frame.every(row=>visibleWidth(row)===60));
-    assert.ok(frame.some(row=>/[\u2801-\u28ff]/.test(row)));
+test('approved scenes morph from the same ring and return to the same quiet pose', () => {
+  const signatures=new Set<string>();
+  for(const scene of ['horizon','interference','life','lorenz'] as const){
+    const start=introFrame(0,60,28,false,scene),concept=introFrame(5000,60,28,false,scene),end=introFrame(introDuration,60,28,false,scene);
+    assert.deepEqual(start,end);assert.deepEqual(end,introFrame(introDuration+500,60,28,false,scene));
+    assert.notDeepEqual(start,concept);assert.notDeepEqual(concept,introFrame(5500,60,28,false,scene));
+    signatures.add(concept.join(''));
+    for(const frame of [start,concept,end]){assert.equal(frame.length,28);assert.ok(frame.every(row=>visibleWidth(row)===60));assert.ok(frame.some(row=>/[\u2801-\u28ff]/.test(row)));}
+    assert.notDeepEqual(concept,introFrame(5000,60,28,false,scene,true));
   }
+  assert.equal(signatures.size,4);
+});
+
+test('approved geometry is finite, Life follows real generations, and bright playback fades back to a dim smaller mark',()=>{
+  assert.equal(lifeStates()[0]!.length,36);assert.ok(lifeStates()[120]!.length>36);
+  for(const scene of scenes){assert.ok(Array.from(scenePoints(scene,5,6144)).every(Number.isFinite));}
+  const pixels=(png:Buffer)=>{const data:Buffer[]=[];for(let at=8;at<png.length;){const n=png.readUInt32BE(at);if(png.toString('ascii',at+4,at+8)==='IDAT')data.push(png.subarray(at+8,at+8+n));at+=n+12;}return inflateSync(Buffer.concat(data));};
+  const quiet=pixels(introPng(5000,60,28)),bright=pixels(introPng(5000,60,28,false,'horizon',true));
+  assert.ok(quiet.reduce((a,b)=>Math.max(a,b),0)<45);assert.ok(bright.reduce((a,b)=>Math.max(a,b),0)>100);
+  assert.deepEqual(introPng(introDuration,60,28,false,'life',true),introPng(0,60,28));
+  const v=fixture();v.preferences={status_fields:[],ambient_art:true,reduce_motion:true};assert.equal(render(v).animate,false);
+  v.preferences.ambient_art=false;assert.equal(render(v).artwork,null);
 });
 
 test('pointer replay uses its own clock and dialogs, images and small terminals hide the artwork', () => {

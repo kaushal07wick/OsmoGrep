@@ -22,7 +22,10 @@ use crate::tools::{ToolRegistry, ToolSafety, ToolScope};
 
 #[derive(Debug)]
 pub enum AgentEvent {
-    Usage { usage: crate::usage::Usage, storage_error: Option<String> },
+    Usage {
+        usage: crate::usage::Usage,
+        storage_error: Option<String>,
+    },
     ToolCall {
         name: String,
         args: Value,
@@ -638,13 +641,21 @@ impl RunAgent {
                 iteration,
             );
 
-            let turn_started=Instant::now();
+            let turn_started = Instant::now();
             let model_response = self.call_openai_with_retry(api_key, &input, tx)?;
             let output_streamed = model_response.output_streamed;
             let resp = model_response.value;
-            if let Some(usage)=crate::usage::reported(&resp,&self.model_cfg.model,&self.model_cfg.provider,turn_started.elapsed().as_millis().min(u64::MAX as u128) as u64) {
-                let storage_error=crate::usage::record(&repo_root,&usage).err();
-                let _=tx.send(AgentEvent::Usage{usage,storage_error});
+            if let Some(usage) = crate::usage::reported(
+                &resp,
+                &self.model_cfg.model,
+                &self.model_cfg.provider,
+                turn_started.elapsed().as_millis().min(u64::MAX as u128) as u64,
+            ) {
+                let storage_error = crate::usage::record(&repo_root, &usage).err();
+                let _ = tx.send(AgentEvent::Usage {
+                    usage,
+                    storage_error,
+                });
             }
 
             let output = resp

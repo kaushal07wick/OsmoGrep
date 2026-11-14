@@ -2,6 +2,7 @@ import { Image, Markdown, getCapabilities, renderImage, stripTerminalSequences, 
 import { introDuration, websiteMark } from './brand.ts';
 import { introFrame, introPng } from './intro.ts';
 import { drawPanel, type PanelView } from './panels.ts';
+import type {Scene} from './scenes.ts';
 
 export interface Rect { x: number; y: number; width: number; height: number }
 export interface Attachment { id: number; label: string; thumbnail: string; width: number; height: number }
@@ -16,6 +17,8 @@ export interface View {
   followTail: boolean; scroll: number; stream: string; permission: string | null; update: string | null;
   voice: string | null; commands: { cmd: string; desc: string }[]; selectedCommand: number; tokens: number;
   introElapsed?: number;
+  introScene?: Scene;
+  introBright?: boolean;
   panel?: PanelView | null;
   approval?: {tool:string;args:string} | null;
   statusLine?: string[];
@@ -139,18 +142,18 @@ export function render(v: View): Rendered {
 
   let artwork: Rect | null = null;
   const images: Rendered['images'] = [];
-  const introElapsed = v.introElapsed ?? v.elapsed;
-  if (!value && !v.masked && !transcript.length && !v.running && !v.permission && !v.update && !v.voice && !v.commands.length
+  const introElapsed = v.preferences?.reduce_motion ? introDuration : v.introElapsed ?? v.elapsed;
+  if (v.preferences?.ambient_art!==false && !v.panel && !value && !v.masked && !transcript.length && !v.running && !v.permission && !v.update && !v.voice && !v.commands.length
     && width >= 36 && execution.height >= 16) {
     const height = Math.min(30, execution.height-2), columns = Math.min(64, height*2, width-4);
     artwork = {x:gutter+Math.floor((width-columns)/2),y:execution.y+Math.floor((execution.height-height)/2),width:columns,height};
     if (getCapabilities().images === 'kitty') {
       const graphicId = (process.pid*128+127)>>>0;
-      const png=introPng(introElapsed,columns,height,light).toString('base64');
+      const png=introPng(introElapsed,columns,height,light,v.introScene,v.introBright).toString('base64');
       const image=renderImage(png,{widthPx:columns*6,heightPx:height*12},{imageId:graphicId,maxWidthCells:columns,maxHeightCells:height,moveCursor:false});
       if(image) images.push({id:graphicId,x:artwork.x,y:artwork.y,sequence:image.sequence});
     } else {
-      introFrame(introElapsed,columns,height,light).forEach((line,i)=>put(artwork!.y+i,line,artwork!.x,columns));
+      introFrame(introElapsed,columns,height,light,v.introScene,v.introBright).forEach((line,i)=>put(artwork!.y+i,line,artwork!.x,columns));
     }
   }
 

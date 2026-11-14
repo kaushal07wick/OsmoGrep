@@ -19,61 +19,61 @@ the repository's existing human Git identity, without AI co-author trailers.
 
 ## Increment 1 — Command center and settings surfaces
 
-- [ ] Establish one command catalog for help, filtering and completion metadata.
-- [ ] Searchable command center and a consistent settings surface; preserve drafts,
+- [x] Establish one command catalog for help, filtering and completion metadata.
+- [x] Searchable command center and a consistent settings surface; preserve drafts,
   scroll position and Escape behavior. Keep legacy command arguments working.
-- [ ] Theme, model/provider, permission and pending-approval views with accurate
+- [x] Theme, model/provider, permission and pending-approval views with accurate
   descriptions of OsmoGrep's actual tool policy, without claiming OS isolation.
-- [ ] Structured TypeScript panel rendering and a functional native fallback.
-- [ ] Regression tests, screenshots, Mac PTY checks, commit and push.
+- [x] Structured TypeScript panel rendering and a functional native fallback.
+- [x] Regression tests, screenshots, Mac PTY checks, commit and push.
 
 ## Increment 2 — Persistent controls
 
-- [ ] Searchable keymap with real remapping, conflict checks, reset and protected
+- [x] Searchable keymap with real remapping, conflict checks, reset and protected
   cancellation behavior. Display actual configured shortcuts in hints.
-- [ ] Status-line field selection, ordering and immediate preview, backed by saved
+- [x] Status-line field selection, ordering and immediate preview, backed by saved
   workspace preferences with backward-compatible defaults and atomic writes.
-- [ ] Keep settings searchable, show their scope and make saved changes explicit.
-- [ ] Test persistence/restart, invalid settings, tiny terminals and draft recovery;
+- [x] Keep settings searchable, show their scope and make saved changes explicit.
+- [x] Test persistence/restart, invalid settings, tiny terminals and draft recovery;
   commit and push.
 
 ## Increment 3 — Skills
 
-- [ ] Discover bounded local/repository skill catalogs from existing skill folders.
-- [ ] Browse, search, enable/disable and insert skills using `/skills` and `$`.
-- [ ] Feed explicitly selected skill instructions into the existing agent path,
+- [x] Discover bounded local/repository skill catalogs from existing skill folders.
+- [x] Browse, search, enable/disable and insert skills using `/skills` and `$`.
+- [x] Feed explicitly selected skill instructions into the existing agent path,
   with source references and content budgets. Never weaken tool permissions.
-- [ ] Test discovery, disabled skills, path boundaries, insertion and actual model
+- [x] Test discovery, disabled skills, path boundaries, insertion and actual model
   request integration; commit and push.
 
 ## Increment 4 — Real activity and pixel statistics
 
-- [ ] Capture provider-reported input/output/cache usage when available, separating
+- [x] Capture provider-reported input/output/cache usage when available, separating
   it from estimates. Do not invent costs, quotas or historical daily activity.
-- [ ] Crash-safe local usage history containing metadata, not prompts or code.
-- [ ] Dithered activity charts, model breakdowns, context/usage views and honest
+- [x] Crash-safe local usage history containing metadata, not prompts or code.
+- [x] Dithered activity charts, model breakdowns, context/usage views and honest
   empty states. Historical graphs start with collected observations.
-- [ ] Validate provider parsing, aggregation, concurrent writes and chart layouts;
+- [x] Validate provider parsing, aggregation, concurrent writes and chart layouts;
   commit and push.
 
 ## Increment 5 — Four approved ambient animations
 
-- [ ] Port concepts 09 (horizon), 05 (interference), 06 (Life) and 01 (Lorenz) from
+- [x] Port concepts 09 (horizon), 05 (interference), 06 (Life) and 01 (Lorenz) from
   the approved HTML gallery into reusable terminal animation geometry.
-- [ ] Select one per launch. Start small and very dim; clicking brightens and plays
+- [x] Select one per launch. Start small and very dim; clicking brightens and plays
   its transition, then returns to the quiet pose. Hover does not affect it.
-- [ ] Preserve graphics and text fallbacks, reduced motion, budgets, image cleanup,
+- [x] Preserve graphics and text fallbacks, reduced motion, budgets, image cleanup,
   resize behavior and composer ownership.
-- [ ] Test deterministic scene fixtures, random selection, timing, click behavior,
+- [x] Test deterministic scene fixtures, random selection, timing, click behavior,
   performance and Mac rendering; commit and push.
 
 ## Final validation and installation
 
-- [ ] Run full Rust/UI suites and compatibility checks; inspect committed diffs.
-- [ ] Install the optimized binary atomically with a backup and verify PATH/hash.
-- [ ] Exercise real Mac controls, provider mock, skills, permission handling,
+- [x] Run full Rust/UI suites and compatibility checks; inspect committed diffs.
+- [x] Install the optimized binary atomically with a backup and verify PATH/hash.
+- [x] Exercise real Mac controls, provider mock, skills, permission handling,
   persistence, images, shell, renderer failure recovery and terminal restoration.
-- [ ] Push remaining validated changes and report exact coverage and limitations.
+- [x] Push remaining validated changes and report exact coverage and limitations.
 
 ## Scope and evidence rules
 
@@ -106,3 +106,35 @@ the repository's existing human Git identity, without AI co-author trailers.
   bytes, resizing, shell execution, renderer crash fallback and terminal restoration.
   This run predates the usage ledger and the final animation changes; their expanded
   end-to-end checks are recorded separately below.
+
+## Final local validation — 2026-11-14
+
+- All 193 Rust tests and 24 TypeScript UI tests pass; TypeScript typecheck, bundle
+  generation, optimized release build and `git diff --check` pass.
+- All 16 expanded Mac PTY checks pass, including a second real process loading
+  saved settings, genuine key remapping, selected skill instructions in the model
+  request, provider-reported usage, pixel history, images and renderer crash recovery.
+  Harness fixes canonicalize macOS `/private` paths and allocate a fresh controlling
+  PTY for restart; these were test harness failures, not application failures.
+- Installed CLI, graph/report/history queries, MCP authorization/root-spoof rejection,
+  agent ReadFile/graph tools and TUI stop/exit behavior pass with a local provider.
+- A single live OpenAI gpt-5.2 read-only text smoke request passes: expected response,
+  exit 0, zero tool calls, 1,101 reported input tokens and 13 output tokens. It used
+  an empty temporary workspace; no proprietary repository content was sent.
+- The five existing controlled predictive-analysis cases pass; warm indexing reuses
+  all three parsed files. This is regression coverage, not a public-repository
+  accuracy benchmark or runtime verification of those synthetic regressions.
+- Four approved geometry scenes are selected per process, at 0.62 visual scale.
+  Startup playback remains very dim; clicks brighten playback and it fades back.
+  Hover does nothing. PNG and Braille fallbacks, reduced motion and artwork-off
+  settings are covered. Visual fixtures were inspected locally.
+- Warm PNG generation, 30 frames per scene at 60×30 cells: horizon 7.83 ms mean /
+  9.97 ms p95; interference 11.92 / 20.44 ms; Life 3.46 / 4.32 ms; Lorenz 4.12 /
+  5.18 ms. These exclude process IPC and terminal output; UI cadence is 70 ms.
+- Installed atomically at `~/.local/bin/osmogrep`, first on PATH, with a backup.
+  SHA-256: `7fe81aac6aca08ba12104b25a145e266e36c0d6dff0af9d28acf26e4e5ed7e8e`.
+- Remaining scope limits: real vision-model interpretation, other OS/terminal
+  combinations, and hosted GitHub/E2B delivery were not revalidated. Native fallback
+  presents the same controls/data with simpler graphics. Skill selection is wired
+  through the interactive agent launcher. History starts with new reported usage;
+  missing provider counts, prices and account quotas are never invented.

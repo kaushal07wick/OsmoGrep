@@ -7,6 +7,7 @@ import base64
 import errno
 import fcntl
 import http.server
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -28,7 +29,7 @@ p.add_argument('--output', type=Path, required=True)
 args = p.parse_args()
 binary = args.binary.resolve()
 args.output.mkdir(parents=True, exist_ok=True)
-repo = Path(tempfile.mkdtemp(prefix='osmogrep-ui-acceptance-'))
+repo = Path(tempfile.mkdtemp(prefix='osmogrep-ui-acceptance-')).resolve()
 subprocess.run(['git', 'init', '-q', str(repo)], check=True)
 
 def chunk(kind, data):
@@ -38,6 +39,9 @@ png += chunk(b'IDAT', zlib.compress((b'\x00'+bytes((42,120,190))*24)*12)) + chun
 image = repo/'test image.png'
 image.write_bytes(png)
 requests = []
+skill_dir=repo/'skills/ui-probe'
+skill_dir.mkdir(parents=True)
+(skill_dir/'SKILL.md').write_text('---\nname: ui-probe\ndescription: Controlled UI acceptance skill\n---\nUI_SKILL_INSTRUCTION: inspect only the requested local image.\n')
 
 class Model(http.server.BaseHTTPRequestHandler):
     def log_message(self, *unused):
@@ -45,7 +49,7 @@ class Model(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         requests.append(body)
-        value = {'id':'local_ui_response','output':[{'type':'message','role':'assistant','content':[{'type':'output_text','text':'IMAGE_REQUEST_OK'}]}]}
+        value = {'id':'local_ui_response','usage':{'input_tokens':1234,'output_tokens':56,'input_tokens_details':{'cached_tokens':200}},'output':[{'type':'message','role':'assistant','content':[{'type':'output_text','text':'IMAGE_REQUEST_OK'}]}]}
         data = ('data: '+json.dumps({'type':'response.completed','response':value})+'\n\ndata: [DONE]\n\n').encode()
         self.send_response(200)
         self.send_header('Content-Type','text/event-stream')
@@ -157,6 +161,45 @@ try:
     drain(.1)
     assert not requests, 'selecting /help must execute locally'
     result['command_picker_navigation_and_execution'] = True
+    # Appearance changes use the existing persisted workspace setting.
+    send(b'\x1bOQ')  # F2
+    paste('Light')
+    send(b'\r')
+    wait_for(lambda:b'\x1b[48;2;237;235;230m' in transcript)
+    send(b'\x15')
+    paste('Dark')
+    send(b'\r')
+    send(b'\x1b')
+    # Remap a real key and prove the new chord opens the command center.
+    send(b'\x1b[19~')  # F8
+    paste('Command center')
+    send(b'\r')
+    send(b'\x10')  # Ctrl+P
+    wait_for(lambda:b'Shortcut saved' in transcript)
+    send(b'\x1b')
+    at=len(transcript)
+    send(b'\x10')
+    wait_for(lambda:b'WORKSPACE' in transcript[at:])
+    send(b'\x1b')
+    result['settings_and_real_key_remapping'] = True
+    # Skill insertion preserves the draft and does not call the model.
+    send(b'\x1bOR')  # F3
+    paste('ui-probe')
+    send(b'\r')
+    wait_for(lambda:b'$ui-probe' in transcript)
+    send(b'\x15')
+    paste('/statusline')
+    send(b'\r')
+    paste('Git branch')
+    send(b' ')
+    send(b'\x1b')
+    saved=Path.home()/'Library/Application Support/osmogrep/sessions'/(hashlib.sha256(str(repo).encode()).hexdigest()+'.json')
+    settings=json.loads(saved.read_text())
+    assert settings['theme']=='dark'
+    assert settings['preferences']['key_bindings']['commands']=='ctrl+p'
+    assert 'branch' not in settings['preferences']['status_fields']
+    assert not requests, 'workspace controls and skill insertion must not call a model'
+    result['statusline_and_skill_picker'] = True
     paste('hello world')
     send(b'\x1b[D'*5)
     send(b'\x1b[1;2C'*5)
@@ -181,7 +224,7 @@ try:
     wait_for(lambda:b'\x1b_G' in transcript[before_attachment:])
     assert b'[Image #1]' in transcript
     result['real_thumbnail_sequence'] = True
-    paste(' please')
+    paste(' $ui-probe please')
     send(b'\r')
     wait_for(lambda:b'IMAGE_REQUEST_OK' in transcript)
     assert len(requests)==1, len(requests)
@@ -191,7 +234,18 @@ try:
     assert len(images)==1
     assert base64.b64decode(images[0]['image_url'].split(',',1)[1])==png
     assert 'inspect image [Image #1]' in json.dumps(requests[0]['input'])
+    assert 'UI_SKILL_INSTRUCTION' in json.dumps(requests[0]['input']), 'selected skill must reach the existing model path'
     result['original_image_bytes_reached_provider'] = True
+    result['selected_skill_reached_provider'] = True
+    paste('/usage')
+    send(b'\r')
+    wait_for(lambda:b'Reported input' in transcript and b'1234' in transcript)
+    send(b'\x1b')
+    paste('/stats')
+    send(b'\r')
+    wait_for(lambda:b'REPORTED TOKENS' in transcript and b'1,290 tokens' in transcript)
+    send(b'\x1b')
+    result['reported_usage_and_pixel_history'] = True
     for cols,rows in [(100,30),(60,18),(180,50)]:
         fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',rows,cols,0,0))
         os.killpg(process.pid,signal.SIGWINCH)
@@ -226,6 +280,27 @@ try:
     result['terminal_state_restored'] = True
     send(b'\n')
     assert process.wait(timeout=3)==0
+    # A second real process must load the saved shortcut and appearance.
+    # macOS binds a controlling PTY to its session; use a fresh PTY for the restart.
+    os.close(master)
+    os.close(slave)
+    master,slave=pty.openpty()
+    fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',44,160,0,0))
+    restart_flags=termios.tcgetattr(slave)
+    at=len(transcript)
+    process = subprocess.Popen(['sh','-c',wrapper,'osmogrep-ui-check',str(binary)],cwd=repo,env=env,
+                               stdin=slave,stdout=slave,stderr=slave,preexec_fn=controlling_terminal)
+    wait_for(lambda:b'osmogrep' in transcript[at:] and b'local-ui-test-model' in transcript[at:])
+    send(b'\x10')
+    wait_for(lambda:b'WORKSPACE' in transcript[at:])
+    send(b'\x1b')
+    paste('/exit')
+    send(b'\r')
+    wait_for(lambda:b'OSMOGREP_UI_EXIT=0' in transcript[at:])
+    assert termios.tcgetattr(slave)[3]==restart_flags[3]
+    send(b'\n')
+    assert process.wait(timeout=3)==0
+    result['preferences_survive_real_restart'] = True
 finally:
     (args.output/'terminal.ansi').write_bytes(transcript)
     (args.output/'result.json').write_text(json.dumps(result,indent=2)+'\n')

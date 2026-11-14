@@ -190,17 +190,53 @@ pub fn draw_ui<B: Backend>(
             render_command_palette(f, hint_rect, state);
         }
         if state.ui.pending_permission.is_none() && state.ui.pending_update.is_none() {
-            if let Some(panel)=super::workbench::view(state) {
-                f.render_widget(Clear,area);
-                let count=area.height.saturating_sub(10) as usize;
-                let start=panel.selected.saturating_sub(count/2).min(panel.rows.len().saturating_sub(count));
-                let mut lines=vec![Line::from(format!("  ◆ {}  /  WORKSPACE",panel.sections[panel.section])),Line::from(""),Line::from(format!("  {}{}",if panel.editing {"Edit: "}else{"Search: "},panel.query)),Line::from("")];
-                for (i,row) in panel.rows.iter().enumerate().skip(start).take(count) {
-                    lines.push(Line::styled(format!("{} {:<26} {}",if i==panel.selected {" ›"}else{"  "},row.label,row.value),if i==panel.selected {Style::default().fg(Color::Rgb(235,155,105)).add_modifier(Modifier::BOLD)}else{Style::default().fg(Color::Gray)}));
+            if let Some(panel) = super::workbench::view(state) {
+                f.render_widget(Clear, area);
+                let count = area.height.saturating_sub(10) as usize;
+                let start = panel
+                    .selected
+                    .saturating_sub(count / 2)
+                    .min(panel.rows.len().saturating_sub(count));
+                let mut lines = vec![
+                    Line::from(format!(
+                        "  ◆ {}  /  WORKSPACE",
+                        panel.sections[panel.section]
+                    )),
+                    Line::from(""),
+                    Line::from(format!(
+                        "  {}{}",
+                        if panel.editing { "Edit: " } else { "Search: " },
+                        panel.query
+                    )),
+                    Line::from(""),
+                ];
+                for (i, row) in panel.rows.iter().enumerate().skip(start).take(count) {
+                    lines.push(Line::styled(
+                        format!(
+                            "{} {:<26} {}",
+                            if i == panel.selected { " ›" } else { "  " },
+                            row.label,
+                            row.value
+                        ),
+                        if i == panel.selected {
+                            Style::default()
+                                .fg(Color::Rgb(235, 155, 105))
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(Color::Gray)
+                        },
+                    ));
                 }
-                if let Some(row)=panel.rows.get(panel.selected) {lines.push(Line::from(""));lines.push(Line::from(row.description.clone()));}
-                lines.push(Line::from(panel.notice));lines.push(Line::from(panel.footer));
-                f.render_widget(Paragraph::new(lines).style(Style::default().bg(Color::Black)),area);
+                if let Some(row) = panel.rows.get(panel.selected) {
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(row.description.clone()));
+                }
+                lines.push(Line::from(panel.notice));
+                lines.push(Line::from(panel.footer));
+                f.render_widget(
+                    Paragraph::new(lines).style(Style::default().bg(Color::Black)),
+                    area,
+                );
             }
         }
     })?;
@@ -1050,9 +1086,22 @@ fn looks_like_image_path(token: &str) -> bool {
 /// bottom status with animation and tabs
 fn render_status_bar(f: &mut Frame, area: Rect, state: &AgentState) {
     let p = palette(state);
-    let mut left=vec![Span::styled(super::workbench::statusline(state).join(" · "),Style::default().fg(p.fg_dim))];
-    if state.ui.pending_permission.is_some(){left.push(Span::styled(" · approval needed",Style::default().fg(Color::Yellow)));}
-    if let Some(update)=&state.ui.pending_update {left.push(Span::styled(update_status_label(update),Style::default().fg(Color::Yellow)));}
+    let mut left = vec![Span::styled(
+        super::workbench::statusline(state).join(" · "),
+        Style::default().fg(p.fg_dim),
+    )];
+    if state.ui.pending_permission.is_some() {
+        left.push(Span::styled(
+            " · approval needed",
+            Style::default().fg(Color::Yellow),
+        ));
+    }
+    if let Some(update) = &state.ui.pending_update {
+        left.push(Span::styled(
+            update_status_label(update),
+            Style::default().fg(Color::Yellow),
+        ));
+    }
 
     let esc_action = if state.ui.agent_running {
         " cancel  "
@@ -1060,15 +1109,23 @@ fn render_status_bar(f: &mut Frame, area: Rect, state: &AgentState) {
         " quit  "
     };
 
+    let submit = super::keymap::BINDINGS
+        .iter()
+        .find(|b| b.id == "submit")
+        .map(|b| super::keymap::effective(&state.preferences, b))
+        .unwrap_or("enter");
     let right = if area.width < 32 {
         Vec::new()
     } else if area.width < 72 {
-        vec![Span::styled("esc / enter", Style::default().fg(p.fg_dim))]
+        vec![Span::styled(
+            format!("esc / {submit}"),
+            Style::default().fg(p.fg_dim),
+        )]
     } else {
         vec![
             Span::styled("[esc]", Style::default().fg(p.fg_main)),
             Span::styled(esc_action, Style::default().fg(p.fg_muted)),
-            Span::styled("[enter]", Style::default().fg(p.fg_main)),
+            Span::styled(format!("[{submit}]"), Style::default().fg(p.fg_main)),
             Span::styled(" run", Style::default().fg(p.fg_muted)),
         ]
     };

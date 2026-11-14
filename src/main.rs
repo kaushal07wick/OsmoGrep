@@ -10,10 +10,9 @@ mod logger;
 mod mcp;
 mod persistence;
 mod preferences;
-mod skills;
-mod usage;
 mod process_runner;
 mod shell_guard;
+mod skills;
 mod state;
 mod test_harness;
 mod tool_budget;
@@ -22,6 +21,7 @@ mod tools;
 mod triage;
 mod ui;
 mod updater;
+mod usage;
 mod verification;
 mod verify_stop;
 mod voice;
@@ -340,11 +340,22 @@ fn start_agent_run(
     } else {
         state.ui.auto_approve
     };
-    let skill_context=match skills::explicit_context(&repo_root,text,&state.preferences) {
-        Ok(context)=>context,
-        Err(error)=>{log(state,LogLevel::Warn,error);return;}
+    let skill_context = match skills::explicit_context(&repo_root, text, &state.preferences) {
+        Ok(context) => context,
+        Err(error) => {
+            log(state, LogLevel::Warn, error);
+            return;
+        }
     };
-    let steer = if skill_context.is_empty(){state.steer.clone()}else{Some(format!("{}\n{}",state.steer.as_deref().unwrap_or(""),skill_context))};
+    let steer = if skill_context.is_empty() {
+        state.steer.clone()
+    } else {
+        Some(format!(
+            "{}\n{}",
+            state.steer.as_deref().unwrap_or(""),
+            skill_context
+        ))
+    };
     let permission_profile = if state.plan_mode {
         PermissionProfile::ReadOnly
     } else {
@@ -957,7 +968,10 @@ fn headless_json_value(evt: AgentEvent, auto_approve: bool) -> serde_json::Value
                 "approved": approved
             })
         }
-        AgentEvent::Usage{usage,storage_error}=>serde_json::json!({"type":"usage","usage":usage,"storage_error":storage_error}),
+        AgentEvent::Usage {
+            usage,
+            storage_error,
+        } => serde_json::json!({"type":"usage","usage":usage,"storage_error":storage_error}),
         AgentEvent::ConversationUpdate(_) => {
             serde_json::json!({ "type": "conversation_update" })
         }
@@ -1126,7 +1140,18 @@ fn emit_headless_text(evt: AgentEvent, auto_approve: bool) {
                 args_summary
             );
         }
-        AgentEvent::Usage{usage,storage_error}=>{println!("[usage] {} input · {} output · provider-reported",usage.input,usage.output);if let Some(error)=storage_error{eprintln!("[usage storage] {error}");}},
+        AgentEvent::Usage {
+            usage,
+            storage_error,
+        } => {
+            println!(
+                "[usage] {} input · {} output · provider-reported",
+                usage.input, usage.output
+            );
+            if let Some(error) = storage_error {
+                eprintln!("[usage storage] {error}");
+            }
+        }
         AgentEvent::ConversationUpdate(_) => {}
         AgentEvent::Cancelled => println!("[cancelled]"),
         AgentEvent::Error(message) => eprintln!("[error] {}", message),
@@ -1553,11 +1578,20 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
             loop {
                 match rx.try_recv() {
                     Ok(evt) => match evt {
-                        AgentEvent::Usage{usage:_,storage_error}=>{
+                        AgentEvent::Usage {
+                            usage: _,
+                            storage_error,
+                        } => {
                             crate::ui::workbench::refresh_usage(&mut state);
-                            if let Some(error)=storage_error{log(&mut state,LogLevel::Warn,format!("Usage history was not saved: {error}"));}
+                            if let Some(error) = storage_error {
+                                log(
+                                    &mut state,
+                                    LogLevel::Warn,
+                                    format!("Usage history was not saved: {error}"),
+                                );
+                            }
                             runtime.mark_dirty();
-                        },
+                        }
                         AgentEvent::ToolCall { name, args } => {
                             runtime.mark_dirty();
                             let cmd = match args {
@@ -1889,7 +1923,13 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
         }
 
         if let Some(command) = state.ui.requested_command.take() {
-            commands::handle_command(&mut state, &command, Some(&voice_cmd_tx), Some(&mut agent), agent_steer_tx.as_ref());
+            commands::handle_command(
+                &mut state,
+                &command,
+                Some(&voice_cmd_tx),
+                Some(&mut agent),
+                agent_steer_tx.as_ref(),
+            );
             runtime.mark_dirty();
         }
         if state.ui.execution_pending {

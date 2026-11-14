@@ -190,4 +190,39 @@ mod tests {
         }
         std::fs::remove_file(path).unwrap();
     }
+    #[test]
+    fn concurrent_metadata_writes_do_not_lose_calls_and_corruption_is_visible() {
+        let path = std::env::temp_dir().join(format!(
+            "osmogrep-usage-concurrent-{}.db",
+            uuid::Uuid::new_v4()
+        ));
+        let conn = Connection::open(&path).unwrap();
+        schema(&conn).unwrap();
+        let threads: Vec<_> = (0..4)
+            .map(|_| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    let conn = Connection::open(path).unwrap();
+                    schema(&conn).unwrap();
+                    let usage = reported(
+                        &serde_json::json!({"usage":{"input_tokens":10,"output_tokens":2}}),
+                        "test",
+                        "local",
+                        1,
+                    )
+                    .unwrap();
+                    insert(&conn, Path::new("repo"), &usage).unwrap();
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        assert_eq!(query(&conn, Path::new("repo")).unwrap()[0].calls, 4);
+        conn.execute("UPDATE provider_usage SET input=-100", [])
+            .unwrap();
+        assert!(query(&conn, Path::new("repo")).is_err());
+        drop(conn);
+        std::fs::remove_file(path).unwrap();
+    }
 }

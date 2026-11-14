@@ -15,3 +15,10 @@ test('panel text is plain and control injection cannot leave the presentation bo
   assert.ok(!f.rows.join('').includes('\x1b[2J'));assert.ok(!f.rows.join('').includes(']52'));
   assert.match(f.rows.map(stripTerminalSequences).join('\n'),/hello/);
 });
+test('pixel activity uses recorded provider totals and keeps the empty state honest',()=>{
+  const date=new Date().toISOString().slice(0,10);
+  const view={...panel,section:8,sections:['','','','','','','','','Stats'],history:[{day:date,model:'test',provider:'local',input:100,output:20,cached:50,calls:1,duration_ms:7}]};
+  const text=drawPanel(view,100,40,false,'').rows.map(stripTerminalSequences).join('\n');
+  assert.match(text,/120 tokens/);assert.match(text,/1 active days/);assert.match(text,/[░▒▓]/);
+  assert.match(drawPanel({...view,history:[]},100,40,false,'').rows.map(stripTerminalSequences).join('\n'),/No recorded activity yet/);
+});

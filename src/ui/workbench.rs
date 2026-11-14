@@ -602,6 +602,39 @@ mod tests {
         assert!(line[0].starts_with('v'));
         assert!(line[1].starts_with('~'));
     }
+
+    #[test]
+    fn permission_requests_keep_priority_over_panels_and_remapped_keys() {
+        use crate::state::PendingPermission;
+        let mut state = crate::init_state();
+        open(&mut state, 0, None);
+        state.ui.agent_running = true;
+        let (tx, rx) = std::sync::mpsc::channel();
+        state.ui.pending_permission = Some(PendingPermission {
+            tool_name: "Shell".into(),
+            args_summary: "controlled test".into(),
+            reply_tx: tx,
+        });
+        super::super::main_ui::handle_event(
+            &mut state,
+            crossterm::event::Event::Key(key(KeyCode::F(1))),
+            ratatui::layout::Rect::default(),
+            ratatui::layout::Rect::default(),
+            ratatui::layout::Rect::default(),
+        );
+        assert!(rx.try_recv().is_err());
+        assert!(state.ui.pending_permission.is_some());
+        super::super::main_ui::handle_event(
+            &mut state,
+            crossterm::event::Event::Key(key(KeyCode::Esc)),
+            ratatui::layout::Rect::default(),
+            ratatui::layout::Rect::default(),
+            ratatui::layout::Rect::default(),
+        );
+        assert!(!rx.recv().unwrap());
+        assert!(state.ui.cancel_requested);
+        assert!(!state.ui.auto_approve);
+    }
 }
 
 fn load_usage(state: &AgentState, section: usize) -> (Vec<crate::usage::Day>, String) {

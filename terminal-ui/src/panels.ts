@@ -15,7 +15,8 @@ export function drawPanel(panel:PanelView, width:number, height:number, light:bo
   const surface=light?'\x1b[48;2;237;235;230m':'\x1b[48;2;18;18;18m';
   const selected=light?'\x1b[48;2;220;217;209m':'\x1b[48;2;35;33;30m';
   const pad=width>=40?3:1, inner=Math.max(1,width-pad*2);
-  const rows=Array<string>(height).fill(surface+' '.repeat(width)+reset);
+  const empty='\x1b[48;2;0;0;0m'+' '.repeat(width)+reset;
+  const rows=Array<string>(height).fill(empty);
   const paint=(y:number,text:string,active=false)=>{
     if(y<0||y>=height)return;
     const line=clip(text,inner),bg=active?selected:surface;
@@ -49,7 +50,8 @@ export function drawPanel(panel:PanelView, width:number, height:number, light:bo
     paint(17,dim+(days.size?`${days.size} active days · ${[...days.values()].reduce((a,b)=>a+b,0).toLocaleString()} tokens`:'No recorded activity yet · new provider responses build this history'));
     listY=19;
   }
-  const footerY=Math.max(listY,height-5), count=Math.max(0,footerY-listY);
+  const count=Math.min(Math.max(0,height-listY-6),Math.max(1,panel.rows.length));
+  const footerY=Math.min(height-4,listY+count+1);
   const at=Math.max(0,Math.min(panel.selected,panel.rows.length-1));
   const start=Math.max(0,Math.min(at-Math.floor(count/2),panel.rows.length-count));
   const labelWidth=Math.min(32,Math.max(12,Math.floor(inner*.38)));
@@ -57,13 +59,17 @@ export function drawPanel(panel:PanelView, width:number, height:number, light:bo
     const r=panel.rows[start+i];if(!r)break;
     const active=start+i===at;
     const label=clip(safe(r.label),labelWidth);
-    const suffix=inner>=50?' '.repeat(Math.max(1,labelWidth-visibleWidth(label)+2))+(active?fg:dim)+safe(r.value||r.description):'';
+    const value=clip(safe(r.value),Math.min(26,Math.floor(inner*.25)));
+    const descriptionWidth=Math.max(0,inner-labelWidth-visibleWidth(value)-7);
+    const description=clip(safe(r.description),descriptionWidth);
+    const suffix=inner>=50?' '.repeat(Math.max(1,labelWidth-visibleWidth(label)+2))+dim+description+' '.repeat(Math.max(1,descriptionWidth-visibleWidth(description)+2))+(active?accent:fg)+value:'';
     paint(listY+i,(active?accent+'› '+bold:dim+'  ')+label+reset+suffix,active);
   }
   if(!panel.rows.length)paint(listY,dim+'No matches. Try another search.');
   const current=panel.rows[at];
-  paint(height-4,panel.section===4?accent+(panel.preview??[]).map(safe).join(' · '):dim+(current?safe(current.description):''));
-  paint(height-3,dim+safe(panel.notice));
-  paint(height-1,accent+safe(panel.footer));
+  paint(footerY,panel.section===4?accent+(panel.preview??[]).map(safe).join(' · '):dim+(current?safe(current.description):''));
+  paint(footerY+1,dim+safe(panel.notice));
+  paint(footerY+3,accent+safe(panel.footer));
+  for(let y=0;y<Math.min(height,footerY+4);y++)if(rows[y]===empty)rows[y]=surface+' '.repeat(width)+reset;
   return {rows:rows.map(line=>clip(line,width)),cursor:{x:Math.min(width-1,pad+(panel.editing?6:8)+visibleWidth(safe(panel.query))),y:Math.min(height-1,5)}};
 }

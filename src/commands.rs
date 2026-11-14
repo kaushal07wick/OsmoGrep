@@ -175,10 +175,22 @@ pub fn is_transcript_command(text: &str) -> bool {
 fn help(state: &mut AgentState) {
     log(state, LogLevel::Info, "Workspace controls");
     for item in command_palette_items() {
-        log(state, LogLevel::Info, format!("  {:<15} {}", item.cmd, item.desc));
+        log(
+            state,
+            LogLevel::Info,
+            format!("  {:<15} {}", item.cmd, item.desc),
+        );
     }
-    log(state, LogLevel::Info, "Ask the agent to test, debug, review, plan, or coordinate work in plain language.");
-    log(state, LogLevel::Info, "!<command> runs a shell command directly. Legacy workflow commands still work.");
+    log(
+        state,
+        LogLevel::Info,
+        "Ask the agent to test, debug, review, plan, or coordinate work in plain language.",
+    );
+    log(
+        state,
+        LogLevel::Info,
+        "!<command> runs a shell command directly. Legacy workflow commands still work.",
+    );
 }
 
 fn clear_logs(state: &mut AgentState) {
@@ -1802,7 +1814,10 @@ fn gh_run_triage(state: &mut AgentState, arg: &str) {
             LogLevel::Success,
             format!(
                 "Wrote triage brief: {}",
-                report_md_path.strip_prefix(&state.repo_root).unwrap_or(&report_md_path).display()
+                report_md_path
+                    .strip_prefix(&state.repo_root)
+                    .unwrap_or(&report_md_path)
+                    .display()
             ),
         ),
         Err(e) => log(
@@ -1897,13 +1912,21 @@ fn write_triage_brief(report: &Value, repo: &str, path: &PathBuf) -> Result<(), 
                     90,
                 );
                 let l_url = pair.get("left_url").and_then(Value::as_str).unwrap_or("");
-                let r_num = pair.get("right_number").and_then(Value::as_u64).unwrap_or(0);
+                let r_num = pair
+                    .get("right_number")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
                 let r_title = compact_line(
-                    pair.get("right_title").and_then(Value::as_str).unwrap_or(""),
+                    pair.get("right_title")
+                        .and_then(Value::as_str)
+                        .unwrap_or(""),
                     90,
                 );
                 let r_url = pair.get("right_url").and_then(Value::as_str).unwrap_or("");
-                let sim = pair.get("similarity").and_then(Value::as_f64).unwrap_or(0.0);
+                let sim = pair
+                    .get("similarity")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.0);
 
                 let left = if l_url.is_empty() {
                     format!("#{} {}", l_num, l_title)
@@ -2672,7 +2695,10 @@ fn voice_off(state: &mut AgentState, voice_tx: Option<&Sender<VoiceCommand>>) {
     }
 }
 pub fn update_command_hints(state: &mut AgentState) {
-    if state.ui.panel.is_some() { state.ui.command_items.clear(); return; }
+    if state.ui.panel.is_some() {
+        state.ui.command_items.clear();
+        return;
+    }
     let input = normalize_command_prefix(state.ui.input.trim());
     let prev_selected = state.ui.command_selected;
     let (items, selected) = command_hints_for(&input, prev_selected);
@@ -2722,33 +2748,114 @@ fn command_hints_for(input: &str, prev_selected: usize) -> (Vec<CommandItem>, us
 
 pub(crate) fn command_palette_items() -> &'static [CommandItem] {
     &[
-        CommandItem { cmd: "/help", desc: "Browse workspace controls" },
-        CommandItem { cmd: "/model", desc: "Choose provider and model" },
-        CommandItem { cmd: "/permissions", desc: "Choose tool permissions" },
-        CommandItem { cmd: "/settings", desc: "Configure this workspace" },
-        CommandItem { cmd: "/skills", desc: "Browse and manage agent skills" },
-        CommandItem { cmd: "/keymap", desc: "Customize keyboard shortcuts" },
-        CommandItem { cmd: "/statusline", desc: "Arrange your status line" },
-        CommandItem { cmd: "/stats", desc: "Explore recorded usage" },
-        CommandItem { cmd: "/theme", desc: "Change appearance" },
-        CommandItem { cmd: "/usage", desc: "Inspect token and context usage" },
-        CommandItem { cmd: "/status", desc: "Inspect workspace and run status" },
-        CommandItem { cmd: "/mcp", desc: "Inspect connected tool servers" },
-        CommandItem { cmd: "/voice", desc: "Manage voice input" },
-        CommandItem { cmd: "/key", desc: "Set provider API key" },
-        CommandItem { cmd: "/copy", desc: "Copy an assistant response" },
-        CommandItem { cmd: "/rename", desc: "Name this conversation" },
-        CommandItem { cmd: "/new", desc: "Start a fresh conversation" },
-        CommandItem { cmd: "/clear", desc: "Clear the visible transcript" },
-        CommandItem { cmd: "/compact", desc: "Compress conversation context" },
-        CommandItem { cmd: "/undo", desc: "Revert the last agent file change" },
-        CommandItem { cmd: "/diff", desc: "Inspect session file changes" },
-        CommandItem { cmd: "/plan mode", desc: "Use read-only planning mode" },
-        CommandItem { cmd: "/steer", desc: "Manage persistent instructions" },
-        CommandItem { cmd: "/jobs", desc: "Inspect background work" },
-        CommandItem { cmd: "/nv", desc: "Open the workspace in Neovim" },
-        CommandItem { cmd: "/quit", desc: "Interrupt the current run" },
-        CommandItem { cmd: "/exit", desc: "Exit OsmoGrep" },
+        CommandItem {
+            cmd: "/help",
+            desc: "Browse workspace controls",
+        },
+        CommandItem {
+            cmd: "/model",
+            desc: "Choose provider and model",
+        },
+        CommandItem {
+            cmd: "/permissions",
+            desc: "Choose tool permissions",
+        },
+        CommandItem {
+            cmd: "/settings",
+            desc: "Configure this workspace",
+        },
+        CommandItem {
+            cmd: "/skills",
+            desc: "Browse and manage agent skills",
+        },
+        CommandItem {
+            cmd: "/keymap",
+            desc: "Customize keyboard shortcuts",
+        },
+        CommandItem {
+            cmd: "/statusline",
+            desc: "Arrange your status line",
+        },
+        CommandItem {
+            cmd: "/stats",
+            desc: "Explore recorded usage",
+        },
+        CommandItem {
+            cmd: "/theme",
+            desc: "Change appearance",
+        },
+        CommandItem {
+            cmd: "/usage",
+            desc: "Inspect token and context usage",
+        },
+        CommandItem {
+            cmd: "/status",
+            desc: "Inspect workspace and run status",
+        },
+        CommandItem {
+            cmd: "/mcp",
+            desc: "Inspect connected tool servers",
+        },
+        CommandItem {
+            cmd: "/voice",
+            desc: "Manage voice input",
+        },
+        CommandItem {
+            cmd: "/key",
+            desc: "Set provider API key",
+        },
+        CommandItem {
+            cmd: "/copy",
+            desc: "Copy an assistant response",
+        },
+        CommandItem {
+            cmd: "/rename",
+            desc: "Name this conversation",
+        },
+        CommandItem {
+            cmd: "/new",
+            desc: "Start a fresh conversation",
+        },
+        CommandItem {
+            cmd: "/clear",
+            desc: "Clear the visible transcript",
+        },
+        CommandItem {
+            cmd: "/compact",
+            desc: "Compress conversation context",
+        },
+        CommandItem {
+            cmd: "/undo",
+            desc: "Revert the last agent file change",
+        },
+        CommandItem {
+            cmd: "/diff",
+            desc: "Inspect session file changes",
+        },
+        CommandItem {
+            cmd: "/plan mode",
+            desc: "Use read-only planning mode",
+        },
+        CommandItem {
+            cmd: "/steer",
+            desc: "Manage persistent instructions",
+        },
+        CommandItem {
+            cmd: "/jobs",
+            desc: "Inspect background work",
+        },
+        CommandItem {
+            cmd: "/nv",
+            desc: "Open the workspace in Neovim",
+        },
+        CommandItem {
+            cmd: "/quit",
+            desc: "Interrupt the current run",
+        },
+        CommandItem {
+            cmd: "/exit",
+            desc: "Exit OsmoGrep",
+        },
     ]
 }
 
@@ -2798,7 +2905,18 @@ mod tests {
     #[test]
     fn menu_exposes_controls_not_manual_agent_workflows() {
         let (items, _) = command_hints_for("/", 0);
-        for manual in ["/test", "/triage", "/swarm", "/plan", "/plan add", "/plan done", "/plan clear", "/autofix", "/gh", "/q"] {
+        for manual in [
+            "/test",
+            "/triage",
+            "/swarm",
+            "/plan",
+            "/plan add",
+            "/plan done",
+            "/plan clear",
+            "/autofix",
+            "/gh",
+            "/q",
+        ] {
             assert!(!items.iter().any(|item| item.cmd == manual), "{manual}");
         }
         assert!(items.iter().any(|item| item.cmd == "/model"));

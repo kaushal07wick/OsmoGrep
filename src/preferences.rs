@@ -82,6 +82,18 @@ impl Preferences {
 mod tests {
     use super::*;
     #[test]
+    fn invalid_and_conflicting_keymaps_cannot_override_protected_controls() {
+        let mut settings:Preferences=serde_json::from_str(r#"{"key_bindings":{"copy":"f1","commands":"ctrl+p","skills":"ctrl+p","future":"f12"}}"#).unwrap();
+        settings.normalize();
+        assert_eq!(
+            settings.key_bindings.get("commands").map(String::as_str),
+            Some("ctrl+p")
+        );
+        assert!(!settings.key_bindings.contains_key("copy"));
+        assert!(!settings.key_bindings.contains_key("skills"));
+        assert!(!settings.key_bindings.contains_key("future"));
+    }
+    #[test]
     fn old_settings_receive_defaults_and_unknown_status_fields_are_safe() {
         let mut settings: Preferences =
             serde_json::from_str(r#"{"status_fields":["model","future","model","branch"]}"#)

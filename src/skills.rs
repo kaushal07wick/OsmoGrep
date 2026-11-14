@@ -140,6 +140,20 @@ fn metadata(text: &str, fallback: &str) -> (String, String) {
         .filter(|c| !c.is_control())
         .take(300)
         .collect();
+    name = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || "-_.:".contains(c) {
+                c
+            } else {
+                '-'
+            }
+        })
+        .take(96)
+        .collect();
+    if name.is_empty() {
+        name = "skill".into();
+    }
     (name, description.trim().to_string())
 }
 

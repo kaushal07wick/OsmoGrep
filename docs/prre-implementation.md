@@ -619,3 +619,15 @@ Raw screenshots and the local browser check report are in
 This is an approval preview. The installed terminal and Rust/TypeScript agent
 sources were not changed; terminal implementation and performance verification
 await the user's selected direction. The gallery has not been pushed or deployed.
+
+### Terminal workspace controls and approved animation integration — 2026-11-14
+
+Implemented the staged [terminal workspace upgrade](terminal-workspace-plan.md):
+curated slash-command discovery, searchable panels, existing tool-policy controls,
+persisted remapping/status line, explicit bounded local skills, provider usage
+metadata/history and the four approved dim central animations. The Rust agent and
+native fallback remain in place. Local validation: 193 Rust tests, 24 UI tests,
+16 real Mac PTY checks, installed CLI/MCP/agent compatibility, five controlled
+analysis cases and one live OpenAI text smoke all pass. See
+[validation measurements](terminal-ui-validation.json). Hosted GitHub/E2B delivery,
+real vision interpretation and other operating systems were not revalidated.

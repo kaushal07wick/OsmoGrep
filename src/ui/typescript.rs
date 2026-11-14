@@ -69,12 +69,25 @@ struct Frame {
     images: Vec<Preview>,
 }
 
-#[derive(Default)]
 struct IntroInteraction {
     area: Option<Rect>,
     started: Option<std::time::Instant>,
     playing: bool,
     capture: bool,
+    variant: usize,
+    bright: bool,
+}
+impl Default for IntroInteraction {
+    fn default() -> Self {
+        Self {
+            area: None,
+            started: None,
+            playing: false,
+            capture: false,
+            variant: (uuid::Uuid::new_v4().as_bytes()[0] % 4) as usize,
+            bright: false,
+        }
+    }
 }
 impl IntroInteraction {
     fn handle_event(&mut self, event: &Event) -> bool {
@@ -89,10 +102,12 @@ impl IntroInteraction {
             return false;
         }
         if self.playing {
+            self.bright = true;
             return true;
         }
         self.started = Some(std::time::Instant::now());
         self.playing = true;
+        self.bright = true;
         true
     }
 }
@@ -234,6 +249,9 @@ impl TypeScriptUi {
             .get_or_insert_with(std::time::Instant::now)
             .elapsed()
             .as_millis() as u64);
+        snapshot["introScene"] =
+            json!(["horizon", "interference", "life", "lorenz"][self.intro.variant]);
+        snapshot["introBright"] = json!(self.intro.bright);
         self.input.try_send(snapshot).map_err(|e| e.to_string())?;
         let raw = self
             .frames
@@ -385,8 +403,14 @@ fn view(state: &AgentState, model: &ModelConfig, id: u64, width: u16, height: u1
         "selectedCommand":ui.command_selected, "tokens":state.usage.prompt_tokens+state.usage.completion_tokens,
     });
     snapshot["panel"] = serde_json::to_value(super::workbench::view(state)).unwrap_or(Value::Null);
-    snapshot["shortcuts"] = json!(super::keymap::BINDINGS.iter().map(|b|(b.id,super::keymap::effective(&state.preferences,b))).collect::<std::collections::BTreeMap<_,_>>());
-    snapshot["approval"] = json!(ui.pending_permission.as_ref().map(|p|json!({"tool":p.tool_name,"args":p.args_summary})));
+    snapshot["shortcuts"] = json!(super::keymap::BINDINGS
+        .iter()
+        .map(|b| (b.id, super::keymap::effective(&state.preferences, b)))
+        .collect::<std::collections::BTreeMap<_, _>>());
+    snapshot["approval"] = json!(ui
+        .pending_permission
+        .as_ref()
+        .map(|p| json!({"tool":p.tool_name,"args":p.args_summary})));
     snapshot["statusLine"] = json!(super::workbench::statusline(state));
     snapshot["preferences"] = serde_json::to_value(&state.preferences).unwrap_or(Value::Null);
     snapshot
