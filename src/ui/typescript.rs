@@ -364,7 +364,7 @@ fn view(state: &AgentState, model: &ModelConfig, id: u64, width: u16, height: u1
     } else {
         Vec::new()
     };
-    json!({
+    let mut snapshot = json!({
         "id":id, "width":width, "height":height, "version":env!("CARGO_PKG_VERSION"),
         "cwd":cwd, "model":model.model, "provider":model.provider,
         "branch":ui.repo_branch.as_deref().unwrap_or(""), "indexed":ui.indexed, "indexing":ui.indexing,
@@ -383,7 +383,13 @@ fn view(state: &AgentState, model: &ModelConfig, id: u64, width: u16, height: u1
         "voice":if state.voice.visible || state.voice.enabled || state.voice.connected {Some(super::tui::voice_bar_text(state))} else {None},
         "commands":ui.command_items.iter().map(|c|json!({"cmd":c.cmd,"desc":c.desc})).collect::<Vec<_>>(),
         "selectedCommand":ui.command_selected, "tokens":state.usage.prompt_tokens+state.usage.completion_tokens,
-    })
+    });
+    snapshot["panel"] = serde_json::to_value(super::workbench::view(state)).unwrap_or(Value::Null);
+    snapshot["shortcuts"] = json!(super::keymap::BINDINGS.iter().map(|b|(b.id,super::keymap::effective(&state.preferences,b))).collect::<std::collections::BTreeMap<_,_>>());
+    snapshot["approval"] = json!(ui.pending_permission.as_ref().map(|p|json!({"tool":p.tool_name,"args":p.args_summary})));
+    snapshot["statusLine"] = json!(super::workbench::statusline(state));
+    snapshot["preferences"] = serde_json::to_value(&state.preferences).unwrap_or(Value::Null);
+    snapshot
 }
 
 #[cfg(test)]

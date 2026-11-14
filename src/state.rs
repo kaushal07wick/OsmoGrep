@@ -77,6 +77,9 @@ pub struct CommandItem {
 }
 
 pub struct UiState {
+    pub presentation_model: Option<crate::agent::ModelConfig>,
+    pub panel: Option<crate::ui::workbench::Panel>,
+    pub requested_command: Option<String>,
     pub attachments: Vec<crate::attachments::Attachment>,
     pub next_attachment_id: u32,
     // input
@@ -135,6 +138,9 @@ pub struct UiState {
 impl Default for UiState {
     fn default() -> Self {
         Self {
+            panel: None,
+            presentation_model: None,
+            requested_command: None,
             attachments: Vec::new(),
             next_attachment_id: 1,
             input: String::new(),
@@ -192,6 +198,7 @@ impl Default for UiState {
 }
 
 pub struct AgentState {
+    pub preferences: crate::preferences::Preferences,
     pub ui: UiState,
     pub logs: LogBuffer,
     pub session_changes: Vec<DiffSnapshot>,
@@ -1147,6 +1154,7 @@ mod tests {
             session_changes: Vec::new(),
             reviewed_change_count: 0,
             undo_stack: Vec::new(),
+            preferences: crate::preferences::Preferences::default(),
             usage: UsageStats::default(),
             steer: None,
             auto_eval: false,

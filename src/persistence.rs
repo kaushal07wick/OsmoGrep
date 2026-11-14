@@ -1,6 +1,29 @@
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
+
+pub(crate) fn atomic_write(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    let temp = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+    let result = (|| {
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temp)?;
+        file.write_all(contents)?;
+        file.sync_all()?;
+        fs::rename(&temp, path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(temp);
+    }
+    result
+}
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -12,6 +35,8 @@ use crate::state::{
 
 #[derive(Serialize, Deserialize)]
 struct PersistedState {
+    #[serde(default)]
+    preferences: crate::preferences::Preferences,
     #[serde(default)]
     conversation: Vec<Value>,
     #[serde(default)]
@@ -60,6 +85,8 @@ pub fn load(state: &mut AgentState) {
     if !saved.conversation.is_empty() {
         state.conversation.set_messages(saved.conversation);
     }
+    state.preferences = saved.preferences;
+    state.preferences.normalize();
     state.steer = saved.steer;
     state.auto_eval = saved.auto_eval;
     state.permission_profile = saved.permission_profile;
@@ -85,6 +112,7 @@ pub fn save(state: &AgentState) -> Result<(), String> {
     }
 
     let payload = PersistedState {
+        preferences: state.preferences.clone(),
         conversation: state.conversation.messages.clone(),
         steer: state.steer.clone(),
         auto_eval: state.auto_eval,
@@ -105,7 +133,7 @@ pub fn save(state: &AgentState) -> Result<(), String> {
     };
 
     let text = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
-    fs::write(path, text).map_err(|e| e.to_string())
+    atomic_write(&path, text.as_bytes()).map_err(|e| e.to_string())
 }
 
 pub struct SessionSummary {
@@ -192,6 +220,25 @@ mod tests {
     use super::list_sessions_in;
     use std::fs;
     use uuid::Uuid;
+
+    #[test]
+    fn atomic_preferences_round_trip_and_failed_replace_preserve_existing_data() {
+        let dir = std::env::temp_dir().join(format!("osmogrep-preferences-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("state.json");
+        let mut p = crate::preferences::Preferences::default();
+        p.reduce_motion = true;
+        p.key_bindings.insert("commands".into(), "ctrl+p".into());
+        super::atomic_write(&path, &serde_json::to_vec(&p).unwrap()).unwrap();
+        let restored: crate::preferences::Preferences =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert!(restored.reduce_motion);
+        assert_eq!(restored.key_bindings.get("commands").unwrap(), "ctrl+p");
+        assert!(super::atomic_write(&dir, b"not a file").is_err());
+        assert!(path.exists());
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn lists_saved_session_summaries() {

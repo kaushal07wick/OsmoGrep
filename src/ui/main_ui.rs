@@ -41,6 +41,10 @@ pub fn handle_event(
 }
 
 fn handle_paste(state: &mut AgentState, text: &str) {
+    if state.ui.panel.is_some() {
+        crate::ui::workbench::paste(state, text);
+        return;
+    }
     let text = normalize_paste_text(text);
     if state.ui.input_mode != InputMode::ApiKey {
         if let Some(path) = crate::attachments::dropped_image(&text, &state.repo_root) {
@@ -113,6 +117,18 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
         return;
     }
 
+    if crate::ui::workbench::handle_key(state, k) {
+        return;
+    }
+    let k = match crate::ui::keymap::resolve(&state.preferences, k) {
+        crate::ui::keymap::Resolved::Command(cmd) => {
+            state.ui.requested_command = Some(cmd.into());
+            return;
+        }
+        crate::ui::keymap::Resolved::Key(key) => key,
+        crate::ui::keymap::Resolved::Ignore => return,
+        crate::ui::keymap::Resolved::Unchanged => k,
+    };
     let palette_active = !state.ui.command_items.is_empty();
     let navigation = matches!(
         k.code,
@@ -201,6 +217,15 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
         /* ---------- Text input ---------- */
         KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => {
             state.push_char(c);
+            if c == '$'
+                && state.ui.input_mode != InputMode::ApiKey
+                && state.ui.input_mode != InputMode::Shell
+            {
+                let prefix = &state.ui.input[..state.ui.input_cursor.saturating_sub(1)];
+                if prefix.is_empty() || prefix.chars().last().is_some_and(char::is_whitespace) {
+                    crate::ui::workbench::open(state, 6, None);
+                }
+            }
         }
 
         KeyCode::Backspace => {
@@ -536,6 +561,7 @@ mod tests {
             session_changes: Vec::new(),
             reviewed_change_count: 0,
             undo_stack: Vec::new(),
+            preferences: crate::preferences::Preferences::default(),
             usage: UsageStats::default(),
             steer: None,
             auto_eval: false,

@@ -149,8 +149,12 @@ try:
     assert b'\x1b[48;2;42;42;42m' in transcript
     send(b'\x1b[A' * 2)
     send(b'\r')
-    # The help heading scrolls above the viewport; check its visible final paragraph.
-    wait_for(lambda: b'Anything else is sent to the agent.' in transcript)
+    wait_for(lambda: b'WORKSPACE' in transcript and b'Search' in transcript)
+    paste('permissions')
+    send(b'\r')
+    wait_for(lambda: b'Tool classifications govern access' in transcript or b'Ask for approval' in transcript)
+    send(b'\x1b')
+    drain(.1)
     assert not requests, 'selecting /help must execute locally'
     result['command_picker_navigation_and_execution'] = True
     paste('hello world')

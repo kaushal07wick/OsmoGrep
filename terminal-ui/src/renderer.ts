@@ -1,6 +1,7 @@
 import { Image, Markdown, getCapabilities, renderImage, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import { introDuration, websiteMark } from './brand.ts';
 import { introFrame, introPng } from './intro.ts';
+import { drawPanel, type PanelView } from './panels.ts';
 
 export interface Rect { x: number; y: number; width: number; height: number }
 export interface Attachment { id: number; label: string; thumbnail: string; width: number; height: number }
@@ -15,6 +16,11 @@ export interface View {
   followTail: boolean; scroll: number; stream: string; permission: string | null; update: string | null;
   voice: string | null; commands: { cmd: string; desc: string }[]; selectedCommand: number; tokens: number;
   introElapsed?: number;
+  panel?: PanelView | null;
+  approval?: {tool:string;args:string} | null;
+  statusLine?: string[];
+  shortcuts?: Record<string,string>;
+  preferences?: {status_fields:string[]; reduce_motion:boolean; ambient_art:boolean};
 }
 export interface Rendered {
   id: number; rows: string[]; input: Rect; execution: Rect; cursor: { x: number; y: number };
@@ -182,8 +188,8 @@ export function render(v: View): Rendered {
   }
   if (footerHeight) {
     const permission = v.planMode ? 'plan mode' : v.autoApprove ? 'auto-approve on' : 'ask approvals';
-    const left = accent + `${v.profile} · ${permission}` + reset + dim + ' · /help commands' + reset;
-    const right = dim + (v.running ? 'tab queue · esc cancel' : '! shell · shift+enter newline') + reset;
+    const left = accent + (v.statusLine ? v.statusLine.map(clean).join(' · ') : `${v.profile} · ${permission}`) + reset + dim + ' · /help' + reset;
+    const right = dim + (v.running ? `${v.shortcuts?.queue??'tab'} queue · esc cancel` : `! shell · ${v.shortcuts?.newline??'shift+enter'} newline`) + reset;
     put(h - 1, left);
     if (width >= visibleWidth(left) + visibleWidth(right) + 4) {
       rows[h - 1] = rows[h - 1]! + ' '.repeat(width - visibleWidth(left) - visibleWidth(right)) + right;
@@ -218,6 +224,18 @@ export function render(v: View): Rendered {
     }
   }
   const rootBackground = light ? '\x1b[48;2;250;250;250m' : '\x1b[48;2;0;0;0m';
+  if (v.panel && !v.permission && !v.update) {
+    const panel=drawPanel(v.panel,w,h,light,accent);
+    return {id:v.id,rows:panel.rows,input:inputRect,execution,editorWidth:textWidth,animate:false,artwork:null,cursor:panel.cursor,images:[]};
+  }
+  if(v.approval){
+    const panel=drawPanel({sections:['Permission required'],section:0,query:'',selected:0,editing:false,
+      rows:[{label:'Y · Allow once',description:clean(v.approval.tool)+' · '+clean(v.approval.args),value:'one tool call'},
+        {label:'N · Deny',description:'The agent receives the denial and can continue safely',value:'keep policy'},
+        {label:'A · Auto-approve',description:'Allow dangerous tools for the rest of this session',value:'session-wide'}],
+      notice:'Tool policy applies · Escape cancels the run',footer:'y allow once · n deny · a auto-approve · esc cancel'},w,h,light,accent);
+    return {id:v.id,rows:panel.rows,input:inputRect,execution,editorWidth:textWidth,animate:false,artwork:null,cursor:panel.cursor,images:[]};
+  }
   return {
     id: v.id, rows: rows.map(row => {
       const clipped = clip(row, w);

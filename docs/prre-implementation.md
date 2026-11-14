@@ -592,3 +592,30 @@ Rust source was unchanged; its prior test result and microbenchmark remain
 attributed to `d3532cf`. Installed the byte-identical release atomically with a
 backup, first on PATH. SHA-256:
 `b2f3fca126459960c480881f979d5c2d9b2d5f60c997db470eaef1758f5cc035`.
+
+## Ten-concept HTML motion gallery — 2026-11-14
+
+Created the standalone [animation concept gallery](animation-concepts.html) for
+user review before terminal implementation. Its ten directions are Lorenz chaos,
+a rotating tesseract, Hopf fibers, a Klein-bottle immersion, wave interference,
+Conway's Life, Gray–Scott reaction–diffusion, Fourier epicycles, an artistic
+accretion disk and a bitonic sorting network. Each has a shared fourteen-second
+logo-to-concept-to-logo transition, full-size terminal preview, timeline scrubbing,
+pause/replay, speed selection, concept hold and a persistent local shortlist.
+Copying a choice prepares approval text; it does not change the installed app.
+
+The HTML embeds all CSS, JavaScript and assets, uses no third-party runtime or
+network assets, and includes links explaining the mathematical inspiration.
+Self-checks validate finite geometry, the Life seed and growth, and the sorting
+network against 32 permutations. Browser checks confirmed ten distinct moving
+renders, inspector navigation, scrubbing, stopped redraw while paused, selection
+persistence, clipboard text, Escape, reduced motion and layouts at 1440, 390 and
+320 pixels. No page errors or external resource requests were observed in Chrome.
+Active and idle requestAnimationFrame timing were both approximately 33.3 ms in
+the local browser environment; this is not a claim of 60 fps or terminal speed.
+Raw screenshots and the local browser check report are in
+`/private/tmp/osmogrep-motion-gallery/`.
+
+This is an approval preview. The installed terminal and Rust/TypeScript agent
+sources were not changed; terminal implementation and performance verification
+await the user's selected direction. The gallery has not been pushed or deployed.

@@ -1,0 +1,1411 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>OsmoGrep — Studies in emergence</title>
+<style>
+:root {
+  --bg:#080808;
+  --panel:#0d0d0c;
+  --ink:#e9e5dc;
+  --muted:#88857e;
+  --line:#282724;
+  --orange:#e86d35;
+  --mono:"SFMono-Regular",Consolas,"Liberation Mono",monospace;
+  --serif:"Iowan Old Style",Baskerville,"Palatino Linotype",Georgia,serif;
+  --sans:"Avenir Next","Segoe UI",sans-serif;
+}
+* {
+  box-sizing: border-box;
+}
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 110px;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.6 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+button,
+input,
+select {
+  font: inherit;
+}
+button,
+a,
+input,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+button {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: default;
+  opacity: .4;
+}
+a {
+  color: inherit;
+  text-decoration: none;
+}
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 5px;
+}
+button {
+  color: var(--ink);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 9px 14px;
+  font: 11px var(--mono);
+  transition: border-color .2s, background .2s;
+}
+button:hover {
+  border-color: #77716a;
+  background: #ffffff06;
+}
+button.primary {
+  background: var(--ink);
+  color: #171511;
+  border-color: var(--ink);
+}
+button.primary:hover {
+  background: #fff;
+}
+button[aria-pressed=true] {
+  color: var(--orange);
+  border-color: #865137;
+}
+.wrap {
+  max-width: 1400px;
+  margin: auto;
+  padding: 0 52px;
+}
+.masthead {
+  height: 82px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+  gap: 20px;
+}
+.wordmark {
+  font: bold 20px var(--mono);
+  letter-spacing: -.8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+.brand-mark {
+  width: 28px;
+  height: 26px;
+  image-rendering: pixelated;
+}
+.mast-note,
+.eyebrow,
+.number,
+.tag,
+.stage-meta,
+.micro,
+.key {
+  font: 10px/1.5 var(--mono);
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+}
+.mast-note {
+  color: var(--muted);
+}
+.mast-note i {
+  display: inline-block;
+  background: var(--orange);
+  width: 5px;
+  height: 5px;
+  margin-right: 8px;
+  border-radius: 100%;
+}
+.hero {
+  padding: 76px 52px 56px;
+  display: grid;
+  grid-template-columns: 1.7fr 1fr;
+  gap: 70px;
+  align-items: end;
+}
+.eyebrow {
+  color: var(--orange);
+  margin: 0 0 24px;
+}
+.hero h1 {
+  font: normal clamp(56px, 6.7vw, 96px)/.98 var(--serif);
+  letter-spacing: -3px;
+  margin: 0;
+}
+.hero h1 em {
+  font-weight: normal;
+  color: var(--orange);
+}
+.hero-copy {
+  padding-bottom: 4px;
+  max-width: 360px;
+}
+.hero-copy p {
+  font-size: 15px;
+  color: #a8a49c;
+  margin: 0 0 22px;
+}
+.hero-copy .micro {
+  color: var(--muted);
+  letter-spacing: .6px;
+  font-size: 9px;
+}
+.hero-copy .micro span {
+  color: var(--ink);
+}
+.toolbar-shell {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: #080808f5;
+  backdrop-filter: blur(16px);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.toolbar {
+  min-height: 70px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.toolbar-label {
+  font: 10px var(--mono);
+  letter-spacing: 1px;
+  color: var(--muted);
+  margin-right: 12px;
+}
+.quiet {
+  border-color: transparent;
+  color: var(--muted);
+}
+select {
+  background: #11110f;
+  color: var(--ink);
+  font: 11px var(--mono);
+  border: 1px solid var(--line);
+  padding: 9px;
+  border-radius: 3px;
+}
+.section-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 35px 0 20px;
+  color: var(--muted);
+}
+.section-bar strong {
+  font-weight: normal;
+  color: var(--ink);
+}
+.jump-list {
+  display: flex;
+  gap: 13px;
+}
+.jump-list a {
+  font: 10px var(--mono);
+  color: var(--muted);
+}
+.jump-list a:hover {
+  color: var(--orange);
+}
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 36px 28px;
+}
+.study {
+  scroll-margin-top: 100px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--panel);
+  transition: border-color .25s;
+}
+.study.selected {
+  border-color: #a4603a;
+}
+.study-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px 10px;
+}
+.number {
+  color: #9b9488;
+  letter-spacing: 1px;
+}
+.tag {
+  color: #6f6c66;
+  font-size: 9px;
+  letter-spacing: 1px;
+}
+.canvas-shell {
+  position: relative;
+  background: #000;
+  aspect-ratio: 1.48;
+  overflow: hidden;
+}
+.study canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.stage-meta {
+  position: absolute;
+  top: 15px;
+  left: 20px;
+  color: #59564f;
+  font-size: 8px;
+  letter-spacing: 1.3px;
+  pointer-events: none;
+}
+.stage-progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 1px;
+  width: 100%;
+  background: #26221c;
+  transform: scaleX(0);
+  transform-origin: left;
+  pointer-events: none;
+}
+.stage-corner {
+  position: absolute;
+  right: 16px;
+  bottom: 13px;
+  color: #49463f;
+  font: 9px var(--mono);
+  pointer-events: none;
+}
+.study-info {
+  padding: 23px 24px 21px;
+}
+.study-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: baseline;
+}
+.study h2 {
+  font: normal 31px/1.15 var(--serif);
+  letter-spacing: -.6px;
+  margin: 0 0 11px;
+}
+.study .equation {
+  font: 10px var(--mono);
+  color: #746e64;
+  white-space: nowrap;
+}
+.study p {
+  margin: 0;
+  color: #a39e95;
+  font-size: 13px;
+  line-height: 1.7;
+  max-width: 470px;
+  min-height: 44px;
+}
+.study-bottom {
+  margin-top: 21px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.inspect {
+  padding: 8px 0;
+  border: 0;
+  color: #ddd7cc;
+  letter-spacing: .2px;
+}
+.inspect:hover {
+  color: var(--orange);
+  background: none;
+}
+.save {
+  border-color: #34312b;
+  color: #a49c90;
+  padding: 7px 11px;
+  font-size: 10px;
+}
+.save[aria-pressed=true] {
+  background: #40261944;
+}
+.section-rule {
+  border-top: 1px solid var(--line);
+  margin-top: 70px;
+  padding: 26px 0 45px;
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: 50px;
+}
+.section-rule h2 {
+  font: normal 26px var(--serif);
+  margin: 0;
+}
+.section-rule p {
+  margin: 0;
+  max-width: 650px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.foot {
+  border-top: 1px solid var(--line);
+  padding: 23px 0 30px;
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  color: #6e685e;
+  font: 9px var(--mono);
+  letter-spacing: .3px;
+}
+.toast {
+  position: fixed;
+  bottom: 22px;
+  left: 50%;
+  transform: translate(-50%, 15px);
+  padding: 12px 20px;
+  background: #e9e5dc;
+  color: #12100d;
+  font: 11px var(--mono);
+  z-index: 30;
+  border-radius: 3px;
+  opacity: 0;
+  transition: .2s;
+  pointer-events: none;
+  max-width: 90vw;
+  text-align: center;
+}
+.toast.on {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+dialog {
+  color: var(--ink);
+  background: #0a0a09;
+  border: 1px solid #39352e;
+  border-radius: 5px;
+  padding: 0;
+  width: min(1180px, calc(100vw - 48px));
+  max-height: calc(100dvh - 40px);
+  overflow: auto;
+}
+dialog::backdrop {
+  background: #000c;
+  backdrop-filter: blur(12px);
+}
+.dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--line);
+  gap: 14px;
+}
+.dialog-title {
+  display: flex;
+  align-items: baseline;
+  gap: 15px;
+}
+.dialog-title h2 {
+  font: normal 27px var(--serif);
+  margin: 0;
+}
+.dialog-nav {
+  display: flex;
+  gap: 8px;
+}
+.dialog-nav button {
+  padding: 7px 11px;
+}
+.terminal {
+  background: #000;
+  height: clamp(300px, 53vh, 620px);
+  position: relative;
+  overflow: hidden;
+}
+.terminal-head {
+  position: absolute;
+  top: 23px;
+  left: 28px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  pointer-events: none;
+}
+.terminal-head .brand-mark {
+  width: 32px;
+  height: 30px;
+}
+.terminal-head b {
+  font: 600 12px var(--mono);
+}
+.terminal-head p {
+  font: 10px var(--mono);
+  color: #706b62;
+  margin: 6px 0 0;
+}
+.terminal canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.terminal-prompt {
+  position: absolute;
+  bottom: 24px;
+  left: 28px;
+  right: 28px;
+  background: #171716;
+  padding: 15px 17px;
+  font: 12px var(--mono);
+  color: #68645d;
+  pointer-events: none;
+}
+.terminal-prompt b {
+  color: var(--orange);
+  font-weight: normal;
+  margin-right: 12px;
+}
+.terminal-mode {
+  position: absolute;
+  right: 28px;
+  top: 25px;
+  font: 9px var(--mono);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #756c60;
+}
+.transport {
+  padding: 16px 24px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.transport button {
+  padding: 7px 12px;
+}
+.transport input {
+  flex: 1;
+  accent-color: var(--orange);
+  min-width: 30px;
+  height: 3px;
+}
+.time-readout {
+  font: 10px var(--mono);
+  color: #aaa196;
+  min-width: 84px;
+  text-align: right;
+}
+.detail-body {
+  padding: 24px;
+  display: grid;
+  grid-template-columns: 1.5fr 1fr;
+  gap: 50px;
+  border-top: 1px solid var(--line);
+}
+.detail-body .micro {
+  font-size: 9px;
+  color: var(--orange);
+  margin: 0 0 9px;
+}
+.detail-body p {
+  margin: 0 0 14px;
+  color: #b2a99b;
+  font-size: 13px;
+}
+.detail-body .notes {
+  font-size: 11px;
+  color: #726b61;
+}
+.reference {
+  font: 10px var(--mono);
+  color: #8e877b;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.choice-panel {
+  border-left: 1px solid var(--line);
+  padding-left: 28px;
+}
+.choice-panel button {
+  width: 100%;
+  margin-bottom: 10px;
+}
+.choice-panel small {
+  display: block;
+  color: #746e64;
+  font-size: 10px;
+}
+.shortlist-sheet {
+  padding: 28px;
+  min-height: 200px;
+}
+.shortlist-sheet h2 {
+  font: normal 34px var(--serif);
+  margin: 0 0 9px;
+}
+.shortlist-sheet p {
+  color: var(--muted);
+  font-size: 12px;
+}
+.shortlist-items {
+  display: grid;
+  gap: 8px;
+  margin: 25px 0;
+}
+.shortlist-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+  padding: 10px 0;
+  gap: 20px;
+}
+.shortlist-row span {
+  font: 14px var(--mono);
+}
+.shortlist-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+.empty-note {
+  padding: 35px 0;
+  color: var(--muted);
+  font: 12px var(--mono);
+}
+@media (min-width: 1600px) {
+  .wrap {
+    max-width: 1550px;
+  }
+  .hero {
+    padding-top: 95px;
+  }
+  .canvas-shell {
+    aspect-ratio: 1.6;
+  }
+}
+@media (max-width: 950px) {
+  .wrap {
+    padding: 0 28px;
+  }
+  .hero {
+    padding-left: 28px;
+    padding-right: 28px;
+    gap: 35px;
+    grid-template-columns: 1.3fr 1fr;
+  }
+  .hero h1 {
+    font-size: 65px;
+  }
+  .study-title {
+    display: block;
+  }
+  .study .equation {
+    display: block;
+    margin-bottom: 10px;
+  }
+  .study p {
+    min-height: 65px;
+  }
+  .tag {
+    font-size: 8px;
+  }
+  .toolbar-label {
+    display: none;
+  }
+  .detail-body {
+    gap: 25px;
+  }
+}
+@media (max-width: 650px) {
+  .wrap {
+    padding: 0 18px;
+  }
+  .masthead {
+    height: 68px;
+  }
+  .mast-note {
+    font-size: 8px;
+    letter-spacing: .3px;
+  }
+  .wordmark {
+    font-size: 17px;
+  }
+  .hero {
+    display: block;
+    padding: 48px 18px 35px;
+  }
+  .hero h1 {
+    font-size: 64px;
+    letter-spacing: -2px;
+  }
+  .hero-copy {
+    margin-top: 27px;
+    max-width: 100%;
+  }
+  .hero-copy p {
+    font-size: 13px;
+    max-width: 340px;
+    margin-bottom: 14px;
+  }
+  .eyebrow {
+    font-size: 9px;
+    margin-bottom: 20px;
+  }
+  .toolbar {
+    min-height: 64px;
+    gap: 7px;
+    flex-wrap: wrap;
+    padding-top: 9px;
+    padding-bottom: 9px;
+  }
+  .toolbar-group {
+    gap: 5px;
+  }
+  .toolbar button,
+  .toolbar select {
+    font-size: 10px;
+    padding: 8px;
+  }
+  .toolbar .quiet {
+    display: none;
+  }
+  .jump-list {
+    gap: 11px;
+  }
+  .jump-list a:nth-child(n+7) {
+    display: none;
+  }
+  .section-bar {
+    font-size: 9px;
+    margin-top: 25px;
+  }
+  .grid {
+    grid-template-columns: 1fr;
+    gap: 23px;
+  }
+  .study p {
+    min-height: 0;
+  }
+  .study-title {
+    display: flex;
+  }
+  .study .equation {
+    font-size: 9px;
+  }
+  .study-info {
+    padding: 20px;
+  }
+  .study h2 {
+    font-size: 28px;
+  }
+  .canvas-shell {
+    aspect-ratio: 1.35;
+  }
+  .section-rule {
+    grid-template-columns: 1fr;
+    gap: 15px;
+    margin-top: 40px;
+  }
+  .foot {
+    display: block;
+    line-height: 2.1;
+  }
+  .foot span {
+    display: block;
+  }
+  dialog {
+    width: calc(100vw - 16px);
+    max-height: calc(100dvh - 16px);
+  }
+  .dialog-head {
+    padding: 13px;
+  }
+  .dialog-title {
+    gap: 8px;
+  }
+  .dialog-title h2 {
+    font-size: 23px;
+  }
+  .dialog-nav {
+    gap: 5px;
+  }
+  .dialog-nav button {
+    padding: 6px 8px;
+  }
+  .terminal {
+    height: 43vh;
+    min-height: 300px;
+  }
+  .terminal-head {
+    left: 18px;
+    top: 18px;
+  }
+  .terminal-prompt {
+    left: 17px;
+    right: 17px;
+    bottom: 16px;
+    font-size: 10px;
+  }
+  .terminal-mode {
+    right: 17px;
+    top: 20px;
+    font-size: 8px;
+  }
+  .detail-body {
+    grid-template-columns: 1fr;
+    gap: 14px;
+    padding: 20px;
+  }
+  .choice-panel {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    padding: 18px 0 0;
+  }
+  .transport {
+    padding: 13px;
+    gap: 10px;
+  }
+  .transport button {
+    font-size: 10px;
+    padding: 7px;
+  }
+  .time-readout {
+    font-size: 9px;
+    min-width: 70px;
+  }
+  .key {
+    display: none;
+  }
+  .shortlist-sheet {
+    padding: 20px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+</style>
+</head>
+<body>
+<header class="wrap"><div class="masthead"><a class="wordmark" href="#" aria-label="OsmoGrep animation studies"><span class="logo-slot"></span>osmogrep</a><div class="mast-note"><i></i>MOTION LAB / VOL. 01</div></div></header>
+<main>
+<section class="wrap hero"><div><p class="eyebrow">Ten studies in emergence</p><h1>Beautiful things<br>from <em>simple rules.</em></h1></div><div class="hero-copy"><p>A little mathematics. A little mischief. Ten possible lives for the OsmoGrep ring, made to reward a closer look.</p><div class="micro"><span>14-second loops</span> · autonomous motion<br>Black canvas · ivory particles · ember accents</div></div></section>
+<div class="toolbar-shell"><div class="wrap toolbar"><div class="toolbar-group"><span class="toolbar-label">THE COLLECTION</span><button id="play-all" type="button">Ⅱ Pause</button><button id="restart-all" type="button" class="quiet">↺ Restart</button><select id="speed" aria-label="Playback speed"><option value="0.5">0.5× speed</option><option value="1" selected>1× speed</option><option value="1.5">1.5× speed</option></select></div><div class="toolbar-group"><button id="hold-study" type="button" aria-pressed="false">Hold the concept</button><button id="open-shortlist" type="button">Shortlist <span id="shortlist-count">0</span> ↗</button></div></div></div>
+<section class="wrap" aria-label="Animation concepts"><div class="section-bar"><span class="micro"><strong>01—10</strong> / SELECT A DIRECTION</span><nav class="jump-list" aria-label="Jump to a study"></nav></div><div id="studies" class="grid"></div></section>
+<section class="wrap"><div class="section-rule"><h2>Find the one that feels<br>like OsmoGrep.</h2><p>Every study starts and ends at the same ring. Open a study for the terminal view, scrub through its transformation, then shortlist your favorites. “Copy selection” prepares a message you can paste into our conversation. This is a standalone concept gallery; selecting a study does not change the installed app.</p></div><footer class="foot"><span>OSMOGREP / MOTION RESEARCH / 10 ORIGINAL STUDIES</span><span>LOCAL, SELF-CONTAINED HTML · NO EXTERNAL ASSETS</span></footer></section>
+</main>
+<dialog id="inspector" aria-labelledby="detail-title"><div class="dialog-head"><div class="dialog-title"><span id="detail-number" class="number"></span><h2 id="detail-title"></h2></div><div class="dialog-nav"><button id="previous" aria-label="Previous concept">←</button><button id="next" aria-label="Next concept">→</button><button id="close-inspector" aria-label="Close study">✕</button></div></div><div class="terminal"><div class="terminal-head"><span class="logo-slot"></span><div><b>osmogrep <span style="color:#6e685f;font-weight:400">/ motion study</span></b><p>~/your-next-idea · preview</p></div></div><div id="detail-phase" class="terminal-mode">LOGO</div><canvas id="detail-canvas" aria-label="Full-size animation preview"></canvas><div class="terminal-prompt"><b>❯</b>What are we working on?</div></div><div class="transport"><button id="detail-play" type="button" aria-label="Pause animation">Ⅱ</button><button id="detail-restart" type="button" aria-label="Replay animation">↺</button><input id="scrubber" aria-label="Animation timeline" type="range" min="0" max="14" step="0.01" value="0"><output id="time" class="time-readout">0.0 / 14.0 s</output></div><div class="detail-body"><div><p class="micro">THE IDEA</p><p id="detail-meaning"></p><p id="detail-notes" class="notes"></p><a id="detail-reference" class="reference" target="_blank" rel="noopener noreferrer">Underlying idea ↗</a></div><div class="choice-panel"><button id="detail-save" type="button" class="primary">Add to shortlist</button><button id="detail-copy" type="button">Copy this direction</button><small>Concept approval happens in our conversation. Your terminal remains unchanged.</small></div></div></dialog>
+<dialog id="shortlist" aria-labelledby="shortlist-title"><div class="dialog-head"><span class="micro">YOUR DIRECTIONS</span><button id="close-shortlist" aria-label="Close shortlist">✕</button></div><div class="shortlist-sheet"><h2 id="shortlist-title">The shortlist.</h2><p>A few worth thinking about. Add or remove studies as you explore.</p><div id="shortlist-items" class="shortlist-items"></div><div class="shortlist-actions"><button id="clear-shortlist">Clear</button><button id="copy-shortlist" class="primary">Copy selection ↗</button></div></div></dialog>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script>
+"use strict";
+const TAU = Math.PI * 2, COUNT = 6144, LOOP = 14, STRIDE = 6;
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const ease = (a, b, x) => {
+  const t = clamp((x - a) / (b - a));
+  return t * t * t * (t * (t * 6 - 15) + 10);
+};
+const fract = (x) => x - Math.floor(x), mix = (a, b, t) => a + (b - a) * t;
+const hash = (n) => fract(Math.sin(n * 127.1 + 311.7) * 43758.5453);
+const grid = ["...iiiii...", ".iiiiiiiii.", ".ii.....ii.", "ii.......ii", "ii.......aa", "ii.......aa", "ii.......ii", ".ii.....ii.", ".iiiiiiiii.", "...iiiii..."];
+const ink = (x, y) => grid[Math.floor((y + 1) * 5)]?.[Math.floor((x / 1.1 + 1) * 5.5)] ?? ".";
+const mark = () => `<svg class="brand-mark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 11 10" aria-hidden="true">${grid.flatMap((r, y) => [...r].flatMap((c, x) => c === "." ? [] : [`<rect x="${x}" y="${y}" width="1" height="1" fill="${c === "a" ? "#e86d35" : "#e9e5dc"}"/>`])).join("")}</svg>`;
+document.querySelectorAll(".logo-slot").forEach((el) => el.innerHTML = mark());
+const ring = new Float32Array(COUNT * STRIDE);
+function put(out, i, x, y, z, light = 0.7, hot = 0, alpha = 1) {
+  const at = i * STRIDE;
+  out[at] = x;
+  out[at + 1] = y;
+  out[at + 2] = z;
+  out[at + 3] = light;
+  out[at + 4] = hot;
+  out[at + 5] = alpha;
+}
+for (let u = 0; u < 128; u++) {
+  const a = u / 128 * TAU, c = Math.cos(a), s = Math.sin(a);
+  let inner = 2, outer = 0;
+  for (let k = 0; k < 240; k++) {
+    const r = k / 240 * 1.5;
+    if (ink(c * r, s * r) !== ".") {
+      inner = Math.min(inner, r);
+      outer = r;
+    }
+  }
+  for (let v = 0; v < 48; v++) {
+    const b = v / 48 * TAU, r = (outer + inner) / 2 + (outer - inner) / 2 * Math.cos(b);
+    put(ring, u * 48 + v, c * r, s * r, 0.15 * Math.sin(b), 0.35 + 0.5 * Math.max(0, Math.sin(b)), ink(c * r, s * r) === "a" ? 1 : 0);
+  }
+}
+function lorenzPath(delta) {
+  let x = 0.1 + delta, y = 0, z = 0;
+  const out = new Float32Array(6e4 * 3), dt = 5e-3;
+  const f = (a, b, c) => [10 * (b - a), a * (28 - c) - b, a * b - 8 * c / 3];
+  for (let i = 0; i < 65e3; i++) {
+    const a = f(x, y, z), b = f(x + a[0] * dt / 2, y + a[1] * dt / 2, z + a[2] * dt / 2), c = f(x + b[0] * dt / 2, y + b[1] * dt / 2, z + b[2] * dt / 2), d = f(x + c[0] * dt, y + c[1] * dt, z + c[2] * dt);
+    x += dt * (a[0] + 2 * b[0] + 2 * c[0] + d[0]) / 6;
+    y += dt * (a[1] + 2 * b[1] + 2 * c[1] + d[1]) / 6;
+    z += dt * (a[2] + 2 * b[2] + 2 * c[2] + d[2]) / 6;
+    if (i >= 5e3) {
+      const at = (i - 5e3) * 3;
+      out[at] = x / 22;
+      out[at + 1] = -(z - 25) / 25;
+      out[at + 2] = y / 30;
+    }
+  }
+  return out;
+}
+const lorenz = [lorenzPath(0), lorenzPath(1e-5)];
+const hyperVertices = Array.from({ length: 16 }, (_, i) => Array.from({ length: 4 }, (_2, j) => i >> j & 1 ? 1 : -1));
+const hyperEdges = [];
+for (let i = 0; i < 16; i++) for (let j = 0; j < 4; j++) if (!(i >> j & 1)) hyperEdges.push([i, i ^ 1 << j]);
+function lifeStates() {
+  const w = 76, h = 44;
+  let cells = new Uint8Array(w * h);
+  const seed = [[24, 0], [22, 1], [24, 1], [12, 2], [13, 2], [20, 2], [21, 2], [34, 2], [35, 2], [11, 3], [15, 3], [20, 3], [21, 3], [34, 3], [35, 3], [0, 4], [1, 4], [10, 4], [16, 4], [20, 4], [21, 4], [0, 5], [1, 5], [10, 5], [14, 5], [16, 5], [17, 5], [22, 5], [24, 5], [10, 6], [16, 6], [24, 6], [11, 7], [15, 7], [12, 8], [13, 8]];
+  for (const [x, y] of seed) cells[(y + 6) * w + x + 5] = 1;
+  const frames = [];
+  for (let generation = 0; generation < 240; generation++) {
+    const alive = [];
+    for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) if (cells[y * w + x]) alive.push([x, y]);
+    frames.push(alive);
+    const next = new Uint8Array(w * h);
+    for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+      const a = y * w + x, n = cells[a - w - 1] + cells[a - w] + cells[a - w + 1] + cells[a - 1] + cells[a + 1] + cells[a + w - 1] + cells[a + w] + cells[a + w + 1];
+      next[a] = n === 3 || cells[a] && n === 2 ? 1 : 0;
+    }
+    cells = next;
+  }
+  return frames;
+}
+const life = lifeStates();
+let reaction = null;
+function prepareReaction() {
+  if (reaction) return reaction;
+  const w = 80, h = 56, len = w * h;
+  let a = new Float32Array(len).fill(1), b = new Float32Array(len), na = new Float32Array(len), nb = new Float32Array(len);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if ([16, 40, 64].some((cx) => [13, 28, 43].some((cy) => Math.hypot(x - cx, y - cy) < 4))) {
+    a[y * w + x] = 0.5;
+    b[y * w + x] = 0.7 + hash(x + y * w) * 0.2;
+  }
+  const frames = [];
+  for (let step = 0; step < 2400; step++) {
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const at = y * w + x, l = y * w + (x + w - 1) % w, r = y * w + (x + 1) % w, u = (y + h - 1) % h * w + x, d = (y + 1) % h * w + x, ul = (y + h - 1) % h * w + (x + w - 1) % w, ur = (y + h - 1) % h * w + (x + 1) % w, dl = (y + 1) % h * w + (x + w - 1) % w, dr = (y + 1) % h * w + (x + 1) % w;
+      const lapA = -a[at] + 0.2 * (a[l] + a[r] + a[u] + a[d]) + 0.05 * (a[ul] + a[ur] + a[dl] + a[dr]), lapB = -b[at] + 0.2 * (b[l] + b[r] + b[u] + b[d]) + 0.05 * (b[ul] + b[ur] + b[dl] + b[dr]), ab = a[at] * b[at] * b[at];
+      na[at] = clamp(a[at] + lapA - ab + 0.055 * (1 - a[at]));
+      nb[at] = clamp(b[at] + 0.5 * lapB + ab - (0.062 + 0.055) * b[at]);
+    }
+    [a, na] = [na, a];
+    [b, nb] = [nb, b];
+    if (step >= 600 && step % 12 === 0) frames.push(b.slice());
+  }
+  return reaction = { w, h, frames };
+}
+const outline = Array.from({ length: 64 }, (_, d) => {
+  let x = 0, y = 0, t = d;
+  for (let s = 1; s < 8; s *= 2) {
+    const rx = 1 & t >> 1, ry = 1 & (t ^ rx);
+    if (ry === 0) {
+      if (rx === 1) {
+        x = s - 1 - x;
+        y = s - 1 - y;
+      }
+      [x, y] = [y, x];
+    }
+    x += s * rx;
+    y += s * ry;
+    t >>= 2;
+  }
+  return [(x / 7 - 0.5) * 1.9, (y / 7 - 0.5) * 1.9];
+});
+function fourierTerms() {
+  const lengths = outline.map((p, i) => Math.hypot(p[0] - outline[(i + 1) % outline.length][0], p[1] - outline[(i + 1) % outline.length][1])), total = lengths.reduce((a, b) => a + b, 0), path = [];
+  for (let i = 0; i < 256; i++) {
+    let d = i / 256 * total, j = 0;
+    while (d > lengths[j] && j < lengths.length - 1) d -= lengths[j++];
+    const t = d / lengths[j], a = outline[j], b = outline[(j + 1) % outline.length];
+    path.push([mix(a[0], b[0], t), mix(a[1], b[1], t)]);
+  }
+  const terms = [];
+  for (let k = -24; k <= 24; k++) {
+    let re = 0, im = 0;
+    for (let i = 0; i < 256; i++) {
+      const a = -TAU * k * i / 256, c = Math.cos(a), s = Math.sin(a);
+      re += path[i][0] * c - path[i][1] * s;
+      im += path[i][0] * s + path[i][1] * c;
+    }
+    terms.push({ k, re: re / 256, im: im / 256, amp: Math.hypot(re, im) / 256 });
+  }
+  return terms.sort((a, b) => b.amp - a.amp).slice(0, 19);
+}
+const fourier = fourierTerms();
+const sortStages = [];
+for (let k = 2; k <= 16; k *= 2) for (let j = k / 2; j > 0; j >>= 1) {
+  const stage = [];
+  for (let i = 0; i < 16; i++) {
+    const other = i ^ j;
+    if (other > i) stage.push([i, other, (i & k) === 0]);
+  }
+  sortStages.push(stage);
+}
+const sortValues = [[11, 3, 14, 1, 8, 5, 15, 0, 12, 6, 2, 10, 7, 13, 4, 9]];
+for (const stage of sortStages) {
+  const values = sortValues.at(-1).slice();
+  for (const [a, b, up] of stage) if (up ? values[a] > values[b] : values[a] < values[b]) [values[a], values[b]] = [values[b], values[a]];
+  sortValues.push(values);
+}
+const concepts = [
+  { id: "lorenz", name: "The butterfly effect", tag: "01 / DETERMINISTIC CHAOS", equation: "\u03C3 = 10 \xB7 \u03C1 = 28 \xB7 \u03B2 = 8/3", lead: "Two nearby beginnings. Two very different futures.", meaning: "Two trajectories, separated by a tiny initial perturbation, wind around a Lorenz attractor. Their divergence gives the animation a direct connection to regression work: a small change can have a surprisingly large consequence.", notes: "RK4-integrated Lorenz equations. The paths are simulated; their colors and camera are art-directed. Sensitivity is a metaphor for regressions, not a claim that every program is chaotic.", source: "https://wind.mit.edu/~emanuel/Lorenz/EdLorenz/Deterministic_63.pdf", pitch: -0.1, yaw: 0.08, gen(t, out) {
+    const end = 18e3 + Math.floor(t * 1600) % 36e3;
+    for (let i = 0; i < COUNT; i++) {
+      const twin = i % 2, path = lorenz[twin], age = Math.floor(i / 2) / (COUNT / 2), at = (end - Math.floor(age * 16e3)) * 3;
+      put(out, i, path[at], path[at + 1], path[at + 2], 0.35 + 0.6 * (1 - age), twin ? 0.78 : 0, 0.3 + 0.65 * (1 - age));
+    }
+  } },
+  { id: "tesseract", name: "The fourth dimension", tag: "02 / HIGHER DIMENSIONS", equation: "16 vertices \xB7 32 edges", lead: "A familiar shape. One impossible extra direction.", meaning: "A tesseract rotates through two four-dimensional planes before being projected into three dimensions. The cube inside the cube trades places with its own exterior. Hidden structure becomes visible when the point of view changes.", notes: "A true 4D hypercube edge graph, with XW and YZ rotations and perspective projection. The display is its lower-dimensional shadow.", source: "https://mathworld.wolfram.com/Tesseract.html", pitch: 0.22, yaw: 0.2, gen(t, out) {
+    const a = t * 0.33, b = t * 0.21, ca = Math.cos(a), sa = Math.sin(a), cb = Math.cos(b), sb = Math.sin(b);
+    const vertices = hyperVertices.map(([x, y, z, w]) => {
+      const xx = x * ca - w * sa, ww = x * sa + w * ca, yy = y * cb - z * sb, zz = y * sb + z * cb, s = 0.68 / (1.8 - ww * 0.45);
+      return [xx * s, yy * s, zz * s];
+    });
+    for (let i = 0; i < COUNT; i++) {
+      const edge = hyperEdges[i % 32], f = Math.floor(i / 32) / (COUNT / 32), p = vertices[edge[0]], q = vertices[edge[1]], pulse = Math.pow(Math.max(0, Math.cos(TAU * (f - t * 0.25))), 16);
+      put(out, i, mix(p[0], q[0], f), mix(p[1], q[1], f), mix(p[2], q[2], f), 0.35 + 0.65 * pulse, edge[0] % 5 === 0 ? pulse : 0, 0.65);
+    }
+  } },
+  { id: "hopf", name: "Everything is linked", tag: "03 / HOPF FIBRATION", equation: "S\xB3 \u2192 S\xB2", lead: "Separate circles. A structure you cannot pull apart.", meaning: "Circles on a three-sphere become interlinked fibers under stereographic projection. A luminous thread travels through the family. It suggests dependencies that look separate in a diff but are structurally inseparable.", notes: "A stereographic projection of Hopf fibers on a Clifford torus. This is a family of linked circles, rather than a complete rendering of the entire three-sphere.", source: "https://arxiv.org/abs/2212.01642", pitch: 0.6, yaw: 0.15, gen(t, out) {
+    const fibers = 24, n = COUNT / fibers, eta = 0.73 + 0.08 * Math.sin(t * 0.24), ce = Math.cos(eta), se = Math.sin(eta);
+    for (let i = 0; i < COUNT; i++) {
+      const f = i % fibers, u = Math.floor(i / fibers) / n * TAU, phi = f / fibers * TAU + t * 0.13, d = 1 - se * Math.sin(u + phi), hot = Math.pow(Math.max(0, Math.cos(phi - t * 0.8)), 20);
+      put(out, i, ce * Math.cos(u) / d * 0.53, ce * Math.sin(u) / d * 0.53, se * Math.cos(u + phi) / d * 0.53, 0.32 + 0.45 * (0.5 + 0.5 * Math.sin(u)) + hot * 0.2, hot, 0.65);
+    }
+  } },
+  { id: "klein", name: "No outside, no inside", tag: "04 / NON-ORIENTABLE SPACE", equation: "A surface without a boundary", lead: "Follow the seam. End up on the other side.", meaning: "A figure-eight Klein bottle turns slowly while an orange seam traces its continuous surface. It makes boundary assumptions feel less obvious: what appears to be a separate side can be part of the same system.", notes: "A figure-eight immersion of the Klein bottle in 3D. The self-intersection belongs to the visualization; the abstract surface does not intersect itself.", source: "https://doc.sagemath.org/html/en/reference/riemannian_geometry/sage/geometry/riemannian_manifolds/surface3d_generators.html", pitch: 0.4, yaw: 0.32, gen(t, out) {
+    for (let i = 0; i < COUNT; i++) {
+      const u = i % 128 / 128 * TAU, v = Math.floor(i / 128) / 48 * TAU, cu = Math.cos(u / 2), su = Math.sin(u / 2), r = 2 + cu * Math.sin(v) - su * Math.sin(2 * v);
+      put(out, i, r * Math.cos(u) / 2.7, r * Math.sin(u) / 2.7, (su * Math.sin(v) + cu * Math.sin(2 * v)) / 2.7, 0.38 + 0.4 * (0.5 + 0.5 * Math.cos(v + u)), Math.pow(Math.max(0, Math.cos(v - t * 0.8)), 28), 0.8);
+    }
+  } },
+  { id: "interference", name: "When changes collide", tag: "05 / WAVE INTERFERENCE", equation: "\u03C8 = \u03C8\u2081 + \u03C8\u2082", lead: "Two harmless waves. An entirely new pattern.", meaning: "Two coherent sources produce overlapping wavefronts. Their phases reinforce and cancel, making a moving interference field. It is a visual analogy for changes whose combined behavior differs from either change alone.", notes: "Analytical superposition of two radial waves. This is a wave-mechanics illustration, not a full quantum-particle simulation.", source: "https://openstax.org/books/university-physics-volume-3/pages/3-1-youngs-double-slit-interference", pitch: 1.02, yaw: -0.13, gen(t, out) {
+    for (let i = 0; i < COUNT; i++) {
+      const x = i % 128 / 127 * 2.4 - 1.2, y = Math.floor(i / 128) / 47 * 1.8 - 0.9, r1 = Math.hypot(x + 0.7, y - 0.28), r2 = Math.hypot(x + 0.7, y + 0.28), wave = (Math.sin(r1 * 17 - t * 3) + Math.sin(r2 * 17 - t * 3)) * 0.115;
+      const hot = Math.pow(Math.max(0, 1 - Math.min(r1, r2) * 5), 2);
+      put(out, i, x, y, wave, 0.33 + 0.6 * Math.abs(wave) / 0.23, hot, 0.5 + 0.4 * Math.abs(wave) / 0.23);
+    }
+  } },
+  { id: "life", name: "Life from four rules", tag: "06 / CELLULAR AUTOMATA", equation: "B3 / S23", lead: "No script for the outcome. Just rules for each cell.", meaning: "A Gosper glider gun oscillates and sends gliders across a field of tiny voxels. The recognizable behavior emerges from local birth and survival rules. It is a small ode to the beautiful, surprising consequences of computation.", notes: "An actual finite-grid Conway\u2019s Game of Life simulation seeded with the Gosper glider gun. The gliders leave through the finite preview boundary.", source: "https://conwaylife.com/wiki/Gosper_glider_gun", pitch: 0.24, yaw: -0.18, gen(t, out) {
+    const generation = Math.floor(t * 15) % 220, alive = life[generation];
+    for (let i = 0; i < COUNT; i++) {
+      const cell = alive[i % alive.length], q = Math.floor(i / alive.length), a = hash(q * 3) * 0.82 - 0.41, b = hash(q * 3 + 1) * 0.82 - 0.41, c = hash(q * 3 + 2) * 0.7 - 0.35;
+      put(out, i, (cell[0] - 35 + a) * 0.043, (cell[1] - 22 + b) * 0.043, c * 0.043, 0.45 + hash(q) * 0.4, cell[0] > 40 ? 0.8 : 0, 0.9);
+    }
+  } },
+  { id: "reaction", name: "Order out of noise", tag: "07 / REACTION\u2013DIFFUSION", equation: "Gray\u2013Scott \xB7 f .055 / k .062", lead: "A quiet instability becomes an intricate world.", meaning: "Two simulated concentrations diffuse at different rates and react. A seeded disturbance grows into branching, cellular structures. The metaphor is systemic: local feedback can become a pattern that no single component explains.", notes: "A finite periodic Gray\u2013Scott simulation, shown as an animated relief. The chemistry is a mathematical model, not a molecular simulation.", source: "https://www.karlsims.com/rd.html", pitch: 0.68, yaw: 0.06, gen(t, out) {
+    const sim = prepareReaction(), f = t * 9 % sim.frames.length, index = Math.floor(f), a = sim.frames[index], b = sim.frames[(index + 1) % sim.frames.length], blend = fract(f);
+    for (let i = 0; i < COUNT; i++) {
+      const at = Math.floor(i / COUNT * a.length), x = at % sim.w, y = Math.floor(at / sim.w), v = mix(a[at], b[at], blend);
+      put(out, i, (x / sim.w - 0.5) * 2.45, (y / sim.h - 0.5) * 1.8, (v - 0.2) * 1.1, 0.35 + v * 0.9, clamp((v - 0.34) * 5), clamp(v * 4));
+    }
+  } },
+  { id: "fourier", name: "The shape of a signal", tag: "08 / FOURIER SYNTHESIS", equation: "z(t) = \u03A3 c\u2096e\u2071\u1D4F\u1D57", lead: "A circle draws a circle that draws a labyrinth.", meaning: "A chain of rotating epicycles reconstructs a finite Hilbert-curve path. Small periodic components add up to a recognizable whole. It is a way to make decomposition\u2014and understanding a complicated signal\u2014visible.", notes: "Fourier coefficients are calculated from a closed, finite Hilbert-curve path. Nineteen harmonics drive the epicycles; the curved reconstruction approximates its sharp corners.", source: "https://reference.wolfram.com/language/ref/Fourier.html", pitch: 0.05, yaw: 0, gen(t, out) {
+    const phase = fract(t / 7) * TAU, centers = [];
+    let x = 0, y = 0;
+    for (const term of fourier) {
+      centers.push([x, y]);
+      const a = term.k * phase, c = Math.cos(a), s = Math.sin(a);
+      x += term.re * c - term.im * s;
+      y += term.re * s + term.im * c;
+    }
+    const tip = [x, y];
+    for (let i = 0; i < COUNT; i++) {
+      if (i < COUNT * 0.62) {
+        const j = i % fourier.length, term = fourier[j], a = Math.floor(i / fourier.length) / Math.ceil(COUNT * 0.62 / fourier.length) * TAU;
+        put(out, i, (centers[j][0] + term.amp * Math.cos(a)) * 0.85, (centers[j][1] + term.amp * Math.sin(a)) * 0.85, 0, 0.27 + j / fourier.length * 0.25, j === 0 ? 0.25 : 0, 0.6);
+      } else if (i < COUNT - 64) {
+        const a = phase * (i - COUNT * 0.62) / (COUNT * 0.38 - 64);
+        let px = 0, py = 0;
+        for (const term of fourier) {
+          px += term.re * Math.cos(term.k * a) - term.im * Math.sin(term.k * a);
+          py += term.re * Math.sin(term.k * a) + term.im * Math.cos(term.k * a);
+        }
+        put(out, i, px * 0.85, py * 0.85, 0.03, 0.8, 0.6, 0.85);
+      } else {
+        const a = i / 64 * TAU;
+        put(out, i, tip[0] * 0.85 + Math.cos(a) * 0.012, tip[1] * 0.85 + Math.sin(a) * 0.012, 0.05, 1, 1, 1);
+      }
+    }
+  } },
+  { id: "horizon", name: "Beyond the surface", tag: "09 / ACCRETION & LENSING", equation: "A study in hidden structure", lead: "A dark center. A great deal happening around it.", meaning: "An accretion disk shears around a dark core while a photon-ring-like arc reveals the far side. It makes the unseen center feel active rather than empty. The connection is investigation: infer a hidden cause from its visible effects.", notes: "An artistic accretion-disk and lensing illustration. It does not integrate general-relativistic geodesics and should not be read as an astrophysical simulation.", source: "https://www.nasa.gov/universe/nasa-visualization-shows-a-black-holes-warped-world/", pitch: 0, yaw: 0, gen(t, out) {
+    for (let i = 0; i < COUNT; i++) {
+      if (i < COUNT * 0.73) {
+        const q = i / (COUNT * 0.73), r = 0.51 + Math.pow(hash(i), 0.65) * 0.85, a = q * TAU * 31 + t * (0.3 + 1.1 / (r * r)), x = r * Math.cos(a), yy = r * Math.sin(a), y = yy * 0.23, z = yy * 0.95;
+        const hidden = x * x + y * y < 0.205 && z < 0;
+        put(out, i, x, y, z, 0.28 + 0.6 * (1 - (r - 0.51) / 0.85), clamp((0.86 - r) * 3), hidden ? 0 : 0.65);
+      } else {
+        const q = (i - COUNT * 0.73) / (COUNT * 0.27), a = q * TAU, r = 0.46 + hash(i * 5) * 0.065;
+        put(out, i, Math.cos(a) * r, Math.sin(a) * r, 0.08, 0.35 + 0.6 * Math.pow(Math.max(0, Math.sin(a - t * 0.5)), 3), 0.18, 0.8);
+      }
+    }
+  } },
+  { id: "sorting", name: "A beautiful resolution", tag: "10 / BITONIC SORTING NETWORK", equation: "16 lanes \xB7 10 stages", lead: "Disorder flows in. Structure comes out.", meaning: "Values pass through a bitonic sorting network. Orange compare\u2013exchange operations rearrange the packets until they leave in order. It is unmistakably computational: a messy beginning becomes a verifiable result.", notes: "An actual 16-input bitonic network and its compare\u2013exchange states. Packet motion is interpolated for legibility; the comparisons themselves are discrete.", source: "https://developer.nvidia.com/gpugems/gpugems2/part-vi-simulation-and-numerical-algorithms/chapter-46-improved-gpu-sorting", pitch: 0.18, yaw: -0.12, gen(t, out) {
+    const progress = fract(t / 7) * 10, active = Math.min(9, Math.floor(progress));
+    for (let i = 0; i < COUNT; i++) {
+      const q = i / COUNT;
+      if (q < 0.46) {
+        const lane = i % 16, f = Math.floor(i / 16) / (COUNT * 0.46 / 16);
+        put(out, i, -1.25 + 2.5 * f, (lane / 15 - 0.5) * 1.65, 0, 0.42, Math.abs(f * 10 - progress) < 0.3 ? 0.65 : 0, 0.7);
+      } else if (q < 0.82) {
+        const edge = i % 80, stage = Math.floor(edge / 8), pair = sortStages[stage][edge % 8], f = hash(i);
+        put(out, i, -1.25 + (stage + 0.5) / 10 * 2.5, mix(pair[0] / 15 - 0.5, pair[1] / 15 - 0.5, f) * 1.65, 0.015, stage === active ? 0.9 : 0.4, stage === active ? 0.85 : 0, 0.8);
+      } else {
+        const lane = i % 16, stage = active, f = ease(0, 1, fract(progress)), value = sortValues[stage][lane];
+        let destination = lane;
+        for (const [a, b, up] of sortStages[stage]) if (a === lane || b === lane) {
+          const va = sortValues[stage][a], vb = sortValues[stage][b], swap = up ? va > vb : va < vb;
+          if (swap) destination = lane === a ? b : a;
+        }
+        const jitter = (hash(i) - 0.5) * 0.018;
+        put(out, i, -1.25 + progress / 10 * 2.5 + jitter, mix(lane / 15 - 0.5, destination / 15 - 0.5, f) * 1.65, jitter + 0.02, 0.45 + value / 15 * 0.45, 1, 1);
+      }
+    }
+  } }
+];
+const palettes = Array.from({ length: 32 }, (_, i) => {
+  const hot = i >= 16, light = i % 16 / 15, base = hot ? [224, 100, 49] : [211, 205, 193], factor = 0.28 + 0.72 * light;
+  return `rgb(${base.map((n) => Math.round(n * factor)).join(",")})`;
+});
+class StudyView {
+  constructor(canvas, concept, large = false) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext("2d", { alpha: false });
+    this.concept = concept;
+    this.large = large;
+    this.out = new Float32Array(COUNT * STRIDE);
+    this.bins = Array.from({ length: 32 }, () => []);
+    this.visible = large;
+    this.progress = null;
+    this.phase = null;
+    this.lastPhase = "";
+    this.frames = 0;
+    this.resize = new ResizeObserver(() => this.fit());
+    this.resize.observe(canvas);
+    this.fit();
+  }
+  fit() {
+    const rect = this.canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    this.width = Math.round(rect.width * dpr);
+    this.height = Math.round(rect.height * dpr);
+    this.canvas.width = this.width;
+    this.canvas.height = this.height;
+    this.dpr = dpr;
+    this.drawnAt = null;
+  }
+  render(seconds, hold2 = false) {
+    if (!this.width || !this.visible || this.drawnAt === seconds && this.drawnHold === hold2) return;
+    this.drawnAt = seconds;
+    this.drawnHold = hold2;
+    const ctx = this.ctx, w = this.width, h = this.height, t = (seconds % LOOP + LOOP) % LOOP, morph = hold2 ? 1 : ease(1.2, 3.5, t) * (1 - ease(10.2, 12.9, t));
+    const phase = hold2 ? "CONCEPT" : t < 1.2 || t >= 12.9 ? "LOGO" : t < 3.5 ? "UNFOLD" : t < 10.2 ? "CONCEPT" : "REFORM";
+    if (this.phase && phase !== this.lastPhase) {
+      this.phase.textContent = phase;
+      this.lastPhase = phase;
+    }
+    if (this.progress) this.progress.style.transform = `scaleX(${t / LOOP})`;
+    this.concept.gen(t, this.out);
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, w, h);
+    for (const bin of this.bins) bin.length = 0;
+    const yaw = (this.concept.yaw + (this.concept.id === "klein" ? t * 0.12 : this.concept.id === "hopf" ? t * 0.07 : 0)) * morph + Math.sin(ease(1.2, 3.5, t) * TAU) * 0.25 * (1 - ease(3.5, 4, t)), pitch = this.concept.pitch * morph, cy = Math.cos(yaw), sy = Math.sin(yaw), cx = Math.cos(pitch), sx = Math.sin(pitch), scale = Math.min(w * 0.35, h * (this.large ? 0.3 : 0.39)), centerY = h * (this.large ? 0.51 : 0.51);
+    for (let i = 0; i < COUNT; i++) {
+      const at = i * STRIDE;
+      let x = mix(ring[at], this.out[at], morph), y = mix(ring[at + 1], this.out[at + 1], morph), z = mix(ring[at + 2], this.out[at + 2], morph);
+      const xx = x * cy + z * sy, zz = z * cy - x * sy, yy = y * cx - zz * sx, depth = y * sx + zz * cx, perspective = 4 / (4 - depth), px = w / 2 + xx * scale * perspective, py = centerY + yy * scale * perspective;
+      const alpha = mix(ring[at + 5], this.out[at + 5], morph);
+      if (alpha < 0.05 || px < 0 || px > w || py < 0 || py > h) continue;
+      const light = clamp(mix(ring[at + 3], this.out[at + 3], morph) * (0.78 + 0.18 * (depth + 1)) * alpha), hot = mix(ring[at + 4], this.out[at + 4], morph) > 0.45;
+      this.bins[(hot ? 16 : 0) + Math.round(light * 15)].push(px, py);
+    }
+    const dot = this.dpr * (this.large ? 1.05 : 0.96);
+    for (let k = 0; k < 32; k++) {
+      const bin = this.bins[k];
+      if (!bin.length) continue;
+      ctx.fillStyle = palettes[k];
+      ctx.beginPath();
+      for (let j = 0; j < bin.length; j += 2) ctx.rect(Math.round(bin[j]), Math.round(bin[j + 1]), dot, dot);
+      ctx.fill();
+    }
+    this.frames++;
+  }
+}
+const selected = /* @__PURE__ */ new Set();
+try {
+  for (const id of JSON.parse(localStorage.getItem("osmogrep-motion-shortlist") || "[]")) if (concepts.some((c) => c.id === id)) selected.add(id);
+} catch {
+}
+const container = document.getElementById("studies"), views = [];
+concepts.forEach((concept, index) => {
+  const article = document.createElement("article");
+  article.className = "study";
+  article.id = concept.id;
+  article.innerHTML = `<div class="study-head"><span class="number">STUDY ${String(index + 1).padStart(2, "0")}</span><span class="tag">${concept.tag.split(" / ")[1]}</span></div><div class="canvas-shell"><span class="stage-meta">LOGO \u2192 ${concept.id === "life" ? "LIFE" : concept.id === "reaction" ? "PATTERN" : "CONCEPT"} \u2192 LOGO</span><canvas aria-label="Animated ${concept.name} concept"></canvas><span class="stage-corner">14 s / LOOP</span><span class="stage-progress"></span></div><div class="study-info"><div class="study-title"><h2>${concept.name}</h2><span class="equation">${concept.equation}</span></div><p>${concept.lead}</p><div class="study-bottom"><button class="inspect" data-inspect="${index}">Inspect the motion <span aria-hidden="true">\u2197</span></button><button class="save" data-save="${concept.id}" aria-pressed="false">\uFF0B Shortlist</button></div></div>`;
+  container.append(article);
+  const view = new StudyView(article.querySelector("canvas"), concept);
+  view.progress = article.querySelector(".stage-progress");
+  view.phase = article.querySelector(".stage-corner");
+  views.push(view);
+  document.querySelector(".jump-list").insertAdjacentHTML("beforeend", `<a href="#${concept.id}" aria-label="Jump to ${concept.name}">${String(index + 1).padStart(2, "0")}</a>`);
+});
+const observer = new IntersectionObserver((entries) => {
+  for (const entry of entries) {
+    const index = views.findIndex((v) => v.canvas === entry.target);
+    if (index >= 0) views[index].visible = entry.isIntersecting;
+  }
+}, { rootMargin: "100px" });
+views.forEach((v) => observer.observe(v.canvas));
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+let playing = !reducedMotion, hold = false, speed = 1, time = playing ? 0 : 6, last = performance.now(), activeIndex = 0, detailView = null;
+const inspector = document.getElementById("inspector"), shortlist = document.getElementById("shortlist"), scrubber = document.getElementById("scrubber");
+function phaseLabel(t) {
+  return hold ? "CONCEPT" : t < 1.2 || t >= 12.9 ? "LOGO" : t < 3.5 ? "UNFOLD" : t < 10.2 ? "CONCEPT" : "REFORM";
+}
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1e3);
+  last = now;
+  if (playing && !document.hidden) time += dt * speed;
+  const seconds = time % LOOP;
+  if (inspector.open && detailView) {
+    detailView.render(time, hold);
+    document.getElementById("detail-phase").textContent = phaseLabel(seconds);
+    scrubber.value = seconds;
+    document.getElementById("time").textContent = `${seconds.toFixed(1)} / 14.0 s`;
+  } else if (!document.hidden) for (const view of views) view.render(time, hold);
+  requestAnimationFrame(frame);
+}
+function syncPlay() {
+  document.getElementById("play-all").textContent = playing ? "\u2161 Pause" : "\u25B7 Play";
+  document.getElementById("detail-play").textContent = playing ? "\u2161" : "\u25B7";
+  document.getElementById("detail-play").setAttribute("aria-label", playing ? "Pause animation" : "Play animation");
+}
+function togglePlay() {
+  playing = !playing;
+  syncPlay();
+}
+document.getElementById("play-all").onclick = togglePlay;
+document.getElementById("detail-play").onclick = togglePlay;
+function restart() {
+  time = 0;
+  hold = false;
+  document.getElementById("hold-study").setAttribute("aria-pressed", "false");
+  playing = true;
+  syncPlay();
+}
+document.getElementById("restart-all").onclick = restart;
+document.getElementById("detail-restart").onclick = restart;
+document.getElementById("speed").onchange = (e) => speed = Number(e.target.value);
+document.getElementById("hold-study").onclick = (e) => {
+  hold = !hold;
+  e.currentTarget.setAttribute("aria-pressed", String(hold));
+  if (hold && time % LOOP < 3.5) time = Math.floor(time / LOOP) * LOOP + 4;
+};
+scrubber.oninput = () => {
+  time = Number(scrubber.value);
+  playing = false;
+  syncPlay();
+};
+function openStudy(index, reset = true) {
+  activeIndex = (index + concepts.length) % concepts.length;
+  const concept = concepts[activeIndex];
+  document.getElementById("detail-number").textContent = String(activeIndex + 1).padStart(2, "0");
+  document.getElementById("detail-title").textContent = concept.name;
+  document.getElementById("detail-meaning").textContent = concept.meaning;
+  document.getElementById("detail-notes").textContent = concept.notes;
+  document.getElementById("detail-reference").href = concept.source;
+  if (!inspector.open) inspector.showModal();
+  if (!detailView) detailView = new StudyView(document.getElementById("detail-canvas"), concept, true);
+  else detailView.concept = concept;
+  detailView.fit();
+  if (reset) {
+    time = reducedMotion ? 6 : 0;
+    playing = !reducedMotion;
+    hold = false;
+    document.getElementById("hold-study").setAttribute("aria-pressed", "false");
+  }
+  syncPlay();
+  syncSelection();
+}
+document.getElementById("previous").onclick = () => openStudy(activeIndex - 1);
+document.getElementById("next").onclick = () => openStudy(activeIndex + 1);
+document.getElementById("close-inspector").onclick = () => inspector.close();
+container.addEventListener("click", (e) => {
+  const inspect = e.target.closest("[data-inspect]"), save = e.target.closest("[data-save]");
+  if (inspect) openStudy(Number(inspect.dataset.inspect));
+  if (save) toggleSelection(save.dataset.save);
+});
+function syncSelection() {
+  for (const button of document.querySelectorAll("[data-save]")) {
+    const yes = selected.has(button.dataset.save);
+    button.setAttribute("aria-pressed", String(yes));
+    button.textContent = yes ? "\u2713 Shortlisted" : "\uFF0B Shortlist";
+    button.closest(".study").classList.toggle("selected", yes);
+  }
+  document.getElementById("shortlist-count").textContent = selected.size;
+  const active = concepts[activeIndex];
+  document.getElementById("detail-save").textContent = selected.has(active.id) ? "\u2713 Remove from shortlist" : "Add to shortlist";
+  document.getElementById("copy-shortlist").disabled = !selected.size;
+  try {
+    localStorage.setItem("osmogrep-motion-shortlist", JSON.stringify([...selected]));
+  } catch {
+  }
+  renderShortlist();
+}
+function toggleSelection(id) {
+  selected.has(id) ? selected.delete(id) : selected.add(id);
+  syncSelection();
+}
+document.getElementById("detail-save").onclick = () => toggleSelection(concepts[activeIndex].id);
+function renderShortlist() {
+  const el = document.getElementById("shortlist-items");
+  el.replaceChildren();
+  if (!selected.size) {
+    el.innerHTML = '<div class="empty-note">Nothing here yet. Inspect a study and save a favorite.</div>';
+    return;
+  }
+  for (const concept of concepts.filter((c) => selected.has(c.id))) {
+    const index = concepts.indexOf(concept), row = document.createElement("div");
+    row.className = "shortlist-row";
+    const span = document.createElement("span");
+    span.textContent = `${String(index + 1).padStart(2, "0")} / ${concept.name}`;
+    const remove = document.createElement("button");
+    remove.textContent = "Remove";
+    remove.onclick = () => toggleSelection(concept.id);
+    row.append(span, remove);
+    el.append(row);
+  }
+}
+document.getElementById("open-shortlist").onclick = () => shortlist.showModal();
+document.getElementById("close-shortlist").onclick = () => shortlist.close();
+document.getElementById("clear-shortlist").onclick = () => {
+  selected.clear();
+  syncSelection();
+};
+let toastTimer;
+function toast(message) {
+  const el = document.getElementById("toast");
+  el.textContent = message;
+  el.classList.add("on");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("on"), 2800);
+}
+async function copyChoice(ids) {
+  const picked = concepts.filter((c) => ids.includes(c.id)), text = `For OsmoGrep\u2019s startup animation, ${picked.length === 1 ? "use" : "shortlist"} ${picked.map((c) => `concept ${String(concepts.indexOf(c) + 1).padStart(2, "0")} \u2014 ${c.name}`).join("; ")}. Keep the smaller, dim dot treatment, black background and no hover response. ${picked.length === 1 ? "I approve this visual direction; adapt it to the existing terminal renderer." : "Let\u2019s refine these directions before installing anything."}`;
+  try {
+    await navigator.clipboard.writeText(text);
+    toast("Direction copied. Paste it into our conversation.");
+  } catch {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.style.cssText = "position:fixed;left:0;top:0;z-index:50;width:100%;height:140px;background:#191713;color:#fff";
+    (shortlist.open ? shortlist : inspector.open ? inspector : document.body).append(area);
+    area.select();
+    if (document.execCommand("copy")) {
+      area.remove();
+      toast("Direction copied. Paste it into our conversation.");
+    } else {
+      toast("Select and copy the displayed approval text.");
+      area.addEventListener("blur", () => area.remove(), { once: true });
+    }
+  }
+}
+document.getElementById("detail-copy").onclick = () => copyChoice([concepts[activeIndex].id]);
+document.getElementById("copy-shortlist").onclick = () => copyChoice([...selected]);
+document.addEventListener("keydown", (e) => {
+  if (e.target.matches("input,select,textarea,button,a")) return;
+  if (inspector.open && (e.key === "ArrowRight" || e.key === "ArrowLeft")) {
+    e.preventDefault();
+    openStudy(activeIndex + (e.key === "ArrowRight" ? 1 : -1));
+  }
+  if (e.code === "Space") {
+    e.preventDefault();
+    togglePlay();
+  }
+});
+document.addEventListener("visibilitychange", () => last = performance.now());
+prepareReaction();
+syncPlay();
+syncSelection();
+requestAnimationFrame(frame);
+function runChecks() {
+  const assert = (condition, message) => {
+    if (!condition) throw Error(message);
+  };
+  assert(concepts.length === 10 && new Set(concepts.map((c) => c.id)).size === 10, "Ten distinct studies are required");
+  assert(sortStages.length === 10 && sortStages.every((stage) => stage.length === 8), "Invalid bitonic network");
+  for (let seed = 0; seed < 32; seed++) {
+    const values = Array.from({ length: 16 }, (_, i) => i);
+    for (let j = 15; j > 0; j--) {
+      const k = Math.floor(hash(seed * 19 + j) * (j + 1));
+      [values[j], values[k]] = [values[k], values[j]];
+    }
+    for (const stage of sortStages) for (const [a, b, up] of stage) if (up ? values[a] > values[b] : values[a] < values[b]) [values[a], values[b]] = [values[b], values[a]];
+    assert(values.every((value, i) => value === i), "Compare-exchange network failed");
+  }
+  assert(life[0].length === 36 && life[30].length > 36, "Life gun must preserve its seed and produce growth");
+  const samples = new Float32Array(COUNT * STRIDE);
+  for (const concept of concepts) for (const t of [0, 6, 12]) {
+    concept.gen(t, samples);
+    assert(samples.every(Number.isFinite), `${concept.id}: nonfinite geometry`);
+  }
+  return { concepts: 10, finite_samples: true, sorting_permutations: 32, life_seed_and_growth: true };
+}
+window.motionLab = { concepts, views, ring, life, sortStages, sortValues, openStudy, runChecks, get time() {
+  return time;
+}, set time(value) {
+  time = value;
+}, get playing() {
+  return playing;
+}, set playing(value) {
+  playing = value;
+  syncPlay();
+}, get hold() {
+  return hold;
+}, set hold(value) {
+  hold = value;
+}, prepareReaction };
+</script>
+</body>
+</html>

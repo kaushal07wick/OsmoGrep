@@ -53,6 +53,7 @@ impl TuiRuntime {
         model: &ModelConfig,
     ) -> Result<(), Box<dyn Error>> {
         let now = std::time::Instant::now();
+        state.ui.presentation_model=Some(model.clone());
         if (!self.dirty && !self.animating) || !self.frame.draw_due(now) {
             return Ok(());
         }

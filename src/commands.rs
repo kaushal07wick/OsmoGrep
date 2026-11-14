@@ -37,6 +37,11 @@ pub fn handle_command(
     let cmd_raw = raw.trim();
     let cmd = normalize_command_prefix(cmd_raw);
 
+    if let Some(section) = crate::ui::workbench::section_for(&cmd) {
+        crate::ui::workbench::open(state, section, agent.as_ref().map(|a| a.model_config()));
+        return;
+    }
+
     if cmd.starts_with("/model ") {
         set_model(state, &cmd, agent);
         return;
@@ -163,109 +168,17 @@ pub fn copy_latest_output(state: &mut AgentState) {
     copy_output(state, "/copy");
 }
 
-fn help(state: &mut AgentState) {
-    use LogLevel::Info;
+pub fn is_transcript_command(text: &str) -> bool {
+    crate::ui::workbench::section_for(&normalize_command_prefix(text.trim())).is_none()
+}
 
-    log(state, Info, "Available commands:");
-    log(state, Info, "  /help        Show this help");
-    log(state, Info, "  /clear       Clear logs");
-    log(state, Info, "  /key         Set OpenAI API key");
-    log(state, Info, "  /voice       Show voice status");
-    log(state, Info, "  /voice on    Start voice input");
-    log(state, Info, "  /voice off   Stop voice input");
-    log(
-        state,
-        Info,
-        "  /status      Show session, run, model, and repo status",
-    );
-    log(
-        state,
-        Info,
-        "  /account     Show provider/account configuration",
-    );
-    log(state, Info, "  /model       Show active provider/model");
-    log(state, Info, "  /model <provider> <model> [base_url]");
-    log(state, Info, "  /usage       Show token and context usage");
-    log(state, Info, "  /theme       Show or set theme (dark/light)");
-    log(state, Info, "  /color       Show or set accent color");
-    log(state, Info, "  /type        Show or set UI density");
-    log(state, Info, "  /copy [N]    Copy latest assistant response");
-    log(state, Info, "  /copy all    Copy the visible transcript");
-    log(state, Info, "  /rename      Rename current session");
-    log(
-        state,
-        Info,
-        "  /verify      Show verification ledger status",
-    );
-    log(
-        state,
-        Info,
-        "  /mcp         Show MCP status and configured servers",
-    );
-    log(state, Info, "  /providers   Show available model providers");
-    log(
-        state,
-        Info,
-        "  /undo        Revert the last agent file change",
-    );
-    log(
-        state,
-        Info,
-        "  /diff        Show all file changes this session",
-    );
-    log(state, Info, "  /compact     Compress conversation context");
-    log(state, Info, "  /metrics     Show usage and queue metrics");
-    log(
-        state,
-        Info,
-        "  /profile     Show permission profile (read-only/workspace-auto/full-access)",
-    );
-    log(state, Info, "  /profile <name>  Set permission profile");
-    log(
-        state,
-        Info,
-        "  /approve     Toggle dangerous tool auto-approve",
-    );
-    log(state, Info, "  /new         Start a fresh conversation");
-    log(state, Info, "  /steer       Show current steer instruction");
-    log(
-        state,
-        Info,
-        "  /steer <txt> Set persistent steer instruction",
-    );
-    log(
-        state,
-        Info,
-        "  /steer now <txt> Interrupt current run and relaunch with steer",
-    );
-    log(state, Info, "  /steer clear Remove steer instruction");
-    log(
-        state,
-        Info,
-        "  /plan mode   Show or set plan-only mode (on/off)",
-    );
-    log(state, Info, "  /jobs        Show background jobs");
-    log(
-        state,
-        Info,
-        "  /nv [file]   Open Neovim split at repo root with tree view",
-    );
-    log(
-        state,
-        Info,
-        "  /nv toggle   Toggle nvim pane in current tmux window",
-    );
-    log(state, Info, "  /nv help     Show nvim/tmux exit shortcuts");
-    log(state, Info, "  /quit | /q   Stop agent execution");
-    log(state, Info, "  /exit        Exit Osmogrep");
-    log(state, Info, "");
-    log(state, Info, "Anything else is sent to the agent.");
-    log(
-        state,
-        Info,
-        "Testing, planning, review, triage, and subagents are model/harness workflows.",
-    );
-    log(state, Info, "!<cmd> runs a shell command directly.");
+fn help(state: &mut AgentState) {
+    log(state, LogLevel::Info, "Workspace controls");
+    for item in command_palette_items() {
+        log(state, LogLevel::Info, format!("  {:<15} {}", item.cmd, item.desc));
+    }
+    log(state, LogLevel::Info, "Ask the agent to test, debug, review, plan, or coordinate work in plain language.");
+    log(state, LogLevel::Info, "!<command> runs a shell command directly. Legacy workflow commands still work.");
 }
 
 fn clear_logs(state: &mut AgentState) {
@@ -2759,6 +2672,7 @@ fn voice_off(state: &mut AgentState, voice_tx: Option<&Sender<VoiceCommand>>) {
     }
 }
 pub fn update_command_hints(state: &mut AgentState) {
+    if state.ui.panel.is_some() { state.ui.command_items.clear(); return; }
     let input = normalize_command_prefix(state.ui.input.trim());
     let prev_selected = state.ui.command_selected;
     let (items, selected) = command_hints_for(&input, prev_selected);
@@ -2773,7 +2687,7 @@ fn command_hints_for(input: &str, prev_selected: usize) -> (Vec<CommandItem>, us
     }
 
     let all = command_palette_items();
-    if all.iter().any(|item| item.cmd == input) {
+    if all.iter().any(|item| item.cmd == input) || input == "/plan" {
         return (Vec::new(), 0);
     }
 
@@ -2806,152 +2720,35 @@ fn command_hints_for(input: &str, prev_selected: usize) -> (Vec<CommandItem>, us
     (items, selected)
 }
 
-fn command_palette_items() -> &'static [CommandItem] {
+pub(crate) fn command_palette_items() -> &'static [CommandItem] {
     &[
-        CommandItem {
-            cmd: "/help",
-            desc: "Show available commands",
-        },
-        CommandItem {
-            cmd: "/clear",
-            desc: "Clear logs",
-        },
-        CommandItem {
-            cmd: "/key",
-            desc: "Set OpenAI API key",
-        },
-        CommandItem {
-            cmd: "/voice",
-            desc: "Show voice status",
-        },
-        CommandItem {
-            cmd: "/voice on",
-            desc: "Start voice input",
-        },
-        CommandItem {
-            cmd: "/voice off",
-            desc: "Stop voice input",
-        },
-        CommandItem {
-            cmd: "/status",
-            desc: "Show session, run, model, and repo status",
-        },
-        CommandItem {
-            cmd: "/account",
-            desc: "Show provider/account configuration",
-        },
-        CommandItem {
-            cmd: "/model",
-            desc: "Show active provider/model",
-        },
-        CommandItem {
-            cmd: "/usage",
-            desc: "Show token and context usage",
-        },
-        CommandItem {
-            cmd: "/theme",
-            desc: "Show or set dark/light theme",
-        },
-        CommandItem {
-            cmd: "/color",
-            desc: "Show or set accent color",
-        },
-        CommandItem {
-            cmd: "/type",
-            desc: "Show or set UI density",
-        },
-        CommandItem {
-            cmd: "/copy",
-            desc: "Copy latest assistant response",
-        },
-        CommandItem {
-            cmd: "/copy all",
-            desc: "Copy visible transcript",
-        },
-        CommandItem {
-            cmd: "/rename",
-            desc: "Rename current session",
-        },
-        CommandItem {
-            cmd: "/mcp",
-            desc: "Show MCP status and servers",
-        },
-        CommandItem {
-            cmd: "/providers",
-            desc: "Show available model providers",
-        },
-        CommandItem {
-            cmd: "/undo",
-            desc: "Revert the last agent file change",
-        },
-        CommandItem {
-            cmd: "/diff",
-            desc: "Show all file changes this session",
-        },
-        CommandItem {
-            cmd: "/compact",
-            desc: "Compress conversation context",
-        },
-        CommandItem {
-            cmd: "/metrics",
-            desc: "Show usage and queue metrics",
-        },
-        CommandItem {
-            cmd: "/profile",
-            desc: "Show or set permission profile",
-        },
-        CommandItem {
-            cmd: "/approve",
-            desc: "Toggle dangerous tool auto-approve",
-        },
-        CommandItem {
-            cmd: "/new",
-            desc: "Start a fresh conversation",
-        },
-        CommandItem {
-            cmd: "/plan",
-            desc: "Show/update plan items",
-        },
-        CommandItem {
-            cmd: "/plan add",
-            desc: "Add a plan item",
-        },
-        CommandItem {
-            cmd: "/plan done",
-            desc: "Mark a plan item complete",
-        },
-        CommandItem {
-            cmd: "/plan clear",
-            desc: "Clear plan items",
-        },
-        CommandItem {
-            cmd: "/plan mode",
-            desc: "Toggle plan-only read-only agent mode",
-        },
-        CommandItem {
-            cmd: "/steer",
-            desc: "Set or show persistent steer instruction",
-        },
-        CommandItem {
-            cmd: "/jobs",
-            desc: "Show background jobs",
-        },
-        CommandItem {
-            cmd: "/nv",
-            desc: "Open Neovim split (auto tmux bootstrap)",
-        },
-        CommandItem {
-            cmd: "/quit",
-            desc: "Stop agent execution",
-        },
-        CommandItem {
-            cmd: "/q",
-            desc: "Stop agent execution",
-        },
-        CommandItem {
-            cmd: "/exit",
-            desc: "Exit Osmogrep",
-        },
+        CommandItem { cmd: "/help", desc: "Browse workspace controls" },
+        CommandItem { cmd: "/model", desc: "Choose provider and model" },
+        CommandItem { cmd: "/permissions", desc: "Choose tool permissions" },
+        CommandItem { cmd: "/settings", desc: "Configure this workspace" },
+        CommandItem { cmd: "/skills", desc: "Browse and manage agent skills" },
+        CommandItem { cmd: "/keymap", desc: "Customize keyboard shortcuts" },
+        CommandItem { cmd: "/statusline", desc: "Arrange your status line" },
+        CommandItem { cmd: "/stats", desc: "Explore recorded usage" },
+        CommandItem { cmd: "/theme", desc: "Change appearance" },
+        CommandItem { cmd: "/usage", desc: "Inspect token and context usage" },
+        CommandItem { cmd: "/status", desc: "Inspect workspace and run status" },
+        CommandItem { cmd: "/mcp", desc: "Inspect connected tool servers" },
+        CommandItem { cmd: "/voice", desc: "Manage voice input" },
+        CommandItem { cmd: "/key", desc: "Set provider API key" },
+        CommandItem { cmd: "/copy", desc: "Copy an assistant response" },
+        CommandItem { cmd: "/rename", desc: "Name this conversation" },
+        CommandItem { cmd: "/new", desc: "Start a fresh conversation" },
+        CommandItem { cmd: "/clear", desc: "Clear the visible transcript" },
+        CommandItem { cmd: "/compact", desc: "Compress conversation context" },
+        CommandItem { cmd: "/undo", desc: "Revert the last agent file change" },
+        CommandItem { cmd: "/diff", desc: "Inspect session file changes" },
+        CommandItem { cmd: "/plan mode", desc: "Use read-only planning mode" },
+        CommandItem { cmd: "/steer", desc: "Manage persistent instructions" },
+        CommandItem { cmd: "/jobs", desc: "Inspect background work" },
+        CommandItem { cmd: "/nv", desc: "Open the workspace in Neovim" },
+        CommandItem { cmd: "/quit", desc: "Interrupt the current run" },
+        CommandItem { cmd: "/exit", desc: "Exit OsmoGrep" },
     ]
 }
 
@@ -2974,11 +2771,11 @@ mod tests {
     use crate::state::{LogBuffer, LogLevel};
 
     #[test]
-    fn command_hints_include_plan_while_typing() {
+    fn command_hints_offer_planning_mode_without_manual_plan_management() {
         let (items, selected) = command_hints_for("/pla", 0);
 
         assert_eq!(selected, 0);
-        assert!(items.iter().any(|item| item.cmd == "/plan"));
+        assert!(!items.iter().any(|item| item.cmd == "/plan"));
         assert!(items.iter().any(|item| item.cmd == "/plan mode"));
     }
 
@@ -2995,7 +2792,17 @@ mod tests {
         let (items, _) = command_hints_for("/cop", 0);
 
         assert!(items.iter().any(|item| item.cmd == "/copy"));
-        assert!(items.iter().any(|item| item.cmd == "/copy all"));
+        assert!(!items.iter().any(|item| item.cmd == "/copy all"));
+    }
+
+    #[test]
+    fn menu_exposes_controls_not_manual_agent_workflows() {
+        let (items, _) = command_hints_for("/", 0);
+        for manual in ["/test", "/triage", "/swarm", "/plan", "/plan add", "/plan done", "/plan clear", "/autofix", "/gh", "/q"] {
+            assert!(!items.iter().any(|item| item.cmd == manual), "{manual}");
+        }
+        assert!(items.iter().any(|item| item.cmd == "/model"));
+        assert!(items.iter().any(|item| item.cmd == "/permissions"));
     }
 
     #[test]
