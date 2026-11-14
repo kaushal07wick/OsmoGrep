@@ -68,7 +68,21 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
     }
 
     if let Some(pending) = state.ui.pending_permission.take() {
-        match k.code {
+        if matches!(k.code, KeyCode::Up | KeyCode::Down) {
+            state.ui.permission_selected = if k.code == KeyCode::Up {
+                state.ui.permission_selected.saturating_sub(1)
+            } else {
+                (state.ui.permission_selected + 1).min(2)
+            };
+            state.ui.pending_permission = Some(pending);
+            return;
+        }
+        let code = if k.code == KeyCode::Enter {
+            KeyCode::Char(['y', 'n', 'a'][state.ui.permission_selected.min(2)])
+        } else {
+            k.code
+        };
+        match code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
                 let _ = pending.reply_tx.send(true);
                 crate::logger::log(
@@ -78,6 +92,7 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
                 );
             }
             KeyCode::Char('n') | KeyCode::Char('N') => {
+                state.discard_diff_preview();
                 let _ = pending.reply_tx.send(false);
                 crate::logger::log(
                     state,
@@ -129,6 +144,10 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
         crate::ui::keymap::Resolved::Ignore => return,
         crate::ui::keymap::Resolved::Unchanged => k,
     };
+    if k.code == KeyCode::Char('t') && k.modifiers.contains(KeyModifiers::CONTROL) {
+        state.ui.expand_tools = !state.ui.expand_tools;
+        return;
+    }
     let palette_active = !state.ui.command_items.is_empty();
     let navigation = matches!(
         k.code,
@@ -352,6 +371,11 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
 }
 
 fn request_agent_cancel(state: &mut AgentState) {
+    state.discard_diff_preview();
+    if state.ui.cancelling {
+        return;
+    }
+    state.ui.cancelling = true;
     state.ui.cancel_requested = true;
     state.ui.command_items.clear();
     state.ui.command_selected = 0;

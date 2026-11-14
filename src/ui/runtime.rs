@@ -19,6 +19,7 @@ pub struct TuiRuntime {
     renderer_error: Option<String>,
     animating: bool,
     last_visual: Option<std::time::Instant>,
+    last_size: Rect,
 }
 
 impl Default for TuiRuntime {
@@ -41,6 +42,7 @@ impl Default for TuiRuntime {
             renderer_error,
             animating: false,
             last_visual: None,
+            last_size: Rect::default(),
         }
     }
 }
@@ -53,7 +55,12 @@ impl TuiRuntime {
         model: &ModelConfig,
     ) -> Result<(), Box<dyn Error>> {
         let now = std::time::Instant::now();
-        state.ui.presentation_model=Some(model.clone());
+        let size = terminal.size()?;
+        if size != self.last_size {
+            self.last_size = size;
+            self.dirty = true;
+        }
+        state.ui.presentation_model = Some(model.clone());
         if (!self.dirty && !self.animating) || !self.frame.draw_due(now) {
             return Ok(());
         }

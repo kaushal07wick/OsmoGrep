@@ -3,6 +3,28 @@
 use crate::state::{AgentState, LogLevel};
 
 const USER_TAG: &str = "USER|";
+
+pub fn tool_summary(args: &serde_json::Value) -> String {
+    [
+        "path",
+        "file_path",
+        "file",
+        "target",
+        "command",
+        "cmd",
+        "query",
+        "pattern",
+    ]
+    .iter()
+    .find_map(|key| args.get(key).and_then(serde_json::Value::as_str))
+    .unwrap_or("")
+    .lines()
+    .next()
+    .unwrap_or("")
+    .chars()
+    .take(180)
+    .collect()
+}
 const TOOL_PREFIX: &str = "● ";
 const CHILD_PREFIX: &str = "  └ ";
 const STATUS_PREFIX: &str = "· ";
@@ -118,4 +140,19 @@ pub fn flush_streaming_log(state: &mut AgentState) {
 
     state.ui.streaming_buffer.clear();
     state.ui.streaming_lines_logged = 0;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn tool_heading_never_dumps_edit_contents() {
+        let args = serde_json::json!({"path":"README.md","old_text":"private old document","new_text":"private new document"});
+        assert_eq!(tool_summary(&args), "README.md");
+        assert_eq!(
+            tool_summary(&serde_json::json!({"command":"cargo test\nprintf hidden"})),
+            "cargo test"
+        );
+        assert_eq!(tool_summary(&serde_json::json!({"new_text":"private"})), "");
+    }
 }

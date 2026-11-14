@@ -377,7 +377,7 @@ fn view(state: &AgentState, model: &ModelConfig, id: u64, width: u16, height: u1
     let diffs: Vec<_> = if ui.diff_active {
         ui.diff_snapshot.iter().map(|d| {
         let diff = super::diff::Diff::from_texts(d.target.clone(), &d.before, &d.after);
-        json!({ "file":diff.file, "lines":diff.lines.iter().map(|l| json!({"text":l.text,"kind":format!("{:?}",l.kind)})).collect::<Vec<_>>() })
+        json!({ "file":diff.file,"added":diff.added,"removed":diff.removed,"preview":d.tool.starts_with("preview:"), "lines":diff.lines.iter().map(|l| json!({"text":l.text,"kind":format!("{:?}",l.kind),"oldLine":l.old_lineno,"newLine":l.new_lineno})).collect::<Vec<_>>() })
     }).collect()
     } else {
         Vec::new()
@@ -407,10 +407,18 @@ fn view(state: &AgentState, model: &ModelConfig, id: u64, width: u16, height: u1
         .iter()
         .map(|b| (b.id, super::keymap::effective(&state.preferences, b)))
         .collect::<std::collections::BTreeMap<_, _>>());
-    snapshot["approval"] = json!(ui
-        .pending_permission
-        .as_ref()
-        .map(|p| json!({"tool":p.tool_name,"args":p.args_summary})));
+    snapshot["approval"] = json!(ui.pending_permission.as_ref().map(
+        |p| json!({"tool":p.tool_name,"args":p.args_summary,"selected":ui.permission_selected})
+    ));
+    snapshot["statusEntries"] = json!(super::workbench::status_entries(state)
+        .into_iter()
+        .map(|(id, value)| json!({"id":id,"value":value}))
+        .collect::<Vec<_>>());
+    snapshot["runElapsed"] = json!(ui
+        .run_started_at
+        .map(|t| t.elapsed().as_millis() as u64)
+        .unwrap_or(0));
+    snapshot["expandTools"] = json!(ui.expand_tools);
     snapshot["statusLine"] = json!(super::workbench::statusline(state));
     snapshot["preferences"] = serde_json::to_value(&state.preferences).unwrap_or(Value::Null);
     snapshot

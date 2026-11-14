@@ -44,12 +44,19 @@ skill_dir.mkdir(parents=True)
 (skill_dir/'SKILL.md').write_text('---\nname: ui-probe\ndescription: Controlled UI acceptance skill\n---\nUI_SKILL_INSTRUCTION: inspect only the requested local image.\n')
 
 class Model(http.server.BaseHTTPRequestHandler):
+    permission_issued=False
     def log_message(self, *unused):
         pass
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         requests.append(body)
         value = {'id':'local_ui_response','usage':{'input_tokens':1234,'output_tokens':56,'input_tokens_details':{'cached_tokens':200}},'output':[{'type':'message','role':'assistant','content':[{'type':'output_text','text':'IMAGE_REQUEST_OK'}]}]}
+        if 'UI_PERMISSION_PROBE' in json.dumps(body):
+            if not Model.permission_issued:
+                Model.permission_issued=True
+                value['output']=[{'type':'function_call','name':'edit_file','call_id':'permission_probe','arguments':json.dumps({'path':'permission.txt','old':'before','new':'after'})}]
+            else:
+                value['output']=[{'type':'message','role':'assistant','content':[{'type':'output_text','text':'PERMISSION_FLOW_OK'}]}]
         data = ('data: '+json.dumps({'type':'response.completed','response':value})+'\n\ndata: [DONE]\n\n').encode()
         self.send_response(200)
         self.send_header('Content-Type','text/event-stream')
@@ -118,6 +125,9 @@ def graphics(data):
             pending=b''
     return frames
 
+def plain(data):
+    return re.sub(rb'\x1b\[[0-?]*[ -/]*[@-~]',b'',data)
+
 result = {}
 try:
     wait_for(lambda:b'osmogrep' in transcript and b'local-ui-test-model' in transcript)
@@ -147,10 +157,10 @@ try:
     assert graphics(transcript[before_click:]), 'click must replay the morph'
     result['central_morph_ignores_hover_and_click_replays'] = True
     paste('/')
-    wait_for(lambda: b'Commands' in transcript and b'navigate' in transcript)
+    wait_for(lambda: b'Commands' in transcript and b'move' in transcript)
     assert b'\x1b[?1000l' in transcript, 'typing must release automatic mouse capture'
     send(b'\x1b[B' * 2)
-    assert b'\x1b[48;2;42;42;42m' in transcript
+    assert '◆'.encode() in transcript
     send(b'\x1b[A' * 2)
     send(b'\r')
     wait_for(lambda: b'WORKSPACE' in transcript and b'Search' in transcript)
@@ -186,7 +196,7 @@ try:
     send(b'\x1bOR')  # F3
     paste('ui-probe')
     send(b'\r')
-    wait_for(lambda:b'$ui-probe' in transcript)
+    wait_for(lambda:b'$ui-probe' in plain(transcript))
     send(b'\x15')
     paste('/statusline')
     send(b'\r')
@@ -222,7 +232,7 @@ try:
     before_attachment=len(transcript)
     paste(str(image).replace(' ','\\ '))
     wait_for(lambda:b'\x1b_G' in transcript[before_attachment:])
-    assert b'[Image #1]' in transcript
+    assert b'[Image #1]' in plain(transcript)
     result['real_thumbnail_sequence'] = True
     paste(' $ui-probe please')
     send(b'\r')
@@ -243,9 +253,20 @@ try:
     send(b'\x1b')
     paste('/stats')
     send(b'\r')
-    wait_for(lambda:b'REPORTED TOKENS' in transcript and b'1,290 tokens' in transcript)
+    wait_for(lambda:b'RECORDED ACTIVITY' in transcript and b'1,290 tokens' in transcript)
     send(b'\x1b')
     result['reported_usage_and_pixel_history'] = True
+    (repo/'permission.txt').write_text('before\n')
+    at=len(transcript)
+    paste('UI_PERMISSION_PROBE')
+    send(b'\r')
+    wait_for(lambda:b'Allow once' in transcript[at:] and b'permission.txt' in transcript[at:])
+    assert (repo/'permission.txt').read_text()=='before\n', 'permission must precede the edit'
+    send(b'y')
+    wait_for(lambda:b'PERMISSION_FLOW_OK' in transcript[at:])
+    assert (repo/'permission.txt').read_text()=='after\n'
+    assert b'48;2;9;30;20m' in transcript[at:], 'applied diff must use the shaded addition surface'
+    result['real_permission_dock_and_numbered_diff'] = True
     for cols,rows in [(100,30),(60,18),(180,50)]:
         fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',rows,cols,0,0))
         os.killpg(process.pid,signal.SIGWINCH)

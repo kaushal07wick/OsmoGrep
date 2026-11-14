@@ -3,6 +3,7 @@ mod attachments;
 mod clipboard;
 mod commands;
 mod context;
+mod editor;
 mod harness;
 mod hooks;
 mod intelligence;
@@ -393,6 +394,8 @@ fn start_agent_run(
     state.ui.exec_scroll = usize::MAX;
     state.ui.spinner_started_at = Some(Instant::now());
     state.ui.agent_running = true;
+    state.ui.run_started_at = Some(Instant::now());
+    state.ui.cancelling = false;
     state.ui.run_phase = if state.plan_mode {
         "planning".to_string()
     } else {
@@ -1568,7 +1571,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
         if state.ui.cancel_requested {
             if let Some(token) = agent_cancel.as_ref() {
                 token.cancel();
-                log_status(&mut state, "Cancellation requested.");
+
                 runtime.mark_dirty();
             }
             state.ui.cancel_requested = false;
@@ -1594,14 +1597,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                         }
                         AgentEvent::ToolCall { name, args } => {
                             runtime.mark_dirty();
-                            let cmd = match args {
-                                serde_json::Value::Object(ref map) => map
-                                    .values()
-                                    .filter_map(|v| v.as_str())
-                                    .collect::<Vec<_>>()
-                                    .join(" "),
-                                _ => String::new(),
-                            };
+                            let cmd = logger::tool_summary(&args);
 
                             log_tool_call(&mut state, &name, cmd);
                             state.ui.run_phase = "tool".to_string();
@@ -1813,6 +1809,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                                     format!("Auto-approved {} ({})", tool_name, args_summary),
                                 );
                             } else {
+                                state.ui.permission_selected = 0;
                                 state.ui.pending_permission =
                                     Some(crate::state::PendingPermission {
                                         tool_name,
@@ -1830,6 +1827,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                         }
 
                         AgentEvent::Cancelled => {
+                            state.discard_diff_preview();
                             runtime.mark_dirty();
                             finish_streaming_output(&mut state);
                             log(&mut state, LogLevel::Warn, "Agent cancelled.");
@@ -1864,6 +1862,13 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                         }
 
                         AgentEvent::Done => {
+                            state.discard_diff_preview();
+                            if let Some(start) = state.ui.run_started_at {
+                                log_status(
+                                    &mut state,
+                                    format!("Finished in {:.1}s", start.elapsed().as_secs_f64()),
+                                );
+                            }
                             runtime.mark_dirty();
                             state.ui.spinner_started_at = None;
                             state.ui.agent_running = false;
@@ -2053,7 +2058,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
         }
     }
 
-    let attach_session = state.ui.tmux_attach_session.clone();
+    let attach_session = state.ui.editor_session.clone();
     let managed_tmux = env_truthy("OSMOGREP_MANAGED_TMUX", false);
     let managed_session = std::env::var("OSMOGREP_NV_SESSION").ok();
     drop(runtime);
@@ -2070,9 +2075,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
     }
 
     if let Some(session) = attach_session {
-        let _ = Command::new("tmux")
-            .args(["attach-session", "-t", &session])
-            .status();
+        editor::attach(&session);
     }
     Ok(())
 }

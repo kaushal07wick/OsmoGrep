@@ -77,6 +77,10 @@ pub struct CommandItem {
 }
 
 pub struct UiState {
+    pub run_started_at: Option<Instant>,
+    pub permission_selected: usize,
+    pub expand_tools: bool,
+    pub cancelling: bool,
     pub presentation_model: Option<crate::agent::ModelConfig>,
     pub panel: Option<crate::ui::workbench::Panel>,
     pub requested_command: Option<String>,
@@ -129,7 +133,7 @@ pub struct UiState {
     pub last_rendered_output: Option<String>,
     pub streaming_active: bool,
     pub streaming_lines_logged: usize,
-    pub tmux_attach_session: Option<String>,
+    pub editor_session: Option<crate::editor::Session>,
     pub active_edit_target: Option<String>,
     pub queued_agent_prompt: Option<String>,
     pub repo_branch: Option<String>,
@@ -138,6 +142,10 @@ pub struct UiState {
 impl Default for UiState {
     fn default() -> Self {
         Self {
+            run_started_at: None,
+            permission_selected: 0,
+            expand_tools: false,
+            cancelling: false,
             panel: None,
             presentation_model: None,
             requested_command: None,
@@ -189,7 +197,7 @@ impl Default for UiState {
             last_rendered_output: None,
             streaming_active: false,
             streaming_lines_logged: 0,
-            tmux_attach_session: None,
+            editor_session: None,
             active_edit_target: None,
             queued_agent_prompt: None,
             repo_branch: None,
@@ -406,6 +414,17 @@ pub struct PlanItem {
 }
 
 impl AgentState {
+    pub fn discard_diff_preview(&mut self) {
+        if self
+            .ui
+            .diff_snapshot
+            .iter()
+            .any(|diff| diff.tool.starts_with("preview:"))
+        {
+            self.ui.diff_snapshot.clear();
+            self.ui.diff_active = false;
+        }
+    }
     pub fn push_char(&mut self, c: char) {
         let mut buf = [0; 4];
         self.insert_text(c.encode_utf8(&mut buf));

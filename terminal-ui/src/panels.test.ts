@@ -20,5 +20,5 @@ test('pixel activity uses recorded provider totals and keeps the empty state hon
   const view={...panel,section:8,sections:['','','','','','','','','Stats'],history:[{day:date,model:'test',provider:'local',input:100,output:20,cached:50,calls:1,duration_ms:7}]};
   const text=drawPanel(view,100,40,false,'').rows.map(stripTerminalSequences).join('\n');
   assert.match(text,/120 tokens/);assert.match(text,/1 active days/);assert.match(text,/[░▒▓]/);
-  assert.match(drawPanel({...view,history:[]},100,40,false,'').rows.map(stripTerminalSequences).join('\n'),/No recorded activity yet/);
+  assert.match(drawPanel({...view,history:[]},100,40,false,'').rows.map(stripTerminalSequences).join('\n'),/0 tokens.*0 active days/);
 });

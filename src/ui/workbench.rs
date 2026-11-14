@@ -31,6 +31,7 @@ pub struct Panel {
     capture: Option<String>,
     skills: Vec<crate::skills::Skill>,
     days: Vec<crate::usage::Day>,
+    demo: bool,
 }
 
 #[derive(Clone)]
@@ -83,6 +84,7 @@ pub struct PanelView {
     pub editing: bool,
     pub preview: Vec<String>,
     pub history: Vec<crate::usage::Day>,
+    pub demo: bool,
 }
 
 pub fn section_for(command: &str) -> Option<usize> {
@@ -110,6 +112,7 @@ pub fn open(state: &mut AgentState, section: usize, model: Option<&ModelConfig>)
         notice,
         model: model.cloned().unwrap_or_default(),
         edit: None,
+        demo: section == 8 && days.is_empty(),
         days,
         capture: None,
         skills: if section == 6 {
@@ -126,8 +129,8 @@ fn entries(state: &AgentState, panel: &Panel) -> Vec<Row> {
         0 => commands::command_palette_items().iter().map(|c| row(c.cmd, c.desc, "↵", Action::Command(c.cmd.into()))).collect(),
         1 => {
             let mut rows = vec![
-                row("Dark", "Black canvas, warm ink", if state.theme == UiTheme::Dark {"●"} else {""}, Action::Theme("dark")),
-                row("Light", "Paper canvas, dark ink", if state.theme == UiTheme::Light {"●"} else {""}, Action::Theme("light")),
+                row("Dark", "Black canvas · Graphite paper composer", if state.theme == UiTheme::Dark {"●"} else {""}, Action::Theme("dark")),
+                row("Light", "Light canvas · Cotton paper composer", if state.theme == UiTheme::Light {"●"} else {""}, Action::Theme("light")),
                 row("Reduce motion", "Settle artwork immediately", check(state.preferences.reduce_motion), Action::Motion),
                 row("Ambient artwork", "Quiet central artwork on an empty conversation", check(state.preferences.ambient_art), Action::Art),
             ];
@@ -219,6 +222,8 @@ pub fn view(state: &AgentState) -> Option<PanelView> {
             "press new chord · backspace default · delete unbind · esc cancel"
         } else if panel.section == 5 {
             "enter rebind · * customized · tab section · esc close"
+        } else if panel.section == 8 {
+            "d sample / recorded · tab section · esc close"
         } else if panel.section == 6 {
             "enter insert · space enable/disable · tab section · esc close"
         } else if panel.edit.is_some() {
@@ -231,6 +236,7 @@ pub fn view(state: &AgentState) -> Option<PanelView> {
         .into(),
         preview: statusline(state),
         history: panel.days.clone(),
+        demo: panel.demo,
     })
 }
 
@@ -311,6 +317,9 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
     let mut changed = false;
     match key.code {
         KeyCode::Esc => close = true,
+        KeyCode::Char('d' | 'D') if panel.section == 8 => {
+            panel.demo = !panel.demo;
+        }
         KeyCode::Tab | KeyCode::BackTab => {
             let back = key.code == KeyCode::BackTab || key.modifiers.contains(KeyModifiers::SHIFT);
             panel.section =
@@ -321,6 +330,7 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
             panel.notice.clear();
             if matches!(panel.section, 7 | 8) {
                 let (days, notice) = load_usage(state, panel.section);
+                panel.demo = panel.section == 8 && days.is_empty();
                 panel.days = days;
                 panel.notice = notice;
             }
@@ -492,13 +502,13 @@ pub fn paste(state: &mut AgentState, text: &str) {
     }
 }
 
-pub fn statusline(state: &AgentState) -> Vec<String> {
+pub fn status_entries(state: &AgentState) -> Vec<(String, String)> {
     state
         .preferences
         .status_fields
         .iter()
         .filter_map(|id| {
-            Some(match id.as_str() {
+            let value = match id.as_str() {
                 "model" => state
                     .ui
                     .presentation_model
@@ -540,8 +550,16 @@ pub fn statusline(state: &AgentState) -> Vec<String> {
                 "elapsed" => format!("{}m", state.started_at.elapsed().as_secs() / 60),
                 "version" => format!("v{}", env!("CARGO_PKG_VERSION")),
                 _ => return None,
-            })
+            };
+            Some((id.clone(), value))
         })
+        .collect()
+}
+
+pub fn statusline(state: &AgentState) -> Vec<String> {
+    status_entries(state)
+        .into_iter()
+        .map(|(_, value)| value)
         .collect()
 }
 
@@ -634,6 +652,51 @@ mod tests {
         assert!(!rx.recv().unwrap());
         assert!(state.ui.cancel_requested);
         assert!(!state.ui.auto_approve);
+    }
+
+    #[test]
+    fn permission_navigation_denies_without_changing_the_draft_and_cancel_is_idempotent() {
+        use crossterm::event::Event;
+        use ratatui::layout::Rect;
+        let mut state = crate::init_state();
+        state.insert_text("keep my draft");
+        state.ui.agent_running = true;
+        let (tx, rx) = std::sync::mpsc::channel();
+        state.ui.pending_permission = Some(crate::state::PendingPermission {
+            tool_name: "edit_file".into(),
+            args_summary: "test.txt".into(),
+            reply_tx: tx,
+        });
+        for code in [KeyCode::Down, KeyCode::Enter] {
+            super::super::main_ui::handle_event(
+                &mut state,
+                Event::Key(key(code)),
+                Rect::default(),
+                Rect::default(),
+                Rect::default(),
+            );
+        }
+        assert!(!rx.recv().unwrap());
+        assert_eq!(state.ui.input, "keep my draft");
+        assert!(!state.ui.auto_approve);
+        super::super::main_ui::handle_event(
+            &mut state,
+            Event::Key(key(KeyCode::Esc)),
+            Rect::default(),
+            Rect::default(),
+            Rect::default(),
+        );
+        let lines = state.logs.iter().count();
+        state.ui.cancel_requested = false;
+        super::super::main_ui::handle_event(
+            &mut state,
+            Event::Key(key(KeyCode::Esc)),
+            Rect::default(),
+            Rect::default(),
+            Rect::default(),
+        );
+        assert_eq!(state.logs.iter().count(), lines);
+        assert!(!state.ui.cancel_requested);
     }
 }
 

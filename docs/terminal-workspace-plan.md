@@ -138,3 +138,42 @@ the repository's existing human Git identity, without AI co-author trailers.
   presents the same controls/data with simpler graphics. Skill selection is wired
   through the interactive agent launcher. History starts with new reported usage;
   missing provider counts, prices and account quotas are never invented.
+
+## Follow-up polish — 2026-11-14
+
+- Responsive status fitting shortens workspace paths before removing optional
+  fields. Panels now reserve side gutters and bottom padding, wrap help text,
+  and use the full available label width in narrow panes. The quick command
+  picker uses an OsmoGrep marker and separate selection/help treatment.
+- Tool headings select a path/command instead of dumping edit payloads. Long
+  tool results fold to three lines; Ctrl+T expands results and diff details.
+  Diffs have line numbers, shaded additions/removals, pending/applied labels,
+  bounded previews and a final-answer position after the diff. Denied/cancelled
+  previews are discarded. Repeated cancellation requests are idempotent.
+- Thinking/tool activity has a restrained animated dot wave and elapsed run
+  time. Permission requests dock above the composer while keeping transcript
+  output visible; arrows/Enter and Y/N/A are supported without changing policy.
+- Stats include clearly labeled, deterministic sample data for visual review,
+  separate from SQLite/history. D toggles sample/recorded mode. A compact recent
+  activity chart replaces the calendar when a short terminal cannot fit it.
+- Neovim launch now has its own small module. Standalone launch uses a private
+  tmux server with its status bar disabled and the actual terminal dimensions.
+  Narrow terminals use an editor window; wide terminals keep at least 64 columns
+  for the agent. Existing tmux sessions retain their options. No plugin sync or
+  user configuration rewrite runs on editor open. Toggle requests a save-aware
+  close; only editor panes owned by this agent are targeted. Runtime checks size
+  even when an intermediate multiplexer misses a resize event.
+- The six interactive composer studies live in `composer-studies.html`. The user
+  selected Cotton for light mode and Graphite for dark mode. Both are implemented
+  as stable ANSI background-cell grain, preserving text selection, masking,
+  cursor geometry and attachment protocols; the native fallback uses their base
+  material colors. The other four concepts remain review artifacts.
+- Validation: 197 Rust tests and 30 UI tests pass. The real Mac UI suite adds an
+  approved temporary-file edit and shaded diff (17 checks). Six isolated real
+  tmux/Neovim checks cover narrow windows, unsaved-file protection, full agent
+  restoration, wide splits, resizing and clean terminal exit. The editor harness
+  uses a bounded file gate to keep its test PTY alive for restoration inspection.
+- Browser review: all six studies support multiline Unicode editing and image
+  previews; comparison/selection persistence and 390/320 px layouts pass, with
+  zero page errors and no external network requests. Fine browser paper grain
+  is represented by restrained terminal-cell shading in the actual composer.

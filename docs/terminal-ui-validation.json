@@ -1,10 +1,10 @@
 {
   "scope": "Local macOS validation of TypeScript presentation and existing Rust backend",
   "date": "2026-11-14",
-  "rust_tests_passed": 193,
-  "typescript_tests_passed": 24,
+  "rust_tests_passed": 197,
+  "typescript_tests_passed": 30,
   "node": "v26.13.1",
-  "installed_sha256": "7fe81aac6aca08ba12104b25a145e266e36c0d6dff0af9d28acf26e4e5ed7e8e",
+  "installed_sha256": "ade66c23cc4e9a23a5088aba14f872c355ebf46602585f026f723ab443dc859b",
   "installed_first_on_path": true,
   "mac_pty_acceptance": {
     "typescript_renderer_started": true,
@@ -18,6 +18,7 @@
     "original_image_bytes_reached_provider": true,
     "selected_skill_reached_provider": true,
     "reported_usage_and_pixel_history": true,
+    "real_permission_dock_and_numbered_diff": true,
     "terminal_resize": true,
     "existing_shell_command": true,
     "renderer_crash_recovers_to_native_ui": true,
@@ -48,7 +49,7 @@
   "brand_provenance": "terminal-ui/brand/provenance.json",
   "pty_binary": "Optimized release, byte-identical to installed binary",
   "installed_cli_version_and_help": true,
-  "layout": "Compact searchable workspace panels, curated command catalog, persisted keymaps/status line, explicit skills, provider usage and four random dim morph scenes",
+  "layout": "Padded responsive panels and status line; contextual permission dock; timed activity; folded tool output and numbered shaded diffs; Cotton/Graphite composer; sample/recorded pixel charts; isolated adaptive Neovim workspace",
   "artwork_visual_scale": 0.62,
   "animation_microbenchmark": {
     "samplesPerScene": 30,
@@ -77,5 +78,32 @@
   "live_text_provider_checked": true,
   "live_text_provider": "openai/gpt-5.2",
   "live_text_provider_reported_input_tokens": 1101,
-  "live_text_provider_reported_output_tokens": 13
+  "live_text_provider_reported_output_tokens": 13,
+  "neovim_tmux_acceptance": {
+    "narrow_full_width_windows_no_status_bar": true,
+    "toggle_preserves_unsaved_changes": true,
+    "closing_editor_restores_full_agent": true,
+    "wide_split_keeps_agent_readable": true,
+    "resize_and_renderer_survive_editor_close": true,
+    "clean_exit_restores_terminal": true
+  },
+  "composer_materials": {
+    "light": "Cotton",
+    "dark": "Graphite",
+    "texture": "Stable ANSI background-cell grain; selectable text, no added glyph decoration",
+    "native_fallback": "Matching base material colors"
+  },
+  "composer_study_validation": {
+    "treatments": 6,
+    "desktop": true,
+    "mobile390": true,
+    "mobile320": true,
+    "multilineUnicodeEditing": true,
+    "attachments": true,
+    "comparison": true,
+    "selectionPersistence": true,
+    "externalRequests": 0,
+    "pageErrors": 0
+  },
+  "live_text_provider_source_commit": "09600f0"
 }

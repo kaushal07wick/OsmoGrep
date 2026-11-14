@@ -1,8 +1,11 @@
 import { Image, Markdown, getCapabilities, renderImage, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import { introDuration, websiteMark } from './brand.ts';
 import { introFrame, introPng } from './intro.ts';
-import { drawPanel, type PanelView } from './panels.ts';
+import { drawPanel, permissionLines, type PanelView } from './panels.ts';
 import type {Scene} from './scenes.ts';
+import {statusText,activity,type StatusEntry} from './chrome.ts';
+import {diffLines,type FileDiff} from './transcript.ts';
+import {paperRow,paperColors} from './paper.ts';
 
 export interface Rect { x: number; y: number; width: number; height: number }
 export interface Attachment { id: number; label: string; thumbnail: string; width: number; height: number }
@@ -11,7 +14,7 @@ export interface View {
   model: string; provider: string; branch: string; indexed: boolean; indexing: boolean;
   theme: string; accent: string; density: string; session: string | null; elapsed: number; profile: string; autoApprove: boolean; planMode: boolean;
   logs: { text: string; level: string }[]; plan: { text: string; done: boolean; active: boolean }[];
-  diffs: { file: string; lines: { text: string; kind: string }[] }[];
+  diffs: FileDiff[];
   input: string; cursor: number; selection: [number, number] | null; masked: boolean;
   inputMode: string; attachments: Attachment[]; running: boolean; phase: string; tool: string | null;
   followTail: boolean; scroll: number; stream: string; permission: string | null; update: string | null;
@@ -20,8 +23,11 @@ export interface View {
   introScene?: Scene;
   introBright?: boolean;
   panel?: PanelView | null;
-  approval?: {tool:string;args:string} | null;
+  approval?: {tool:string;args:string;selected?:number} | null;
   statusLine?: string[];
+  statusEntries?: StatusEntry[];
+  runElapsed?:number;
+  expandTools?:boolean;
   shortcuts?: Record<string,string>;
   preferences?: {status_fields:string[]; reduce_motion:boolean; ambient_art:boolean};
 }
@@ -73,6 +79,7 @@ export function render(v: View): Rendered {
     : { blue: rgb(95,175,255), green: rgb(70,190,120), violet: rgb(185,140,255), rose: rgb(255,110,145), orange: rgb(235,155,105) };
   const accent = accents[v.accent as keyof typeof accents] ?? accents.orange;
   const bg = light ? '\x1b[48;2;240;240;240m' : '\x1b[48;2;30;30;30m';
+  const paper=paperColors(light);
   const tint = (color: string) => (s: string) => color + s + reset;
   const markdown = (text: string, n: number) => new Markdown(clean(text), 0, 0, {
     heading: s => fg + bold(s) + reset, link: tint(accent), linkUrl: tint(dim), code: tint(accent),
@@ -110,6 +117,9 @@ export function render(v: View): Rendered {
   const composerY = Math.max(0, h - footerHeight - composerHeight);
   const inputRect = { x: gutter, y: composerY, width, height: composerHeight };
   const execution = { x: gutter, y: headerY + headerHeight, width, height: Math.max(0, composerY - headerY - headerHeight - (v.running || v.permission || v.update || v.voice ? 1 : 0)) };
+  const approvalRows=v.approval?permissionLines(v.approval.tool,v.approval.args,v.approval.selected??0,width,accent,light):[];
+  const approvalHeight=Math.min(approvalRows.length,Math.max(0,Math.floor(execution.height*.65)));
+  execution.height=Math.max(0,execution.height-(approvalHeight?approvalHeight+1:0));
   const transcript: string[] = [];
   let paragraph: string[] = [];
   const flush = () => { if (paragraph.length) { transcript.push(...markdown(paragraph.join('\n'), width - pad * 2)); paragraph = []; } };
@@ -119,22 +129,21 @@ export function render(v: View): Rendered {
       flush(); let command = text.slice(5), prefix = '❯ ';
       if (v.logs[i + 1]?.text === 'SHELL : $ ' + command) { i++; prefix = '$ '; }
       transcript.push('', ...wrapTextWithAnsi(accent + prefix + reset + fg + bold(command) + reset, Math.max(1, width - pad * 2)), '');
+    } else if (text.trimStart().startsWith('└ ')) {
+      flush();const results=[text];
+      while(v.logs[i+1]?.text.trimStart().startsWith('└ '))results.push(clean(v.logs[++i]!.text));
+      const shown=v.expandTools?results:results.slice(0,3);
+      shown.forEach(line=>transcript.push(...wrapTextWithAnsi(dim+line+reset,Math.max(1,width-pad*2))));
+      if(shown.length<results.length)transcript.push(dim+`  … ${results.length-shown.length} more lines · ctrl+t expand`+reset);
     } else if (text.startsWith('● ') || text.trimStart().startsWith('└ ') || text.startsWith('· ') || entry.level !== 'Info') {
       flush();
       const color = entry.level === 'Error' ? rgb(230, 100, 100) : entry.level === 'Warn' ? rgb(225, 185, 75) : text.startsWith('● ') ? accent : dim;
       transcript.push(...wrapTextWithAnsi(color + text + reset, Math.max(1, width - pad * 2)));
     } else { paragraph.push(text); }
   }
+  for(const diff of v.diffs)transcript.push(...diffLines(diff,Math.max(1,width-pad*2),light,!!v.expandTools));
   flush();
-  if (v.stream) transcript.push(...markdown(v.stream + '▍', width - pad * 2));
-  for (const diff of v.diffs) {
-    transcript.push('', accent + clean(diff.file) + reset);
-    for (const line of diff.lines) {
-      const color = line.kind === 'Added' ? rgb(70, 190, 120) : line.kind === 'Removed' ? rgb(230, 100, 100) : dim;
-      const prefix = line.kind === 'Added' ? '+ ' : line.kind === 'Removed' ? '- ' : '  ';
-      transcript.push(...wrapTextWithAnsi(color + prefix + clean(line.text) + reset, Math.max(1, width - pad * 2)));
-    }
-  }
+  if(v.stream)transcript.push(...markdown(v.stream+'▍',width-pad*2));
   if (v.plan.length) transcript.push('', ...v.plan.map(p => `${p.done ? '✓' : p.active ? '›' : '·'} ${clean(p.text)}`));
   const maxScroll = Math.max(0, transcript.length - execution.height);
   const start = v.followTail ? maxScroll : Math.max(0, maxScroll - v.scroll);
@@ -157,9 +166,10 @@ export function render(v: View): Rendered {
     }
   }
 
-  const status = v.permission ?? v.update ?? v.voice ?? (v.running ? `${['✻', '✼', '✶', '✳'][Math.floor(v.elapsed / 130) % 4]} ${v.tool ?? v.phase}…  esc to interrupt` : '');
-  if (status) put(composerY - 1, accent + clean(status) + reset);
-  for (let y = composerY; y < composerY + composerHeight; y++) put(y, bg + ' '.repeat(width) + reset);
+  const status = v.update ?? v.voice ?? (v.permission&&!v.approval?v.permission:null) ?? (v.running ? activity(v.runElapsed??v.elapsed,v.approval?'Waiting for permission':v.phase,v.approval||v.phase==='thinking'?null:v.tool,!!v.preferences?.reduce_motion) : '');
+  if(status){const action=v.running?'esc interrupt':'';const left=clip(status,Math.max(1,width-action.length-4));put(composerY-1,accent+left+reset+(width>action.length+visibleWidth(left)+3?' '.repeat(width-visibleWidth(left)-action.length)+dim+action+reset:''));}
+  if(approvalHeight){const y=composerY-approvalHeight-2;approvalRows.slice(0,approvalHeight).forEach((line,i)=>{const content=clip(line,width-2);put(y+i,bg+content+' '.repeat(Math.max(0,width-visibleWidth(content)))+reset);});}
+  for (let y = composerY; y < composerY + composerHeight; y++) put(y, paperRow('',width,y-composerY,composerHeight,light));
   if (previewHeight) {
     let x = gutter + pad + 2;
     for (const a of attached) {
@@ -184,38 +194,39 @@ export function render(v: View): Rendered {
       const isSelected = selected && pos >= selected[0] && pos < selected[1];
       styled += (isSelected ? '\x1b[7m' : '') + c + (isSelected ? '\x1b[27m' : ''); pos++;
     }
-    if (!value && !v.masked) styled = dim + 'Try "explain this codebase"' + fg;
+    if (!value && !v.masked) styled = paper.muted + 'Try "explain this codebase"' + paper.foreground;
     const prefix = index === 0 ? '❯ ' : '  ';
-    const content = ' '.repeat(pad) + accent + prefix + fg + styled;
-    put(textY + i, bg + content + ' '.repeat(Math.max(0, width - visibleWidth(content))) + reset);
+    const content = ' '.repeat(pad) + accent + prefix + paper.foreground + styled;
+    put(textY + i, paperRow(content,width,textY+i-composerY,composerHeight,light));
   }
   if (footerHeight) {
     const permission = v.planMode ? 'plan mode' : v.autoApprove ? 'auto-approve on' : 'ask approvals';
-    const left = accent + (v.statusLine ? v.statusLine.map(clean).join(' · ') : `${v.profile} · ${permission}`) + reset + dim + ' · /help' + reset;
-    const right = dim + (v.running ? `${v.shortcuts?.queue??'tab'} queue · esc cancel` : `! shell · ${v.shortcuts?.newline??'shift+enter'} newline`) + reset;
-    put(h - 1, left);
-    if (width >= visibleWidth(left) + visibleWidth(right) + 4) {
-      rows[h - 1] = rows[h - 1]! + ' '.repeat(width - visibleWidth(left) - visibleWidth(right)) + right;
-    }
+    const right = dim+(v.running?`${v.shortcuts?.queue??'tab'} queue`:'/help')+reset;
+    const reserve=width>=60?visibleWidth(right)+3:0;
+    const entries=v.statusEntries??(v.statusLine?v.statusLine.map((value,i)=>({id:value.startsWith('~')||value.startsWith('/')?'directory':i===0?'model':'optional',value})):[{id:'permissions',value:`${v.profile} · ${permission}`}]);
+    const left=dim+statusText(entries,Math.max(1,width-pad*2-reserve))+reset;
+    put(h-1,' '.repeat(pad)+left,width>=40?gutter:gutter,Math.max(1,width-pad));
+    if(reserve)rows[h-1]+=' '.repeat(Math.max(1,width-pad*2-visibleWidth(left)-visibleWidth(right)))+right;
+
   }
   if (v.commands.length) {
     const bottom = composerY - (status ? 2 : 1);
-    const available = Math.max(0, bottom - execution.y), chrome = available >= 5 ? 3 : 0;
-    const count = Math.min(6, v.commands.length, Math.max(0, available - chrome));
+    const available = Math.max(0, bottom - execution.y), chrome = available >= 8 ? 5 : 0;
+    const count = Math.min(5, v.commands.length, Math.max(0, available - chrome));
     const selected = Math.max(0, Math.min(v.commands.length - 1, v.selectedCommand));
     const first = Math.max(0, Math.min(selected - Math.floor(count / 2), v.commands.length - count));
-    const menuWidth = Math.max(1, Math.min(86, width - pad * 2)), menuY = bottom - count - chrome;
+    const menuWidth = Math.max(1, Math.min(78, width - pad * 2)), menuY = bottom - count - chrome;
     const surface = light ? '\x1b[48;2;240;240;240m' : '\x1b[48;2;22;22;22m';
-    const highlight = light ? '\x1b[48;2;222;222;222m' : '\x1b[48;2;42;42;42m';
     const paint = (y: number, text: string, selected = false) => {
       const line = clip(text, menuWidth);
-      put(y, (selected ? highlight : surface) + line + ' '.repeat(Math.max(0, menuWidth - visibleWidth(line))) + reset, gutter + pad, menuWidth);
+      put(y, surface + line + ' '.repeat(Math.max(0, menuWidth - visibleWidth(line))) + reset, gutter + pad, menuWidth);
     };
     if (count && chrome) {
-      const title = '  Commands', position = `${selected + 1} / ${v.commands.length}  `;
+      const title = '  Commands / quick actions', position = `${selected + 1} · ${v.commands.length}  `;
       paint(menuY, dim + (menuWidth >= 28 ? title + ' '.repeat(Math.max(1, menuWidth - title.length - position.length)) + position : title));
       paint(menuY + 1, '');
-      paint(bottom - 1, dim + '  ↑↓ navigate · enter run · esc close');
+      paint(bottom - 3, dim + '  ↑↓ move   [enter] select   [esc] dismiss');
+      paint(bottom - 2, '');paint(bottom - 1, '');
     }
     const commandWidth = Math.min(26, Math.floor(menuWidth * .4), Math.max(...v.commands.map(item => visibleWidth(clean(item.cmd)))));
     for (let i = 0; i < count; i++) {
@@ -223,7 +234,7 @@ export function render(v: View): Rendered {
       const command = clip(clean(item.cmd), commandWidth);
       const label = menuWidth >= 44 ? command + ' '.repeat(commandWidth - visibleWidth(command) + 3) : clean(item.cmd);
       const description = menuWidth >= 44 ? (active ? fg : dim) + clean(item.desc) : '';
-      paint(menuY + (chrome ? 2 : 0) + i, (active ? accent + ' › ' + bold(label) : fg + '   ' + label) + description, active);
+      paint(menuY + (chrome ? 2 : 0) + i, (active ? accent + ' ◆ ' + bold(label) : dim + '   ' + label) + description, active);
     }
   }
   const rootBackground = light ? '\x1b[48;2;250;250;250m' : '\x1b[48;2;0;0;0m';
@@ -231,14 +242,7 @@ export function render(v: View): Rendered {
     const panel=drawPanel(v.panel,w,h,light,accent);
     return {id:v.id,rows:panel.rows,input:inputRect,execution,editorWidth:textWidth,animate:false,artwork:null,cursor:panel.cursor,images:[]};
   }
-  if(v.approval){
-    const panel=drawPanel({sections:['Permission required'],section:0,query:'',selected:0,editing:false,
-      rows:[{label:'Y · Allow once',description:clean(v.approval.tool)+' · '+clean(v.approval.args),value:'one tool call'},
-        {label:'N · Deny',description:'The agent receives the denial and can continue safely',value:'keep policy'},
-        {label:'A · Auto-approve',description:'Allow dangerous tools for the rest of this session',value:'session-wide'}],
-      notice:'Tool policy applies · Escape cancels the run',footer:'y allow once · n deny · a auto-approve · esc cancel'},w,h,light,accent);
-    return {id:v.id,rows:panel.rows,input:inputRect,execution,editorWidth:textWidth,animate:false,artwork:null,cursor:panel.cursor,images:[]};
-  }
+
   return {
     id: v.id, rows: rows.map(row => {
       const clipped = clip(row, w);

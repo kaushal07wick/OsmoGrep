@@ -631,3 +631,19 @@ native fallback remain in place. Local validation: 193 Rust tests, 24 UI tests,
 analysis cases and one live OpenAI text smoke all pass. See
 [validation measurements](terminal-ui-validation.json). Hosted GitHub/E2B delivery,
 real vision interpretation and other operating systems were not revalidated.
+
+### Responsive terminal polish and selected composer materials — 2026-11-14
+
+Implemented the reported layout/padding fixes, path-aware status fitting, distinct
+quick picker, contextual permission dock with keyboard decisions, timed activity,
+folded tool output and numbered shaded diffs. Tool headings no longer dump edit
+payloads, and denied/cancelled diff previews are discarded. Stats have explicitly
+labeled sample data with a D toggle; no sample activity enters durable history.
+
+Replaced the automatic Neovim plugin sync/config rewrite with an isolated tmux
+workspace and responsive editor placement. Six real editor lifecycle checks pass,
+including unsaved-file protection and close/resize recovery. The final release
+passes 197 Rust tests, 30 UI tests and 17 Mac PTY checks. The six local HTML material
+studies were reviewed; the selected Cotton/light and Graphite/dark treatments are
+implemented with stable terminal-cell grain. See `terminal-workspace.md` for keys
+and `terminal-ui-validation.json` for evidence and remaining platform limits.

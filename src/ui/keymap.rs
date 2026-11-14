@@ -10,6 +10,13 @@ pub struct Binding {
 }
 pub const BINDINGS: &[Binding] = &[
     Binding {
+        id: "details",
+        label: "Expand tool output / diffs",
+        group: "Transcript",
+        default: "ctrl+t",
+        command: None,
+    },
+    Binding {
         id: "commands",
         label: "Command center",
         group: "Workspace",

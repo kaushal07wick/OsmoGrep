@@ -899,7 +899,11 @@ fn render_input_box(f: &mut Frame, area: Rect, state: &AgentState) {
         Style::default().fg(p.border),
     )));
 
-    f.render_widget(Paragraph::new(out), area);
+    let paper = match state.theme {
+        UiTheme::Dark => Color::Rgb(37, 37, 33),
+        UiTheme::Light => Color::Rgb(220, 214, 199),
+    };
+    f.render_widget(Paragraph::new(out).style(Style::default().bg(paper)), area);
 
     let prompt_width = if cursor_line == 0 { PROMPT.len() } else { 0 };
     let cursor_y_offset = cursor_line.saturating_sub(visual_start);

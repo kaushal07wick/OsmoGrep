@@ -6,20 +6,12 @@ import { introDuration, websiteMark } from './brand.ts';
 import { siteLogo } from './site-art.ts';
 import { introFrame, introPng } from './intro.ts';
 import {lifeStates,scenePoints,scenes} from './scenes.ts';
+import {fixture} from './test-fixture.ts';
 import { crc32, inflateSync } from 'node:zlib';
 
 setCapabilities({images:null,trueColor:true,hyperlinks:false});
 
-export function fixture(): View {
-  return {
-    id: 1, width: 160, height: 44, version: 'test', cwd: '~/project', model: 'test-model', provider: 'local',
-    branch: 'main', indexed: true, indexing: false, theme: 'dark', accent: 'orange', density: 'standard', session: null, elapsed: 0,
-    profile: 'workspace-auto', autoApprove: false, planMode: false, logs: [], plan: [], diffs: [],
-    input: '', cursor: 0, selection: null, masked: false, inputMode: 'AgentText', attachments: [],
-    running: false, phase: 'idle', tool: null, followTail: true, scroll: 0, stream: '', permission: null,
-    update: null, voice: null, commands: [], selectedCommand: 0, tokens: 0,
-  };
-}
+
 test('matches the reference geometry at idle and during conversation', () => {
   const v = fixture(), idle = render(v);
   assert.equal(idle.input.x, 1); assert.equal(idle.input.width, 158);
@@ -161,7 +153,7 @@ test('composer has a continuous padded surface with room around text and footer'
   assert.equal(f.cursor.y, f.input.y + 1);
   assert.equal(f.cursor.x, f.input.x + 4);
   for (let y=f.input.y; y<f.input.y+f.input.height; y++) {
-    assert.ok(f.rows[y]!.includes('\x1b[48;2;30;30;30m'));
+    assert.ok(/\x1b\[48;2;3[2-9];3[2-9];(?:2[8-9]|3[0-9])m/.test(f.rows[y]!));
     assert.ok(!stripTerminalSequences(f.rows[y]!).includes('─'));
   }
   assert.equal(stripTerminalSequences(f.rows[f.input.y]!).trim(), '');
@@ -175,7 +167,7 @@ test('composer has a continuous padded surface with room around text and footer'
 });
 test('selected input is highlighted and secret entry has no placeholder', () => {
   const v = fixture(); v.input = 'abc'; v.cursor = 2; v.selection = [1,2];
-  assert.ok(render(v).rows.join('').includes('\x1b[7mb\x1b[27m'));
+  assert.ok(/\x1b\[7m(?:\x1b\[[0-9;]*m)*b\x1b\[27m/.test(render(v).rows.join('')));
   v.input = ''; v.masked = true;
   assert.ok(!render(v).rows.join('').includes('Try'));
 });
@@ -229,18 +221,18 @@ test('command picker uses a bounded dark card and keeps selection visible while 
   v.commands = Array.from({length:20}, (_,i) => ({cmd:`/command-${i}`,desc:`Description ${i}`}));
   v.selectedCommand = 14; v.permission = 'Pending approval';
   const f = render(v), text = f.rows.map(stripTerminalSequences).join('\n');
-  assert.match(text, /Commands.*15 \/ 20/);
-  assert.match(text, /› \/command-14\s+Description 14/);
-  assert.match(text, /↑↓ navigate.*enter run/);
+  assert.match(text, /Commands.*15 · 20/);
+  assert.match(text, /◆ \/command-14\s+Description 14/);
+  assert.match(text, /↑↓ move.*enter.*select/);
   assert.match(text, /Pending approval/);
-  assert.equal(text.match(/Description \d+/g)?.length, 6);
+  assert.equal(text.match(/Description \d+/g)?.length, 5);
   assert.ok(!text.includes('Description 0'));
   assert.ok(!f.rows.join('').includes('\x1b[7m'));
   const selected = f.rows.find(row => row.includes('Description 14'))!;
-  assert.ok(selected.includes('\x1b[48;2;42;42;42m'));
+  assert.ok(selected.includes('\x1b[38;2;235;155;105m'));
   assert.ok(f.rows.indexOf(selected) < f.input.y - 1);
   v.commands = [{cmd:'/key',desc:'Configure credentials'}];v.selectedCommand = 0;
-  assert.match(render(v).rows.map(stripTerminalSequences).join('\n'), /1 \/ 1/);
+  assert.match(render(v).rows.map(stripTerminalSequences).join('\n'), /1 · 1/);
 });
 
 test('command picker fits small terminals, preserves the editor and supports light theme', () => {
@@ -250,7 +242,7 @@ test('command picker fits small terminals, preserves the editor and supports lig
     const f = render(v);
     assert.ok(f.rows.every(row => visibleWidth(row) === width));
     assert.ok(f.cursor.y >= f.input.y && f.cursor.y < f.input.y+f.input.height);
-    if (height! >= 12) assert.match(f.rows.map(stripTerminalSequences).join('\n'), /› \/key/);
-    if (theme === 'light' && height === 44) assert.ok(f.rows.join('').includes('\x1b[48;2;222;222;222m'));
+    if (height! >= 12) assert.match(f.rows.map(stripTerminalSequences).join('\n'), /◆ \/key/);
+    if (theme === 'light' && height === 44) assert.ok(f.rows.join('').includes('\x1b[48;2;240;240;240m'));
   }
 });
