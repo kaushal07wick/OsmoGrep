@@ -46,7 +46,7 @@ function raster(elapsed: number, columns: number, rows: number, detail: 1 | 3) {
   const turns=smooth(.12,.42,t)+smooth(.64,.94,t), yaw=turns===2?0:tau*turns;
   const pitch=.25*Math.sin(yaw);
   const cy=Math.cos(yaw), sy=Math.sin(yaw), cx=Math.cos(pitch), sx=Math.sin(pitch);
-  const scale=Math.min(width/2.7,height/2.5), points=mesh(detail);
+  const scale=.8*Math.min(width/2.7,height/2.5), points=mesh(detail);
   for (let i=0; i<points.length; i+=14) {
     const x=points[i]!*(1-morph)+points[i+6]!*morph, y=points[i+1]!*(1-morph)+points[i+7]!*morph, z=points[i+2]!*(1-morph)+points[i+8]!*morph;
     const xx=x*cy+z*sy, zz=z*cy-x*sy, yy=y*cx-zz*sx, rotatedZ=y*sx+zz*cx;
@@ -77,7 +77,7 @@ export function introFrame(elapsed: number, columns: number, rows: number, light
         const px=x*2+dx, py=y*4+dy, at=py*width+px;
         if(shade[at]!>(bayer[(py%4)*4+px%4]!+.5)/16) {mask|=dots[dy]![dx]!;warm+=orange[at]!;total++;}
       }
-      const color=warm>total/2 ? (light?'190;65;10':'234;88;12') : (light?'65;63;59':'175;170;160');
+      const color=warm>total/2 ? (light?'190;65;10':'164;62;8') : (light?'65;63;59':'123;119;112');
       if(mask&&color!==last) {line+=`\x1b[38;2;${color}m`;last=color;}
       line+=mask?String.fromCharCode(0x2800+mask):' ';
     }
@@ -101,7 +101,7 @@ export function introPng(elapsed: number, columns: number, rows: number, light =
     for(let x=0;x<width;x++) {
       const at=y*width+x;
       if(shade[at]!<=(bayer[(y%4)*4+x%4]!+.5)/16) continue;
-      const rgb=orange[at] ? (light?[190,65,10]:[234,88,12]) : (light?[65,63,59]:[205,200,190]);
+      const rgb=orange[at] ? (light?[190,65,10]:[164,62,8]) : (light?[65,63,59]:[144,140,133]);
       const offset=y*(width*3+1)+1+x*3;
       raw[offset]=rgb[0]!;raw[offset+1]=rgb[1]!;raw[offset+2]=rgb[2]!;
     }

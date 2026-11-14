@@ -95,7 +95,7 @@ test('ring rotates into a readable terminal mark, holds it and returns to its or
   assert.notDeepEqual(start,terminal);
   assert.deepEqual(terminal,introFrame(6000,60,28));
   assert.deepEqual(start,introFrame(1000,60,28));
-  assert.ok(terminal.slice(17,22).some(row=>row.includes('234;88;12')), 'underscore carries the orange accent');
+  assert.ok(terminal.slice(17,22).some(row=>row.includes('164;62;8')), 'underscore carries the muted orange accent');
   for(const frame of [start,terminal,end]) {
     assert.equal(frame.length,28);
     assert.ok(frame.every(row=>visibleWidth(row)===60));

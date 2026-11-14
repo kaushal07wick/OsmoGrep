@@ -564,3 +564,15 @@ Installed the byte-identical release atomically with a backup, first on PATH.
 SHA-256: `ea4b7927382dd860044601dab8fd342e6a0007e601fc1404ac0a84becdc835cd`.
 The fine path was checked with the Ghostty-compatible protocol; other terminal
 implementations and hosted execution were not retested.
+
+## Subtler central artwork — 2026-11-14
+
+Reduced the artwork's projected size by 20% and dark-mode color brightness by
+about 30% in both rendering paths. The animation sequence, fine dot resolution,
+input geometry and interaction behavior are unchanged. Visually checked the
+updated phases; all **20 UI tests**, TypeScript and release builds, and eleven
+Mac PTY checks passed. Rust source was unchanged, so its previous 179-test result
+was not rerun. The earlier microbenchmark remains attributed to `d3532cf`.
+
+Installed the byte-identical release atomically with a backup, first on PATH.
+SHA-256: `d8788b182a4842a1f292125e007c6ec504c003288d0a66e1a904375c0bf52d2b`.

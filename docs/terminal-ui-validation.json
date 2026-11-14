@@ -2,9 +2,10 @@
   "scope": "Local macOS validation of TypeScript presentation and existing Rust backend",
   "date": "2026-11-14",
   "rust_tests_passed": 179,
+  "rust_tests_source_commit": "d3532cf",
   "typescript_tests_passed": 20,
   "node": "v26.13.1",
-  "installed_sha256": "ea4b7927382dd860044601dab8fd342e6a0007e601fc1404ac0a84becdc835cd",
+  "installed_sha256": "d8788b182a4842a1f292125e007c6ec504c003288d0a66e1a904375c0bf52d2b",
   "installed_first_on_path": true,
   "mac_pty_acceptance": {
     "typescript_renderer_started": true,
@@ -44,7 +45,10 @@
   "brand_provenance": "terminal-ui/brand/provenance.json",
   "pty_binary": "Optimized release, byte-identical to installed binary",
   "installed_cli_version_and_help": true,
-  "layout": "Static header; central ring-to-terminal-to-ring startup sequence with holds; no hover response; click replay after settlement",
+  "layout": "Static header; smaller, dimmer central ring-to-terminal-to-ring sequence; no hover response; click replay after settlement",
+  "artwork_visual_scale": 0.8,
+  "dark_artwork_rgb_multiplier": 0.7,
+  "animation_microbenchmark_source_commit": "d3532cf",
   "animation_microbenchmark": {
     "scope": "Warm procedural generation and PNG encoding, excluding IPC and terminal output",
     "samples": 100,
