@@ -5,7 +5,7 @@ import { drawPanel, permissionLines, type PanelView } from './panels.ts';
 import type {Scene} from './scenes.ts';
 import {statusText,activity,type StatusEntry} from './chrome.ts';
 import {diffLines,type FileDiff} from './transcript.ts';
-import {paperRow,paperColors} from './paper.ts';
+import {paperRow,paperColors,paperGraphic} from './paper.ts';
 
 export interface Rect { x: number; y: number; width: number; height: number }
 export interface Attachment { id: number; label: string; thumbnail: string; width: number; height: number }
@@ -32,11 +32,11 @@ export interface View {
   preferences?: {status_fields:string[]; reduce_motion:boolean; ambient_art:boolean};
 }
 export interface Rendered {
-  id: number; rows: string[]; input: Rect; execution: Rect; cursor: { x: number; y: number };
+  id: number; rows: string[]; input: Rect; execution: Rect; cursor: { x: number; y: number }; cursorVisible?:boolean;
   editorWidth: number;
   animate: boolean;
   artwork: Rect | null;
-  images: { id: number; x: number; y: number; sequence: string }[];
+  images: { id: number; x: number; y: number; sequence: string; placement?:string }[];
 }
 const reset = '\x1b[0m';
 const rgb = (r: number, g: number, b: number) => `\x1b[38;2;${r};${g};${b}m`;
@@ -80,6 +80,7 @@ export function render(v: View): Rendered {
   const accent = accents[v.accent as keyof typeof accents] ?? accents.orange;
   const bg = light ? '\x1b[48;2;240;240;240m' : '\x1b[48;2;30;30;30m';
   const paper=paperColors(light);
+  const paperGraphics=getCapabilities().images==='kitty';
   const tint = (color: string) => (s: string) => color + s + reset;
   const markdown = (text: string, n: number) => new Markdown(clean(text), 0, 0, {
     heading: s => fg + bold(s) + reset, link: tint(accent), linkUrl: tint(dim), code: tint(accent),
@@ -169,7 +170,7 @@ export function render(v: View): Rendered {
   const status = v.update ?? v.voice ?? (v.permission&&!v.approval?v.permission:null) ?? (v.running ? activity(v.runElapsed??v.elapsed,v.approval?'Waiting for permission':v.phase,v.approval||v.phase==='thinking'?null:v.tool,!!v.preferences?.reduce_motion) : '');
   if(status){const action=v.running?'esc interrupt':'';const left=clip(status,Math.max(1,width-action.length-4));put(composerY-1,accent+left+reset+(width>action.length+visibleWidth(left)+3?' '.repeat(width-visibleWidth(left)-action.length)+dim+action+reset:''));}
   if(approvalHeight){const y=composerY-approvalHeight-2;approvalRows.slice(0,approvalHeight).forEach((line,i)=>{const content=clip(line,width-2);put(y+i,bg+content+' '.repeat(Math.max(0,width-visibleWidth(content)))+reset);});}
-  for (let y = composerY; y < composerY + composerHeight; y++) put(y, paperRow('',width,y-composerY,composerHeight,light));
+  for (let y = composerY; y < composerY + composerHeight; y++) put(y, paperRow('',width,y-composerY,composerHeight,light,paperGraphics));
   if (previewHeight) {
     let x = gutter + pad + 2;
     for (const a of attached) {
@@ -197,7 +198,7 @@ export function render(v: View): Rendered {
     if (!value && !v.masked) styled = paper.muted + 'Try "explain this codebase"' + paper.foreground;
     const prefix = index === 0 ? '❯ ' : '  ';
     const content = ' '.repeat(pad) + accent + prefix + paper.foreground + styled;
-    put(textY + i, paperRow(content,width,textY+i-composerY,composerHeight,light));
+    put(textY + i, paperRow(content,width,textY+i-composerY,composerHeight,light,paperGraphics));
   }
   if (footerHeight) {
     const permission = v.planMode ? 'plan mode' : v.autoApprove ? 'auto-approve on' : 'ask approvals';
@@ -210,21 +211,23 @@ export function render(v: View): Rendered {
 
   }
   if (v.commands.length) {
-    const bottom = composerY - (status ? 2 : 1);
-    const available = Math.max(0, bottom - execution.y), chrome = available >= 8 ? 5 : 0;
+    const bottom = composerY - (status ? 3 : 2);
+    const available = Math.max(0, bottom - execution.y), chrome = available >= 10 ? 7 : 0;
     const count = Math.min(5, v.commands.length, Math.max(0, available - chrome));
     const selected = Math.max(0, Math.min(v.commands.length - 1, v.selectedCommand));
     const first = Math.max(0, Math.min(selected - Math.floor(count / 2), v.commands.length - count));
-    const menuWidth = Math.max(1, Math.min(78, width - pad * 2)), menuY = bottom - count - chrome;
+    const menuWidth = Math.max(1, Math.min(78, width - pad * 2 - 2)), menuY = bottom - count - chrome;
     const surface = light ? '\x1b[48;2;240;240;240m' : '\x1b[48;2;22;22;22m';
-    const paint = (y: number, text: string, selected = false) => {
-      const line = clip(text, menuWidth);
+    const paint = (y: number, text: string) => {
+      const line = clip(text, Math.max(1,menuWidth-3));
       put(y, surface + line + ' '.repeat(Math.max(0, menuWidth - visibleWidth(line))) + reset, gutter + pad, menuWidth);
     };
     if (count && chrome) {
-      const title = '  Commands / quick actions', position = `${selected + 1} · ${v.commands.length}  `;
-      paint(menuY, dim + (menuWidth >= 28 ? title + ' '.repeat(Math.max(1, menuWidth - title.length - position.length)) + position : title));
-      paint(menuY + 1, '');
+      const title = '   Commands / quick actions', position = `${selected + 1} · ${v.commands.length}`;
+      paint(menuY, '');
+      paint(menuY+1, dim + (menuWidth >= 28 ? title + ' '.repeat(Math.max(1, menuWidth - 3 - title.length - position.length)) + position : title));
+      paint(menuY + 2, '');
+      paint(bottom - 4, '');
       paint(bottom - 3, dim + '  ↑↓ move   [enter] select   [esc] dismiss');
       paint(bottom - 2, '');paint(bottom - 1, '');
     }
@@ -234,13 +237,14 @@ export function render(v: View): Rendered {
       const command = clip(clean(item.cmd), commandWidth);
       const label = menuWidth >= 44 ? command + ' '.repeat(commandWidth - visibleWidth(command) + 3) : clean(item.cmd);
       const description = menuWidth >= 44 ? (active ? fg : dim) + clean(item.desc) : '';
-      paint(menuY + (chrome ? 2 : 0) + i, (active ? accent + ' ◆ ' + bold(label) : dim + '   ' + label) + description, active);
+      paint(menuY + (chrome ? 3 : 0) + i, (active ? accent + '  › ' + bold(label) : dim + '    ' + label) + description);
     }
   }
   const rootBackground = light ? '\x1b[48;2;250;250;250m' : '\x1b[48;2;0;0;0m';
+  if(paperGraphics)images.unshift({...paperGraphic(width,composerHeight,light,(process.pid*128+126)>>>0),x:gutter,y:composerY});
   if (v.panel && !v.permission && !v.update) {
     const panel=drawPanel(v.panel,w,h,light,accent);
-    return {id:v.id,rows:panel.rows,input:inputRect,execution,editorWidth:textWidth,animate:false,artwork:null,cursor:panel.cursor,images:[]};
+    return {id:v.id,rows:panel.rows,input:inputRect,execution,editorWidth:textWidth,animate:false,artwork:null,cursor:panel.cursor,cursorVisible:v.panel.section!==8,images:[]};
   }
 
   return {

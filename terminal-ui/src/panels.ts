@@ -9,14 +9,14 @@ const reset='\x1b[0m',bold='\x1b[1m';
 export function drawPanel(panel:PanelView,width:number,height:number,light:boolean,accent:string){
   const root=light?'\x1b[48;2;250;250;250m':'\x1b[48;2;0;0;0m',surface=light?'\x1b[48;2;237;235;230m':'\x1b[48;2;18;18;18m';
   const fg=light?'\x1b[38;2;32;32;32m':'\x1b[38;2;225;220;210m',dim=light?'\x1b[38;2;105;105;105m':'\x1b[38;2;130;130;128m';
-  const gutter=width>=60?2:0,card=Math.max(1,width-2*gutter),pad=card>=40?3:1,inner=Math.max(1,card-2*pad),top=height>=14?1:0,available=Math.max(1,height-top-(height>=14?1:0));
+  const gutter=width>=60?3:width>=24?1:0,card=Math.max(1,width-2*gutter),pad=card>=40?3:1,inner=Math.max(1,card-2*pad),top=height>=14?2:0,available=Math.max(1,height-top-(height>=14?2:0));
   const wrap=(s:string,n=2)=>wrapTextWithAnsi(s,inner).slice(0,n),rows=Array<string>(height).fill(root+' '.repeat(width)+reset);
   const at=Math.max(0,Math.min(panel.selected,panel.rows.length-1)),current=panel.rows[at];
   const tabs=panel.sections.slice(Math.max(0,Math.min(panel.section-1,panel.sections.length-3)),Math.max(0,Math.min(panel.section-1,panel.sections.length-3))+3).map(s=>s===panel.sections[panel.section]?accent+bold+s+reset:dim+s+reset).join(dim+'  /  ');
-  const header=available>=14?['',accent+'◆ '+bold+plain(panel.sections[panel.section]??'Workspace')+reset+dim+'   /  WORKSPACE','',inner>=48?tabs:dim+'tab / shift+tab · sections','',...(panel.section===8?[]:[(panel.editing?accent+'Edit  ':dim+'Search  ')+fg+plain(panel.query)+(panel.query?'':'_'),''])]:[accent+plain(panel.sections[panel.section]??'Workspace')];
-  const detail=panel.section===4?(panel.preview??[]).map(plain).join(' · '):plain(current?(inner<60?current.label+' · ':'')+current.description:'');
+  const header=available>=14?['',accent+'◌ '+bold+plain(panel.sections[panel.section]??'Workspace')+reset+dim+'   /  WORKSPACE','',inner>=48?tabs:dim+'tab / shift+tab · sections','',...(panel.section===8?[]:[(panel.editing?accent+'Edit  ':dim+'Search  ')+fg+plain(panel.query)+(panel.query?'':'_'),''])]:[accent+plain(panel.sections[panel.section]??'Workspace')];
+  const detail=panel.section===8?'':panel.section===4?(panel.preview??[]).map(plain).join(' · '):plain(current?(inner<60?current.label+' · ':'')+current.description:'');
   const notice=panel.section===8?(panel.demo?'Sample data · preview only · D switches to recorded data':'Recorded provider usage · D previews sample data'):plain(panel.notice);
-  const tail=available>=14?['',...wrap(dim+detail),...wrap(dim+notice),'',...wrap(accent+plain(panel.footer)),'','']:[accent+'↑↓ · enter · esc'];
+  const tail=available>=14?['',...(detail?wrap(dim+detail):[]),...wrap(dim+notice),'',...wrap(accent+plain(panel.footer)),'','']:[accent+'↑↓ · enter · esc'];
   const count=Math.max(0,available-header.length-tail.length),body:string[]=[];
   if(panel.section===8){body.push(...statsLines(panel.history??[],inner,count,light,!!panel.demo));}
   else{

@@ -1,4 +1,4 @@
-import { crc32, deflateSync } from 'node:zlib';
+import {rgbPng} from './png.ts';
 import { siteLogo } from './site-art.ts';
 import { introDuration } from './brand.ts';
 import {scenePoints,type Scene} from './scenes.ts';
@@ -70,13 +70,6 @@ export function introFrame(elapsed: number, columns: number, rows: number, light
   });
 }
 
-function chunk(kind: string, data: Buffer): Buffer {
-  const result=Buffer.alloc(data.length+12);
-  result.writeUInt32BE(data.length);result.write(kind,4);data.copy(result,8);
-  result.writeUInt32BE(crc32(result.subarray(4,-4)),result.length-4);
-  return result;
-}
-
 /** Three times the linear dot resolution, displayed through the existing image path. */
 export function introPng(elapsed: number, columns: number, rows: number, light = false,scene:Scene='horizon',bright=false): Buffer {
   const {width,height,shade,orange,gain}=raster(elapsed,columns,rows,3,scene,bright);
@@ -91,6 +84,5 @@ export function introPng(elapsed: number, columns: number, rows: number, light =
       for(let c=0;c<3;c++)raw[offset+c]=Math.round(light?250-(250-rgb[c]!)*gain:rgb[c]!*gain);
     }
   }
-  const header=Buffer.alloc(13);header.writeUInt32BE(width);header.writeUInt32BE(height,4);header[8]=8;header[9]=2;
-  return Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),chunk('IHDR',header),chunk('IDAT',deflateSync(raw,{level:1})),chunk('IEND',Buffer.alloc(0))]);
+  return rgbPng(width,height,raw);
 }

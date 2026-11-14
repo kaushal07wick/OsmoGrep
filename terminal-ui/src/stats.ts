@@ -5,44 +5,41 @@ export function sampleHistory(now=Date.now()):Day[]{
   const end=Date.parse(dateKey(now));
   return Array.from({length:365},(_,i)=>{
     const day=end-(364-i)*86400000,noise=Math.sin(i*127.1+311.7)*43758.5453,n=noise-Math.floor(noise);
-    const intensity=Math.max(0,Math.sin(i*.077)+Math.cos(i*.027)*.6+.7),tokens=n<.18?0:Math.round(intensity*(.2+n)*12500);
+    const intensity=Math.max(.2,Math.sin(i*.077)+Math.cos(i*.027)*.6+.7),tokens=n<.18?0:Math.round(intensity*(.2+n)*12500);
     return {day:dateKey(day),model:'Sample model',provider:'demo',input:Math.round(tokens*.82),output:tokens-Math.round(tokens*.82),cached:Math.round(tokens*.28),calls:tokens?Math.ceil(tokens/1400):0,duration_ms:0};
   });
 }
+export function weeklyUsage(history:Day[],count:number,now=Date.now()){
+  const today=Date.parse(dateKey(now)),monday=today-((new Date(today).getUTCDay()+6)%7)*86400000;
+  const weeks=Array.from({length:count},(_,i)=>({start:monday-(count-1-i)*7*86400000,input:0,output:0,calls:0}));
+  for(const day of history){const index=Math.floor((Date.parse(day.day)-weeks[0]!.start)/(7*86400000));if(index>=0&&index<weeks.length){weeks[index]!.input+=day.input;weeks[index]!.output+=day.output;weeks[index]!.calls+=day.calls;}}
+  return weeks;
+}
+const resetColor='\x1b[0m';
 export function statsLines(history:Day[],width:number,height:number,light:boolean,demo:boolean,now=Date.now()):string[]{
-  const data=demo?sampleHistory(now):history,days=new Map<string,number>();
-  for(const d of data)days.set(d.day,(days.get(d.day)??0)+d.input+d.output);
-  const total=data.reduce((n,d)=>n+d.input+d.output,0),calls=data.reduce((n,d)=>n+d.calls,0),active=[...days.values()].filter(Boolean).length;
-  const ink=light?'\x1b[38;2;65;60;54m':'\x1b[38;2;185;174;158m',warm='\x1b[38;2;222;147;90m',muted=light?'\x1b[38;2;115;110;104m':'\x1b[38;2;100;94;86m';
-  const number=(n:number)=>n>=1000000?`${(n/1000000).toFixed(2)}m`:n.toLocaleString('en-US');
-  const lines=[warm+`${demo?'SAMPLE DATA  /  PREVIEW':'RECORDED ACTIVITY  /  THIS WORKSPACE'}`+reset,'',ink+`${number(total)} tokens   ${active} active days   ${number(calls)} calls`+reset,''];
-  if(height<14){
-    const end=Date.parse(dateKey(now)),count=Math.max(1,Math.min(48,width-2));
-    const recent=Array.from({length:count},(_,i)=>days.get(dateKey(end-(count-1-i)*86400000))??0),peak=Math.max(1,...recent);
-    lines.push(muted+'RECENT DAYS · UTC'+reset);
-    for(let row=2;row>=0;row--)lines.push(warm+recent.map(n=>{const fill=n/peak*3-row;return fill>=1?'▓':fill>.6?'▒':fill>.25?'░':'·';}).join('')+reset);
-    lines.push(muted+'QUIET · ░ ▒ ▓ BUSY'+reset);
-    return lines.slice(0,height).map(line=>fit(line,width));
+  const data=demo?sampleHistory(now):history,days=new Set(data.filter(d=>d.input+d.output>0).map(d=>d.day));
+  const total=data.reduce((n,d)=>n+d.input+d.output,0),calls=data.reduce((n,d)=>n+d.calls,0);
+  const ink=light?'\x1b[38;2;65;60;54m':'\x1b[38;2;201;192;178m',warm=light?'\x1b[38;2;163;77;26m':'\x1b[38;2;222;147;90m',muted=light?'\x1b[38;2;115;110;104m':'\x1b[38;2;119;113;103m',inputColor=light?'\x1b[38;2;132;123;106m':'\x1b[38;2;122;119;109m';
+  const number=(n:number)=>n.toLocaleString('en-US'),compact=(n:number)=>n>=1000000?`${(n/1000000).toFixed(2)}m`:n>=10000?`${(n/1000).toFixed(1)}k`:number(n);
+  const count=Math.max(2,Math.min(12,height-10-((demo&&history.length)||(!total&&!demo)?1:0))),weeks=weeklyUsage(data,count,now),totals=weeks.map(w=>w.input+w.output),peak=Math.max(1,...totals),latest=totals.at(-1)!,previous=totals.at(-2)!,average=Math.round(totals.reduce((a,b)=>a+b,0)/count);
+  const column=Math.max(1,Math.floor(width/3)),cell=(s:string)=>fit(s,column)+' '.repeat(Math.max(0,column-s.length));
+  const lines=[warm+`${demo?'SAMPLE DATA':'RECORDED ACTIVITY'}  /  WEEKLY USAGE`+reset,'',muted+`${compact(total)} tokens · ${days.size} active ${days.size===1?'day':'days'} · ${number(calls)} ${calls===1?'call':'calls'}${demo?' · sample year':' · all recorded'}`+reset,'',
+    muted+cell('THIS WEEK')+cell('LAST WEEK')+cell(`AVG / ${count} WKS`)+reset,
+    warm+cell(number(latest))+ink+cell(number(previous))+cell(number(average))+reset,''];
+  const date=(t:number)=>{const d=new Date(t);return `${String(d.getUTCDate()).padStart(2,'0')} ${'Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec'.split(' ')[d.getUTCMonth()]}`;};
+  const labelWidth=15,valueWidth=width>=60?12:8,barWidth=Math.max(1,width-labelWidth-valueWidth-3);
+  for(let i=0;i<weeks.length;i++){
+    const week=weeks[i]!,amount=totals[i]!,length=Math.round(amount/peak*barWidth*2),input=Math.round(week.input/Math.max(1,amount)*length);
+    let bar='';for(let x=0;x<barWidth;x++){
+      const covered=Math.max(0,Math.min(2,length-x*2)),color=x*2<input?inputColor:warm;
+      const pattern=covered===2?[0xf7,0xdf,0x7f,0xfe][(x+i)%4]!:covered===1?0x47:0;
+      bar+=pattern?color+String.fromCharCode(0x2800+pattern):' ';
+    }
+    const label=date(week.start)+'–'+date(week.start+6*86400000),value=width>=60?number(amount):compact(amount);
+    lines.push((i===weeks.length-1?warm+'› ':muted+'  ')+fit(label,labelWidth-2)+' '+bar+ink+' '.repeat(Math.max(1,valueWidth-value.length))+value+resetColor);
   }
-  const weeks=Math.min(52,Math.max(4,Math.floor((width-4)/2))),end=Date.parse(dateKey(now));
-  const sunday=end-new Date(end).getUTCDay()*86400000,start=sunday-(weeks-1)*7*86400000,max=Math.max(1,...days.values());
-  let months='    ',previous=-1;
-  for(let x=0;x<weeks;x++){const date=new Date(start+x*7*86400000),m=date.getUTCMonth();if(m!==previous){const label=date.toLocaleString('en-US',{month:'short',timeZone:'UTC'});months+=label;previous=m;x++;}else months+='  ';}
-  lines.push(muted+fit(months,width)+reset);
-  for(let y=0;y<7;y++){
-    let line=muted+(['S','M','T','W','T','F','S'][y]??'')+'   ';
-    for(let x=0;x<weeks;x++){
-      const n=days.get(dateKey(start+(x*7+y)*86400000))??0,level=n?Math.max(1,Math.ceil(Math.sqrt(n/max)*4)):0;
-      const rgb=light?['177;169;156','174;139;106','180;115;66','180;90;35','158;62;16'][level]:['44;40;35','79;59;42','123;79;47','177;106;57','231;158;94'][level];
-      line+=`\x1b[38;2;${rgb}m`+['· ','⠂ ','░ ','▒ ','▓ '][level];
-    }lines.push(line+reset);
-  }
-  lines.push('',muted+'QUIET  · ⠂ ░ ▒ ▓  BUSY     UTC · input + output'+reset);
-  if(height>=21){
-    const recent=Array.from({length:Math.min(48,width-4)},(_,i)=>days.get(dateKey(end-(Math.min(48,width-4)-1-i)*86400000))??0),peak=Math.max(1,...recent);
-    lines.push('',muted+'RECENT DAYS'+reset);
-    for(let row=2;row>=0;row--)lines.push(warm+'    '+recent.map(n=>{const fill=n/peak*3-row;return fill>=1?'▓':fill>.6?'▒':fill>.25?'░':' ';}).join('')+reset);
-  }
-  if(!total&&!demo)lines.push(ink+'No reported responses in this workspace yet.'+reset);
-  return lines.slice(0,height).map(line=>fit(line,width));
+  lines.push('',muted+'UTC weeks · orange = output · graphite = input'+reset,muted+'Bar length = weekly tokens · one shared scale'+reset);
+  if(demo&&history.length)lines.push(ink+`Recorded here: ${number(history.reduce((n,d)=>n+d.input+d.output,0))} tokens · D switches to your data`+reset);
+  if(!total&&!demo)lines.push(ink+'No reported usage yet · D opens sample data'+reset);
+  return lines.slice(0,Math.max(0,height)).map(line=>fit(line,width));
 }

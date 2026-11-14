@@ -199,7 +199,7 @@ pub fn draw_ui<B: Backend>(
                     .min(panel.rows.len().saturating_sub(count));
                 let mut lines = vec![
                     Line::from(format!(
-                        "  ◆ {}  /  WORKSPACE",
+                        "  ◌ {}  /  WORKSPACE",
                         panel.sections[panel.section]
                     )),
                     Line::from(""),

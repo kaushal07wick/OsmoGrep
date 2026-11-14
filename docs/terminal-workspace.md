@@ -13,7 +13,7 @@ remain supported but are omitted from the menu.
 | `/statusline` | Toggle fields with Space; reorder enabled fields with Left/Right |
 | `/skills` · F3 · type `$` | Search, enable/disable and insert explicit skills |
 | `/usage` | Reported provider tokens, cached subset, calls and separate estimates |
-| `/stats` | Dithered UTC activity and model totals from recorded usage |
+| `/stats` | Weekly token bars, exact aggregates and sample/recorded views |
 | `/status` | Workspace, run, session, verification and connected-tool status |
 
 Tab/Shift+Tab switches panel sections. Type to filter, Up/Down to navigate and
@@ -35,9 +35,12 @@ Instruction source paths are included; tool permissions continue to apply.
 
 Usage history stores provider/model, a workspace hash, timestamps and token/call
 metadata in a local SQLite WAL database. It stores no prompts, responses or code.
-Charts cover recorded responses in the last 365 UTC days, capped at 2,000
-day/model groups. Providers omitting usage create no fictional chart entries.
-An empty Stats view opens clearly labeled sample data for design review; press D
+Charts aggregate recorded responses in the last 365 UTC days, capped at 2,000
+day/model groups. The weekly view shows up to 12 Monday–Sunday UTC buckets,
+with exact totals, input/output composition, this week, last week and the
+average over displayed weeks. The current week is partial. Bar lengths share
+one linear scale. Providers omitting usage create no fictional chart entries.
+Stats opens clearly labeled sample data for the current design review; press D
 to switch between sample and recorded mode. Samples never enter the usage ledger.
 Legacy estimates remain labeled; prices, quotas and earlier activity are not
 reconstructed. Database failure is reported without failing the coding agent.
@@ -53,9 +56,13 @@ After updating the installed binary, exit a running session and start
 `osmogrep` again to load the new renderer.
 
 The composer uses **Cotton** in light mode and **Graphite** in dark mode. Its
-paper grain is stable background-cell shading, not text decoration or an image,
-so copied text stays clean. `/theme light` and `/theme dark` select the matching
-surface. The native fallback uses the same base material colors.
+paper grain uses a cached fine-pixel PNG behind real terminal text on Kitty-compatible
+terminals. The [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/)
+places it below text and selection backgrounds; edits reuse the pixels, while
+resize/theme changes replace them. Closing a panel, renderer fallback and exit
+remove obsolete image data. Copied text stays clean. `/theme light` and `/theme dark` select the matching
+surface. Other terminals and the native renderer use a uniform matte surface in the same
+base material colors, without cell-sized checkerboard noise.
 
 Tool output folds after three lines. **Ctrl+T** toggles details and longer diff
 hunks; it can be remapped in Keymap. Changed lines have numbers and shaded

@@ -112,7 +112,7 @@ pub fn open(state: &mut AgentState, section: usize, model: Option<&ModelConfig>)
         notice,
         model: model.cloned().unwrap_or_default(),
         edit: None,
-        demo: section == 8 && days.is_empty(),
+        demo: section == 8,
         days,
         capture: None,
         skills: if section == 6 {
@@ -330,7 +330,7 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
             panel.notice.clear();
             if matches!(panel.section, 7 | 8) {
                 let (days, notice) = load_usage(state, panel.section);
-                panel.demo = panel.section == 8 && days.is_empty();
+                panel.demo = panel.section == 8;
                 panel.days = days;
                 panel.notice = notice;
             }

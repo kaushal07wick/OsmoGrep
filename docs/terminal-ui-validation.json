@@ -1,13 +1,14 @@
 {
   "scope": "Local macOS validation of TypeScript presentation and existing Rust backend",
   "date": "2026-11-14",
-  "rust_tests_passed": 197,
-  "typescript_tests_passed": 30,
+  "rust_tests_passed": 198,
+  "typescript_tests_passed": 35,
   "node": "v26.13.1",
-  "installed_sha256": "ade66c23cc4e9a23a5088aba14f872c355ebf46602585f026f723ab443dc859b",
+  "installed_sha256": "aae5f9547534909ae227e7b3aaffb731d02f11acd56c0d954a7b6eb0ade2f47e",
   "installed_first_on_path": true,
   "mac_pty_acceptance": {
     "typescript_renderer_started": true,
+    "native_paper_pixels_cached": true,
     "central_morph_animates_then_settles": true,
     "central_morph_ignores_hover_and_click_replays": true,
     "command_picker_navigation_and_execution": true,
@@ -47,9 +48,9 @@
   "other_operating_systems_tested_locally": false,
   "brand_source": "https://osmogrep.com/",
   "brand_provenance": "terminal-ui/brand/provenance.json",
-  "pty_binary": "Optimized release, byte-identical to installed binary",
+  "pty_binary": "Optimized release; final static badge substitution followed by unit/build checks",
   "installed_cli_version_and_help": true,
-  "layout": "Padded responsive panels and status line; contextual permission dock; timed activity; folded tool output and numbered shaded diffs; Cotton/Graphite composer; sample/recorded pixel charts; isolated adaptive Neovim workspace",
+  "layout": "Consistent container gutters and bottom padding; dotted section badges and arrow selection; readable weekly totals and dithered bars; native Kitty paper background with editable text",
   "artwork_visual_scale": 0.62,
   "animation_microbenchmark": {
     "samplesPerScene": 30,
@@ -90,8 +91,10 @@
   "composer_materials": {
     "light": "Cotton",
     "dark": "Graphite",
-    "texture": "Stable ANSI background-cell grain; selectable text, no added glyph decoration",
-    "native_fallback": "Matching base material colors"
+    "texture": "Cached fine-pixel PNG below real text through Kitty graphics; explicit selection backgrounds in both themes",
+    "native_fallback": "Uniform matte material colors without checkerboard cell noise",
+    "pixel_layering_visual_check": "Temporary Ghostty window, macOS",
+    "protocol": "https://sw.kovidgoyal.net/kitty/graphics-protocol/"
   },
   "composer_study_validation": {
     "treatments": 6,
@@ -105,5 +108,20 @@
     "externalRequests": 0,
     "pageErrors": 0
   },
-  "live_text_provider_source_commit": "09600f0"
+  "live_text_provider_source_commit": "09600f0",
+  "weekly_usage_chart": {
+    "buckets": "Monday\u2013Sunday UTC, up to 12 weeks depending on terminal height",
+    "metrics": [
+      "this week (partial)",
+      "last week",
+      "average of displayed weeks",
+      "exact totals by week",
+      "input/output composition"
+    ],
+    "scale": "shared linear token scale",
+    "sample_mode": "Labeled sample data opens for design review; D toggles recorded usage; samples are never persisted",
+    "aggregation_tests": "Multiple models, cached subset excluded from extra counting, UTC Monday and year boundary"
+  },
+  "previous_compatibility_source_commit": "09600f0",
+  "native_graphics_limit": "Kitty-compatible terminal required for paper pixels; no new Windows/Linux visual checks"
 }

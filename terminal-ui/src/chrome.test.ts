@@ -1,7 +1,7 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';
 import {visibleWidth,stripTerminalSequences} from '@earendil-works/pi-tui';
 import {statusText,activity} from './chrome.ts';import {render} from './renderer.ts';import {fixture} from './test-fixture.ts';
-import {diffLines} from './transcript.ts';import {sampleHistory,statsLines} from './stats.ts';
+import {diffLines} from './transcript.ts';import {sampleHistory,statsLines,weeklyUsage} from './stats.ts';
 test('status fields shrink paths before optional fields and remain within narrow panes',()=>{
  const fields=[{id:'model',value:'gpt-5.2 · openai'},{id:'directory',value:'~/Desktop/workspace/personal/Antimatter'},{id:'branch',value:'main'},{id:'elapsed',value:'1m'}];
  for(const w of [12,28,48,80,160]){const text=statusText(fields,w);assert.ok(visibleWidth(text)<=w);assert.ok(!text.endsWith(' · '));if(w===48){assert.match(text,/Antimatter/);assert.ok(!text.includes('Desktop'));}}
@@ -19,7 +19,14 @@ test('long tool output folds without dropping access to details and diffs retain
  assert.match(rows.map(stripTerminalSequences).join('\n'),/7 - old/);assert.match(rows.map(stripTerminalSequences).join('\n'),/7 \+ new/);assert.ok(rows.some(r=>r.includes('48;2;9;30;20')));assert.ok(rows.every(r=>visibleWidth(r)<=30));
 });
 test('sample charts are labeled, deterministic and never mutate real usage',()=>{
- const history:any[]=[],now=Date.UTC(2026,10,14);const a=sampleHistory(now),b=sampleHistory(now);assert.deepEqual(a,b);assert.equal(a.length,365);
- const text=statsLines(history,100,24,false,true,now).map(stripTerminalSequences).join('\n');assert.match(text,/SAMPLE DATA/);assert.match(text,/[░▒▓]/);assert.equal(history.length,0);
+ const history:any[]=[],now=Date.UTC(2026,10,14);const a=sampleHistory(now),b=sampleHistory(now);assert.deepEqual(a,b);assert.equal(a.length,365);assert.ok(weeklyUsage(a,12,now).every(w=>w.input+w.output>0));
+ const text=statsLines(history,100,24,false,true,now).map(stripTerminalSequences).join('\n');assert.match(text,/SAMPLE DATA/);assert.match(text,/[\u2801-\u28ff]/);assert.equal(history.length,0);
  assert.ok(!statsLines(history,100,24,false,false,now).join('').includes('SAMPLE DATA'));
+});
+
+test('weekly aggregates start on Monday in UTC, cross years and combine model calls without double-counting cache',()=>{
+ const make=(day:string,input:number,output:number,cached=0)=>({day,model:'test',provider:'local',input,output,cached,calls:1,duration_ms:0});
+ const history=[make('2026-12-27',100,10),make('2026-12-28',200,20,100),make('2027-01-03',300,30),make('2027-01-04',400,40),make('2027-01-04',500,50)];
+ const weeks=weeklyUsage(history,3,Date.UTC(2027,0,4,1));assert.deepEqual(weeks.map(w=>[new Date(w.start).toISOString().slice(0,10),w.input+w.output]),[['2026-12-21',110],['2026-12-28',550],['2027-01-04',990]]);
+ const text=statsLines(history,100,24,false,false,Date.UTC(2027,0,4,1)).map(stripTerminalSequences).join('\n');assert.match(text,/THIS WEEK.*LAST WEEK.*AVG/);assert.match(text,/990/);assert.match(text,/28 Dec–03 Jan/);assert.match(text,/04 Jan–10 Jan/);
 });

@@ -117,8 +117,12 @@ def wait_for(check, seconds=12):
 def graphics(data):
     frames=[]
     pending=b''
-    for controls,payload in re.findall(rb'\x1b_G([^;]*);([^\x1b]*)\x1b\\',data):
-        if b'a=T' in controls: pending=b''
+    displaying=False
+    for controls,payload in re.findall(rb'\x1b_G([^;\x1b]*);([^\x1b]*)\x1b\\',data):
+        if b'a=' in controls:
+            displaying=b'a=T' in controls
+            pending=b''
+        if not displaying: continue
         if payload: pending+=payload
         if pending and b'm=1' not in controls:
             frames.append(base64.b64decode(pending))
@@ -142,6 +146,9 @@ try:
     settled = len(transcript)
     drain(.4)
     assert not graphics(transcript[settled:]), 'central animation must settle after ten seconds'
+    assert b'a=t,' in transcript and b'z=-1073741825' in transcript, 'native paper must be uploaded behind text'
+    assert b'a=t,' not in transcript[settled:], 'stationary paper pixels must be retained rather than re-uploaded'
+    result['native_paper_pixels_cached'] = True
     settled_image=graphics(transcript)[-1]
     assert struct.unpack('>II',settled_image[16:24])==(60*6,30*12), 'fine image must have three times the linear dot resolution'
     result['central_morph_animates_then_settles'] = True
@@ -253,6 +260,8 @@ try:
     send(b'\x1b')
     paste('/stats')
     send(b'\r')
+    wait_for(lambda:b'SAMPLE DATA' in transcript and b'WEEKLY USAGE' in transcript)
+    send(b'd')
     wait_for(lambda:b'RECORDED ACTIVITY' in transcript and b'1,290 tokens' in transcript)
     send(b'\x1b')
     result['reported_usage_and_pixel_history'] = True

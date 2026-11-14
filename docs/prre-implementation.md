@@ -647,3 +647,27 @@ passes 197 Rust tests, 30 UI tests and 17 Mac PTY checks. The six local HTML mat
 studies were reviewed; the selected Cotton/light and Graphite/dark treatments are
 implemented with stable terminal-cell grain. See `terminal-workspace.md` for keys
 and `terminal-ui-validation.json` for evidence and remaining platform limits.
+
+### Native composer pixels and readable weekly usage — 2026-11-14
+
+- Replaced cell-sized noise with a cached, fine-pixel PNG paper surface through
+  Kitty graphics. Cotton/light and Graphite/dark retain editable terminal text;
+  selection uses an explicit material background for contrast in either theme.
+  Unsupported terminals get a uniform matte fallback. Static pixels upload once;
+  placements refresh after redraw, while changed/removed surfaces release data.
+  PNG encoding is shared with the existing central artwork; no dependency added.
+- Quick actions reserve top, side and bottom padding plus a gap above the input.
+  Workspace cards retain outer gutters and two blank rows below shortcut hints.
+  A small dotted circle replaces section diamonds; selection uses an arrow.
+- Replaced the calendar/experimental terrain with weekly horizontal dithered bars.
+  Each Monday–Sunday UTC bucket has an exact total; summaries show this week,
+  last week and the average over displayed weeks. Gray/orange separates input
+  and output on a shared linear scale. Current week is partial. Up to 12 weeks
+  fit according to terminal height; sample data is explicit and D toggles actual
+  recorded history without writing samples to the ledger.
+- Validation: 198 Rust checks, 35 UI checks, 18 Mac terminal acceptance checks
+  (including retained native paper uploads), and 6 isolated Neovim lifecycle
+  checks pass. Unit cases cover pixel PNG checksums, sub-cell grain, both-theme
+  selection contrast, geometry limits, padding and UTC/year-boundary aggregation.
+  Native pixel layering was inspected in a temporary Ghostty window. The chart
+  was reviewed using renderer fixtures; other operating systems were not tested.

@@ -139,12 +139,13 @@ test('Kitty-compatible terminals use the fine intro without changing its reserve
   setCapabilities({images:'kitty',trueColor:true,hyperlinks:false});
   try {
     const v=fixture(), frame=render(v);
-    assert.equal(frame.images.length,1);
-    assert.ok(frame.images[0]!.sequence.includes('\x1b_G'));
-    assert.equal(frame.images[0]!.x,frame.artwork!.x);
-    assert.equal(frame.images[0]!.y,frame.artwork!.y);
+    const artwork=frame.images.filter(image=>!image.placement);
+    assert.equal(artwork.length,1);
+    assert.ok(artwork[0]!.sequence.includes('\x1b_G'));
+    assert.equal(artwork[0]!.x,frame.artwork!.x);
+    assert.equal(artwork[0]!.y,frame.artwork!.y);
     v.input='typing';
-    assert.equal(render(v).images.length,0);
+    assert.equal(render(v).images.filter(image=>!image.placement).length,0);
   } finally {setCapabilities({images:null,trueColor:true,hyperlinks:false});}
 });
 test('composer has a continuous padded surface with room around text and footer', () => {
@@ -176,10 +177,11 @@ test('real thumbnail is emitted inside the composer on supported terminals', () 
   const v = fixture(); v.input = 'Look [Image #1]'; v.cursor = 15;
   v.attachments = [{id:1,label:'[Image #1]',thumbnail:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aJ9sAAAAASUVORK5CYII=',width:1,height:1}];
   const f = render(v);
-  assert.equal(f.images.length, 1); assert.ok(f.images[0]!.sequence.includes('\x1b_G'));
-  assert.ok(f.images[0]!.y > f.input.y && f.images[0]!.y < f.cursor.y);
+  const thumbnails=f.images.filter(image=>!image.placement);
+  assert.equal(thumbnails.length, 1); assert.ok(thumbnails[0]!.sequence.includes('\x1b_G'));
+  assert.ok(thumbnails[0]!.y > f.input.y && thumbnails[0]!.y < f.cursor.y);
   v.input = 'Image removed';
-  assert.equal(render(v).images.length, 0);
+  assert.equal(render(v).images.filter(image=>!image.placement).length, 0);
 });
 test('approval, update, voice and plan are visible', () => {
   const v = fixture(); v.permission = 'Allow shell? [y]es [n]o'; v.plan = [{text:'Inspect code',done:false,active:true}];
@@ -222,7 +224,7 @@ test('command picker uses a bounded dark card and keeps selection visible while 
   v.selectedCommand = 14; v.permission = 'Pending approval';
   const f = render(v), text = f.rows.map(stripTerminalSequences).join('\n');
   assert.match(text, /Commands.*15 · 20/);
-  assert.match(text, /◆ \/command-14\s+Description 14/);
+  assert.match(text, /› \/command-14\s+Description 14/);
   assert.match(text, /↑↓ move.*enter.*select/);
   assert.match(text, /Pending approval/);
   assert.equal(text.match(/Description \d+/g)?.length, 5);
@@ -242,7 +244,14 @@ test('command picker fits small terminals, preserves the editor and supports lig
     const f = render(v);
     assert.ok(f.rows.every(row => visibleWidth(row) === width));
     assert.ok(f.cursor.y >= f.input.y && f.cursor.y < f.input.y+f.input.height);
-    if (height! >= 12) assert.match(f.rows.map(stripTerminalSequences).join('\n'), /◆ \/key/);
+    if (height! >= 12) assert.match(f.rows.map(stripTerminalSequences).join('\n'), /› \/key/);
     if (theme === 'light' && height === 44) assert.ok(f.rows.join('').includes('\x1b[48;2;240;240;240m'));
   }
+});
+
+test('quick actions keep surface padding on all four sides and a gap above the input',()=>{
+ const v={...fixture(),input:'/',commands:[{cmd:'/skills',desc:'A long description '.repeat(20)}]},frame=render(v),surface='\x1b[48;2;22;22;22m',indices=frame.rows.map((r,i)=>r.includes(surface)?i:-1).filter(i=>i>=0),card=indices.map(i=>frame.rows[i]!);
+ assert.ok(card.length>5);assert.equal(stripTerminalSequences(card[0]!).trim(),'');assert.ok(card.slice(-2).every(r=>stripTerminalSequences(r).trim()===''));
+ for(const row of card){const content=stripTerminalSequences(row).slice(frame.input.x+2,frame.input.x+2+78);assert.ok(stripTerminalSequences(content).startsWith('  '));assert.ok(stripTerminalSequences(content).endsWith('   '));}
+ assert.ok(indices[0]!>frame.execution.y);assert.ok(indices.at(-1)!<=frame.input.y-3);
 });

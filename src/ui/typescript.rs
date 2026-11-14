@@ -48,12 +48,22 @@ struct Point {
     x: u16,
     y: u16,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 struct Preview {
     id: u32,
     x: u16,
     y: u16,
     sequence: String,
+    #[serde(default)]
+    placement: Option<String>,
+}
+impl Preview {
+    fn retained_in(&self, images: &[Self]) -> bool {
+        self.placement.is_some()
+            && images.iter().any(|image| {
+                image.placement.is_some() && image.id == self.id && image.sequence == self.sequence
+            })
+    }
 }
 #[derive(Deserialize)]
 struct Frame {
@@ -66,6 +76,8 @@ struct Frame {
     animate: bool,
     artwork: Option<Region>,
     cursor: Point,
+    #[serde(default, rename = "cursorVisible")]
+    cursor_visible: Option<bool>,
     images: Vec<Preview>,
 }
 
@@ -119,7 +131,7 @@ pub struct TypeScriptUi {
     directory: PathBuf,
     sequence: u64,
     previous: Vec<String>,
-    images: Vec<u32>,
+    images: Vec<Preview>,
     size: (u16, u16),
     intro: IntroInteraction,
 }
@@ -295,8 +307,11 @@ impl TypeScriptUi {
             .map_err(|e| e.to_string())?;
             self.intro.capture = capture;
         }
-        for id in self.images.drain(..) {
-            write!(output, "\x1b_Ga=d,d=i,i={id},q=2;\x1b\\").map_err(|e| e.to_string())?;
+        for old in &self.images {
+            let retained = old.retained_in(&frame.images);
+            let delete = if retained { "i" } else { "I" };
+            write!(output, "\x1b_Ga=d,d={delete},i={},q=2;\x1b\\", old.id)
+                .map_err(|e| e.to_string())?;
         }
         let resized = self.size != (width, height);
         if resized {
@@ -315,17 +330,27 @@ impl TypeScriptUi {
                 .map_err(|e| e.to_string())?;
             }
         }
-        for image in frame.images {
+        for image in &frame.images {
             if image.x < width && image.y < height {
-                queue!(output, MoveTo(image.x, image.y), Print(image.sequence))
-                    .map_err(|e| e.to_string())?;
-                self.images.push(image.id);
+                queue!(output, MoveTo(image.x, image.y)).map_err(|e| e.to_string())?;
+                let retained = image.retained_in(&self.images);
+                if !retained {
+                    queue!(output, Print(&image.sequence)).map_err(|e| e.to_string())?;
+                }
+                if let Some(placement) = &image.placement {
+                    queue!(output, Print(placement)).map_err(|e| e.to_string())?;
+                }
             }
         }
+        self.images = frame.images;
         queue!(
             output,
             MoveTo(frame.cursor.x, frame.cursor.y),
-            Print("\x1b[0m\x1b[?25h\x1b[?2026l")
+            Print(if frame.cursor_visible.unwrap_or(true) {
+                "\x1b[0m\x1b[?25h\x1b[?2026l"
+            } else {
+                "\x1b[0m\x1b[?2026l"
+            })
         )
         .map_err(|e| e.to_string())?;
         output.flush().map_err(|e| e.to_string())?;
@@ -342,6 +367,10 @@ impl TypeScriptUi {
 
 impl Drop for TypeScriptUi {
     fn drop(&mut self) {
+        for image in &self.images {
+            let _ = write!(io::stdout(), "\x1b_Ga=d,d=I,i={},q=2;\x1b\\", image.id);
+        }
+        let _ = io::stdout().flush();
         if self.intro.capture {
             let _ = execute!(io::stdout(), DisableMouseCapture);
         }
@@ -486,6 +515,23 @@ mod tests {
         mouse.kind = MouseEventKind::Down(MouseButton::Left);
         assert!(!intro.handle_event(&Event::Mouse(mouse)));
         assert!(intro.started.is_none());
+    }
+
+    #[test]
+    fn static_graphics_reuse_pixels_after_moving_but_not_after_theme_or_geometry_changes() {
+        let paper: Preview = serde_json::from_value(
+            json!({"id":126,"x":1,"y":20,"sequence":"cotton pixels","placement":"behind text"}),
+        )
+        .unwrap();
+        let mut next = paper.clone();
+        next.y = 24;
+        assert!(paper.retained_in(&[next.clone()]));
+        next.sequence = "graphite pixels".into();
+        assert!(!paper.retained_in(&[next]));
+        assert!(!paper.retained_in(&[]));
+        let animation: Preview =
+            serde_json::from_value(json!({"id":127,"x":1,"y":2,"sequence":"frame"})).unwrap();
+        assert!(!animation.retained_in(&[animation.clone()]));
     }
 
     #[test]

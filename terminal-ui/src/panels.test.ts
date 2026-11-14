@@ -19,6 +19,16 @@ test('pixel activity uses recorded provider totals and keeps the empty state hon
   const date=new Date().toISOString().slice(0,10);
   const view={...panel,section:8,sections:['','','','','','','','','Stats'],history:[{day:date,model:'test',provider:'local',input:100,output:20,cached:50,calls:1,duration_ms:7}]};
   const text=drawPanel(view,100,40,false,'').rows.map(stripTerminalSequences).join('\n');
-  assert.match(text,/120 tokens/);assert.match(text,/1 active days/);assert.match(text,/[░▒▓]/);
+  assert.match(text,/120 tokens/);assert.match(text,/1 active day/);assert.match(text,/[\u2801-\u28ff]/);
   assert.match(drawPanel({...view,history:[]},100,40,false,'').rows.map(stripTerminalSequences).join('\n'),/0 tokens.*0 active days/);
+});
+
+test('workspace cards have outer margins and at least two blank surface rows below hints',()=>{
+ for(const [width,height] of [[80,24],[160,44]]){
+  const rows=drawPanel(panel,width!,height!,false,'').rows,surface='\x1b[48;2;18;18;18m',card=rows.filter(r=>r.includes(surface));
+  assert.ok(rows.join('').includes('◌')&&!rows.join('').includes('◆'));
+  assert.ok(!rows[0]!.includes(surface)&&!rows[1]!.includes(surface));assert.ok(!rows.at(-1)!.includes(surface)&&!rows.at(-2)!.includes(surface));
+  assert.ok(card.every(r=>stripTerminalSequences(r).startsWith('      ')&&stripTerminalSequences(r).endsWith('      ')));
+  const hint=card.findIndex(r=>r.includes('esc close'));assert.ok(hint>=0);assert.ok(card.slice(hint+1,hint+3).every(r=>stripTerminalSequences(r).trim()===''));assert.ok(card.length>=hint+3);
+ }
 });
