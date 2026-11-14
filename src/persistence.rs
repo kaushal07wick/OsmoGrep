@@ -43,6 +43,8 @@ struct PersistedState {
     steer: Option<String>,
     #[serde(default = "default_auto_eval")]
     auto_eval: bool,
+    #[serde(default)]
+    automation_opt_in: bool,
     #[serde(default = "default_permission_profile")]
     permission_profile: PermissionProfile,
     #[serde(default)]
@@ -88,7 +90,7 @@ pub fn load(state: &mut AgentState) {
     state.preferences = saved.preferences;
     state.preferences.normalize();
     state.steer = saved.steer;
-    state.auto_eval = saved.auto_eval;
+    state.auto_eval = saved.auto_eval && saved.automation_opt_in;
     state.permission_profile = saved.permission_profile;
     state.jobs = saved.jobs;
     state.next_job_id = saved.next_job_id.max(1);
@@ -116,6 +118,7 @@ pub fn save(state: &AgentState) -> Result<(), String> {
         conversation: state.conversation.messages.clone(),
         steer: state.steer.clone(),
         auto_eval: state.auto_eval,
+        automation_opt_in: state.auto_eval,
         permission_profile: state.permission_profile,
         jobs: state.jobs.clone(),
         next_job_id: state.next_job_id,
@@ -194,7 +197,7 @@ fn default_permission_profile() -> PermissionProfile {
 }
 
 fn default_auto_eval() -> bool {
-    true
+    false
 }
 
 fn state_file(repo_root: &Path) -> PathBuf {
@@ -217,6 +220,14 @@ pub fn session_dir() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn inherited_automation_defaults_do_not_become_opt_in() {
+        let legacy: super::PersistedState = serde_json::from_str(r#"{"auto_eval":true}"#).unwrap();
+        assert!(!(legacy.auto_eval && legacy.automation_opt_in));
+        let explicit: super::PersistedState =
+            serde_json::from_str(r#"{"auto_eval":true,"automation_opt_in":true}"#).unwrap();
+        assert!(explicit.auto_eval && explicit.automation_opt_in);
+    }
     use super::list_sessions_in;
     use std::fs;
     use uuid::Uuid;

@@ -1,18 +1,21 @@
 {
   "scope": "Local macOS validation of TypeScript presentation and existing Rust backend",
-  "date": "2026-11-14",
-  "rust_tests_passed": 202,
-  "typescript_tests_passed": 38,
+  "date": "2026-11-15",
+  "rust_tests_passed": 216,
+  "typescript_tests_passed": 41,
   "node": "v26.13.1",
-  "installed_sha256": "1cd354346d378836c1752336ef125d68450aca2c4ef5ddf2dccf60f40b001f50",
+  "installed_sha256": "20c6c813971189d0e84308fcc9e034db6a5ee16fe1f924ff8bb1062e7fb1d62b",
   "installed_first_on_path": true,
   "mac_pty_acceptance": {
     "typescript_renderer_started": true,
     "native_paper_pixels_cached": true,
     "central_morph_animates_then_settles": true,
     "central_morph_ignores_hover_and_click_replays": true,
+    "escape_does_not_exit_idle_app": true,
+    "greeting_has_no_tools_or_stale_background_jobs": true,
     "command_picker_navigation_and_execution": true,
     "footer_provider_model_selectors": true,
+    "light_cursor_has_explicit_contrast": true,
     "settings_and_real_key_remapping": true,
     "statusline_and_skill_picker": true,
     "large_multiline_draft_editing": true,
@@ -22,6 +25,10 @@
     "weekly_chart_entry_animation": true,
     "reported_usage_and_pixel_history": true,
     "real_permission_dock_and_numbered_diff": true,
+    "submitted_followups_are_distinct_fifo_turns": true,
+    "assistant_preface_does_not_skip_requested_tools": true,
+    "wheel_scrolling_and_drag_copy_plain_output": true,
+    "streaming_preserves_user_scroll_position": true,
     "terminal_resize": true,
     "existing_shell_command": true,
     "renderer_crash_recovers_to_native_ui": true,
@@ -146,5 +153,51 @@
     "local_mock_catalog_and_switching": true,
     "stale_row_clicks_rejected": true
   },
-  "command_tray": "Same width as composer, attached directly to its upper edge; padding retained"
+  "command_tray": "Same width as composer, attached directly to its upper edge; padding retained",
+  "live_agent_conversation": {
+    "date": "2026-11-15",
+    "proprietary_repository_sent": false,
+    "scope": "Read-only model calls in a temporary fixture directory",
+    "cases": [
+      {
+        "case": "greeting",
+        "passed": true,
+        "exit_code": 0,
+        "tools": [],
+        "event_types": [
+          "conversation_update",
+          "done",
+          "run_start",
+          "run_status",
+          "stream_delta",
+          "stream_done",
+          "usage"
+        ]
+      },
+      {
+        "case": "read_fixture",
+        "passed": true,
+        "exit_code": 0,
+        "tools": [
+          "read_file"
+        ],
+        "event_types": [
+          "conversation_update",
+          "done",
+          "file_focus",
+          "run_start",
+          "run_status",
+          "stream_delta",
+          "stream_done",
+          "tool_call",
+          "tool_result",
+          "usage"
+        ]
+      }
+    ]
+  },
+  "vm_regression_verification": {
+    "status": "not run",
+    "reason": "Repository outside configured MCP work-folder boundary; start rejected before session allocation."
+  }
 }

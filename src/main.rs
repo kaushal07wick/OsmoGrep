@@ -24,6 +24,7 @@ mod ui;
 mod updater;
 mod usage;
 mod verification;
+#[cfg(test)]
 mod verify_stop;
 mod voice;
 mod worktree;
@@ -266,6 +267,10 @@ fn warn_if_verification_needed(state: &mut AgentState) {
     }
 }
 
+fn should_queue_automatic_checks(state: &AgentState) -> bool {
+    state.auto_eval && state.session_changes.len() > state.ui.run_change_start
+}
+
 fn queue_auto_review_if_needed(state: &mut AgentState) {
     let changes = unreviewed_changes(&state.session_changes, state.reviewed_change_count);
     if changes.is_empty() {
@@ -320,13 +325,23 @@ fn start_agent_run(
     agent_steer_tx: &mut Option<mpsc::Sender<String>>,
 ) {
     if !agent.is_configured() {
-        log(state, LogLevel::Warn, "OPENAI_API_KEY not set. Use /key");
+        if !text.trim().is_empty() {
+            state.ui.queued_agent_prompts.push_front(text.to_string());
+            state.ui.queue_paused = true;
+        }
+        log(
+            state,
+            LogLevel::Warn,
+            "Provider API key not set. Message retained; use /key, then Enter to resume.",
+        );
         return;
     }
     if text.trim().is_empty() {
         return;
     }
 
+    state.ui.run_change_start = state.session_changes.len();
+    state.ui.transcript_selection = None;
     let (tx, rx) = mpsc::channel();
     let repo_root = state.repo_root.clone();
     let mut prior_messages = state.conversation.messages.clone();
@@ -344,7 +359,13 @@ fn start_agent_run(
     let skill_context = match skills::explicit_context(&repo_root, text, &state.preferences) {
         Ok(context) => context,
         Err(error) => {
-            log(state, LogLevel::Warn, error);
+            state.ui.queued_agent_prompts.push_front(text.to_string());
+            state.ui.queue_paused = true;
+            log(
+                state,
+                LogLevel::Warn,
+                format!("{error}. Message retained; correct the skill, then Enter to resume."),
+            );
             return;
         }
     };
@@ -362,7 +383,7 @@ fn start_agent_run(
     } else {
         state.permission_profile
     };
-    let user_text = if state.plan_mode {
+    let user_text = if state.plan_mode && !crate::tools::ToolScope::for_prompt(text).chat_only() {
         plan_mode_prompt(text)
     } else {
         text.to_string()
@@ -380,7 +401,7 @@ fn start_agent_run(
     *agent_rx = Some(rx);
     *agent_cancel = Some(cancel);
     *agent_steer_tx = Some(steer_tx);
-    state.ui.queued_agent_prompt = None;
+    state.ui.queue_paused = false;
     state.ui.last_activity = Instant::now();
     state.ui.hint = None;
     state.ui.autocomplete = None;
@@ -1775,7 +1796,6 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                         AgentEvent::StreamDelta(delta) => {
                             runtime.mark_dirty();
                             state.ui.streaming_active = true;
-                            state.ui.follow_tail = true;
                             state.ui.streaming_transcript.push_str(&delta);
                             state.ui.streaming_buffer.push_str(&delta);
                             update_streaming_log(&mut state);
@@ -1833,6 +1853,8 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                             state.discard_diff_preview();
                             runtime.mark_dirty();
                             finish_streaming_output(&mut state);
+                            state.conversation.messages.push(serde_json::json!({"role":"assistant","content":"[The previous turn was cancelled before completion. Do not resume it without a new request.]"}));
+                            let _ = persistence::save(&state);
                             log(&mut state, LogLevel::Warn, "Agent cancelled.");
                             state.ui.spinner_started_at = None;
                             state.ui.agent_running = false;
@@ -1851,6 +1873,8 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                             runtime.mark_dirty();
                             log(&mut state, LogLevel::Error, e);
                             finish_streaming_output(&mut state);
+                            state.conversation.messages.push(serde_json::json!({"role":"assistant","content":"[The previous turn failed; no successful completion was confirmed.]"}));
+                            let _ = persistence::save(&state);
                             state.ui.spinner_started_at = None;
                             state.ui.agent_running = false;
                             state.ui.run_phase = "error".to_string();
@@ -1880,9 +1904,13 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                             state.ui.current_tool_detail = None;
                             state.ui.pending_permission = None;
                             state.ui.active_edit_target = None;
-                            warn_if_verification_needed(&mut state);
-                            queue_auto_review_if_needed(&mut state);
-                            if state.auto_eval && !state.session_changes.is_empty() {
+                            if state.session_changes.len() > state.ui.run_change_start {
+                                warn_if_verification_needed(&mut state);
+                            }
+                            if should_queue_automatic_checks(&state) {
+                                state.reviewed_change_count =
+                                    state.reviewed_change_count.max(state.ui.run_change_start);
+                                queue_auto_review_if_needed(&mut state);
                                 let id = state.next_job_id;
                                 state.next_job_id += 1;
                                 state.jobs.push(crate::state::JobRecord {
@@ -1946,7 +1974,11 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
 
             let mode = state.ui.input_mode;
             let raw = state.commit_input();
-            let text = raw.trim();
+            let text = if mode == InputMode::AgentText {
+                raw.as_str()
+            } else {
+                raw.trim()
+            };
 
             state.ui.hint = None;
             state.ui.autocomplete = None;
@@ -1956,7 +1988,11 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                     log(&mut state, LogLevel::Info, "[api key entered]");
                 }
 
-                _ if !text.is_empty() && commands::is_transcript_command(text) => {
+                _ if !text.is_empty()
+                    && commands::is_transcript_command(text)
+                    && (mode != InputMode::AgentText
+                        || agent_rx.is_none() && state.ui.queued_agent_prompts.is_empty()) =>
+                {
                     log_user_input(&mut state, text);
                 }
 
@@ -1983,20 +2019,13 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
 
                 InputMode::AgentText => {
                     if !text.is_empty() {
-                        if agent_rx.is_some() {
-                            if state.ui.attachments.iter().any(|a| text.contains(&a.label)) {
-                                state.ui.queued_agent_prompt = Some(text.to_string());
-                                log_status(
-                                    &mut state,
-                                    "Queued image message after the current run.",
-                                );
-                            } else if let Some(tx) = agent_steer_tx.as_ref() {
-                                let _ = tx.send(text.to_string());
-                                log_status(&mut state, "Steer sent to running agent.");
-                            } else {
-                                state.ui.queued_agent_prompt = Some(text.to_string());
-                                log_status(&mut state, "Queued follow-up prompt.");
+                        if agent_rx.is_some() || !state.ui.queued_agent_prompts.is_empty() {
+                            state.ui.queued_agent_prompts.push_back(text.to_string());
+                            if agent_rx.is_none() {
+                                state.ui.queue_paused = false;
                             }
+                            let count = state.ui.queued_agent_prompts.len();
+                            log_status(&mut state,format!("Queued follow-up #{count}; it will be sent as a separate turn."));
                         } else {
                             start_agent_run(
                                 &mut state,
@@ -2023,8 +2052,8 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
             }
         }
 
-        if agent_rx.is_none() {
-            if let Some(next_prompt) = state.ui.queued_agent_prompt.take() {
+        if agent_rx.is_none() && !state.ui.queue_paused {
+            if let Some(next_prompt) = state.ui.queued_agent_prompts.pop_front() {
                 runtime.mark_dirty();
                 log_user_input(&mut state, &next_prompt);
                 start_agent_run(
@@ -2116,7 +2145,7 @@ fn init_state() -> AgentState {
         preferences: crate::preferences::Preferences::default(),
         usage: crate::state::UsageStats::default(),
         steer: None,
-        auto_eval: true,
+        auto_eval: false,
         permission_profile: PermissionProfile::WorkspaceAuto,
         jobs: Vec::new(),
         job_queue: Vec::new(),
@@ -2245,6 +2274,20 @@ mod tests {
                 .count(),
             80
         );
+    }
+
+    #[test]
+    fn old_session_changes_never_schedule_jobs_after_a_greeting() {
+        let mut state = init_state();
+        assert!(!state.auto_eval);
+        state.session_changes.push(diff("old"));
+        state.ui.run_change_start = 1;
+        state.auto_eval = true;
+        assert!(!should_queue_automatic_checks(&state));
+        state.session_changes.push(diff("new"));
+        assert!(should_queue_automatic_checks(&state));
+        state.auto_eval = false;
+        assert!(!should_queue_automatic_checks(&state));
     }
 
     #[test]

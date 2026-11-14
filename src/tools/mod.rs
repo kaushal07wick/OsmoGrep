@@ -86,6 +86,7 @@ pub struct ToolScope {
     include_dynamic_workflow: bool,
     include_intelligence: bool,
     read_only: bool,
+    chat_only: bool,
 }
 
 impl ToolScope {
@@ -93,6 +94,7 @@ impl ToolScope {
         let lower = prompt.to_ascii_lowercase();
         let ultracode = has_ultracode_suffix(&lower);
         Self {
+            chat_only: is_small_talk(prompt),
             include_web: contains_any(
                 &lower,
                 &[
@@ -175,7 +177,14 @@ impl ToolScope {
         self
     }
 
+    pub fn chat_only(&self) -> bool {
+        self.chat_only
+    }
+
     fn allows(&self, name: &str) -> bool {
+        if self.chat_only {
+            return false;
+        }
         if self.read_only && is_mutating_tool(name) {
             return false;
         }
@@ -190,6 +199,28 @@ impl ToolScope {
             _ => true,
         }
     }
+}
+
+fn is_small_talk(prompt: &str) -> bool {
+    let words = prompt
+        .to_lowercase()
+        .split_whitespace()
+        .map(|w| w.trim_matches(|c: char| !c.is_alphabetic()).to_string())
+        .filter(|w| !w.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    matches!(
+        words.as_str(),
+        "hi" | "hello"
+            | "hey"
+            | "hello bro"
+            | "hey bro"
+            | "hi bro"
+            | "thanks"
+            | "thank you"
+            | "good morning"
+            | "good evening"
+    )
 }
 
 fn is_mutating_tool(name: &str) -> bool {
@@ -658,6 +689,24 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn greetings_never_expose_tools_but_requests_that_begin_with_a_greeting_still_do() {
+        let registry = ToolRegistry::with_root(std::env::temp_dir());
+        for prompt in ["hello", "Hi!", "hey bro", "thanks"] {
+            let scope = ToolScope::for_prompt(prompt);
+            assert!(scope.chat_only());
+            assert!(registry.scoped_schema(&scope).is_empty());
+            assert!(!scope.allows("run_shell"));
+        }
+        for prompt in [
+            "hello, fix the parser",
+            "hi, run tests",
+            "continue the previous task",
+        ] {
+            assert!(!ToolScope::for_prompt(prompt).chat_only());
+        }
     }
 
     #[test]

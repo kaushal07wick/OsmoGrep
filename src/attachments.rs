@@ -97,9 +97,9 @@ fn register(state: &mut AgentState, attachment: Attachment) -> Result<(), String
         state.ui.input.contains(&a.label)
             || state
                 .ui
-                .queued_agent_prompt
-                .as_ref()
-                .is_some_and(|p| p.contains(&a.label))
+                .queued_agent_prompts
+                .iter()
+                .any(|p| p.contains(&a.label))
     });
     if state.ui.attachments.len() >= MAX_IMAGES {
         return Err("At most eight images can be attached".into());

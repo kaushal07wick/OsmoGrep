@@ -715,7 +715,11 @@ fn set_steer(state: &mut AgentState, cmd: &str, steer_tx: Option<&Sender<String>
                         "Steer-now injected into running agent.",
                     );
                 } else {
-                    state.ui.queued_agent_prompt = Some(now_text.to_string());
+                    state
+                        .ui
+                        .queued_agent_prompts
+                        .push_back(now_text.to_string());
+                    state.ui.queue_paused = false;
                     log(
                         state,
                         LogLevel::Warn,
@@ -723,7 +727,11 @@ fn set_steer(state: &mut AgentState, cmd: &str, steer_tx: Option<&Sender<String>
                     );
                 }
             } else {
-                state.ui.queued_agent_prompt = Some(now_text.to_string());
+                state
+                    .ui
+                    .queued_agent_prompts
+                    .push_back(now_text.to_string());
+                state.ui.queue_paused = false;
                 log(
                     state,
                     LogLevel::Warn,
@@ -731,7 +739,11 @@ fn set_steer(state: &mut AgentState, cmd: &str, steer_tx: Option<&Sender<String>
                 );
             }
         } else {
-            state.ui.queued_agent_prompt = Some(now_text.to_string());
+            state
+                .ui
+                .queued_agent_prompts
+                .push_back(now_text.to_string());
+            state.ui.queue_paused = false;
             log(
                 state,
                 LogLevel::Info,
@@ -1281,7 +1293,8 @@ fn run_triage_agent(state: &mut AgentState, cmd: &str) {
          Keep content actionable and concise. Include concrete PR/Issue numbers and links where available."
     );
 
-    state.ui.queued_agent_prompt = Some(prompt);
+    state.ui.queued_agent_prompts.push_back(prompt);
+    state.ui.queue_paused = false;
     log(
         state,
         LogLevel::Info,

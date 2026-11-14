@@ -692,3 +692,37 @@ and `terminal-ui-validation.json` for evidence and remaining platform limits.
   Neovim checks pass. The PTY suite now uses a temporary HOME and a local model
   catalog, proving actual footer clicks, row selection, model changes, chart
   animation, persisted settings and renderer recovery without real provider calls.
+
+### Conversation delivery and transcript repair — 2026-11-15
+
+Made ordinary coding assistance the primary agent behavior. Replaced the
+triage-heavy system prompt with current-request guidance and removed forced
+verification follow-ups from the runtime. Bare greetings have an empty tool
+schema, `tool_choice=none`, and a runtime guard against unexpected tool calls.
+Historical system/skill steering is refreshed rather than silently replayed.
+User messages are recorded before provider execution, including failed/cancelled
+turns. Assistant prefaces no longer terminate responses that also request tools.
+
+Changed normal Enter delivery during a run from live steering to a FIFO queue;
+Tab shares the queue, preserves whitespace/history, and excludes API-key entry.
+Cancellation pauses pending turns; empty Enter resumes them. Missing credentials
+and skill errors retain unsent prompts. New requests no longer overwrite each
+other. Explicit steering preserves outstanding tool results. Old session diffs do
+not schedule checks after unrelated replies; inherited automation defaults require
+fresh opt-in. Framework detection recognizes Swift packages without assuming that
+a `tests` directory is Python; Swift commands produce verification evidence.
+
+Added drag selection/copy over rendered plain-text transcript cells, bounded wheel
+scrolling, and a stable viewport during streamed output. Escape closes/deselects
+or cancels; it never exits an idle app. Fixed permission-card resets that exposed
+black holes in its padding. Set contrasting cursor colors and restore them at
+terminal teardown. API-key input never enters history or the follow-up queue.
+
+Native Mac acceptance covers an idle Escape, greeting with stale session changes,
+three distinct queued turns, preface plus real read tool, permission-gated edits,
+scrolling/copy via captured OSC52, stable scrolling during streaming, and terminal
+restoration. Live provider checks in a temporary fixture also passed: greeting
+with zero tools and a random marker retrieved through read_file. No proprietary
+project source was sent. The VM verifier rejected this checkout because it is
+outside its configured work folder; its boundary was left unchanged and no VM
+verification verdict is claimed.

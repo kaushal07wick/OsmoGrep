@@ -4,7 +4,7 @@ import { introFrame, introPng } from './intro.ts';
 import { drawPanel, permissionLines, type PanelView } from './panels.ts';
 import type {Scene} from './scenes.ts';
 import {statusLayout,activity,type StatusEntry} from './chrome.ts';
-import {diffLines,type FileDiff} from './transcript.ts';
+import {diffLines,highlightTranscript,selectedTranscript,type TranscriptSelection,type FileDiff} from './transcript.ts';
 import {paperRow,paperColors,paperGraphic} from './paper.ts';
 
 export interface Rect { x: number; y: number; width: number; height: number }
@@ -28,6 +28,9 @@ export interface View {
   statusEntries?: StatusEntry[];
   runElapsed?:number;
   expandTools?:boolean;
+  scrollTop?:number;
+  queuedMessages?:number;queuePaused?:boolean;
+  transcriptSelection?:TranscriptSelection|null;
   shortcuts?: Record<string,string>;
   preferences?: {status_fields:string[]; reduce_motion:boolean; ambient_art:boolean};
 }
@@ -37,6 +40,8 @@ export interface Rendered {
   animate: boolean;
   artwork: Rect | null;
   controls?:{id:'model'|'provider'|'choice';index?:number;label?:string;x:number;y:number;width:number;height:number}[];
+  transcript?:{x:number;y:number;width:number;height:number;start:number;maxScroll:number;lineWidths:number[]};
+  selectionText?:string;
   images: { id: number; x: number; y: number; sequence: string; placement?:string }[];
 }
 const reset = '\x1b[0m';
@@ -149,8 +154,8 @@ export function render(v: View): Rendered {
   if(v.stream)transcript.push(...markdown(v.stream+'▍',width-pad*2));
   if (v.plan.length) transcript.push('', ...v.plan.map(p => `${p.done ? '✓' : p.active ? '›' : '·'} ${clean(p.text)}`));
   const maxScroll = Math.max(0, transcript.length - execution.height);
-  const start = v.followTail ? maxScroll : Math.max(0, maxScroll - v.scroll);
-  transcript.slice(start, start + execution.height).forEach((line, i) => put(execution.y + i, line, gutter + pad, width - pad * 2));
+  const start = v.followTail ? maxScroll : Math.max(0,Math.min(maxScroll,v.scrollTop??maxScroll-v.scroll));
+  transcript.slice(start, start + execution.height).forEach((line, i) => put(execution.y + i, highlightTranscript(line,start+i,v.transcriptSelection,light), gutter + pad, width - pad * 2));
 
   let artwork: Rect | null = null;
   const images: Rendered['images'] = [];
@@ -171,7 +176,7 @@ export function render(v: View): Rendered {
 
   const status = v.update ?? v.voice ?? (v.permission&&!v.approval?v.permission:null) ?? (v.running ? activity(v.runElapsed??v.elapsed,v.approval?'Waiting for permission':v.phase,v.approval||v.phase==='thinking'?null:v.tool,!!v.preferences?.reduce_motion) : '');
   if(status){const action=v.running?'esc interrupt':'';const left=clip(status,Math.max(1,width-action.length-4));put(composerY-1,accent+left+reset+(width>action.length+visibleWidth(left)+3?' '.repeat(width-visibleWidth(left)-action.length)+dim+action+reset:''));}
-  if(approvalHeight){const y=composerY-approvalHeight-2;approvalRows.slice(0,approvalHeight).forEach((line,i)=>{const content=clip(line,width-2);put(y+i,bg+content+' '.repeat(Math.max(0,width-visibleWidth(content)))+reset);});}
+  if(approvalHeight){const y=composerY-approvalHeight-2;approvalRows.slice(0,approvalHeight).forEach((line,i)=>{const content=clip(line,width-2);put(y+i,bg+content.replaceAll(reset,reset+bg+fg)+' '.repeat(Math.max(0,width-visibleWidth(content)))+reset);});}
   for (let y = composerY; y < composerY + composerHeight; y++) put(y, paperRow('',width,y-composerY,composerHeight,light,paperGraphics));
   if (previewHeight) {
     let x = gutter + pad + 2;
@@ -204,7 +209,7 @@ export function render(v: View): Rendered {
   }
   if (footerHeight) {
     const permission = v.planMode ? 'plan mode' : v.autoApprove ? 'auto-approve on' : 'ask approvals';
-    const right = dim+(v.running?`${v.shortcuts?.queue??'tab'} queue`:'/help')+reset;
+    const right = dim+((v.queuedMessages??0)>0?`${v.queuedMessages} queued${v.queuePaused?' · enter resume':''}`:v.running?`${v.shortcuts?.queue??'tab'} queue`:'/help')+reset;
     const reserve=width>=60?visibleWidth(right)+3:0;
     const entries=v.statusEntries??(v.statusLine?v.statusLine.map((value,i)=>({id:value.startsWith('~')||value.startsWith('/')?'directory':i===0?'model':'optional',value})):[{id:'permissions',value:`${v.profile} · ${permission}`}]);
     const fields=entries.flatMap(e=>e.id==='model'?[{id:'model',value:clean(v.model)+' ▾'},{id:'provider',value:clean(v.provider)+' ▾'}]:[e]);
@@ -259,5 +264,7 @@ export function render(v: View): Rendered {
     }), input: inputRect, execution, editorWidth: textWidth, animate: v.running || !!artwork && introElapsed < introDuration, artwork,
     cursor: { x: Math.min(w - 1, gutter + pad + 2 + input.position.x), y: Math.min(h - 1, textY + input.position.y - topLine) },
     images, controls,
+    transcript:{x:gutter+pad,y:execution.y,width:Math.max(1,width-pad*2),height:execution.height,start,maxScroll,lineWidths:transcript.slice(start,start+execution.height).map(line=>Math.min(Math.max(1,width-pad*2),visibleWidth(line)))},
+    selectionText:selectedTranscript(transcript,v.transcriptSelection),
   };
 }

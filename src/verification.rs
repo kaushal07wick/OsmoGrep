@@ -277,6 +277,11 @@ fn detect_tokens(tokens: &[String]) -> Option<(String, String, Vec<String>)> {
     let first = tokens.first()?.as_str();
     match first {
         "cargo" => detect_cargo(tokens),
+        "swift" if matches!(tokens.get(1).map(String::as_str), Some("test" | "build")) => Some((
+            format!("swift {}", tokens[1]),
+            if tokens[1] == "test" { "test" } else { "build" }.into(),
+            tokens[2..].to_vec(),
+        )),
         "go" if tokens.get(1).map(String::as_str) == Some("test") => Some((
             "go test".to_string(),
             "test".to_string(),
@@ -498,6 +503,25 @@ pub fn staleness_to_json(stale: &Option<VerificationStaleness>) -> serde_json::V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn swift_test_and_build_produce_real_verification_evidence() {
+        let test = classify_command(
+            Path::new("."),
+            "swift test --filter ParserTests",
+            0,
+            "passed",
+        )
+        .unwrap();
+        assert_eq!(test.canonical_command, "swift test");
+        assert_eq!(test.kind, "test");
+        assert_eq!(
+            classify_command(Path::new("."), "swift build", 0, "built")
+                .unwrap()
+                .kind,
+            "build"
+        );
+    }
 
     #[test]
     fn classifies_cargo_test_as_full_verification() {

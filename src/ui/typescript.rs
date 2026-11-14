@@ -10,7 +10,7 @@ use std::{
 
 use crossterm::{
     cursor::MoveTo,
-    event::{DisableMouseCapture, Event, MouseButton, MouseEventKind},
+    event::{DisableMouseCapture, Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind},
     execute, queue,
     style::Print,
     terminal::{Clear, ClearType},
@@ -76,6 +76,28 @@ struct Control {
     area: Region,
 }
 #[derive(Deserialize)]
+struct Transcript {
+    #[serde(flatten)]
+    area: Region,
+    start: usize,
+    #[serde(rename = "maxScroll")]
+    max_scroll: usize,
+    #[serde(rename = "lineWidths")]
+    line_widths: Vec<usize>,
+}
+impl Transcript {
+    fn point(&self, x: u16, y: u16) -> Option<[usize; 2]> {
+        if self.line_widths.is_empty() {
+            return None;
+        }
+        let row = (y.saturating_sub(self.area.y) as usize).min(self.line_widths.len() - 1);
+        Some([
+            self.start + row,
+            (x.saturating_sub(self.area.x) as usize).min(self.line_widths[row]),
+        ])
+    }
+}
+#[derive(Deserialize)]
 struct Frame {
     id: u64,
     rows: Vec<String>,
@@ -91,6 +113,10 @@ struct Frame {
     images: Vec<Preview>,
     #[serde(default)]
     controls: Vec<Control>,
+    #[serde(default)]
+    transcript: Option<Transcript>,
+    #[serde(default, rename = "selectionText")]
+    selection_text: String,
 }
 
 struct IntroInteraction {
@@ -147,6 +173,9 @@ pub struct TypeScriptUi {
     controls: Vec<Control>,
     size: (u16, u16),
     intro: IntroInteraction,
+    transcript: Option<Transcript>,
+    selecting: bool,
+    copy_pending: bool,
 }
 
 impl TypeScriptUi {
@@ -253,10 +282,17 @@ impl TypeScriptUi {
             controls: Vec::new(),
             size: (0, 0),
             intro: IntroInteraction::default(),
+            transcript: None,
+            selecting: false,
+            copy_pending: false,
         })
     }
 
     pub fn handle_visual_event(&mut self, event: &Event, state: &mut AgentState) -> bool {
+        if matches!(event,Event::Mouse(m) if m.kind==MouseEventKind::Down(MouseButton::Left)) {
+            self.selecting = false;
+            self.copy_pending = false;
+        }
         if state.ui.pending_permission.is_none() && state.ui.pending_update.is_none() {
             if let Event::Mouse(mouse) = event {
                 if mouse.kind == MouseEventKind::Down(MouseButton::Left)
@@ -297,12 +333,70 @@ impl TypeScriptUi {
                 }
             }
         }
+        if let Event::Key(key) = event {
+            if state.ui.transcript_selection.is_some()
+                && key.code == KeyCode::Char('c')
+                && key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER)
+            {
+                self.copy_pending = true;
+                return true;
+            }
+            if matches!(
+                key.code,
+                KeyCode::Char(_) | KeyCode::Enter | KeyCode::Backspace
+            ) && !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+            {
+                state.ui.transcript_selection = None;
+            }
+        }
+        if state.ui.panel.is_none() {
+            if let Event::Mouse(mouse) = event {
+                match mouse.kind {
+                    MouseEventKind::Down(MouseButton::Left) if mouse.modifiers.is_empty() => {
+                        state.ui.transcript_selection = None;
+                        if let Some(view) = &self.transcript {
+                            if view.area.rect().contains((mouse.column, mouse.row).into()) {
+                                if let Some(point) = view.point(mouse.column, mouse.row) {
+                                    state.ui.transcript_selection = Some([point, point]);
+                                    self.selecting = true;
+                                    state.ui.input_all_selected = false;
+                                    state.ui.input_selection_anchor = None;
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                    MouseEventKind::Drag(MouseButton::Left)
+                    | MouseEventKind::Up(MouseButton::Left)
+                        if self.selecting =>
+                    {
+                        if let (Some(view), Some(range)) =
+                            (&self.transcript, state.ui.transcript_selection.as_mut())
+                        {
+                            if let Some(point) = view.point(mouse.column, mouse.row) {
+                                range[1] = point;
+                            }
+                        }
+                        if mouse.kind == MouseEventKind::Up(MouseButton::Left) {
+                            self.selecting = false;
+                            self.copy_pending = true;
+                        }
+                        return true;
+                    }
+                    _ => {}
+                }
+            }
+        }
         self.intro.handle_event(event)
     }
 
     pub fn draw(
         &mut self,
-        state: &AgentState,
+        state: &mut AgentState,
         model: &ModelConfig,
         width: u16,
         height: u16,
@@ -328,6 +422,12 @@ impl TypeScriptUi {
             || frame.rows.len() != height as usize
             || !frame.input.inside(width, height)
             || !frame.execution.inside(width, height)
+            || frame.transcript.as_ref().is_some_and(|t| {
+                !t.area.inside(width, height)
+                    || t.start > t.max_scroll
+                    || t.line_widths.len() > t.area.height as usize
+                    || t.line_widths.iter().any(|w| *w > t.area.width as usize)
+            })
             || frame.controls.iter().any(|c| {
                 !matches!(c.id.as_str(), "model" | "provider" | "choice")
                     || c.id == "choice"
@@ -357,13 +457,14 @@ impl TypeScriptUi {
             .map_err(|e| e.to_string())?;
         self.intro.area = frame.artwork.as_ref().map(Region::rect);
         self.intro.playing = self.intro.area.is_some() && frame.animate;
-        let capture = (self.intro.area.is_some() || !frame.controls.is_empty())
-            && super::terminal::artwork_mouse_enabled()
-            && !super::terminal::mouse_capture_enabled();
+        let capture =
+            (frame.execution.height > 0 || self.intro.area.is_some() || !frame.controls.is_empty())
+                && super::terminal::artwork_mouse_enabled()
+                && !super::terminal::mouse_capture_enabled();
         if capture != self.intro.capture {
             if capture {
-                // Button events only; pointer motion never affects the startup sequence.
-                queue!(output, Print("\x1b[?1000h\x1b[?1006h"))
+                // Drag events support transcript selection; hover never affects artwork.
+                queue!(output, Print("\x1b[?1002h\x1b[?1006h"))
             } else {
                 queue!(output, DisableMouseCapture)
             }
@@ -407,6 +508,13 @@ impl TypeScriptUi {
         }
         self.images = frame.images;
         self.controls = frame.controls;
+        if let Some(view) = &frame.transcript {
+            state.ui.exec_scroll_max = view.max_scroll;
+            if !state.ui.follow_tail {
+                state.ui.exec_scroll = view.max_scroll.saturating_sub(view.start);
+            }
+        }
+        self.transcript = frame.transcript;
         queue!(
             output,
             MoveTo(frame.cursor.x, frame.cursor.y),
@@ -418,6 +526,16 @@ impl TypeScriptUi {
         )
         .map_err(|e| e.to_string())?;
         output.flush().map_err(|e| e.to_string())?;
+        if self.copy_pending {
+            self.copy_pending = false;
+            if state.ui.transcript_selection.is_some() && !frame.selection_text.is_empty() {
+                state.ui.input_clipboard = frame.selection_text.clone();
+                if let Err(error) = crate::clipboard::copy_text_to_clipboard(&frame.selection_text)
+                {
+                    crate::logger::log_status(state, format!("Copy failed: {error}"));
+                }
+            }
+        }
         self.previous = frame.rows;
         self.size = (width, height);
         Ok((
@@ -495,6 +613,12 @@ fn view(state: &AgentState, model: &ModelConfig, id: u64, width: u16, height: u1
         "commands":ui.command_items.iter().map(|c|json!({"cmd":c.cmd,"desc":c.desc})).collect::<Vec<_>>(),
         "selectedCommand":ui.command_selected, "tokens":state.usage.prompt_tokens+state.usage.completion_tokens,
     });
+    snapshot["queuedMessages"] = json!(ui.queued_agent_prompts.len());
+    snapshot["queuePaused"] = json!(ui.queue_paused);
+    snapshot["transcriptSelection"] = json!(ui.transcript_selection);
+    if !ui.follow_tail && ui.exec_scroll_max != usize::MAX {
+        snapshot["scrollTop"] = json!(ui.exec_scroll_max.saturating_sub(ui.exec_scroll));
+    }
     snapshot["panel"] = serde_json::to_value(super::workbench::view(state)).unwrap_or(Value::Null);
     snapshot["shortcuts"] = json!(super::keymap::BINDINGS
         .iter()
@@ -579,6 +703,24 @@ mod tests {
         mouse.kind = MouseEventKind::Down(MouseButton::Left);
         assert!(!intro.handle_event(&Event::Mouse(mouse)));
         assert!(intro.started.is_none());
+    }
+
+    #[test]
+    fn transcript_points_are_clamped_to_visible_text_and_global_scroll_rows() {
+        let view = Transcript {
+            area: Region {
+                x: 3,
+                y: 5,
+                width: 40,
+                height: 12,
+            },
+            start: 50,
+            max_scroll: 100,
+            line_widths: vec![8, 4],
+        };
+        assert_eq!(view.point(5, 5), Some([50, 2]));
+        assert_eq!(view.point(100, 100), Some([51, 4]));
+        assert_eq!(view.point(0, 0), Some([50, 0]));
     }
 
     #[test]

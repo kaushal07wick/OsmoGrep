@@ -267,6 +267,9 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
 
             let raw = state.ui.input.trim();
             if raw.is_empty() {
+                if !state.ui.agent_running && !state.ui.queued_agent_prompts.is_empty() {
+                    state.ui.queue_paused = false;
+                }
                 return;
             }
 
@@ -303,10 +306,11 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
 
         /* ---------- Autocomplete ---------- */
         KeyCode::Tab => {
-            if state.ui.agent_running {
-                let raw = state.ui.input.trim();
-                if !raw.is_empty() {
-                    state.ui.queued_agent_prompt = Some(raw.to_string());
+            if state.ui.agent_running && state.ui.input_mode != InputMode::ApiKey {
+                let raw = state.ui.input.clone();
+                if !raw.trim().is_empty() {
+                    let raw = state.commit_input();
+                    state.ui.queued_agent_prompts.push_back(raw);
                     state.ui.input.clear();
                     state.ui.input_cursor = 0;
                     state.ui.input_all_selected = false;
@@ -362,7 +366,15 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
             if state.ui.agent_running {
                 state.ui.cancel_requested = true;
             } else {
-                state.ui.should_exit = true;
+                state.ui.transcript_selection = None;
+                state.ui.input_all_selected = false;
+                state.ui.input_selection_anchor = None;
+                if state.ui.input_mode == InputMode::ApiKey {
+                    state.clear_input();
+                    state.ui.input_mode = InputMode::AgentText;
+                    state.ui.input_masked = false;
+                    state.ui.input_placeholder = None;
+                }
             }
         }
 
@@ -371,6 +383,7 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
 }
 
 fn request_agent_cancel(state: &mut AgentState) {
+    state.ui.queue_paused = true;
     state.discard_diff_preview();
     if state.ui.cancelling {
         return;
@@ -397,8 +410,9 @@ fn request_agent_cancel(state: &mut AgentState) {
 
 fn scroll_execution_back(state: &mut AgentState, step: usize) {
     let (offset, follow_tail) = scroll_back_offset(state.ui.exec_scroll, step);
-    state.ui.exec_scroll = offset;
-    state.ui.follow_tail = follow_tail;
+    let offset = offset.min(state.ui.exec_scroll_max);
+    state.ui.exec_scroll = if offset == 0 { usize::MAX } else { offset };
+    state.ui.follow_tail = follow_tail || offset == 0;
 }
 
 fn scroll_execution_toward_tail(state: &mut AgentState, step: usize) {
@@ -481,8 +495,7 @@ fn apply_input_control_action(state: &mut AgentState, action: InputControlAction
                 let _ = crate::clipboard::copy_text_to_clipboard(&state.ui.input_clipboard);
                 crate::logger::log_status(state, "Copied input.");
             } else if state.ui.agent_running {
-                state.ui.cancel_requested = true;
-                crate::logger::log_status(state, "Cancel requested.");
+                request_agent_cancel(state);
             }
         }
         InputControlAction::CopyOutput => {
@@ -679,6 +692,74 @@ mod tests {
     }
 
     #[test]
+    fn queued_inputs_are_fifo_and_escape_pauses_without_dropping_them() {
+        let mut state = crate::init_state();
+        state.ui.agent_running = true;
+        for text in ["first", "second"] {
+            state.ui.input = text.into();
+            state.ui.input_cursor = text.len();
+            handle_key(&mut state, key(KeyCode::Tab));
+        }
+        assert_eq!(
+            state
+                .ui
+                .queued_agent_prompts
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec!["first", "second"]
+        );
+        handle_key(&mut state, key(KeyCode::Esc));
+        assert!(state.ui.queue_paused);
+        assert_eq!(state.ui.queued_agent_prompts.len(), 2);
+        state.ui.agent_running = false;
+        handle_key(&mut state, key(KeyCode::Enter));
+        assert!(!state.ui.queue_paused);
+        assert_eq!(
+            state.ui.queued_agent_prompts.pop_front().as_deref(),
+            Some("first")
+        );
+    }
+
+    #[test]
+    fn tab_during_api_key_entry_never_sends_the_key_to_the_agent() {
+        let mut state = crate::init_state();
+        state.ui.agent_running = true;
+        state.ui.input_mode = crate::state::InputMode::ApiKey;
+        state.ui.input = "example-key".into();
+        handle_key(&mut state, key(KeyCode::Tab));
+        assert!(state.ui.queued_agent_prompts.is_empty());
+        assert_eq!(state.ui.input, "example-key");
+    }
+
+    #[test]
+    fn escape_never_exits_an_idle_session_or_discards_a_draft() {
+        let mut state = crate::init_state();
+        state.ui.input = "keep draft".into();
+        for _ in 0..3 {
+            handle_key(&mut state, key(KeyCode::Esc));
+        }
+        assert!(!state.ui.should_exit);
+        assert_eq!(state.ui.input, "keep draft");
+        state.ui.input_mode = crate::state::InputMode::ApiKey;
+        state.ui.input = "secret".into();
+        handle_key(&mut state, key(KeyCode::Esc));
+        assert!(!state.ui.should_exit);
+        assert!(state.ui.input.is_empty());
+        assert_eq!(state.ui.input_mode, crate::state::InputMode::AgentText);
+    }
+
+    #[test]
+    fn transcript_scroll_cannot_accumulate_past_the_oldest_visible_line() {
+        let mut state = crate::init_state();
+        state.ui.exec_scroll_max = 20;
+        super::scroll_execution_back(&mut state, 100);
+        assert_eq!(state.ui.exec_scroll, 20);
+        super::scroll_execution_toward_tail(&mut state, 12);
+        assert_eq!(state.ui.exec_scroll, 8);
+    }
+
+    #[test]
     fn scroll_toward_tail_recovers_follow_mode_at_bottom() {
         assert_eq!(scroll_toward_tail_offset(3, 6), (usize::MAX, true));
         assert_eq!(scroll_toward_tail_offset(0, 6), (usize::MAX, true));
@@ -763,6 +844,20 @@ mod tests {
 }
 
 fn handle_mouse(state: &mut AgentState, m: MouseEvent) {
+    if state.ui.panel.is_some()
+        && state.ui.pending_permission.is_none()
+        && state.ui.pending_update.is_none()
+    {
+        let code = match m.kind {
+            MouseEventKind::ScrollUp => Some(KeyCode::Up),
+            MouseEventKind::ScrollDown => Some(KeyCode::Down),
+            _ => None,
+        };
+        if let Some(code) = code {
+            crate::ui::workbench::handle_key(state, KeyEvent::new(code, KeyModifiers::NONE));
+            return;
+        }
+    }
     match m.kind {
         MouseEventKind::ScrollUp => {
             scroll_execution_back(state, SCROLL_WHEEL_STEP);

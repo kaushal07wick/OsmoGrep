@@ -20,6 +20,7 @@ pub struct TuiRuntime {
     animating: bool,
     last_visual: Option<std::time::Instant>,
     last_size: Rect,
+    cursor_theme: Option<crate::state::UiTheme>,
 }
 
 impl Default for TuiRuntime {
@@ -43,6 +44,7 @@ impl Default for TuiRuntime {
             animating: false,
             last_visual: None,
             last_size: Rect::default(),
+            cursor_theme: None,
         }
     }
 }
@@ -77,6 +79,12 @@ impl TuiRuntime {
         {
             return Ok(());
         }
+        if self.cursor_theme != Some(state.theme) {
+            use std::io::Write;
+            io::stdout().write_all(super::terminal::cursor_appearance(state.theme).as_bytes())?;
+            io::stdout().flush()?;
+            self.cursor_theme = Some(state.theme);
+        }
         if let Some(ui) = self.typescript.as_mut() {
             let size = terminal.size()?;
             match ui.draw(state, model, size.width, size.height) {
@@ -105,6 +113,11 @@ impl TuiRuntime {
             );
         }
 
+        use std::io::Write;
+        if super::terminal::artwork_mouse_enabled() {
+            io::stdout().write_all(b"\x1b[?1002h\x1b[?1006h")?;
+        }
+        state.ui.exec_scroll_max = usize::MAX;
         let (input, _, exec) = draw_ui(terminal, state)?;
         self.input_rect = input;
         self.exec_rect = exec;

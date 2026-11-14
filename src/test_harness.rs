@@ -80,9 +80,7 @@ fn detect_framework_and_command(
 
     let cargo = repo_root.join("Cargo.toml").exists();
     let go = repo_root.join("go.mod").exists();
-    let py = repo_root.join("pyproject.toml").exists()
-        || repo_root.join("pytest.ini").exists()
-        || repo_root.join("tests").exists();
+    let py = repo_root.join("pyproject.toml").exists() || repo_root.join("pytest.ini").exists();
     let pkg = repo_root.join("package.json");
     let js = if pkg.exists() {
         fs::read_to_string(pkg)
@@ -95,6 +93,8 @@ fn detect_framework_and_command(
 
     let (framework, mut cmd) = if cargo {
         ("cargo", "cargo test --color never".to_string())
+    } else if repo_root.join("Package.swift").is_file() {
+        ("swift", "swift test".to_string())
     } else if py {
         ("pytest", "pytest -q".to_string())
     } else if js {
@@ -102,12 +102,19 @@ fn detect_framework_and_command(
     } else if go {
         ("go", "go test ./...".to_string())
     } else {
-        return Err("No supported test framework detected (cargo/pytest/jest/go).".to_string());
+        return Err(
+            "No supported test framework detected (cargo/swift/pytest/jest/go).".to_string(),
+        );
     };
 
     if !target.is_empty() {
+        if framework == "swift" {
+            cmd.push_str(" --filter");
+        }
         cmd.push(' ');
-        cmd.push_str(target);
+        cmd.push('\'');
+        cmd.push_str(&target.replace('\'', "'\\''"));
+        cmd.push('\'');
     }
 
     Ok((framework.to_string(), cmd))
@@ -119,6 +126,18 @@ fn parse_counts(framework: &str, output: &str) -> (usize, usize) {
         "pytest" => parse_pytest_counts(output),
         "jest" => parse_jest_counts(output),
         "go" => parse_go_counts(output),
+        "swift" => {
+            let pattern = Regex::new(r"Executed (\d+) tests?, with (\d+) failures?").unwrap();
+            pattern
+                .captures_iter(output)
+                .last()
+                .map(|c| {
+                    let total = c[1].parse::<usize>().unwrap_or(0);
+                    let failed = c[2].parse::<usize>().unwrap_or(0);
+                    (total.saturating_sub(failed), failed)
+                })
+                .unwrap_or((0, 0))
+        }
         _ => (0, 0),
     }
 }
@@ -203,4 +222,32 @@ fn truncate_output(s: &str) -> String {
         .collect();
 
     format!("...truncated...\n{}", tail)
+}
+
+#[cfg(test)]
+mod regression_tests {
+    use super::*;
+    #[test]
+    fn swift_packages_are_not_misclassified_from_their_tests_directory() {
+        let root =
+            std::env::temp_dir().join(format!("osmogrep-framework-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("tests")).unwrap();
+        assert!(detect_framework_and_command(&root, None).is_err());
+        fs::write(root.join("Package.swift"), "// swift-tools-version: 6.0").unwrap();
+        assert_eq!(
+            detect_framework_and_command(&root, None).unwrap(),
+            ("swift".into(), "swift test".into())
+        );
+        assert_eq!(
+            detect_framework_and_command(&root, Some("ParserTests"))
+                .unwrap()
+                .1,
+            "swift test --filter 'ParserTests'"
+        );
+        assert_eq!(
+            parse_counts("swift", "Executed 12 tests, with 2 failures"),
+            (10, 2)
+        );
+        let _ = fs::remove_dir_all(root);
+    }
 }

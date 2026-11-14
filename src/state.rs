@@ -110,6 +110,9 @@ pub struct UiState {
     pub command_selected: usize,
     pub last_activity: Instant,
     pub exec_scroll: usize,
+    pub exec_scroll_max: usize,
+    pub transcript_selection: Option<[[usize; 2]; 2]>,
+    pub run_change_start: usize,
     pub follow_tail: bool,
     pub active_spinner: Option<String>,
     pub spinner_started_at: Option<Instant>,
@@ -135,7 +138,8 @@ pub struct UiState {
     pub streaming_lines_logged: usize,
     pub editor_session: Option<crate::editor::Session>,
     pub active_edit_target: Option<String>,
-    pub queued_agent_prompt: Option<String>,
+    pub queued_agent_prompts: VecDeque<String>,
+    pub queue_paused: bool,
     pub repo_branch: Option<String>,
 }
 
@@ -174,6 +178,9 @@ impl Default for UiState {
             command_selected: 0,
             last_activity: Instant::now(),
             exec_scroll: usize::MAX,
+            exec_scroll_max: usize::MAX,
+            transcript_selection: None,
+            run_change_start: 0,
             follow_tail: true,
             active_spinner: None,
             spinner_started_at: None,
@@ -199,7 +206,8 @@ impl Default for UiState {
             streaming_lines_logged: 0,
             editor_session: None,
             active_edit_target: None,
-            queued_agent_prompt: None,
+            queued_agent_prompts: VecDeque::new(),
+            queue_paused: false,
             repo_branch: None,
         }
     }
@@ -756,8 +764,8 @@ impl AgentState {
         let raw = self.ui.input.clone();
         let trimmed = raw.trim();
 
-        if !trimmed.is_empty() {
-            self.ui.history.push(trimmed.to_string());
+        if !trimmed.is_empty() && self.ui.input_mode != InputMode::ApiKey {
+            self.ui.history.push(raw.clone());
         }
 
         self.ui.input.clear();
@@ -1161,6 +1169,18 @@ mod tests {
         assert_eq!(state.ui.input_cursor, 7);
         state.insert_text("X");
         assert_eq!(state.ui.input, "1234567X89abcdef");
+    }
+
+    #[test]
+    fn submitted_text_keeps_whitespace_and_credentials_never_enter_history() {
+        let mut state = agent_state_with_input("  hello\n  world\n");
+        let expected = state.ui.input.clone();
+        assert_eq!(state.commit_input(), expected);
+        assert_eq!(state.ui.history.last(), Some(&expected));
+        state.ui.input_mode = InputMode::ApiKey;
+        state.ui.input = "example-key".into();
+        state.commit_input();
+        assert_eq!(state.ui.history.len(), 1);
     }
 
     fn agent_state_with_input(input: &str) -> AgentState {

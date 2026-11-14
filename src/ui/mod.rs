@@ -8,5 +8,5 @@ pub mod markdown;
 pub mod runtime;
 pub mod terminal;
 pub mod tui;
-pub mod workbench;
 mod typescript;
+pub mod workbench;

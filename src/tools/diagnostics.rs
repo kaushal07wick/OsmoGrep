@@ -78,6 +78,8 @@ impl Tool for Diagnostics {
 fn default_command() -> String {
     if Path::new("Cargo.toml").exists() {
         "cargo check --message-format short".to_string()
+    } else if Path::new("Package.swift").exists() {
+        "swift build".to_string()
     } else if Path::new("pyproject.toml").exists() {
         "ruff check . || pytest -q".to_string()
     } else if Path::new("package.json").exists() {

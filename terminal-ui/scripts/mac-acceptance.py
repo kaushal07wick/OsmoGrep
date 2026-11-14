@@ -56,18 +56,46 @@ class Model(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         requests.append(body)
+        latest=next((m.get('content','') for m in reversed(body['input']) if m.get('role')=='user'),'')
+        latest=latest if isinstance(latest,str) else json.dumps(latest)
         value = {'id':'local_ui_response','usage':{'input_tokens':1234,'output_tokens':56,'input_tokens_details':{'cached_tokens':200}},'output':[{'type':'message','role':'assistant','content':[{'type':'output_text','text':'IMAGE_REQUEST_OK'}]}]}
-        if 'UI_PERMISSION_PROBE' in json.dumps(body):
+        def message(text): return [{'type':'message','role':'assistant','content':[{'type':'output_text','text':text}]}]
+        prefix=b'';delay=0
+        if latest=='hello':
+            assert body['tool_choice']=='none' and body['tools']==[]
+            assert 'obsolete instructions' not in json.dumps(body['input'][0]).lower()
+            value.pop('usage');value['output']=message('GREETING_ONLY_OK')
+        elif latest.startswith('QUEUE_'):
+            value.pop('usage');value['output']=message(latest+'_COMPLETE')
+            if latest=='QUEUE_FIRST':
+                prefix=('data: '+json.dumps({'type':'response.output_text.delta','delta':'QUEUE_FIRST_'})+'\n\n').encode();delay=3
+                tail=('data: '+json.dumps({'type':'response.output_text.delta','delta':'COMPLETE'})+'\n\n').encode()
+            else: tail=b''
+        elif latest=='STREAM_SCROLL_PROBE':
+            value.pop('usage')
+            beginning='\n\n'.join(f'STREAM_LINE_{i:03}' for i in range(80))+'\n\n'
+            ending='\n\n'.join(f'STREAM_LINE_{i:03}' for i in range(80,100))+'\n'
+            prefix=('data: '+json.dumps({'type':'response.output_text.delta','delta':beginning})+'\n\n').encode();delay=3
+            tail=('data: '+json.dumps({'type':'response.output_text.delta','delta':ending})+'\n\n').encode()
+            value['output']=message(beginning+ending)
+        elif latest=='READ_PROBE':
+            value.pop('usage')
+            if any(m.get('type')=='function_call_output' for m in body['input']):
+                assert 'CONVERSATION_SOURCE' in json.dumps(body['input'])
+                value['output']=message('READ_PROBE_OK')
+            else:
+                value['output']=message('I will read the requested file.')+[{'type':'function_call','name':'read_file','call_id':'read_probe','arguments':json.dumps({'path':'conversation.txt'})}]
+        elif latest=='SCROLL_PROBE':
+            value.pop('usage');value['output']=message('\n\n'.join(f'SCROLL_LINE_{i:03}' for i in range(200)))
+        elif latest=='UI_PERMISSION_PROBE':
             if not Model.permission_issued:
                 Model.permission_issued=True
                 value['output']=[{'type':'function_call','name':'edit_file','call_id':'permission_probe','arguments':json.dumps({'path':'permission.txt','old':'before','new':'after'})}]
-            else:
-                value['output']=[{'type':'message','role':'assistant','content':[{'type':'output_text','text':'PERMISSION_FLOW_OK'}]}]
-        data = ('data: '+json.dumps({'type':'response.completed','response':value})+'\n\ndata: [DONE]\n\n').encode()
-        self.send_response(200)
-        self.send_header('Content-Type','text/event-stream')
-        self.send_header('Content-Length',str(len(data)))
-        self.end_headers()
+            else: value['output']=message('PERMISSION_FLOW_OK')
+        data = (('data: '+json.dumps({'type':'response.completed','response':value})+'\n\ndata: [DONE]\n\n').encode())
+        if latest in ['QUEUE_FIRST','STREAM_SCROLL_PROBE']: data=tail+data
+        self.send_response(200);self.send_header('Content-Type','text/event-stream');self.send_header('Content-Length',str(len(prefix)+len(data)));self.end_headers()
+        if prefix: self.wfile.write(prefix);self.wfile.flush();time.sleep(delay)
         self.wfile.write(data)
 
 server = http.server.HTTPServer(('127.0.0.1',0),Model)
@@ -86,6 +114,13 @@ env.update({'TERM':'xterm-ghostty','TERM_PROGRAM':'ghostty','COLORTERM':'truecol
             'NO_PROXY':'127.0.0.1,localhost'})
 env.pop('VLLM_REALTIME_PROXY_LISTEN',None)
 env.pop('OSMOGREP_MOUSE',None)
+env.pop('TMUX',None);env.pop('STY',None)
+env['OSMOGREP_CLIPBOARD_OSC52']='1'
+state_path=test_home/'Library/Application Support/osmogrep/sessions'/(hashlib.sha256(str(repo).encode()).hexdigest()+'.json')
+state_path.parent.mkdir(parents=True,exist_ok=True)
+state_path.write_text(json.dumps({'auto_eval':True,'session_changes':[{'tool':'edit_file','target':'old.rs','before':'old','after':'new'}],'conversation':[{'role':'system','content':'Obsolete instructions: always inspect the repository'},{'role':'user','content':'An old task'},{'role':'assistant','content':'Old task finished'}]}))
+(repo/'.context').mkdir(exist_ok=True)
+(repo/'.context/osmogrep-verification.jsonl').write_text(json.dumps({'type':'workspace_edited','id':'old-source-edit','edited_at':'2020-01-01T00:00:00Z','root':str(repo),'changed_paths':['old.rs']})+'\n')
 
 def controlling_terminal():
     os.setsid()
@@ -148,7 +183,7 @@ try:
     first = len(transcript)
     drain(.7)
     assert graphics(transcript[first:]), 'fine startup frames must use terminal graphics'
-    assert b'\x1b[?1000h' in transcript and b'\x1b[?1003h' not in transcript, 'idle artwork must request buttons, not hover events'
+    assert b'\x1b[?1002h' in transcript and b'\x1b[?1003h' not in transcript, 'idle artwork must request buttons, not hover events'
     drain(10)
     assert len(set(graphics(transcript)))>3, 'startup must advance through distinct morph poses automatically'
     settled = len(transcript)
@@ -171,6 +206,17 @@ try:
     drain(.7)
     assert graphics(transcript[before_click:]), 'click must replay the morph'
     result['central_morph_ignores_hover_and_click_replays'] = True
+    send(b'\x1b\x1b')
+    assert process.poll() is None and b'OSMOGREP_UI_EXIT' not in transcript
+    result['escape_does_not_exit_idle_app']=True
+    at=len(transcript);paste('hello');send(b'\r')
+    wait_for(lambda:b'GREETING_ONLY_OK' in plain(transcript[at:]))
+    drain(.3)
+    assert len(requests)==1 and requests[0]['tool_choice']=='none'
+    assert b'Auto-review queued' not in transcript[at:] and b'Auto-eval queued' not in transcript[at:]
+    assert not json.loads(state_path.read_text()).get('auto_eval',True)
+    result['greeting_has_no_tools_or_stale_background_jobs']=True
+    requests.clear()
     paste('/')
     wait_for(lambda: b'Commands' in transcript and b'move' in transcript)
     assert b'\x1b[?1003h' not in transcript, 'selectors must capture buttons without hover tracking'
@@ -208,6 +254,8 @@ try:
     paste('Light')
     send(b'\r')
     wait_for(lambda:b'\x1b[48;2;237;235;230m' in transcript)
+    assert b'\x1b]12;#53331c\x07' in transcript
+    result['light_cursor_has_explicit_contrast']=True
     send(b'\x15')
     paste('Dark')
     send(b'\r')
@@ -304,6 +352,41 @@ try:
     assert (repo/'permission.txt').read_text()=='after\n'
     assert b'48;2;9;30;20m' in transcript[at:], 'applied diff must use the shaded addition surface'
     result['real_permission_dock_and_numbered_diff'] = True
+    # Ordinary Enter messages remain separate FIFO turns while a response streams.
+    at=len(requests);paste('QUEUE_FIRST');send(b'\r');paste('QUEUE_SECOND');send(b'\r');paste('QUEUE_THIRD');send(b'\r')
+    wait_for(lambda:b'QUEUE_THIRD_COMPLETE' in plain(transcript),seconds=15)
+    delivered=[next(m['content'] for m in reversed(request['input']) if m.get('role')=='user') for request in requests[at:]]
+    assert delivered==['QUEUE_FIRST','QUEUE_SECOND','QUEUE_THIRD'],delivered
+    assert all('[steer-now]' not in json.dumps(r['input']) for r in requests[at:])
+    result['submitted_followups_are_distinct_fifo_turns']=True
+    # A response preface must not prevent subsequent tool calls from executing.
+    (repo/'conversation.txt').write_text('CONVERSATION_SOURCE\n')
+    at=len(requests);paste('READ_PROBE');send(b'\r');wait_for(lambda:b'READ_PROBE_OK' in plain(transcript))
+    assert len(requests[at:])==2
+    result['assistant_preface_does_not_skip_requested_tools']=True
+    at=len(transcript);paste('SCROLL_PROBE');send(b'\r');wait_for(lambda:b'SCROLL_LINE_199' in plain(transcript[at:]))
+    visible=[int(n) for n in re.findall(rb'SCROLL_LINE_(\d+)',plain(transcript[at:]))][-20:]
+    moved=len(transcript);send(b'\x1b[<64;40;12M'*3)
+    older=[int(n) for n in re.findall(rb'SCROLL_LINE_(\d+)',plain(transcript[moved:]))]
+    assert older and min(older)<min(visible),(older,visible)
+    copied_at=len(transcript);send(b'\x1b[<0;4;6M');send(b'\x1b[<32;100;30M');send(b'\x1b[<0;100;30m')
+    wait_for(lambda:b'\x1b]52;c;' in transcript[copied_at:])
+    copies=re.findall(rb'\x1b]52;c;([A-Za-z0-9+/=]+)\x07',transcript[copied_at:])
+    copied=base64.b64decode(copies[-1]).decode()
+    assert 'SCROLL_LINE_' in copied and '\x1b' not in copied
+    result['wheel_scrolling_and_drag_copy_plain_output']=True
+    send(b'\x1b');paste('STREAM_SCROLL_PROBE');send(b'\r')
+    wait_for(lambda:b'STREAM_LINE_079' in plain(transcript))
+    send(b'\x1b[<64;40;12M'*4)
+    held=len(transcript);drain(3.5)
+    assert b'STREAM_LINE_099' not in plain(transcript[held:]), 'streaming must not pull a scrolled transcript back to the bottom'
+    send(b'\x1b[F')
+    wait_for(lambda:b'STREAM_LINE_099' in plain(transcript[held:]))
+    result['streaming_preserves_user_scroll_position']=True
+
+    send(b'\x1b')
+    assert process.poll() is None
+
     for cols,rows in [(100,30),(60,18),(180,50)]:
         fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',rows,cols,0,0))
         os.killpg(process.pid,signal.SIGWINCH)
@@ -335,6 +418,7 @@ try:
     wait_for(lambda:b'OSMOGREP_UI_EXIT=0' in transcript)
     assert termios.tcgetattr(slave)[3]==before[3]
     assert b'\x1b[?1049l' in transcript and b'\x1b[<1u' in transcript
+    assert b'\x1b]112\x07' in transcript and b'\x1b[0 q' in transcript
     result['terminal_state_restored'] = True
     send(b'\n')
     assert process.wait(timeout=3)==0

@@ -28,12 +28,14 @@ route, with a five-second timeout, no redirects and a 2 MiB response bound. No
 agent turn or completion request runs for discovery. Endpoints without a catalog
 retain custom entry. Listed models still need the Responses capability used by
 the existing agent. Saved credentials are scoped by provider, with legacy keys
-preserved; they never enter the renderer. Hold Shift to use terminal-native mouse
-text selection while button reporting is enabled; `OSMOGREP_MOUSE=off` leaves
-keyboard selectors available.
+preserved; they never enter the renderer. Drag over transcript text to select it; release copies plain text to the clipboard.
+Ctrl+C copies that selection again, and Ctrl+O copies the latest response. Hold
+Shift for terminal-native selection instead. `OSMOGREP_MOUSE=off` leaves keyboard
+selectors and transcript copy commands available.
 
 Tab/Shift+Tab switches panel sections. Type to filter, Up/Down to navigate and
-Escape to close without losing a draft. Model-field editing supports paste,
+Escape to close without losing a draft. Escape never exits an idle app; `/exit`
+is the explicit exit command. Model-field editing supports paste,
 Backspace and Ctrl+U to replace a value. In shortcut capture, Backspace restores
 the default and Delete unbinds the action. Conflicts are rejected. Escape and
 Ctrl+C retain cancellation/copy behavior. Pending tool approvals take priority.
@@ -97,3 +99,27 @@ Neovim normally to restore the full agent view. `/nv toggle` requests a save-awa
 close and preserves unsaved buffers until you decide. A standalone agent must
 finish/cancel its current run before the initial tmux handoff. When already in
 your own tmux session, OsmoGrep leaves that session's status bar/options alone.
+
+The normal workflow is coding assistance, not a mandatory test/review pipeline.
+Greetings have no tool access; coding requests use relevant tools and checks.
+Saved conversation system instructions are refreshed each turn; old temporary
+skill/steering instructions do not silently carry into unrelated tasks. Assistant
+prefaces do not stop subsequent tool calls in the same response. There is no
+forced verification-on-stop loop. Legacy background review/evaluation is off by
+default, and old inherited settings do not count as explicit opt-in. Expert
+`/autofix on` enables it only for changes made in the current turn.
+
+Enter while running queues a separate follow-up turn, in order; Tab also queues
+without replacing earlier messages. Queued text and image attachments remain
+associated. Escape cancels current execution and pauses queued messages rather
+than exiting or dropping them. Press Enter with an empty draft to resume a paused
+queue. Explicit live steering remains available through `/steer now`. Ordinary
+messages are never injected as live system steering. Missing credentials or skill
+errors retain the unsent message for resumption. Submitted whitespace is preserved;
+credentials do not enter recall history or the follow-up queue.
+
+The transcript supports wheel/PageUp/PageDown scrolling, with End returning to live
+output. Streaming does not pull a scrolled viewport back to the bottom. Permission
+cards maintain a continuous background across styled text and padding. Cursor
+colors are explicit for Cotton and Graphite and restored on exit. Swift packages
+use `swift test`/`swift build`; a generic `tests` directory no longer implies pytest.

@@ -11,7 +11,6 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 
 pub struct TerminalSession {
     active: bool,
-    mouse_capture: bool,
 }
 
 impl TerminalSession {
@@ -21,24 +20,15 @@ impl TerminalSession {
         }
 
         let raw_result = disable_raw_mode();
-        let screen_result = if self.mouse_capture {
-            execute!(
-                writer,
-                DisableBracketedPaste,
-                DisableMouseCapture,
-                PopKeyboardEnhancementFlags,
-                LeaveAlternateScreen,
-                Show
-            )
-        } else {
-            execute!(
-                writer,
-                DisableBracketedPaste,
-                PopKeyboardEnhancementFlags,
-                LeaveAlternateScreen,
-                Show
-            )
-        };
+        let screen_result = execute!(
+            writer,
+            DisableBracketedPaste,
+            DisableMouseCapture,
+            PopKeyboardEnhancementFlags,
+            crossterm::style::Print("\x1b]112\x07\x1b[0 q"),
+            LeaveAlternateScreen,
+            Show
+        );
         self.active = false;
 
         raw_result?;
@@ -50,6 +40,13 @@ impl TerminalSession {
 impl Drop for TerminalSession {
     fn drop(&mut self) {
         let _ = self.restore_with(io::stdout());
+    }
+}
+
+pub(super) fn cursor_appearance(theme: crate::state::UiTheme) -> &'static str {
+    match theme {
+        crate::state::UiTheme::Light => "\x1b]12;#53331c\x07\x1b[5 q",
+        crate::state::UiTheme::Dark => "\x1b]12;#f0d6be\x07\x1b[5 q",
     }
 }
 
@@ -89,10 +86,7 @@ pub fn setup_terminal() -> Result<TerminalSession, Box<dyn Error>> {
         }
     }
 
-    Ok(TerminalSession {
-        active: true,
-        mouse_capture,
-    })
+    Ok(TerminalSession { active: true })
 }
 
 pub fn teardown_terminal(
@@ -126,6 +120,13 @@ fn parse_mouse_capture_setting(raw: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::parse_mouse_capture_setting;
+
+    #[test]
+    fn both_themes_set_explicit_contrasting_cursor_colors() {
+        assert!(super::cursor_appearance(crate::state::UiTheme::Light).contains("#53331c"));
+        assert!(super::cursor_appearance(crate::state::UiTheme::Dark).contains("#f0d6be"));
+        assert!(super::cursor_appearance(crate::state::UiTheme::Light).ends_with("\x1b[5 q"));
+    }
 
     #[test]
     fn mouse_capture_setting_requires_explicit_enable() {

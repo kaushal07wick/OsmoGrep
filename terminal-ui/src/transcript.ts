@@ -1,4 +1,4 @@
-import {wrapTextWithAnsi,visibleWidth} from '@earendil-works/pi-tui';
+import {wrapTextWithAnsi,visibleWidth,stripTerminalSequences,sliceByColumn} from '@earendil-works/pi-tui';
 import {plain,fit} from './chrome.ts';
 export interface FileDiff {file:string;added?:number;removed?:number;preview?:boolean;lines:{text:string;kind:string;oldLine?:number|null;newLine?:number|null}[]}
 const reset='\x1b[0m';
@@ -18,4 +18,19 @@ export function diffLines(diff:FileDiff,width:number,light:boolean,expanded:bool
   }
   if(selected.length<diff.lines.length)lines.push(dim+`  … ${diff.lines.length-selected.length} more lines · ctrl+t expand`+reset);
   return lines.map(line=>fit(line,width));
+}
+
+export type TranscriptSelection=[[number,number],[number,number]];
+export function orderedSelection(range:TranscriptSelection):TranscriptSelection {
+  return range[0][0]<range[1][0]||range[0][0]===range[1][0]&&range[0][1]<=range[1][1]?range:[range[1],range[0]];
+}
+export function selectedTranscript(lines:string[],range?:TranscriptSelection|null):string {
+  if(!range)return '';const [from,to]=orderedSelection(range);
+  return lines.slice(from[0],to[0]+1).map((line,i)=>stripTerminalSequences(sliceByColumn(line,i===0?from[1]:0,Math.max(0,(from[0]+i===to[0]?to[1]:visibleWidth(line))-(i===0?from[1]:0)))).trimEnd()).join('\n');
+}
+export function highlightTranscript(line:string,index:number,range:TranscriptSelection|null|undefined,light:boolean):string {
+  if(!range)return line;const [from,to]=orderedSelection(range);if(index<from[0]||index>to[0])return line;
+  const start=index===from[0]?from[1]:0,end=index===to[0]?to[1]:visibleWidth(line);
+  if(end<=start)return line;
+  return sliceByColumn(line,0,start)+(light?'\x1b[48;2;90;65;42m\x1b[38;2;255;250;230m':'\x1b[48;2;81;73;60m\x1b[38;2;245;239;220m')+stripTerminalSequences(sliceByColumn(line,start,end-start))+'\x1b[0m'+sliceByColumn(line,end,Math.max(0,visibleWidth(line)-end));
 }
