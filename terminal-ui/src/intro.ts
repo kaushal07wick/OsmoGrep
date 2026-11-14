@@ -9,11 +9,32 @@ const dots = [[1,8],[2,16],[4,32],[64,128]];
 const pixel = (x: number, y: number) => siteLogo[Math.floor((y+1)*5)]?.[Math.floor((x/1.1+1)*5.5)] ?? '.';
 const meshes: (Float32Array | undefined)[] = [];
 
-// Match surface points along the ring and the three strokes of the terminal mark.
+// Folded paper facets: body, head, orange beak, forked tail and two wings.
+const facets = [
+  {a:[-.4,.18,.03],b:[.43,.08,.04],c:[-.08,.14,.34],wing:0,orange:0},
+  {a:[-.4,.18,.03],b:[-.08,.14,.34],c:[-.1,.46,.08],wing:0,orange:0},
+  {a:[-.08,.14,.34],b:[.43,.08,.04],c:[-.1,.46,.08],wing:0,orange:0},
+  {a:[.05,.16,.1],b:[.37,-.29,.12],c:[.55,.09,.1],wing:0,orange:0},
+  {a:[.37,-.29,.12],b:[.65,-.26,.12],c:[.55,.09,.1],wing:0,orange:0},
+  {a:[.65,-.26,.12],b:[1.05,-.13,.06],c:[.57,-.08,.12],wing:0,orange:1},
+  {a:[-.37,.2,.02],b:[-1.04,.48,.02],c:[-.35,.38,.04],wing:0,orange:0},
+  {a:[-.35,.28,.04],b:[-.82,.68,.02],c:[-.1,.43,.08],wing:0,orange:0},
+  {a:[-.22,.2,-.12],b:[-.25,-.92,-.18],c:[.16,-.32,-.3],wing:-1,orange:0},
+  {a:[-.22,.2,.15],b:[-.88,-.72,.08],c:[-.24,-.28,.5],wing:1,orange:0},
+  {a:[-.24,-.28,.5],b:[-.88,-.72,.08],c:[.18,-.43,.1],wing:1,orange:0},
+  {a:[-.22,.2,.15],b:[-.24,-.28,.5],c:[.18,-.43,.1],wing:1,orange:0},
+].map(face=>{
+  const ab=face.b.map((n,i)=>n-face.a[i]!), ac=face.c.map((n,i)=>n-face.a[i]!);
+  const normal=[ab[1]!*ac[2]!-ab[2]!*ac[1]!,ab[2]!*ac[0]!-ab[0]!*ac[2]!,ab[0]!*ac[1]!-ab[1]!*ac[0]!];
+  const length=Math.hypot(...normal), facing=normal[2]!<0?-1:1;
+  return {...face,area:length/2,normal:normal.map(n=>n/length*facing)};
+});
+const totalArea=facets.reduce((sum,face)=>sum+face.area,0);
+
+// Pair ring surface points with area-weighted samples of the folded bird.
 function mesh(detail: 1 | 3): Float32Array {
   if (meshes[detail]) return meshes[detail]!;
-  const columns=256*detail, rows=80*detail, points=new Float32Array(columns*rows*14);
-  const diagonal=Math.hypot(.6,.55), total=diagonal*2+.85;
+  const columns=256*detail, rows=80*detail, points=new Float32Array(columns*rows*15);
   for (let u=0; u<columns; u++) {
     const a=u/columns*tau, ca=Math.cos(a), sa=Math.sin(a);
     let inner=1.5, outer=0;
@@ -21,18 +42,19 @@ function mesh(detail: 1 | 3): Float32Array {
       const r=i/256*1.5;
       if (pixel(ca*r,sa*r)!=='.') { inner=Math.min(inner,r); outer=r; }
     }
-    const distance=u/columns*total;
-    const segment=distance<diagonal ? [-.8,-.55,.6,.55,distance/diagonal]
-      : distance<diagonal*2 ? [-.2,0,-.6,.55,(distance-diagonal)/diagonal]
-      : [0,.55,.85,0,(distance-diagonal*2)/.85];
-    const [x,y,dx,dy,f]=segment as [number,number,number,number,number];
-    const length=Math.hypot(dx,dy), nx=-dy/length, ny=dx/length;
+    let area=u/columns*totalArea, face=facets[0]!;
+    for(const candidate of facets) {
+      face=candidate;
+      if(area<candidate.area) break;
+      area-=candidate.area;
+    }
+    const radial=Math.min(1,area/face.area);
     for (let v=0; v<rows; v++) {
       const b=v/rows*tau-Math.PI, cb=Math.cos(b), sb=Math.sin(b);
-      const r=(outer+inner)/2+(outer-inner)/2*cb, at=(u*rows+v)*14;
+      const r=(outer+inner)/2+(outer-inner)/2*cb, at=(u*rows+v)*15;
+      const target=face.a.map((n,i)=>n*(1-radial)+radial*((1-v/rows)*face.b[i]!+v/rows*face.c[i]!));
       points.set([ca*r,sa*r,.16*sb,ca*cb,sa*cb,sb,
-        x+dx*f+nx*.12*cb,y+dy*f+ny*.12*cb,.12*sb,nx*cb,ny*cb,sb,
-        pixel(ca*r,sa*r)==='a'?1:0,distance>=diagonal*2?1:0],at);
+        ...target,...face.normal,pixel(ca*r,sa*r)==='a'?1:0,face.orange,face.wing],at);
     }
   }
   return meshes[detail]=points;
@@ -46,11 +68,18 @@ function raster(elapsed: number, columns: number, rows: number, detail: 1 | 3) {
   const turns=smooth(.12,.42,t)+smooth(.64,.94,t), yaw=turns===2?0:tau*turns;
   const pitch=.25*Math.sin(yaw);
   const cy=Math.cos(yaw), sy=Math.sin(yaw), cx=Math.cos(pitch), sx=Math.sin(pitch);
+  const gesture=smooth(.42,.64,t), fold=gesture>0&&gesture<1 ? .95*Math.sin(Math.PI*gesture) : 0;
+  const cf=Math.cos(fold), sf=Math.sin(fold);
   const scale=.8*Math.min(width/2.7,height/2.5), points=mesh(detail);
-  for (let i=0; i<points.length; i+=14) {
-    const x=points[i]!*(1-morph)+points[i+6]!*morph, y=points[i+1]!*(1-morph)+points[i+7]!*morph, z=points[i+2]!*(1-morph)+points[i+8]!*morph;
+  for (let i=0; i<points.length; i+=15) {
+    const wing=points[i+14]!, lift=sf*wing, hingeZ=wing>0?.15:-.12;
+    const targetY=wing ? .2+(points[i+7]!-.2)*cf-(points[i+8]!-hingeZ)*lift : points[i+7]!;
+    const targetZ=wing ? hingeZ+(points[i+7]!-.2)*lift+(points[i+8]!-hingeZ)*cf : points[i+8]!;
+    const targetNY=wing ? points[i+10]!*cf-points[i+11]!*lift : points[i+10]!;
+    const targetNZ=wing ? points[i+10]!*lift+points[i+11]!*cf : points[i+11]!;
+    const x=points[i]!*(1-morph)+points[i+6]!*morph, y=points[i+1]!*(1-morph)+targetY*morph, z=points[i+2]!*(1-morph)+targetZ*morph;
     const xx=x*cy+z*sy, zz=z*cy-x*sy, yy=y*cx-zz*sx, rotatedZ=y*sx+zz*cx;
-    const nx=points[i+3]!*(1-morph)+points[i+9]!*morph, ny=points[i+4]!*(1-morph)+points[i+10]!*morph, nz=points[i+5]!*(1-morph)+points[i+11]!*morph;
+    const nx=points[i+3]!*(1-morph)+points[i+9]!*morph, ny=points[i+4]!*(1-morph)+targetNY*morph, nz=points[i+5]!*(1-morph)+targetNZ*morph;
     const normalX=nx*cy+nz*sy, normalZ=nz*cy-nx*sy;
     const normalY=ny*cx-normalZ*sx, normalFront=ny*sx+normalZ*cx;
     const illumination=.22+.65*Math.max(0,(-normalX*.35-normalY*.45+normalFront*.82)/Math.max(.001,Math.hypot(nx,ny,nz)));

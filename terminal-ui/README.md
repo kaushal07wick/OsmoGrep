@@ -10,8 +10,8 @@ at the upper left, full-width transcript, fixed bottom composer and a small
 permissions footer. Branding comes from the live **osmogrep.com** deployment:
 the pixel-ring logo, lowercase wordmark and warm orange accent. The canvas stays
 black in dark mode. The header mark stays still. In a fresh, empty conversation,
-a large dot-dithered ring holds briefly, rotates and morphs into `>_`, pauses on
-that terminal mark, then returns to the OsmoGrep ring over ten seconds. The
+a dot-dithered ring holds briefly, unfolds into an origami bird with an orange
+beak, folds its wings once, then reforms into the OsmoGrep ring over ten seconds. The
 settled pose stays in the center. Hover has no effect, and clicks during playback
 are ignored; clicking the settled mark replays it. Drafts, messages, plans and
 dialogs hide it. Short terminals omit it.

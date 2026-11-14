@@ -5,7 +5,7 @@
   "rust_tests_source_commit": "d3532cf",
   "typescript_tests_passed": 20,
   "node": "v26.13.1",
-  "installed_sha256": "d8788b182a4842a1f292125e007c6ec504c003288d0a66e1a904375c0bf52d2b",
+  "installed_sha256": "b2f3fca126459960c480881f979d5c2d9b2d5f60c997db470eaef1758f5cc035",
   "installed_first_on_path": true,
   "mac_pty_acceptance": {
     "typescript_renderer_started": true,
@@ -45,7 +45,7 @@
   "brand_provenance": "terminal-ui/brand/provenance.json",
   "pty_binary": "Optimized release, byte-identical to installed binary",
   "installed_cli_version_and_help": true,
-  "layout": "Static header; smaller, dimmer central ring-to-terminal-to-ring sequence; no hover response; click replay after settlement",
+  "layout": "Static header; smaller, dimmer ring unfolds into an origami bird, folds its wings once and reforms; no hover response",
   "artwork_visual_scale": 0.8,
   "dark_artwork_rgb_multiplier": 0.7,
   "animation_microbenchmark_source_commit": "d3532cf",

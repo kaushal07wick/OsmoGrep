@@ -87,16 +87,17 @@ test('central intro settles at ten seconds and yields to drafts and conversation
   assert.ok(render(v).rows.every(row=>row.startsWith('\x1b[48;2;0;0;0m')));
 });
 
-test('ring rotates into a readable terminal mark, holds it and returns to its original pose', () => {
-  const start=introFrame(0,60,28), terminal=introFrame(5000,60,28), end=introFrame(introDuration,60,28);
+test('ring unfolds into an origami bird, folds its wings once and returns to its original pose', () => {
+  const start=introFrame(0,60,28), bird=introFrame(4200,60,28), end=introFrame(introDuration,60,28);
   assert.deepEqual(start,end);
   assert.deepEqual(end,introFrame(introDuration+500,60,28));
   assert.notDeepEqual(start,introFrame(2500,60,28));
-  assert.notDeepEqual(start,terminal);
-  assert.deepEqual(terminal,introFrame(6000,60,28));
+  assert.notDeepEqual(start,bird);
+  assert.notDeepEqual(bird,introFrame(5300,60,28));
+  assert.deepEqual(bird,introFrame(6400,60,28));
   assert.deepEqual(start,introFrame(1000,60,28));
-  assert.ok(terminal.slice(17,22).some(row=>row.includes('164;62;8')), 'underscore carries the muted orange accent');
-  for(const frame of [start,terminal,end]) {
+  assert.ok(bird.some(row=>row.includes('164;62;8')), 'beak carries the muted orange accent');
+  for(const frame of [start,bird,end]) {
     assert.equal(frame.length,28);
     assert.ok(frame.every(row=>visibleWidth(row)===60));
     assert.ok(frame.some(row=>/[\u2801-\u28ff]/.test(row)));

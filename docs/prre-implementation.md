@@ -576,3 +576,19 @@ was not rerun. The earlier microbenchmark remains attributed to `d3532cf`.
 
 Installed the byte-identical release atomically with a backup, first on PATH.
 SHA-256: `d8788b182a4842a1f292125e007c6ec504c003288d0a66e1a904375c0bf52d2b`.
+
+## Origami transformation — 2026-11-14
+
+Replaced the terminal symbol with an original folded-paper bird. The logo
+unfolds into twelve shaded triangular facets with a muted orange beak, the wings
+fold once around fixed shoulder hinges, and the bird reforms into the ring.
+The smaller scale, dim palette, ten-second duration and lack of hover interaction
+remain. Both the fine graphics path and text fallback use the same facet geometry.
+
+All **20 UI tests**, TypeScript and optimized Rust builds, and eleven Mac PTY
+checks passed. Updated the gesture test to verify wing motion and return to the
+open-wing pose, followed by the exact starting ring. Visually inspected six phases.
+Rust source was unchanged; its prior test result and microbenchmark remain
+attributed to `d3532cf`. Installed the byte-identical release atomically with a
+backup, first on PATH. SHA-256:
+`b2f3fca126459960c480881f979d5c2d9b2d5f60c997db470eaef1758f5cc035`.

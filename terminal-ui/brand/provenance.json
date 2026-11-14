@@ -3,5 +3,5 @@
   "captured": "2026-11-13T20:54:34.259Z",
   "homepage_sha256": "d903caf51919a45b6d6ed4e03772101841ea5a3797167fb182a914552cadf025",
   "logo": "Exact deployed 11×10 SVG pixel grid, adapted to light ink on black.",
-  "animation": "Original point-cloud sequence: hold the deployed ring, rotate and morph into >_, pause, return to the ring. Three-times-finer dots on Kitty-compatible terminals; no hover interaction."
+  "animation": "Original point-cloud sequence: the deployed ring unfolds into an origami bird, folds its wings once and reforms into the ring. Three-times-finer dots on Kitty-compatible terminals; no hover interaction."
 }
