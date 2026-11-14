@@ -103,6 +103,17 @@ def wait_for(check, seconds=12):
     while not check() and time.monotonic()<end: drain(.1)
     assert check(),bytes(transcript[-2000:])
 
+def graphics(data):
+    frames=[]
+    pending=b''
+    for controls,payload in re.findall(rb'\x1b_G([^;]*);([^\x1b]*)\x1b\\',data):
+        if b'a=T' in controls: pending=b''
+        if payload: pending+=payload
+        if pending and b'm=1' not in controls:
+            frames.append(base64.b64decode(pending))
+            pending=b''
+    return frames
+
 result = {}
 try:
     wait_for(lambda:b'osmogrep' in transcript and b'local-ui-test-model' in transcript)
@@ -110,24 +121,30 @@ try:
     result['typescript_renderer_started'] = True
     first = len(transcript)
     drain(.7)
-    assert b'175;170;160' in transcript[first:], 'central dot sculpture must animate after startup'
-    assert b'\x1b[?1003h' in transcript, 'idle artwork must accept pointer motion'
+    assert graphics(transcript[first:]), 'fine startup frames must use terminal graphics'
+    assert b'\x1b[?1000h' in transcript and b'\x1b[?1003h' not in transcript, 'idle artwork must request buttons, not hover events'
     drain(10)
+    assert len(set(graphics(transcript)))>3, 'startup must advance through distinct morph poses automatically'
     settled = len(transcript)
     drain(.4)
-    assert b'175;170;160' not in transcript[settled:], 'central animation must settle after ten seconds'
+    assert not graphics(transcript[settled:]), 'central animation must settle after ten seconds'
+    settled_image=graphics(transcript)[-1]
+    assert struct.unpack('>II',settled_image[16:24])==(60*6,30*12), 'fine image must have three times the linear dot resolution'
     result['central_morph_animates_then_settles'] = True
     before_hover=len(transcript)
     send(b'\x1b[<35;85;21M')
-    assert b'175;170;160' in transcript[before_hover:], 'hover must tilt the settled artwork'
+    assert all(frame==settled_image for frame in graphics(transcript[before_hover:])), 'hover must not change the pose'
+    after_hover=len(transcript)
+    drain(.4)
+    assert not graphics(transcript[after_hover:]), 'hover must not start playback'
     before_click=len(transcript)
     send(b'\x1b[<0;80;21M')
     drain(.7)
-    assert b'175;170;160' in transcript[before_click:], 'click must replay the morph'
-    result['central_morph_hover_and_click_replay'] = True
+    assert graphics(transcript[before_click:]), 'click must replay the morph'
+    result['central_morph_ignores_hover_and_click_replays'] = True
     paste('/')
     wait_for(lambda: b'Commands' in transcript and b'navigate' in transcript)
-    assert b'\x1b[?1003l' in transcript, 'typing must release automatic mouse capture'
+    assert b'\x1b[?1000l' in transcript, 'typing must release automatic mouse capture'
     send(b'\x1b[B' * 2)
     assert b'\x1b[48;2;42;42;42m' in transcript
     send(b'\x1b[A' * 2)
@@ -155,8 +172,9 @@ try:
     result['large_multiline_draft_editing'] = True
     send(b'\x01')
     paste('inspect image ')
+    before_attachment=len(transcript)
     paste(str(image).replace(' ','\\ '))
-    wait_for(lambda:b'\x1b_G' in transcript)
+    wait_for(lambda:b'\x1b_G' in transcript[before_attachment:])
     assert b'[Image #1]' in transcript
     result['real_thumbnail_sequence'] = True
     paste(' please')

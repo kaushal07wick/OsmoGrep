@@ -1,6 +1,6 @@
-import { Image, Markdown, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
+import { Image, Markdown, getCapabilities, renderImage, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import { introDuration, websiteMark } from './brand.ts';
-import { introFrame } from './intro.ts';
+import { introFrame, introPng } from './intro.ts';
 
 export interface Rect { x: number; y: number; width: number; height: number }
 export interface Attachment { id: number; label: string; thumbnail: string; width: number; height: number }
@@ -14,7 +14,7 @@ export interface View {
   inputMode: string; attachments: Attachment[]; running: boolean; phase: string; tool: string | null;
   followTail: boolean; scroll: number; stream: string; permission: string | null; update: string | null;
   voice: string | null; commands: { cmd: string; desc: string }[]; selectedCommand: number; tokens: number;
-  introElapsed?: number; pointer?: { x: number; y: number } | null;
+  introElapsed?: number;
 }
 export interface Rendered {
   id: number; rows: string[]; input: Rect; execution: Rect; cursor: { x: number; y: number };
@@ -132,19 +132,25 @@ export function render(v: View): Rendered {
   transcript.slice(start, start + execution.height).forEach((line, i) => put(execution.y + i, line, gutter + pad, width - pad * 2));
 
   let artwork: Rect | null = null;
+  const images: Rendered['images'] = [];
   const introElapsed = v.introElapsed ?? v.elapsed;
   if (!value && !v.masked && !transcript.length && !v.running && !v.permission && !v.update && !v.voice && !v.commands.length
     && width >= 36 && execution.height >= 16) {
     const height = Math.min(30, execution.height-2), columns = Math.min(64, height*2, width-4);
     artwork = {x:gutter+Math.floor((width-columns)/2),y:execution.y+Math.floor((execution.height-height)/2),width:columns,height};
-    const pointer = v.pointer ? {x:Math.max(-1,Math.min(1,(v.pointer.x-artwork.x)/columns*2-1)),y:Math.max(-1,Math.min(1,(v.pointer.y-artwork.y)/height*2-1))} : null;
-    introFrame(introElapsed,columns,height,light,pointer).forEach((line,i)=>put(artwork!.y+i,line,artwork!.x,columns));
+    if (getCapabilities().images === 'kitty') {
+      const graphicId = (process.pid*128+127)>>>0;
+      const png=introPng(introElapsed,columns,height,light).toString('base64');
+      const image=renderImage(png,{widthPx:columns*6,heightPx:height*12},{imageId:graphicId,maxWidthCells:columns,maxHeightCells:height,moveCursor:false});
+      if(image) images.push({id:graphicId,x:artwork.x,y:artwork.y,sequence:image.sequence});
+    } else {
+      introFrame(introElapsed,columns,height,light).forEach((line,i)=>put(artwork!.y+i,line,artwork!.x,columns));
+    }
   }
 
   const status = v.permission ?? v.update ?? v.voice ?? (v.running ? `${['✻', '✼', '✶', '✳'][Math.floor(v.elapsed / 130) % 4]} ${v.tool ?? v.phase}…  esc to interrupt` : '');
   if (status) put(composerY - 1, accent + clean(status) + reset);
   for (let y = composerY; y < composerY + composerHeight; y++) put(y, bg + ' '.repeat(width) + reset);
-  const images: Rendered['images'] = [];
   if (previewHeight) {
     let x = gutter + pad + 2;
     for (const a of attached) {

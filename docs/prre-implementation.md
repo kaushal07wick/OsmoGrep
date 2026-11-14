@@ -532,3 +532,35 @@ verified it is first on PATH. SHA-256:
 `141c1c3505393bb8b46e6dd6352effc8abd1a722162b4711fd0bfbcc2ed6f6ec`.
 Other terminal/font combinations were not checked locally; short windows and the
 native fallback omit the central artwork. No hosted execution checks were rerun.
+
+## Finer startup choreography without hover — 2026-11-14
+
+Replaced the sphere transition with a designed ten-second sequence: hold the
+OsmoGrep ring, rotate and morph into a white chevron and orange underscore (`>_`),
+pause on that terminal mark, then rotate back and rest on the ring. Startup plays
+automatically once. Hover and dragging have no influence, and clicks during
+playback cannot restart its clock. Clicking the settled mark still replays it.
+Automatic mouse reporting now requests button events only, with no hover reports.
+
+Ghostty/Kitty-compatible terminals reuse the existing image rendering and cleanup
+path for a procedurally generated PNG at **three times the linear dot resolution**
+of the text version: 360×336 samples for a 60×28-cell stage. Both dimensions grow
+threefold; the stage size remains stable. The text fallback retains Braille cells.
+Surface meshes use typed arrays, and PNG compression/checksums use Node's standard
+library; no dependencies, external assets or services were added.
+
+Validation: **179 Rust tests**, **20 UI tests**, TypeScript bundle and optimized
+Rust builds passed. Tests check pose holds, return to the exact initial frame,
+PNG dimensions, checksums and decompression, graphics placement, hover isolation
+and ignoring clicks during playback. Inspected six rendered phases. A warm
+100-frame 60×28-cell microbenchmark averaged **9.31 ms** including fine PNG encoding
+and **1.08 ms** for text generation; both exclude IPC and terminal output.
+
+All eleven Mac PTY checks passed. The run decoded emitted PNG frames, checked
+threefold dimensions, observed automatic changing poses and settlement, confirmed
+hover preserves identical image data without restarting playback, then tested
+click replay, editing, images, resize, shell execution, fallback and restoration.
+Installed the byte-identical release atomically with a backup, first on PATH.
+SHA-256: `ea4b7927382dd860044601dab8fd342e6a0007e601fc1404ac0a84becdc835cd`.
+The fine path was checked with the Ghostty-compatible protocol; other terminal
+implementations and hosted execution were not retested.

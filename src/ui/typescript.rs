@@ -10,7 +10,7 @@ use std::{
 
 use crossterm::{
     cursor::MoveTo,
-    event::{DisableMouseCapture, EnableMouseCapture, Event, MouseButton, MouseEventKind},
+    event::{DisableMouseCapture, Event, MouseButton, MouseEventKind},
     execute, queue,
     style::Print,
     terminal::{Clear, ClearType},
@@ -72,8 +72,8 @@ struct Frame {
 #[derive(Default)]
 struct IntroInteraction {
     area: Option<Rect>,
-    pointer: Option<(u16, u16)>,
     started: Option<std::time::Instant>,
+    playing: bool,
     capture: bool,
 }
 impl IntroInteraction {
@@ -82,24 +82,17 @@ impl IntroInteraction {
             return false;
         };
         let Some(area) = self.area else { return false };
-        if !mouse.modifiers.is_empty()
-            || !matches!(
-                mouse.kind,
-                MouseEventKind::Moved
-                    | MouseEventKind::Down(MouseButton::Left)
-                    | MouseEventKind::Drag(MouseButton::Left)
-            )
-        {
+        if !mouse.modifiers.is_empty() || mouse.kind != MouseEventKind::Down(MouseButton::Left) {
             return false;
         }
         if !area.contains((mouse.column, mouse.row).into()) {
-            self.pointer = None;
             return false;
         }
-        self.pointer = Some((mouse.column, mouse.row));
-        if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
-            self.started = Some(std::time::Instant::now());
+        if self.playing {
+            return true;
         }
+        self.started = Some(std::time::Instant::now());
+        self.playing = true;
         true
     }
 }
@@ -241,11 +234,6 @@ impl TypeScriptUi {
             .get_or_insert_with(std::time::Instant::now)
             .elapsed()
             .as_millis() as u64);
-        snapshot["pointer"] = self
-            .intro
-            .pointer
-            .map(|(x, y)| json!({"x":x,"y":y}))
-            .unwrap_or(Value::Null);
         self.input.try_send(snapshot).map_err(|e| e.to_string())?;
         let raw = self
             .frames
@@ -275,15 +263,14 @@ impl TypeScriptUi {
             .write_all(b"\x1b[?2026h\x1b[?25l")
             .map_err(|e| e.to_string())?;
         self.intro.area = frame.artwork.as_ref().map(Region::rect);
-        if self.intro.area.is_none() {
-            self.intro.pointer = None;
-        }
+        self.intro.playing = self.intro.area.is_some() && frame.animate;
         let capture = self.intro.area.is_some()
             && super::terminal::artwork_mouse_enabled()
             && !super::terminal::mouse_capture_enabled();
         if capture != self.intro.capture {
             if capture {
-                queue!(output, EnableMouseCapture)
+                // Button events only; pointer motion never affects the startup sequence.
+                queue!(output, Print("\x1b[?1000h\x1b[?1006h"))
             } else {
                 queue!(output, DisableMouseCapture)
             }
@@ -405,7 +392,7 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 
     #[test]
-    fn intro_pointer_tilts_and_click_restarts_only_inside_artwork() {
+    fn intro_ignores_hover_and_only_replays_a_settled_mark_on_click() {
         let mut intro = IntroInteraction {
             area: Some(Rect::new(20, 10, 60, 28)),
             ..IntroInteraction::default()
@@ -416,21 +403,28 @@ mod tests {
             row: 20,
             modifiers: KeyModifiers::NONE,
         };
-        assert!(intro.handle_event(&Event::Mouse(mouse)));
-        assert_eq!(intro.pointer, Some((50, 20)));
+        assert!(!intro.handle_event(&Event::Mouse(mouse)));
         assert!(intro.started.is_none());
         mouse.kind = MouseEventKind::Down(MouseButton::Left);
         assert!(intro.handle_event(&Event::Mouse(mouse)));
         let clicked = intro.started;
         assert!(clicked.is_some());
+        assert!(intro.handle_event(&Event::Mouse(mouse)));
+        assert_eq!(intro.started, clicked, "clicks must not interrupt playback");
         mouse.column = 2;
         assert!(!intro.handle_event(&Event::Mouse(mouse)));
-        assert!(intro.pointer.is_none());
         assert_eq!(intro.started, clicked);
+        intro.started = Some(std::time::Instant::now() - Duration::from_secs(11));
+        intro.playing = false;
+        mouse.column = 50;
+        mouse.modifiers = KeyModifiers::NONE;
+        assert!(intro.handle_event(&Event::Mouse(mouse)));
+        assert!(intro.started.unwrap().elapsed() < Duration::from_secs(1));
+        let restarted = intro.started;
         mouse.column = 50;
         mouse.modifiers = KeyModifiers::SHIFT;
         assert!(!intro.handle_event(&Event::Mouse(mouse)));
-        assert_eq!(intro.started, clicked);
+        assert_eq!(intro.started, restarted);
     }
 
     #[test]

@@ -10,16 +10,22 @@ at the upper left, full-width transcript, fixed bottom composer and a small
 permissions footer. Branding comes from the live **osmogrep.com** deployment:
 the pixel-ring logo, lowercase wordmark and warm orange accent. The canvas stays
 black in dark mode. The header mark stays still. In a fresh, empty conversation,
-a large dot-dithered ring rotates and morphs into a sphere, then back into the
-OsmoGrep pixel ring over ten seconds. Its settled pose remains in the center;
-moving over it tilts it and clicking replays the transformation. Drafts, messages,
-plans and dialogs hide it. Short terminals omit it. It uses eight Braille dot
-positions per cell, with no graphics protocol, model calls or network requests.
+a large dot-dithered ring holds briefly, rotates and morphs into `>_`, pauses on
+that terminal mark, then returns to the OsmoGrep ring over ten seconds. The
+settled pose stays in the center. Hover has no effect, and clicks during playback
+are ignored; clicking the settled mark replays it. Drafts, messages, plans and
+dialogs hide it. Short terminals omit it.
 
-Mouse reporting is enabled automatically only while that idle artwork is visible,
+Ghostty and other Kitty-compatible terminals reuse the existing inline image
+path for three times the linear dot resolution (nine times as many sample
+positions). Other terminals use eight Braille dot positions per cell. Both
+paths generate the same geometry locally, with no model or network requests.
+
+Button reporting is enabled automatically only while that idle artwork is visible,
 then released when editing starts. `OSMOGREP_MOUSE=off osmogrep` disables this
 interaction; explicit `OSMOGREP_MOUSE=on` retains normal capture for the session.
-Keyboard input, wheel scrolling and modified clicks keep their existing handlers.
+The artwork never requests hover reporting. Keyboard input, wheel scrolling and
+modified clicks keep their existing handlers.
 
 `brand/provenance.json` records the live asset hashes. `brand/logo.svg` preserves
 the deployed mark; `src/site-art.ts` holds its pixel grid.

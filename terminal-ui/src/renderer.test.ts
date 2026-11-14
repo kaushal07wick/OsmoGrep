@@ -4,7 +4,10 @@ import { setCapabilities, stripTerminalSequences, visibleWidth } from '@earendil
 import { clean, render, type View } from './renderer.ts';
 import { introDuration, websiteMark } from './brand.ts';
 import { siteLogo } from './site-art.ts';
-import { introFrame } from './intro.ts';
+import { introFrame, introPng } from './intro.ts';
+import { crc32, inflateSync } from 'node:zlib';
+
+setCapabilities({images:null,trueColor:true,hyperlinks:false});
 
 export function fixture(): View {
   return {
@@ -65,7 +68,7 @@ test('central intro settles at ten seconds and yields to drafts and conversation
   const v=fixture();
   const first=render(v);
   assert.equal(first.animate,true);
-  v.elapsed=500;
+  v.elapsed=2500;
   const next=render(v);
   assert.deepEqual(first.rows.slice(1,4),next.rows.slice(1,4));
   assert.notDeepEqual(first.rows.slice(4),next.rows.slice(4));
@@ -84,17 +87,16 @@ test('central intro settles at ten seconds and yields to drafts and conversation
   assert.ok(render(v).rows.every(row=>row.startsWith('\x1b[48;2;0;0;0m')));
 });
 
-test('dithered ring rotates, morphs to a sphere and resolves to its original mark', () => {
-  const start=introFrame(0,60,28), sphere=introFrame(5000,60,28), end=introFrame(introDuration,60,28);
+test('ring rotates into a readable terminal mark, holds it and returns to its original pose', () => {
+  const start=introFrame(0,60,28), terminal=introFrame(5000,60,28), end=introFrame(introDuration,60,28);
   assert.deepEqual(start,end);
   assert.deepEqual(end,introFrame(introDuration+500,60,28));
   assert.notDeepEqual(start,introFrame(2500,60,28));
-  assert.notDeepEqual(start,sphere);
-  const center=(frame:string[])=>frame.slice(12,16).map(stripTerminalSequences).map(row=>row.slice(27,33)).join('').trim();
-  assert.equal(center(start),'');
-  assert.ok(center(sphere).length>0);
-  assert.notDeepEqual(end,introFrame(introDuration,60,28,false,{x:.8,y:.4}));
-  for(const frame of [start,sphere,end]) {
+  assert.notDeepEqual(start,terminal);
+  assert.deepEqual(terminal,introFrame(6000,60,28));
+  assert.deepEqual(start,introFrame(1000,60,28));
+  assert.ok(terminal.slice(17,22).some(row=>row.includes('234;88;12')), 'underscore carries the orange accent');
+  for(const frame of [start,terminal,end]) {
     assert.equal(frame.length,28);
     assert.ok(frame.every(row=>visibleWidth(row)===60));
     assert.ok(frame.some(row=>/[\u2801-\u28ff]/.test(row)));
@@ -107,11 +109,42 @@ test('pointer replay uses its own clock and dialogs, images and small terminals 
   v.introElapsed=2500;
   assert.equal(render(v).animate,true);
   assert.notDeepEqual(settled.rows,render(v).rows);
-  v.pointer={x:90,y:15};
-  assert.notDeepEqual(render(v).rows,render({...v,pointer:null}).rows);
+  assert.deepEqual(render(v),render(Object.assign({},v,{pointer:{x:90,y:15}})), 'legacy pointer data cannot influence a frame');
   for(const state of [{permission:'approve'},{update:'update'},{voice:'voice'},{masked:true},{input:'[Image #1]'},{width:30},{height:12}]) {
     assert.equal(render({...v,...state}).artwork,null);
   }
+});
+
+test('fine intro PNG uses three times the linear dot resolution and valid PNG checksums', () => {
+  const png=introPng(5000,60,28), data:Buffer[]=[];
+  assert.equal(png.subarray(0,8).toString('hex'),'89504e470d0a1a0a');
+  let width=0,height=0;
+  for(let at=8;at<png.length;) {
+    const length=png.readUInt32BE(at), type=png.toString('ascii',at+4,at+8);
+    const payload=png.subarray(at+8,at+8+length);
+    assert.equal(crc32(png.subarray(at+4,at+8+length)),png.readUInt32BE(at+8+length));
+    if(type==='IHDR'){width=payload.readUInt32BE();height=payload.readUInt32BE(4);}
+    if(type==='IDAT') data.push(payload);
+    at+=12+length;
+  }
+  assert.equal(width,60*2*3);assert.equal(height,28*4*3);
+  const raw=inflateSync(Buffer.concat(data));
+  assert.equal(raw.length,(width*3+1)*height);
+  assert.ok(raw.some(value=>value>0));
+  assert.deepEqual(introPng(0,60,28),introPng(introDuration,60,28));
+});
+
+test('Kitty-compatible terminals use the fine intro without changing its reserved bounds', () => {
+  setCapabilities({images:'kitty',trueColor:true,hyperlinks:false});
+  try {
+    const v=fixture(), frame=render(v);
+    assert.equal(frame.images.length,1);
+    assert.ok(frame.images[0]!.sequence.includes('\x1b_G'));
+    assert.equal(frame.images[0]!.x,frame.artwork!.x);
+    assert.equal(frame.images[0]!.y,frame.artwork!.y);
+    v.input='typing';
+    assert.equal(render(v).images.length,0);
+  } finally {setCapabilities({images:null,trueColor:true,hyperlinks:false});}
 });
 test('composer has a continuous padded surface with room around text and footer', () => {
   const v = fixture(), f = render(v);

@@ -20,6 +20,6 @@ writeFileSync('brand/provenance.json', JSON.stringify({
   source: 'https://osmogrep.com/', captured: new Date().toISOString(),
   homepage_sha256: createHash('sha256').update(home).digest('hex'),
   logo: 'Exact deployed 11×10 SVG pixel grid, adapted to light ink on black.',
-  animation: 'Original terminal point-cloud animation sampled from the deployed pixel ring: rotate, morph into a sphere and resolve to the ring; hover tilts and click replays.',
+  animation: 'Original point-cloud sequence: hold the deployed ring, rotate and morph into >_, pause, return to the ring. Three-times-finer dots on Kitty-compatible terminals; no hover interaction.',
 }, null, 2) + '\n');
 console.log('Imported the live pixel logo.');

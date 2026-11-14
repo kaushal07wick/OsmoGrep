@@ -2,14 +2,14 @@
   "scope": "Local macOS validation of TypeScript presentation and existing Rust backend",
   "date": "2026-11-14",
   "rust_tests_passed": 179,
-  "typescript_tests_passed": 18,
+  "typescript_tests_passed": 20,
   "node": "v26.13.1",
-  "installed_sha256": "141c1c3505393bb8b46e6dd6352effc8abd1a722162b4711fd0bfbcc2ed6f6ec",
+  "installed_sha256": "ea4b7927382dd860044601dab8fd342e6a0007e601fc1404ac0a84becdc835cd",
   "installed_first_on_path": true,
   "mac_pty_acceptance": {
     "typescript_renderer_started": true,
     "central_morph_animates_then_settles": true,
-    "central_morph_hover_and_click_replay": true,
+    "central_morph_ignores_hover_and_click_replays": true,
     "command_picker_navigation_and_execution": true,
     "large_multiline_draft_editing": true,
     "real_thumbnail_sequence": true,
@@ -44,12 +44,15 @@
   "brand_provenance": "terminal-ui/brand/provenance.json",
   "pty_binary": "Optimized release, byte-identical to installed binary",
   "installed_cli_version_and_help": true,
-  "layout": "Static header; central dithered ring-to-sphere-to-ring morph with hover tilt and click replay; padded composer on black",
+  "layout": "Static header; central ring-to-terminal-to-ring startup sequence with holds; no hover response; click replay after settlement",
   "animation_microbenchmark": {
-    "scope": "Procedural frame generation only, excluding IPC and terminal output",
+    "scope": "Warm procedural generation and PNG encoding, excluding IPC and terminal output",
     "samples": 100,
     "columns": 60,
     "rows": 28,
-    "mean_frame_ms": 1.35
+    "mean_frame_ms": 9.31,
+    "text_fallback_mean_frame_ms": 1.08,
+    "fine_linear_resolution_multiplier": 3,
+    "fine_protocol": "Kitty-compatible terminals including Ghostty"
   }
 }
