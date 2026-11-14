@@ -55,6 +55,7 @@ enum Action {
     ChooseProvider(String),
     ChooseModel(String),
     ApplyModel,
+    CycleApi,
     KeyBinding(String),
     Skill(String),
     None,
@@ -182,9 +183,7 @@ pub fn poll(state: &mut AgentState, agent: &crate::agent::Agent) -> bool {
         match result {
             Ok(models) => {
                 panel.models = models;
-                panel.notice =
-                    "Endpoint catalog · choose a Responses-compatible model, or enter a custom ID"
-                        .into();
+                panel.notice = "Endpoint catalog · choose a model, or enter a custom ID".into();
             }
             Err(error) => panel.notice = format!("{error} · custom model IDs remain available"),
         }
@@ -202,6 +201,11 @@ fn entries(state: &AgentState, panel: &Panel) -> Vec<Row> {
                 "groq".into(),
                 "mistral".into(),
                 "ollama".into(),
+                "anthropic".into(),
+                "openrouter".into(),
+                "deepseek".into(),
+                "xai".into(),
+                "lmstudio".into(),
             ];
             if !providers.contains(&panel.model.provider) {
                 providers.insert(0, panel.model.provider.clone());
@@ -271,11 +275,12 @@ fn entries(state: &AgentState, panel: &Panel) -> Vec<Row> {
             rows
         },
         2 => vec![
-            row("Provider", "OpenAI Responses-compatible endpoint; credentials stay in Rust", &panel.model.provider, Action::EditModel(0)),
+            row("Provider", "Provider-specific APIs; credentials stay in Rust", &panel.model.provider, Action::EditModel(0)),
             row("Model", "Enter the model identifier supported by your endpoint", &panel.model.model, Action::EditModel(1)),
             row("Endpoint", "Optional http(s) URL; empty uses the provider default", panel.model.base_url.as_deref().unwrap_or("default"), Action::EditModel(2)),
             row("Apply model", "Save through the existing model configuration path", "↵", Action::ApplyModel),
             row("API key", "Open the masked credential input", "↵", Action::Command("/key".into())),
+            row("API protocol", "Auto follows provider; Enter cycles for custom endpoints", panel.model.api.map(|a|a.name()).unwrap_or("auto"), Action::CycleApi),
         ],
         3 => vec![
             row("Read only", "Block tools classified as dangerous", selected_profile(state, PermissionProfile::ReadOnly), Action::Profile(PermissionProfile::ReadOnly)),
@@ -567,6 +572,7 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
                         if &panel.model.provider != provider {
                             panel.model.provider = provider.clone();
                             panel.model.base_url = None;
+                            panel.model.api = None;
                             panel.models.clear();
                         }
                         panel.picker = Some(1);
@@ -577,10 +583,11 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
                     }
                     Action::ChooseModel(model) => {
                         state.ui.requested_command = Some(format!(
-                            "/model {} {} {}",
+                            "/model {} {} {} --api={}",
                             panel.model.provider,
                             model,
-                            panel.model.base_url.as_deref().unwrap_or("")
+                            panel.model.base_url.as_deref().unwrap_or(""),
+                            panel.model.api.map(|a| a.name()).unwrap_or("auto")
                         ));
                         close = true;
                     }
@@ -614,12 +621,23 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
                         panel.query.clear();
                         panel.selected = *field;
                     }
+                    Action::CycleApi => {
+                        use crate::agent::provider::Api;
+                        panel.model.api = match panel.model.api {
+                            None => Some(Api::Responses),
+                            Some(Api::Responses) => Some(Api::ChatCompletions),
+                            Some(Api::ChatCompletions) => Some(Api::AnthropicMessages),
+                            Some(Api::AnthropicMessages) => None,
+                        };
+                        panel.notice = "Protocol draft updated · choose Apply model to save".into();
+                    }
                     Action::ApplyModel => {
                         state.ui.requested_command = Some(format!(
-                            "/model {} {} {}",
+                            "/model {} {} {} --api={}",
                             panel.model.provider,
                             panel.model.model,
-                            panel.model.base_url.as_deref().unwrap_or("")
+                            panel.model.base_url.as_deref().unwrap_or(""),
+                            panel.model.api.map(|a| a.name()).unwrap_or("auto")
                         ));
                         close = true;
                     }

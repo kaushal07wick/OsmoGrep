@@ -763,7 +763,7 @@ fn run_headless(args: RunArgs) -> Result<i32, Box<dyn Error>> {
         .ok_or("permission profile must be read-only, workspace-auto, or full-access")?;
     let agent = Agent::new();
     if !agent.is_configured() {
-        return Err("OPENAI_API_KEY is not set".into());
+        return Err("Provider API key is not set; configure this provider's environment variable or use /key".into());
     }
 
     let mut emitter = HeadlessEmitter::new(args.json_events, args.auto_approve);
@@ -1068,19 +1068,16 @@ fn is_secret_key(key: &str) -> bool {
 }
 
 fn mask_secret_text(text: &str) -> String {
-    let mut out = Vec::new();
-    for part in text.split_whitespace() {
-        if looks_like_secret(part) {
-            out.push("[redacted]");
-        } else {
-            out.push(part);
-        }
-    }
-    if out.is_empty() {
-        String::new()
-    } else {
-        out.join(" ")
-    }
+    text.split_inclusive(char::is_whitespace)
+        .map(|part| {
+            let token = part.trim_end_matches(char::is_whitespace);
+            if looks_like_secret(token) {
+                format!("[redacted]{}", &part[token.len()..])
+            } else {
+                part.to_string()
+            }
+        })
+        .collect()
 }
 
 fn looks_like_secret(text: &str) -> bool {
@@ -2418,6 +2415,16 @@ mod tests {
         assert_eq!(
             event.get("delta_kind").and_then(serde_json::Value::as_str),
             Some("insert")
+        );
+    }
+
+    #[test]
+    fn headless_redaction_preserves_stream_whitespace_and_code_indentation() {
+        let text = "\n    let x = 1;\n\treturn x;  ";
+        assert_eq!(mask_secret_text(text), text);
+        assert_eq!(
+            mask_secret_text("  sk-secretsecret\n\tnext "),
+            "  [redacted]\n\tnext "
         );
     }
 

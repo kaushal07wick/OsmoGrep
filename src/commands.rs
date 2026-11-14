@@ -458,20 +458,43 @@ fn set_model(state: &mut AgentState, cmd: &str, agent: Option<&mut Agent>) {
         log(
             state,
             LogLevel::Warn,
-            "Usage: /model <provider> <model> [base_url]",
+            "Usage: /model <provider> <model> [base_url] [--api=auto|responses|chat-completions|anthropic-messages]",
         );
         return;
     }
 
     let provider = parts[1].to_string();
     let model = parts[2].to_string();
-    let base_url = if parts.len() >= 4 {
-        Some(parts[3].to_string())
+    let mut base_url = None;
+    let mut api = if provider == agent.model_config().provider {
+        agent.model_config().api
     } else {
         None
     };
-
-    agent.set_model_config(provider.clone(), model.clone(), base_url.clone());
+    for part in &parts[3..] {
+        if let Some(value) = part.strip_prefix("--api=") {
+            match crate::agent::provider::Api::parse(value) {
+                Ok(value) => api = value,
+                Err(error) => {
+                    log(state, LogLevel::Warn, error);
+                    return;
+                }
+            }
+        } else if base_url.is_none()
+            && (part.starts_with("http://") || part.starts_with("https://"))
+            && !part.contains('@')
+        {
+            base_url = Some(part.to_string());
+        } else {
+            log(
+                state,
+                LogLevel::Warn,
+                "Use a valid HTTP(S) base URL without embedded credentials and --api=<protocol>",
+            );
+            return;
+        }
+    }
+    agent.set_model_config(provider.clone(), model.clone(), base_url.clone(), api);
     log(
         state,
         LogLevel::Success,
@@ -564,7 +587,7 @@ fn show_providers(state: &mut AgentState) {
     log(
         state,
         LogLevel::Info,
-        "Providers: openai, groq, mistral, ollama (anthropic-compatible via custom base_url)",
+        "Providers: openai, anthropic, openrouter, groq, mistral, deepseek, xai, ollama, lmstudio. Custom endpoints support --api=<protocol>.",
     );
 }
 

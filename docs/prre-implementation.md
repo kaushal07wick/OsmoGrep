@@ -726,3 +726,11 @@ with zero tools and a random marker retrieved through read_file. No proprietary
 project source was sent. The VM verifier rejected this checkout because it is
 outside its configured work folder; its boundary was left unchanged and no VM
 verification verdict is claimed.
+
+### Provider transport repair — 2026-11-15
+
+Reviewed the local pi, Hermes and Codex model/agent boundaries; findings and precise source paths are recorded in [agent-provider-design.md](agent-provider-design.md). Replaced the Responses-only assumption with shared Responses, Chat Completions and native Anthropic Messages handling, including headers, text/images, tool schemas/results, streaming fragments, provider reasoning replay, cache accounting and safe error/cancellation behavior. Scoped calls and model discovery use the same selected protocol. Added protocol selection to model settings and `/model`, expanded provider presets, and allowed keyless local runtimes. Removed credentials from subprocess arguments and preserved headless text spacing.
+
+The implementation adds no dependency or second agent loop. OAuth subscription login, cloud-specific native transports and full model capability catalogs remain separate work; API-key transport support does not claim those features. Provider fixture and live smoke results are recorded separately in the validation manifest.
+
+Reviewed the reference system-prompt builders as well. Extracted OsmoGrep's stable base to `src/prompts/agent.md`, separated task intent from tool availability, and explicitly made ordinary conversation, supplied-code explanations, reasoning, writing and brainstorming valid direct answers. A live five-case check passed with zero calls for the first four kinds and one real read_file call for a workspace request. The exact-greeting fast path remains a narrow optimization rather than general intent routing.

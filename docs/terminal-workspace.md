@@ -123,3 +123,7 @@ output. Streaming does not pull a scrolled viewport back to the bottom. Permissi
 cards maintain a continuous background across styled text and padding. Cursor
 colors are explicit for Cotton and Graphite and restored on exit. Swift packages
 use `swift test`/`swift build`; a generic `tests` directory no longer implies pytest.
+
+## Provider APIs
+
+Provider selection now controls the actual API format: Responses, Chat Completions, or native Anthropic Messages. Model settings include an API protocol override for custom gateways. Both the primary agent and scoped calls translate tool calls/results, inline images, streaming events and usage through the same boundary. Ollama and LM Studio can run without a key. Headless output preserves streamed whitespace while redacting secret-like tokens. See [the source review and configuration guide](agent-provider-design.md) for provider defaults, commands, evidence and limits.

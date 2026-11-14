@@ -1,10 +1,10 @@
 {
   "scope": "Local macOS validation of TypeScript presentation and existing Rust backend",
   "date": "2026-11-15",
-  "rust_tests_passed": 216,
+  "rust_tests_passed": 228,
   "typescript_tests_passed": 41,
   "node": "v26.13.1",
-  "installed_sha256": "20c6c813971189d0e84308fcc9e034db6a5ee16fe1f924ff8bb1062e7fb1d62b",
+  "installed_sha256": "3a1651dcd5c6593bac0339676d79f1db7ef3b7e91f06be9601274f035dd0e5c0",
   "installed_first_on_path": true,
   "mac_pty_acceptance": {
     "typescript_renderer_started": true,
@@ -57,7 +57,7 @@
   "other_operating_systems_tested_locally": false,
   "brand_source": "https://osmogrep.com/",
   "brand_provenance": "terminal-ui/brand/provenance.json",
-  "pty_binary": "Optimized release, byte-identical to installed binary",
+  "pty_binary": "Final optimized provider/prompt release, byte-identical to installed binary",
   "installed_cli_version_and_help": true,
   "layout": "Consistent container gutters and bottom padding; dotted section badges and arrow selection; readable weekly totals and dithered bars; native Kitty paper background with editable text",
   "artwork_visual_scale": 0.62,
@@ -84,7 +84,7 @@
       }
     }
   },
-  "source_revision": "Final workspace UI increment; see Git history for this file",
+  "source_revision": "Provider transport and system-prompt increment; see Git history for this file",
   "live_text_provider_checked": true,
   "live_text_provider": "openai/gpt-5.2",
   "live_text_provider_reported_input_tokens": 1101,
@@ -199,5 +199,113 @@
   "vm_regression_verification": {
     "status": "not run",
     "reason": "Repository outside configured MCP work-folder boundary; start rejected before session allocation."
-  }
+  },
+  "provider_protocols": [
+    "responses",
+    "chat-completions",
+    "anthropic-messages"
+  ],
+  "provider_tool_roundtrips": {
+    "scope": "Isolated local HTTP fixtures with actual file tools; no paid provider calls",
+    "cases": [
+      {
+        "protocol": "chat-completions",
+        "streaming": false,
+        "passed": true,
+        "model_requests": 2,
+        "tools": [
+          "read_file",
+          "read_file"
+        ],
+        "fixture_errors": [],
+        "agent_errors": []
+      },
+      {
+        "protocol": "chat-completions",
+        "streaming": true,
+        "passed": true,
+        "model_requests": 2,
+        "tools": [
+          "read_file",
+          "read_file"
+        ],
+        "fixture_errors": [],
+        "agent_errors": []
+      },
+      {
+        "protocol": "anthropic-messages",
+        "streaming": false,
+        "passed": true,
+        "model_requests": 2,
+        "tools": [
+          "read_file",
+          "read_file"
+        ],
+        "fixture_errors": [],
+        "agent_errors": []
+      },
+      {
+        "protocol": "anthropic-messages",
+        "streaming": true,
+        "passed": true,
+        "model_requests": 2,
+        "tools": [
+          "read_file",
+          "read_file"
+        ],
+        "fixture_errors": [],
+        "agent_errors": []
+      }
+    ]
+  },
+  "live_intent_behavior": {
+    "scope": "Opt-in live model calls: conversation, reasoning, supplied code, rewriting, and an actual temporary file read",
+    "proprietary_repository_sent": false,
+    "cases": [
+      {
+        "case": "greeting",
+        "passed": true,
+        "tools": [],
+        "exit_code": 0,
+        "errors": []
+      },
+      {
+        "case": "reasoning",
+        "passed": true,
+        "tools": [],
+        "exit_code": 0,
+        "errors": []
+      },
+      {
+        "case": "supplied_code",
+        "passed": true,
+        "tools": [],
+        "exit_code": 0,
+        "errors": []
+      },
+      {
+        "case": "writing",
+        "passed": true,
+        "tools": [],
+        "exit_code": 0,
+        "errors": []
+      },
+      {
+        "case": "workspace_read",
+        "passed": true,
+        "tools": [
+          "read_file"
+        ],
+        "exit_code": 0,
+        "errors": []
+      }
+    ]
+  },
+  "provider_source_review": "docs/agent-provider-design.md",
+  "base_system_prompt": "src/prompts/agent.md",
+  "provider_other_live_credentials_tested": false,
+  "oauth_subscription_login_added": false,
+  "blocking_reader_cancellation_limit": "Caller cancels promptly; a blocked HTTP reader may survive until the 120s timeout and cannot dispatch tools.",
+  "headless_preserves_stream_whitespace": true,
+  "neovim_tmux_acceptance_source_commit": "d25cb79; editor source unchanged in provider increment"
 }
