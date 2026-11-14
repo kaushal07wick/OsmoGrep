@@ -1214,13 +1214,15 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
             running_jobs,
         )))? {
             let ev = event::read()?;
-            handle_event(
-                &mut state,
-                ev,
-                runtime.input_rect(),
-                Rect::default(),
-                runtime.exec_rect(),
-            );
+            if !runtime.handle_visual_event(&ev) {
+                handle_event(
+                    &mut state,
+                    ev,
+                    runtime.input_rect(),
+                    Rect::default(),
+                    runtime.exec_rect(),
+                );
+            }
             runtime.mark_dirty();
         }
 

@@ -9,10 +9,17 @@ The UI follows the supplied Claude Code reference: compact brand/model/directory
 at the upper left, full-width transcript, fixed bottom composer and a small
 permissions footer. Branding comes from the live **osmogrep.com** deployment:
 the pixel-ring logo, lowercase wordmark and warm orange accent. The canvas stays
-black in dark mode. For the first ten seconds the orange segment travels around
-the header ring, then returns to the website's static mark. Editing and messages
-keep their space; no illustration occupies the conversation. Compact headers
-omit the logo and its animation. It makes no model calls or network requests.
+black in dark mode. The header mark stays still. In a fresh, empty conversation,
+a large dot-dithered ring rotates and morphs into a sphere, then back into the
+OsmoGrep pixel ring over ten seconds. Its settled pose remains in the center;
+moving over it tilts it and clicking replays the transformation. Drafts, messages,
+plans and dialogs hide it. Short terminals omit it. It uses eight Braille dot
+positions per cell, with no graphics protocol, model calls or network requests.
+
+Mouse reporting is enabled automatically only while that idle artwork is visible,
+then released when editing starts. `OSMOGREP_MOUSE=off osmogrep` disables this
+interaction; explicit `OSMOGREP_MOUSE=on` retains normal capture for the session.
+Keyboard input, wheel scrolling and modified clicks keep their existing handlers.
 
 `brand/provenance.json` records the live asset hashes. `brand/logo.svg` preserves
 the deployed mark; `src/site-art.ts` holds its pixel grid.

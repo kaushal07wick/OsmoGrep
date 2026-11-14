@@ -499,3 +499,36 @@ release atomically with a backup and verified it is first on PATH. SHA-256:
 `0e6bb27927f917d56c617e4a11debd703a23fb159b3c26b4d42ccbe9cb642c15`.
 Raw evidence is ignored under `.context/command-picker-validation/`.
 No live provider or hosted E2B checks were repeated for this presentation change.
+
+## Interactive central dithered morph — 2026-11-14
+
+The user clarified that the reference animation belongs in the empty center of
+the terminal. The header logo is now static. Added an original procedural point
+cloud derived from the deployed OsmoGrep pixel ring: it rotates, morphs into a
+sphere, then resolves to the original ring in ten seconds. Eight ordered-dithered
+Braille dot positions per cell provide fine shading on the black canvas. The
+settled ring remains visible while idle. There are no downloaded animation frames,
+graphics-protocol requirements, new dependencies or model calls.
+
+Hover tilts the artwork; left click replays its transformation. Rust owns pointer
+events, the replay clock and temporary mouse capture. Only unmodified pointer
+events inside the artwork are consumed; keyboard and wheel handlers remain.
+The parent validates the artwork bounds before enabling interaction. Typing,
+conversation, dialogs and plans hide the artwork and release automatic capture.
+Explicit `OSMOGREP_MOUSE=off` disables artwork mouse reporting. Renderer failure
+and exit restore capture state through the existing cleanup path.
+
+Validation: **179 Rust tests**, **18 TypeScript tests**, TypeScript bundle build
+and optimized Rust build passed. Visually inspected six animation phases. A
+100-frame procedural-generation microbenchmark at 60×28 cells averaged **1.35 ms
+per frame**, excluding IPC and terminal output. The Mac PTY acceptance run passed
+all eleven checks, including actual SGR hover/click events, settlement after ten
+seconds, mouse release on typing, command navigation, editing, image bytes at the
+local provider boundary, resizing, shell execution, renderer recovery and terminal
+restoration. Evidence is local under ignored `.context/central-morph-validation/`.
+
+Installed the byte-identical optimized release atomically with a backup and
+verified it is first on PATH. SHA-256:
+`141c1c3505393bb8b46e6dd6352effc8abd1a722162b4711fd0bfbcc2ed6f6ec`.
+Other terminal/font combinations were not checked locally; short windows and the
+native fallback omit the central artwork. No hosted execution checks were rerun.

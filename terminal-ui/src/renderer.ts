@@ -1,5 +1,6 @@
 import { Image, Markdown, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import { introDuration, websiteMark } from './brand.ts';
+import { introFrame } from './intro.ts';
 
 export interface Rect { x: number; y: number; width: number; height: number }
 export interface Attachment { id: number; label: string; thumbnail: string; width: number; height: number }
@@ -13,11 +14,13 @@ export interface View {
   inputMode: string; attachments: Attachment[]; running: boolean; phase: string; tool: string | null;
   followTail: boolean; scroll: number; stream: string; permission: string | null; update: string | null;
   voice: string | null; commands: { cmd: string; desc: string }[]; selectedCommand: number; tokens: number;
+  introElapsed?: number; pointer?: { x: number; y: number } | null;
 }
 export interface Rendered {
   id: number; rows: string[]; input: Rect; execution: Rect; cursor: { x: number; y: number };
   editorWidth: number;
   animate: boolean;
+  artwork: Rect | null;
   images: { id: number; x: number; y: number; sequence: string }[];
 }
 const reset = '\x1b[0m';
@@ -79,8 +82,7 @@ export function render(v: View): Rendered {
     dim + clean(`${v.model} · ${v.provider}`) + reset,
     dim + clean(v.cwd) + (v.branch ? ` · ${clean(v.branch)}` : '') + (v.indexing ? ' · indexing…' : v.indexed ? ' · indexed ✓' : '') + reset,
   ];
-  const mark = websiteMark(light, v.elapsed);
-  const animateLogo = headerHeight >= 4 && width >= 40 && v.elapsed < introDuration;
+  const mark = websiteMark(light);
   if (headerHeight >= 4 && width >= 40) {
     header.forEach((line, i) => put(headerY + i, mark[i] + '  ' + line));
   } else if (headerHeight) {
@@ -128,6 +130,16 @@ export function render(v: View): Rendered {
   const maxScroll = Math.max(0, transcript.length - execution.height);
   const start = v.followTail ? maxScroll : Math.max(0, maxScroll - v.scroll);
   transcript.slice(start, start + execution.height).forEach((line, i) => put(execution.y + i, line, gutter + pad, width - pad * 2));
+
+  let artwork: Rect | null = null;
+  const introElapsed = v.introElapsed ?? v.elapsed;
+  if (!value && !v.masked && !transcript.length && !v.running && !v.permission && !v.update && !v.voice && !v.commands.length
+    && width >= 36 && execution.height >= 16) {
+    const height = Math.min(30, execution.height-2), columns = Math.min(64, height*2, width-4);
+    artwork = {x:gutter+Math.floor((width-columns)/2),y:execution.y+Math.floor((execution.height-height)/2),width:columns,height};
+    const pointer = v.pointer ? {x:Math.max(-1,Math.min(1,(v.pointer.x-artwork.x)/columns*2-1)),y:Math.max(-1,Math.min(1,(v.pointer.y-artwork.y)/height*2-1))} : null;
+    introFrame(introElapsed,columns,height,light,pointer).forEach((line,i)=>put(artwork!.y+i,line,artwork!.x,columns));
+  }
 
   const status = v.permission ?? v.update ?? v.voice ?? (v.running ? `${['✻', '✼', '✶', '✳'][Math.floor(v.elapsed / 130) % 4]} ${v.tool ?? v.phase}…  esc to interrupt` : '');
   if (status) put(composerY - 1, accent + clean(status) + reset);
@@ -205,7 +217,7 @@ export function render(v: View): Rendered {
       const clipped = clip(row, w);
       return rootBackground + fg + clipped.replaceAll(reset, reset + rootBackground + fg)
         + ' '.repeat(Math.max(0, w - visibleWidth(clipped))) + reset;
-    }), input: inputRect, execution, editorWidth: textWidth, animate: v.running || animateLogo,
+    }), input: inputRect, execution, editorWidth: textWidth, animate: v.running || !!artwork && introElapsed < introDuration, artwork,
     cursor: { x: Math.min(w - 1, gutter + pad + 2 + input.position.x), y: Math.min(h - 1, textY + input.position.y - topLine) },
     images,
   };

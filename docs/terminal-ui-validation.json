@@ -1,14 +1,15 @@
 {
   "scope": "Local macOS validation of TypeScript presentation and existing Rust backend",
   "date": "2026-11-14",
-  "rust_tests_passed": 177,
-  "typescript_tests_passed": 16,
+  "rust_tests_passed": 179,
+  "typescript_tests_passed": 18,
   "node": "v26.13.1",
-  "installed_sha256": "0e6bb27927f917d56c617e4a11debd703a23fb159b3c26b4d42ccbe9cb642c15",
+  "installed_sha256": "141c1c3505393bb8b46e6dd6352effc8abd1a722162b4711fd0bfbcc2ed6f6ec",
   "installed_first_on_path": true,
   "mac_pty_acceptance": {
     "typescript_renderer_started": true,
-    "header_logo_animates_then_stops": true,
+    "central_morph_animates_then_settles": true,
+    "central_morph_hover_and_click_replay": true,
     "command_picker_navigation_and_execution": true,
     "large_multiline_draft_editing": true,
     "real_thumbnail_sequence": true,
@@ -43,5 +44,12 @@
   "brand_provenance": "terminal-ui/brand/provenance.json",
   "pty_binary": "Optimized release, byte-identical to installed binary",
   "installed_cli_version_and_help": true,
-  "layout": "Animated header ring, padded composer and compact charcoal command card with soft selection on a black canvas"
+  "layout": "Static header; central dithered ring-to-sphere-to-ring morph with hover tilt and click replay; padded composer on black",
+  "animation_microbenchmark": {
+    "scope": "Procedural frame generation only, excluding IPC and terminal output",
+    "samples": 100,
+    "columns": 60,
+    "rows": 28,
+    "mean_frame_ms": 1.35
+  }
 }

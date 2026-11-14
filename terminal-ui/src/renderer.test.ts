@@ -4,6 +4,7 @@ import { setCapabilities, stripTerminalSequences, visibleWidth } from '@earendil
 import { clean, render, type View } from './renderer.ts';
 import { introDuration, websiteMark } from './brand.ts';
 import { siteLogo } from './site-art.ts';
+import { introFrame } from './intro.ts';
 
 export function fixture(): View {
   return {
@@ -55,40 +56,62 @@ test('shell commands appear once', () => {
   const text = render(v).rows.map(stripTerminalSequences).join('\n');
   assert.equal(text.match(/ls -al/g)?.length, 1); assert.ok(!text.includes('SHELL :'));
 });
-test('logo animation moves its accent without changing the deployed silhouette', () => {
+test('header preserves the static deployed logo', () => {
   assert.deepEqual(siteLogo,['...iiiii...','.iiiiiiiii.','.ii.....ii.','ii.......ii','ii.......aa','ii.......aa','ii.......ii','.ii.....ii.','.iiiiiiiii.','...iiiii...']);
   assert.ok(websiteMark().every(row=>visibleWidth(row)===7));
   assert.ok(websiteMark().join('').includes('234;88;12'));
-  const still = websiteMark();
-  assert.notDeepEqual(websiteMark(false, 0), websiteMark(false, 500));
-  for (let ms = 0; ms <= introDuration; ms += 125) {
-    const frame = websiteMark(false, ms);
-    // Mixed foreground/background halves still fill the same terminal cell.
-    const silhouette = (rows: string[]) => rows.map(row => stripTerminalSequences(row).replace(/[▀▄█]/g, '█'));
-    assert.deepEqual(silhouette(frame), silhouette(still));
-    assert.ok(frame.every(row => visibleWidth(row) === 7));
-  }
-  assert.deepEqual(websiteMark(false, introDuration), still);
-  assert.deepEqual(websiteMark(false, introDuration + 500), still);
 });
-test('only the header logo animates for ten seconds, including while editing', () => {
+test('central intro settles at ten seconds and yields to drafts and conversation', () => {
   const v=fixture();
   const first=render(v);
   assert.equal(first.animate,true);
   v.elapsed=500;
   const next=render(v);
-  assert.notDeepEqual(first.rows.slice(1,4),next.rows.slice(1,4));
-  assert.deepEqual(first.rows.slice(4),next.rows.slice(4));
-  assert.ok(next.rows.slice(next.execution.y,next.execution.y+next.execution.height).every(row => stripTerminalSequences(row).trim() === ''));
+  assert.deepEqual(first.rows.slice(1,4),next.rows.slice(1,4));
+  assert.notDeepEqual(first.rows.slice(4),next.rows.slice(4));
+  assert.ok(next.artwork);
+  assert.ok(next.artwork.y >= next.execution.y && next.artwork.y+next.artwork.height < next.input.y);
   v.elapsed=introDuration;
   assert.equal(render(v).animate,false);
+  assert.ok(render(v).artwork);
   v.elapsed=0;v.input='typing';
-  assert.equal(render(v).animate,true);
-  v.density='compact';
   assert.equal(render(v).animate,false);
+  assert.equal(render(v).artwork,null);
+  v.input='';v.logs=[{text:'hello',level:'Info'}];
+  assert.equal(render(v).artwork,null);
   const text=render(v).rows.map(stripTerminalSequences).join('\n');
   assert.ok(!text.includes('Catch the bug.'));
   assert.ok(render(v).rows.every(row=>row.startsWith('\x1b[48;2;0;0;0m')));
+});
+
+test('dithered ring rotates, morphs to a sphere and resolves to its original mark', () => {
+  const start=introFrame(0,60,28), sphere=introFrame(5000,60,28), end=introFrame(introDuration,60,28);
+  assert.deepEqual(start,end);
+  assert.deepEqual(end,introFrame(introDuration+500,60,28));
+  assert.notDeepEqual(start,introFrame(2500,60,28));
+  assert.notDeepEqual(start,sphere);
+  const center=(frame:string[])=>frame.slice(12,16).map(stripTerminalSequences).map(row=>row.slice(27,33)).join('').trim();
+  assert.equal(center(start),'');
+  assert.ok(center(sphere).length>0);
+  assert.notDeepEqual(end,introFrame(introDuration,60,28,false,{x:.8,y:.4}));
+  for(const frame of [start,sphere,end]) {
+    assert.equal(frame.length,28);
+    assert.ok(frame.every(row=>visibleWidth(row)===60));
+    assert.ok(frame.some(row=>/[\u2801-\u28ff]/.test(row)));
+  }
+});
+
+test('pointer replay uses its own clock and dialogs, images and small terminals hide the artwork', () => {
+  const v=fixture();v.elapsed=20_000;
+  const settled=render(v);assert.equal(settled.animate,false);
+  v.introElapsed=2500;
+  assert.equal(render(v).animate,true);
+  assert.notDeepEqual(settled.rows,render(v).rows);
+  v.pointer={x:90,y:15};
+  assert.notDeepEqual(render(v).rows,render({...v,pointer:null}).rows);
+  for(const state of [{permission:'approve'},{update:'update'},{voice:'voice'},{masked:true},{input:'[Image #1]'},{width:30},{height:12}]) {
+    assert.equal(render({...v,...state}).artwork,null);
+  }
 });
 test('composer has a continuous padded surface with room around text and footer', () => {
   const v = fixture(), f = render(v);

@@ -120,4 +120,10 @@ impl TuiRuntime {
     pub fn mark_dirty(&mut self) {
         self.dirty = true;
     }
+
+    pub fn handle_visual_event(&mut self, event: &crossterm::event::Event) -> bool {
+        self.typescript
+            .as_mut()
+            .is_some_and(|ui| ui.handle_visual_event(event))
+    }
 }

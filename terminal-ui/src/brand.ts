@@ -6,15 +6,10 @@ const background = (rgb: number[]) => `\x1b[48;2;${rgb.join(';')}m`;
 export const brandOrange = [234, 88, 12];
 export const introDuration = 10_000;
 
-export function websiteMark(light = false, elapsed = introDuration): string[] {
+export function websiteMark(light = false): string[] {
   const palette: Record<string, number[]> = { i: light ? [24,24,27] : [233,229,220], a: brandOrange };
   // The deployed SVG's actual pixels, sampled to a compact 7×6 header mark.
-  const pixel = (x: number, y: number) => {
-    const ink = siteLogo[Math.min(9,Math.floor((y+.5)*10/6))]![Math.min(10,Math.floor((x+.5)*11/7))]!;
-    if (ink === '.' || elapsed < 0 || elapsed >= introDuration) return ink;
-    const angle = Math.atan2((y - 2.5) / 3, (x - 3) / 3.5) - elapsed / 2000 * Math.PI * 2;
-    return Math.abs(Math.atan2(Math.sin(angle), Math.cos(angle))) < .48 ? 'a' : 'i';
-  };
+  const pixel = (x: number, y: number) => siteLogo[Math.min(9,Math.floor((y+.5)*10/6))]![Math.min(10,Math.floor((x+.5)*11/7))]!;
   return Array.from({length:3},(_,y)=>Array.from({length:7},(_,x)=>{
     const top=palette[pixel(x,y*2)], bottom=palette[pixel(x,y*2+1)];
     if (!top && !bottom) return ' ';

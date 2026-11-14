@@ -3,5 +3,5 @@
   "captured": "2026-11-13T20:54:34.259Z",
   "homepage_sha256": "d903caf51919a45b6d6ed4e03772101841ea5a3797167fb182a914552cadf025",
   "logo": "Exact deployed 11×10 SVG pixel grid, adapted to light ink on black.",
-  "animation": "Terminal adaptation: orange segment orbits the fixed header ring for ten seconds, then returns to its deployed position."
+  "animation": "Original terminal point-cloud animation sampled from the deployed pixel ring: rotate, morph into a sphere and resolve to the ring; hover tilts and click replays."
 }

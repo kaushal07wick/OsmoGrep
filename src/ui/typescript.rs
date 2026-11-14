@@ -10,7 +10,8 @@ use std::{
 
 use crossterm::{
     cursor::MoveTo,
-    queue,
+    event::{DisableMouseCapture, EnableMouseCapture, Event, MouseButton, MouseEventKind},
+    execute, queue,
     style::Print,
     terminal::{Clear, ClearType},
 };
@@ -63,8 +64,44 @@ struct Frame {
     #[serde(rename = "editorWidth")]
     editor_width: u16,
     animate: bool,
+    artwork: Option<Region>,
     cursor: Point,
     images: Vec<Preview>,
+}
+
+#[derive(Default)]
+struct IntroInteraction {
+    area: Option<Rect>,
+    pointer: Option<(u16, u16)>,
+    started: Option<std::time::Instant>,
+    capture: bool,
+}
+impl IntroInteraction {
+    fn handle_event(&mut self, event: &Event) -> bool {
+        let Event::Mouse(mouse) = event else {
+            return false;
+        };
+        let Some(area) = self.area else { return false };
+        if !mouse.modifiers.is_empty()
+            || !matches!(
+                mouse.kind,
+                MouseEventKind::Moved
+                    | MouseEventKind::Down(MouseButton::Left)
+                    | MouseEventKind::Drag(MouseButton::Left)
+            )
+        {
+            return false;
+        }
+        if !area.contains((mouse.column, mouse.row).into()) {
+            self.pointer = None;
+            return false;
+        }
+        self.pointer = Some((mouse.column, mouse.row));
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+            self.started = Some(std::time::Instant::now());
+        }
+        true
+    }
 }
 
 pub struct TypeScriptUi {
@@ -76,6 +113,7 @@ pub struct TypeScriptUi {
     previous: Vec<String>,
     images: Vec<u32>,
     size: (u16, u16),
+    intro: IntroInteraction,
 }
 
 impl TypeScriptUi {
@@ -180,7 +218,12 @@ impl TypeScriptUi {
             previous: Vec::new(),
             images: Vec::new(),
             size: (0, 0),
+            intro: IntroInteraction::default(),
         })
+    }
+
+    pub fn handle_visual_event(&mut self, event: &Event) -> bool {
+        self.intro.handle_event(event)
     }
 
     pub fn draw(
@@ -191,9 +234,19 @@ impl TypeScriptUi {
         height: u16,
     ) -> Result<(Rect, Rect, usize, bool), String> {
         self.sequence += 1;
-        self.input
-            .try_send(view(state, model, self.sequence, width, height))
-            .map_err(|e| e.to_string())?;
+        let mut snapshot = view(state, model, self.sequence, width, height);
+        snapshot["introElapsed"] = json!(self
+            .intro
+            .started
+            .get_or_insert_with(std::time::Instant::now)
+            .elapsed()
+            .as_millis() as u64);
+        snapshot["pointer"] = self
+            .intro
+            .pointer
+            .map(|(x, y)| json!({"x":x,"y":y}))
+            .unwrap_or(Value::Null);
+        self.input.try_send(snapshot).map_err(|e| e.to_string())?;
         let raw = self
             .frames
             .recv_timeout(FRAME_TIMEOUT)
@@ -208,6 +261,12 @@ impl TypeScriptUi {
             || frame.editor_width == 0
             || frame.editor_width > frame.input.width
             || frame.rows.iter().any(|s| s.contains(['\n', '\r']))
+            || frame.artwork.as_ref().is_some_and(|area| {
+                !area.inside(width, height)
+                    || area.width == 0
+                    || area.height == 0
+                    || area.rect().intersection(frame.execution.rect()) != area.rect()
+            })
         {
             return Err("TypeScript UI frame outside terminal bounds".into());
         }
@@ -215,6 +274,22 @@ impl TypeScriptUi {
         output
             .write_all(b"\x1b[?2026h\x1b[?25l")
             .map_err(|e| e.to_string())?;
+        self.intro.area = frame.artwork.as_ref().map(Region::rect);
+        if self.intro.area.is_none() {
+            self.intro.pointer = None;
+        }
+        let capture = self.intro.area.is_some()
+            && super::terminal::artwork_mouse_enabled()
+            && !super::terminal::mouse_capture_enabled();
+        if capture != self.intro.capture {
+            if capture {
+                queue!(output, EnableMouseCapture)
+            } else {
+                queue!(output, DisableMouseCapture)
+            }
+            .map_err(|e| e.to_string())?;
+            self.intro.capture = capture;
+        }
         for id in self.images.drain(..) {
             write!(output, "\x1b_Ga=d,d=i,i={id},q=2;\x1b\\").map_err(|e| e.to_string())?;
         }
@@ -262,6 +337,9 @@ impl TypeScriptUi {
 
 impl Drop for TypeScriptUi {
     fn drop(&mut self) {
+        if self.intro.capture {
+            let _ = execute!(io::stdout(), DisableMouseCapture);
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
         let _ = fs::remove_dir_all(&self.directory);
@@ -324,6 +402,60 @@ fn view(state: &AgentState, model: &ModelConfig, id: u64, width: u16, height: u1
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
+
+    #[test]
+    fn intro_pointer_tilts_and_click_restarts_only_inside_artwork() {
+        let mut intro = IntroInteraction {
+            area: Some(Rect::new(20, 10, 60, 28)),
+            ..IntroInteraction::default()
+        };
+        let mut mouse = MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 50,
+            row: 20,
+            modifiers: KeyModifiers::NONE,
+        };
+        assert!(intro.handle_event(&Event::Mouse(mouse)));
+        assert_eq!(intro.pointer, Some((50, 20)));
+        assert!(intro.started.is_none());
+        mouse.kind = MouseEventKind::Down(MouseButton::Left);
+        assert!(intro.handle_event(&Event::Mouse(mouse)));
+        let clicked = intro.started;
+        assert!(clicked.is_some());
+        mouse.column = 2;
+        assert!(!intro.handle_event(&Event::Mouse(mouse)));
+        assert!(intro.pointer.is_none());
+        assert_eq!(intro.started, clicked);
+        mouse.column = 50;
+        mouse.modifiers = KeyModifiers::SHIFT;
+        assert!(!intro.handle_event(&Event::Mouse(mouse)));
+        assert_eq!(intro.started, clicked);
+    }
+
+    #[test]
+    fn intro_leaves_keyboard_wheel_and_hidden_artwork_events_with_the_normal_ui() {
+        let mut intro = IntroInteraction {
+            area: Some(Rect::new(20, 10, 60, 28)),
+            ..IntroInteraction::default()
+        };
+        assert!(!intro.handle_event(&Event::Key(KeyEvent::new(
+            KeyCode::Char('x'),
+            KeyModifiers::NONE
+        ))));
+        let mut mouse = MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 50,
+            row: 20,
+            modifiers: KeyModifiers::NONE,
+        };
+        assert!(!intro.handle_event(&Event::Mouse(mouse)));
+        intro.area = None;
+        mouse.kind = MouseEventKind::Down(MouseButton::Left);
+        assert!(!intro.handle_event(&Event::Mouse(mouse)));
+        assert!(intro.started.is_none());
+    }
+
     #[test]
     fn secret_entry_is_masked_before_crossing_the_presentation_boundary() {
         let mut state = crate::init_state();

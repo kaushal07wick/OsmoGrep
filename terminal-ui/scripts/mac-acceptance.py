@@ -66,6 +66,7 @@ env.update({'TERM':'xterm-ghostty','TERM_PROGRAM':'ghostty','COLORTERM':'truecol
             'OSMOGREP_UI':'typescript','OSMOGREP_DISABLE_UPDATE_CHECK':'1','VLLM_REALTIME_AUTOCONNECT':'0',
             'NO_PROXY':'127.0.0.1,localhost'})
 env.pop('VLLM_REALTIME_PROXY_LISTEN',None)
+env.pop('OSMOGREP_MOUSE',None)
 
 def controlling_terminal():
     os.setsid()
@@ -109,14 +110,24 @@ try:
     result['typescript_renderer_started'] = True
     first = len(transcript)
     drain(.7)
-    assert b'234;88;12' in transcript[first:], 'header accent must animate after startup'
+    assert b'175;170;160' in transcript[first:], 'central dot sculpture must animate after startup'
+    assert b'\x1b[?1003h' in transcript, 'idle artwork must accept pointer motion'
     drain(10)
     settled = len(transcript)
     drain(.4)
-    assert b'234;88;12' not in transcript[settled:], 'header animation must stop after ten seconds'
-    result['header_logo_animates_then_stops'] = True
+    assert b'175;170;160' not in transcript[settled:], 'central animation must settle after ten seconds'
+    result['central_morph_animates_then_settles'] = True
+    before_hover=len(transcript)
+    send(b'\x1b[<35;85;21M')
+    assert b'175;170;160' in transcript[before_hover:], 'hover must tilt the settled artwork'
+    before_click=len(transcript)
+    send(b'\x1b[<0;80;21M')
+    drain(.7)
+    assert b'175;170;160' in transcript[before_click:], 'click must replay the morph'
+    result['central_morph_hover_and_click_replay'] = True
     paste('/')
     wait_for(lambda: b'Commands' in transcript and b'navigate' in transcript)
+    assert b'\x1b[?1003l' in transcript, 'typing must release automatic mouse capture'
     send(b'\x1b[B' * 2)
     assert b'\x1b[48;2;42;42;42m' in transcript
     send(b'\x1b[A' * 2)

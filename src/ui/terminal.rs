@@ -104,10 +104,16 @@ pub fn teardown_terminal(
     Ok(())
 }
 
-fn mouse_capture_enabled() -> bool {
+pub(super) fn mouse_capture_enabled() -> bool {
     std::env::var("OSMOGREP_MOUSE")
         .ok()
         .is_some_and(|raw| parse_mouse_capture_setting(&raw))
+}
+
+pub(super) fn artwork_mouse_enabled() -> bool {
+    std::env::var("OSMOGREP_MOUSE")
+        .map(|raw| parse_mouse_capture_setting(&raw))
+        .unwrap_or(true)
 }
 
 fn parse_mouse_capture_setting(raw: &str) -> bool {
