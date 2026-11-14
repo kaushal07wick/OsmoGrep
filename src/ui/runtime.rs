@@ -66,11 +66,12 @@ impl TuiRuntime {
         if (!self.dirty && !self.animating) || !self.frame.draw_due(now) {
             return Ok(());
         }
-        let animation_interval = if state.ui.panel.as_ref().is_some_and(|p| p.section == 8) {
-            32
-        } else {
-            70
-        };
+        let animation_interval =
+            if !state.ui.agent_running || state.ui.panel.as_ref().is_some_and(|p| p.section == 8) {
+                32
+            } else {
+                70
+            };
         if !self.dirty
             && self.animating
             && self.last_visual.is_some_and(|last| {
@@ -115,7 +116,7 @@ impl TuiRuntime {
 
         use std::io::Write;
         if super::terminal::artwork_mouse_enabled() {
-            io::stdout().write_all(b"\x1b[?1002h\x1b[?1006h")?;
+            io::stdout().write_all(b"\x1b[?1000h\x1b[?1002h\x1b[?1006h")?;
         }
         state.ui.exec_scroll_max = usize::MAX;
         let (input, _, exec) = draw_ui(terminal, state)?;

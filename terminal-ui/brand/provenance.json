@@ -2,6 +2,6 @@
   "source": "https://osmogrep.com/",
   "captured": "2026-11-13T20:54:34.259Z",
   "homepage_sha256": "d903caf51919a45b6d6ed4e03772101841ea5a3797167fb182a914552cadf025",
-  "logo": "Exact deployed 11×10 SVG pixel grid, adapted to light ink on black.",
-  "animation": "Original point-cloud sequence: the deployed ring unfolds into an origami bird, folds its wings once and reforms into the ring. Three-times-finer dots on Kitty-compatible terminals; no hover interaction."
+  "logo": "Exact deployed 11\u00d710 SVG pixel grid, adapted to light ink on black.",
+  "animation": "Original point-cloud morphs using the deployed ring: horizon, interference, Game of Life, and Lorenz. Ten-second automatic playback, quiet settled pose, click replay without hover. Separated fine dots, continuous-acceleration easing, and a smaller canvas with explicit composer clearance."
 }

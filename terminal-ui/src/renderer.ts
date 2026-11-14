@@ -40,7 +40,7 @@ export interface Rendered {
   animate: boolean;
   artwork: Rect | null;
   controls?:{id:'model'|'provider'|'choice';index?:number;label?:string;x:number;y:number;width:number;height:number}[];
-  transcript?:{x:number;y:number;width:number;height:number;start:number;maxScroll:number;lineWidths:number[]};
+  transcript?:{x:number;y:number;width:number;height:number;start:number;maxScroll:number;lineWidths:number[];scrollbar?:Rect|null};
   selectionText?:string;
   images: { id: number; x: number; y: number; sequence: string; placement?:string }[];
 }
@@ -129,9 +129,11 @@ export function render(v: View): Rendered {
   const approvalHeight=Math.min(approvalRows.length,Math.max(0,Math.floor(execution.height*.65)));
   execution.height=Math.max(0,execution.height-(approvalHeight?approvalHeight+1:0));
   const transcript: string[] = [];
+  const insertedDiffs=new Set<FileDiff>();
   let paragraph: string[] = [];
   const flush = () => { if (paragraph.length) { transcript.push(...markdown(paragraph.join('\n'), width - pad * 2)); paragraph = []; } };
   for (let i = 0; i < v.logs.length; i++) {
+    const firstLog=i;
     const entry = v.logs[i]!; const text = clean(entry.text);
     if (text.startsWith('USER|')) {
       flush(); let command = text.slice(5), prefix = '❯ ';
@@ -148,22 +150,35 @@ export function render(v: View): Rendered {
       const color = entry.level === 'Error' ? rgb(230, 100, 100) : entry.level === 'Warn' ? rgb(225, 185, 75) : text.startsWith('● ') ? accent : dim;
       transcript.push(...wrapTextWithAnsi(color + text + reset, Math.max(1, width - pad * 2)));
     } else { paragraph.push(text); }
+    for(const diff of v.diffs)if(diff.afterLog!=null&&diff.afterLog>=firstLog&&diff.afterLog<=i){
+      flush();transcript.push(...diffLines(diff,Math.max(1,width-pad*2),light,!!v.expandTools));insertedDiffs.add(diff);
+    }
   }
-  for(const diff of v.diffs)transcript.push(...diffLines(diff,Math.max(1,width-pad*2),light,!!v.expandTools));
   flush();
+  for(const diff of v.diffs)if(!insertedDiffs.has(diff))transcript.push(...diffLines(diff,Math.max(1,width-pad*2),light,!!v.expandTools));
   if(v.stream)transcript.push(...markdown(v.stream+'▍',width-pad*2));
   if (v.plan.length) transcript.push('', ...v.plan.map(p => `${p.done ? '✓' : p.active ? '›' : '·'} ${clean(p.text)}`));
   const maxScroll = Math.max(0, transcript.length - execution.height);
   const start = v.followTail ? maxScroll : Math.max(0,Math.min(maxScroll,v.scrollTop??maxScroll-v.scroll));
   transcript.slice(start, start + execution.height).forEach((line, i) => put(execution.y + i, highlightTranscript(line,start+i,v.transcriptSelection,light), gutter + pad, width - pad * 2));
+  const scrollbar=maxScroll>0&&width>=20&&execution.height>=3?{x:gutter+width-1,y:execution.y,width:1,height:execution.height}:null;
+  if(scrollbar){
+    const thumb=Math.max(1,Math.floor(scrollbar.height*scrollbar.height/transcript.length));
+    const first=Math.round((scrollbar.height-thumb)*start/maxScroll);
+    for(let row=0;row<scrollbar.height;row++){
+      const active=row>=first&&row<first+thumb,line=rows[scrollbar.y+row]??'';
+      rows[scrollbar.y+row]=line+' '.repeat(Math.max(0,scrollbar.x-visibleWidth(line)))+(active?dim:(light?rgb(215,215,210):rgb(45,44,40)))+(active?'▎':'│')+reset;
+    }
+  }
 
   let artwork: Rect | null = null;
   const images: Rendered['images'] = [];
   const introElapsed = v.preferences?.reduce_motion ? introDuration : v.introElapsed ?? v.elapsed;
   if (v.preferences?.ambient_art!==false && !v.panel && !value && !v.masked && !transcript.length && !v.running && !v.permission && !v.update && !v.voice && !v.commands.length
     && width >= 36 && execution.height >= 16) {
-    const height = Math.min(30, execution.height-2), columns = Math.min(64, height*2, width-4);
-    artwork = {x:gutter+Math.floor((width-columns)/2),y:execution.y+Math.floor((execution.height-height)/2),width:columns,height};
+    const clearance=Math.max(3,Math.min(6,Math.floor(execution.height*.15)));
+    const height = Math.min(26, execution.height-clearance-1), columns = Math.min(56, height*2, width-6);
+    artwork = {x:gutter+Math.floor((width-columns)/2),y:execution.y+Math.floor((execution.height-clearance-height)/2),width:columns,height};
     if (getCapabilities().images === 'kitty') {
       const graphicId = (process.pid*128+127)>>>0;
       const png=introPng(introElapsed,columns,height,light,v.introScene,v.introBright).toString('base64');
@@ -209,7 +224,7 @@ export function render(v: View): Rendered {
   }
   if (footerHeight) {
     const permission = v.planMode ? 'plan mode' : v.autoApprove ? 'auto-approve on' : 'ask approvals';
-    const right = dim+((v.queuedMessages??0)>0?`${v.queuedMessages} queued${v.queuePaused?' · enter resume':''}`:v.running?`${v.shortcuts?.queue??'tab'} queue`:'/help')+reset;
+    const right = dim+((v.queuedMessages??0)>0?`${v.queuedMessages} queued${v.queuePaused?' · enter resume':''}`:!v.followTail&&maxScroll>0?`${maxScroll-start} ↑ · end live`:v.running?`${v.shortcuts?.queue??'tab'} queue`:maxScroll>0?'scroll · pgup/pgdn':'/help')+reset;
     const reserve=width>=60?visibleWidth(right)+3:0;
     const entries=v.statusEntries??(v.statusLine?v.statusLine.map((value,i)=>({id:value.startsWith('~')||value.startsWith('/')?'directory':i===0?'model':'optional',value})):[{id:'permissions',value:`${v.profile} · ${permission}`}]);
     const fields=entries.flatMap(e=>e.id==='model'?[{id:'model',value:clean(v.model)+' ▾'},{id:'provider',value:clean(v.provider)+' ▾'}]:[e]);
@@ -264,7 +279,7 @@ export function render(v: View): Rendered {
     }), input: inputRect, execution, editorWidth: textWidth, animate: v.running || !!artwork && introElapsed < introDuration, artwork,
     cursor: { x: Math.min(w - 1, gutter + pad + 2 + input.position.x), y: Math.min(h - 1, textY + input.position.y - topLine) },
     images, controls,
-    transcript:{x:gutter+pad,y:execution.y,width:Math.max(1,width-pad*2),height:execution.height,start,maxScroll,lineWidths:transcript.slice(start,start+execution.height).map(line=>Math.min(Math.max(1,width-pad*2),visibleWidth(line)))},
+    transcript:{x:gutter+pad,y:execution.y,width:Math.max(1,width-pad*2),height:execution.height,start,maxScroll,scrollbar,lineWidths:transcript.slice(start,start+execution.height).map(line=>Math.min(Math.max(1,width-pad*2),visibleWidth(line)))},
     selectionText:selectedTranscript(transcript,v.transcriptSelection),
   };
 }

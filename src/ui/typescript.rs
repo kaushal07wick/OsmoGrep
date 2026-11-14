@@ -84,8 +84,19 @@ struct Transcript {
     max_scroll: usize,
     #[serde(rename = "lineWidths")]
     line_widths: Vec<usize>,
+    scrollbar: Option<Region>,
 }
 impl Transcript {
+    fn scroll_top_at(&self, y: u16) -> Option<usize> {
+        let track = self.scrollbar.as_ref()?;
+        let row = y
+            .saturating_sub(track.y)
+            .min(track.height.saturating_sub(1)) as usize;
+        Some(
+            self.max_scroll.saturating_mul(row)
+                / usize::from(track.height.saturating_sub(1).max(1)),
+        )
+    }
     fn point(&self, x: u16, y: u16) -> Option<[usize; 2]> {
         if self.line_widths.is_empty() {
             return None;
@@ -175,6 +186,7 @@ pub struct TypeScriptUi {
     intro: IntroInteraction,
     transcript: Option<Transcript>,
     selecting: bool,
+    scrolling: bool,
     copy_pending: bool,
 }
 
@@ -284,6 +296,7 @@ impl TypeScriptUi {
             intro: IntroInteraction::default(),
             transcript: None,
             selecting: false,
+            scrolling: false,
             copy_pending: false,
         })
     }
@@ -292,6 +305,36 @@ impl TypeScriptUi {
         if matches!(event,Event::Mouse(m) if m.kind==MouseEventKind::Down(MouseButton::Left)) {
             self.selecting = false;
             self.copy_pending = false;
+            self.scrolling = false;
+        }
+        if state.ui.panel.is_none() && state.ui.pending_update.is_none() {
+            if let (Event::Mouse(mouse), Some(view)) = (event, &self.transcript) {
+                let on_track = view
+                    .scrollbar
+                    .as_ref()
+                    .is_some_and(|track| track.rect().contains((mouse.column, mouse.row).into()));
+                if mouse.modifiers.is_empty()
+                    && ((mouse.kind == MouseEventKind::Down(MouseButton::Left) && on_track)
+                        || (self.scrolling
+                            && matches!(
+                                mouse.kind,
+                                MouseEventKind::Drag(MouseButton::Left)
+                                    | MouseEventKind::Up(MouseButton::Left)
+                            )))
+                {
+                    if let Some(top) = view.scroll_top_at(mouse.row) {
+                        state.ui.exec_scroll = if top == view.max_scroll {
+                            usize::MAX
+                        } else {
+                            view.max_scroll - top
+                        };
+                        state.ui.follow_tail = top == view.max_scroll;
+                        state.ui.transcript_selection = None;
+                        self.scrolling = mouse.kind != MouseEventKind::Up(MouseButton::Left);
+                        return true;
+                    }
+                }
+            }
         }
         if state.ui.pending_permission.is_none() && state.ui.pending_update.is_none() {
             if let Event::Mouse(mouse) = event {
@@ -427,6 +470,13 @@ impl TypeScriptUi {
                     || t.start > t.max_scroll
                     || t.line_widths.len() > t.area.height as usize
                     || t.line_widths.iter().any(|w| *w > t.area.width as usize)
+                    || t.scrollbar.as_ref().is_some_and(|track| {
+                        !track.inside(width, height)
+                            || track.width != 1
+                            || track.y != t.area.y
+                            || track.height != t.area.height
+                            || track.x < t.area.x + t.area.width
+                    })
             })
             || frame.controls.iter().any(|c| {
                 !matches!(c.id.as_str(), "model" | "provider" | "choice")
@@ -464,7 +514,7 @@ impl TypeScriptUi {
         if capture != self.intro.capture {
             if capture {
                 // Drag events support transcript selection; hover never affects artwork.
-                queue!(output, Print("\x1b[?1002h\x1b[?1006h"))
+                queue!(output, Print("\x1b[?1000h\x1b[?1002h\x1b[?1006h"))
             } else {
                 queue!(output, DisableMouseCapture)
             }
@@ -588,7 +638,8 @@ fn view(state: &AgentState, model: &ModelConfig, id: u64, width: u16, height: u1
     let diffs: Vec<_> = if ui.diff_active {
         ui.diff_snapshot.iter().map(|d| {
         let diff = super::diff::Diff::from_texts(d.target.clone(), &d.before, &d.after);
-        json!({ "file":diff.file,"added":diff.added,"removed":diff.removed,"preview":d.tool.starts_with("preview:"), "lines":diff.lines.iter().map(|l| json!({"text":l.text,"kind":format!("{:?}",l.kind),"oldLine":l.old_lineno,"newLine":l.new_lineno})).collect::<Vec<_>>() })
+        let after_log=if d.tool.starts_with("preview:") || d.tool.starts_with("live:"){None}else{state.logs.iter().enumerate().filter(|(_,line)|line.text.trim()==format!("└ edited {}",d.target)).map(|(index,_)|index).last()};
+        json!({ "file":diff.file,"added":diff.added,"removed":diff.removed,"preview":d.tool.starts_with("preview:"),"afterLog":after_log, "lines":diff.lines.iter().map(|l| json!({"text":l.text,"kind":format!("{:?}",l.kind),"oldLine":l.old_lineno,"newLine":l.new_lineno})).collect::<Vec<_>>() })
     }).collect()
     } else {
         Vec::new()
@@ -717,10 +768,19 @@ mod tests {
             start: 50,
             max_scroll: 100,
             line_widths: vec![8, 4],
+            scrollbar: None,
         };
         assert_eq!(view.point(5, 5), Some([50, 2]));
         assert_eq!(view.point(100, 100), Some([51, 4]));
         assert_eq!(view.point(0, 0), Some([50, 0]));
+    }
+
+    #[test]
+    fn scrollbar_reaches_both_ends_and_clamps_dragging_outside_the_track() {
+        let view:Transcript=serde_json::from_value(json!({"x":3,"y":5,"width":40,"height":11,"start":50,"maxScroll":200,"lineWidths":[8],"scrollbar":{"x":44,"y":5,"width":1,"height":11}})).unwrap();
+        assert_eq!(view.scroll_top_at(0), Some(0));
+        assert_eq!(view.scroll_top_at(10), Some(100));
+        assert_eq!(view.scroll_top_at(100), Some(200));
     }
 
     #[test]

@@ -127,3 +127,9 @@ use `swift test`/`swift build`; a generic `tests` directory no longer implies py
 ## Provider APIs
 
 Provider selection now controls the actual API format: Responses, Chat Completions, or native Anthropic Messages. Model settings include an API protocol override for custom gateways. Both the primary agent and scoped calls translate tool calls/results, inline images, streaming events and usage through the same boundary. Ollama and LM Studio can run without a key. Headless output preserves streamed whitespace while redacting secret-like tokens. See [the source review and configuration guide](agent-provider-design.md) for provider defaults, commands, evidence and limits.
+
+## Artwork spacing and edit output
+
+The four approved central morphs retain the black background and dim settled logo. The artwork uses a smaller canvas, at least three terminal rows of clearance above the composer, separated native pixel dots, and smoother easing at up to roughly 30 frames per second. Hover remains inactive and Reduce Motion still settles the artwork immediately.
+
+Long transcripts expose a thin draggable rail in the unused right gutter; wheel and PageUp/PageDown scrolling remain available. The footer indicates when the view is scrolled back and End returns to live output. Patch headings and approvals show the target path rather than raw patch JSON. Applied diffs appear beside the edit result, before the assistant's final reply. The prompt requests a one-to-three-sentence change summary without quoting the inserted content unless asked.

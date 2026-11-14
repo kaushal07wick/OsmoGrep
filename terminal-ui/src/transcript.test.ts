@@ -22,3 +22,20 @@ test('permission surface covers trailing padding even after styled row resets',(
  }
  assert.ok(colors.slice(f.input.x,f.input.x+f.input.width).every(c=>c==='30;30;30'));
 });
+test('an edit diff stays next to its tool result with the final summary after it',()=>{
+ const v=fixture();v.height=60;
+ v.logs=[{level:'Success',text:'● (Patch) README.md'},{level:'Info',text:'  └ edited README.md'},{level:'Info',text:'Updated README.md with the requested sentence.'}];
+ v.diffs=[{file:'README.md',afterLog:1,lines:[{text:'new sentence',kind:'Added',newLine:9}]}];
+ const frame=render(v),text=frame.rows.map(stripTerminalSequences).join('\n');
+ assert.ok(text.indexOf('new sentence')<text.indexOf('Updated README.md'));
+ assert.ok(text.indexOf('edited README.md')<text.indexOf('new sentence'));
+});
+test('overflowing edit output exposes a bounded scroll track and a return-to-live hint',()=>{
+ const v=fixture();v.logs=Array.from({length:50},(_,i)=>({level:'Info',text:`Line ${i}\n`}));
+ const bottom=render(v);assert.ok(bottom.transcript!.scrollbar);
+ const top=render({...v,followTail:false,scrollTop:0});const track=top.transcript!.scrollbar!;
+ assert.equal(top.transcript!.start,0);assert.ok(track.x>=top.transcript!.x+top.transcript!.width);
+ assert.ok(track.y+track.height<=top.input.y);
+ assert.match(top.rows.map(stripTerminalSequences).join('\n'),/end live/);
+ assert.ok(top.rows.every(row=>stripTerminalSequences(row).length<=v.width));
+});

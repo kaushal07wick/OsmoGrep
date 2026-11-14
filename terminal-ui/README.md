@@ -5,27 +5,29 @@ conversation, commands, model calls, permissions, tools, jobs and cancellation.
 There is no second agent or tool runner. Display components and Unicode/Markdown
 layout reuse `@earendil-works/pi-tui`.
 
-The UI follows the supplied Claude Code reference: compact brand/model/directory
-at the upper left, full-width transcript, fixed bottom composer and a small
-permissions footer. Branding comes from the live **osmogrep.com** deployment:
-the pixel-ring logo, lowercase wordmark and warm orange accent. The canvas stays
-black in dark mode. The header mark stays still. In a fresh, empty conversation,
-a dot-dithered ring holds briefly, unfolds into an origami bird with an orange
-beak, folds its wings once, then reforms into the OsmoGrep ring over ten seconds. The
-settled pose stays in the center. Hover has no effect, and clicks during playback
-are ignored; clicking the settled mark replays it. Drafts, messages, plans and
-dialogs hide it. Short terminals omit it.
+The current interface has a compact brand/model/directory header, a scrollable
+transcript, a fixed composer, and a configurable status line with model/provider
+selectors. The deployed **osmogrep.com** pixel-ring branding is adapted to a black
+canvas in dark mode. Graphite and Cotton are native pixel-paper materials behind
+real editable text.
 
-Ghostty and other Kitty-compatible terminals reuse the existing inline image
-path for three times the linear dot resolution (nine times as many sample
-positions). Other terminals use eight Braille dot positions per cell. Both
-paths generate the same geometry locally, with no model or network requests.
+The header mark stays still. An empty conversation automatically plays one of
+four central dot-dithered morphs: horizon, interference, Game of Life, or Lorenz.
+The smaller artwork has explicit clearance above the composer, uses smoother
+easing, and settles back into a dim logo after ten seconds. A click brightens and
+replays it; hover has no effect. Reduce Motion keeps a static pose. Drafts,
+conversation and dialogs hide the artwork; short terminals omit it.
 
-Button reporting is enabled automatically only while that idle artwork is visible,
-then released when editing starts. `OSMOGREP_MOUSE=off osmogrep` disables this
-interaction; explicit `OSMOGREP_MOUSE=on` retains normal capture for the session.
-The artwork never requests hover reporting. Keyboard input, wheel scrolling and
-modified clicks keep their existing handlers.
+Kitty-compatible graphics provide fine separated pixel dots and paper textures.
+Other terminals use Braille artwork and matte material colors. Both artwork paths
+are generated locally without model calls or external assets at runtime.
+
+Button and wheel reporting are enabled for the interactive transcript, selectors,
+and artwork; hover reporting is not requested. The transcript supports wheel and
+PageUp/PageDown navigation, a draggable right-gutter rail, drag-to-copy selection,
+and an End shortcut to return to live output. Streaming does not pull a scrolled
+viewport to the bottom. `OSMOGREP_MOUSE=off` disables app mouse interaction while
+retaining keyboard navigation.
 
 `brand/provenance.json` records the live asset hashes. `brand/logo.svg` preserves
 the deployed mark; `src/site-art.ts` holds its pixel grid.
@@ -43,7 +45,7 @@ that fallback explicitly. Noninteractive commands don't start Node.
 ## Composer
 
 - Typing `/` opens a compact command card above the composer. Up/down moves the
-  soft accent selection; Enter runs the selected command. Six entries remain
+  soft accent selection; Enter runs the selected command. Up to five entries remain
   visible at a time, with a position counter and keyboard hints when space allows.
 - A continuous charcoal panel provides blank rows above and below the draft,
   horizontal padding and a gap before the footer. Dark-mode surroundings stay black.
@@ -56,7 +58,8 @@ that fallback explicitly. Noninteractive commands don't start Node.
   terminal Cmd+C/Cmd+V shortcuts also retain terminal-managed behavior.
 - Ctrl+K kills to line end, Ctrl+W deletes the preceding word, Ctrl+Y yanks the
   internal clipboard. Shift+Enter inserts a newline; Enter sends. While a run
-  is active, Tab queues a follow-up; Escape cancels the run.
+  is active, Enter or Tab queues a separate follow-up; Escape cancels the run and
+  pauses the queue. An empty Enter resumes a paused queue.
 - Drag or paste a PNG/JPEG/GIF/WebP path to attach it. Ctrl+V reads a copied
   clipboard image on macOS. Each image inserts `[Image #N]` at the cursor.
   Removing that label excludes the image from the message.
@@ -68,6 +71,19 @@ that fallback explicitly. Noninteractive commands don't start Node.
   content in the existing provider request. The chosen model must support
   image input. Image messages entered during another run are queued, preserving
   their bytes. Existing per-repository session history remains local.
+
+Applied diffs are anchored to their edit result before the final assistant reply.
+Tool output can be folded/expanded with Ctrl+T; approvals summarize the target path
+rather than dumping patch payloads. The agent prompt requests a short change
+summary for ordinary edits. Escape never exits an idle app; `/exit` does.
+
+## README previews
+
+The root README uses PNG/GIF exports of this renderer with illustrative data,
+not screenshots of a private repository. Regenerate them with
+`python3 terminal-ui/scripts/readme-previews.py` from the repo root. This optional
+development script needs Pillow plus Menlo or DejaVu Sans Mono; those are not
+application runtime dependencies. The chart preview is explicitly sample data.
 
 ## Development
 

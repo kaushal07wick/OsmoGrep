@@ -132,7 +132,18 @@ test('fine intro PNG uses three times the linear dot resolution and valid PNG ch
   const raw=inflateSync(Buffer.concat(data));
   assert.equal(raw.length,(width*3+1)*height);
   assert.ok(raw.some(value=>value>0));
+  for(let y=0;y<height;y++)for(let x=0;x<width;x++)if(x%2||y%2){
+    const at=y*(width*3+1)+1+x*3;
+    assert.equal(raw[at]!+raw[at+1]!+raw[at+2]!,0,'fine dots retain a black gap rather than merging into a solid surface');
+  }
   assert.deepEqual(introPng(0,60,28),introPng(introDuration,60,28));
+});
+test('artwork keeps breathing room above the composer at different terminal sizes',()=>{
+ for(const [width,height]of [[80,30],[160,44],[240,80]]){
+  const f=render({...fixture(),width:width!,height:height!});assert.ok(f.artwork);
+  assert.ok(f.input.y-f.artwork.y-f.artwork.height>=3);
+  assert.ok(f.artwork.height<=26&&f.artwork.width<=56);
+ }
 });
 
 test('Kitty-compatible terminals use the fine intro without changing its reserved bounds', () => {

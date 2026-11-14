@@ -17,7 +17,13 @@ pub fn tool_summary(args: &serde_json::Value) -> String {
     ]
     .iter()
     .find_map(|key| args.get(key).and_then(serde_json::Value::as_str))
-    .unwrap_or("")
+    .map(str::to_string)
+    .or_else(|| {
+        args.get("patch")
+            .and_then(serde_json::Value::as_str)
+            .and_then(crate::agent::extract_patch_target)
+    })
+    .unwrap_or_default()
     .lines()
     .next()
     .unwrap_or("")
@@ -154,5 +160,7 @@ mod tests {
             "cargo test"
         );
         assert_eq!(tool_summary(&serde_json::json!({"new_text":"private"})), "");
+        let patch = serde_json::json!({"patch":"*** Begin Patch\n*** Update File: README.md\n@@\n-old private text\n+new private text\n*** End Patch"});
+        assert_eq!(tool_summary(&patch), "README.md");
     }
 }

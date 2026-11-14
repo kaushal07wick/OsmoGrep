@@ -1,10 +1,10 @@
 {
   "scope": "Local macOS validation of TypeScript presentation and existing Rust backend",
   "date": "2026-11-15",
-  "rust_tests_passed": 228,
-  "typescript_tests_passed": 41,
+  "rust_tests_passed": 229,
+  "typescript_tests_passed": 44,
   "node": "v26.13.1",
-  "installed_sha256": "3a1651dcd5c6593bac0339676d79f1db7ef3b7e91f06be9601274f035dd0e5c0",
+  "installed_sha256": "f43cb4c834f3ab6086430488251988e06b0367acc18ec4472b3ee6a10896edd6",
   "installed_first_on_path": true,
   "mac_pty_acceptance": {
     "typescript_renderer_started": true,
@@ -28,6 +28,7 @@
     "submitted_followups_are_distinct_fifo_turns": true,
     "assistant_preface_does_not_skip_requested_tools": true,
     "wheel_scrolling_and_drag_copy_plain_output": true,
+    "transcript_scroll_track_drags_and_returns_to_live": true,
     "streaming_preserves_user_scroll_position": true,
     "terminal_resize": true,
     "existing_shell_command": true,
@@ -57,34 +58,34 @@
   "other_operating_systems_tested_locally": false,
   "brand_source": "https://osmogrep.com/",
   "brand_provenance": "terminal-ui/brand/provenance.json",
-  "pty_binary": "Final optimized provider/prompt release, byte-identical to installed binary",
+  "pty_binary": "Optimized artwork/transcript release; final prompt-only manual-delegation sentence added after terminal checks",
   "installed_cli_version_and_help": true,
   "layout": "Consistent container gutters and bottom padding; dotted section badges and arrow selection; readable weekly totals and dithered bars; native Kitty paper background with editable text",
-  "artwork_visual_scale": 0.62,
+  "artwork_visual_scale": 0.6,
   "animation_microbenchmark": {
-    "samplesPerScene": 30,
-    "columns": 60,
-    "rows": 30,
+    "samplesPerScene": 20,
+    "columns": 52,
+    "rows": 26,
     "frames": {
       "horizon": {
-        "meanMs": 7.826191733333334,
-        "p95Ms": 9.96991700000001
+        "meanMs": 9.112762600000007,
+        "p95Ms": 9.867999999999995
       },
       "interference": {
-        "meanMs": 11.921898666666666,
-        "p95Ms": 20.43941699999999
+        "meanMs": 10.065831200000002,
+        "p95Ms": 11.218957999999986
       },
       "life": {
-        "meanMs": 3.461823566666654,
-        "p95Ms": 4.316208999999958
+        "meanMs": 5.753441650000019,
+        "p95Ms": 6.489791000000082
       },
       "lorenz": {
-        "meanMs": 4.120787566666668,
-        "p95Ms": 5.181041999999934
+        "meanMs": 6.278645750000004,
+        "p95Ms": 7.244249999999965
       }
     }
   },
-  "source_revision": "Provider transport and system-prompt increment; see Git history for this file",
+  "source_revision": "Artwork spacing and transcript scrolling increment; see Git history for this file",
   "live_text_provider_checked": true,
   "live_text_provider": "openai/gpt-5.2",
   "live_text_provider_reported_input_tokens": 1101,
@@ -307,5 +308,75 @@
   "oauth_subscription_login_added": false,
   "blocking_reader_cancellation_limit": "Caller cancels promptly; a blocked HTTP reader may survive until the 120s timeout and cannot dispatch tools.",
   "headless_preserves_stream_whitespace": true,
-  "neovim_tmux_acceptance_source_commit": "d25cb79; editor source unchanged in provider increment"
+  "neovim_tmux_acceptance_source_commit": "d25cb79; editor source unchanged in provider increment",
+  "live_edit_summary": {
+    "scope": "Live coding action in a temporary fixture only",
+    "passed": true,
+    "tools": [
+      "read_file",
+      "write_file"
+    ],
+    "final_response": "Appended the line `The coding agent is ready.` to `notes.txt`, preserving the existing text.",
+    "final_word_count": 14,
+    "exit_code": 0
+  },
+  "artwork_layout": {
+    "maximum_cells": [
+      56,
+      26
+    ],
+    "minimum_composer_clearance_rows": 3,
+    "native_dot_gap_pixels": 1,
+    "intro_frame_interval_ms": 32,
+    "hover_replay": false
+  },
+  "transcript_scroll": {
+    "wheel": true,
+    "keyboard": true,
+    "draggable_gutter_track": true,
+    "follow_tail_hint": true,
+    "applied_diffs_before_final_summary": true,
+    "patch_approval_uses_target_path": true
+  },
+  "subagents_used_for_this_increment": false,
+  "subagent_prompt_policy": "Explicit user delegation request required",
+  "readme_documentation": {
+    "local_links_valid": true,
+    "obsolete_terminal_embeds_removed": true,
+    "obsolete_forced_test_claims_removed": true,
+    "previews_use_actual_renderer": true,
+    "illustrative_data_labeled": true,
+    "assets": [
+      {
+        "file": "docs/assets/terminal-commands.png",
+        "width": 1276,
+        "height": 719,
+        "frames": 1
+      },
+      {
+        "file": "docs/assets/terminal-cotton.png",
+        "width": 1276,
+        "height": 944,
+        "frames": 1
+      },
+      {
+        "file": "docs/assets/terminal-morph.gif",
+        "width": 1276,
+        "height": 1044,
+        "frames": 39
+      },
+      {
+        "file": "docs/assets/terminal-usage.png",
+        "width": 1276,
+        "height": 1144,
+        "frames": 1
+      },
+      {
+        "file": "docs/assets/terminal-workspace.png",
+        "width": 1276,
+        "height": 944,
+        "frames": 1
+      }
+    ]
+  }
 }

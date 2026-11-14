@@ -4,7 +4,7 @@ import { introDuration } from './brand.ts';
 import {scenePoints,type Scene} from './scenes.ts';
 
 const tau = Math.PI * 2;
-const smooth = (a: number, b: number, t: number) => { const x = Math.max(0, Math.min(1, (t-a)/(b-a))); return x*x*(3-2*x); };
+const smooth = (a: number, b: number, t: number) => { const x = Math.max(0, Math.min(1, (t-a)/(b-a))); return x*x*x*(x*(x*6-15)+10); };
 const bayer = [0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5];
 const dots = [[1,8],[2,16],[4,32],[64,128]];
 const pixel = (x: number, y: number) => siteLogo[Math.floor((y+1)*5)]?.[Math.floor((x/1.1+1)*5.5)] ?? '.';
@@ -28,14 +28,16 @@ function raster(elapsed:number,columns:number,rows:number,detail:1|3,scene:Scene
   const width=columns*2*detail,height=rows*4*detail,length=width*height;
   const depth=new Float32Array(length).fill(-Infinity),shade=new Float32Array(length),orange=new Uint8Array(length);
   const t=Math.max(0,Math.min(1,elapsed/introDuration));
-  const morph=smooth(.16,.38,t)*(1-smooth(.66,.96,t));
-  const turns=smooth(.1,.4,t)+smooth(.65,.97,t),yaw=turns===2?0:tau*turns;
+  const morph=smooth(.12,.38,t)*(1-smooth(.64,.94,t));
+  const turns=smooth(.07,.38,t)+smooth(.64,.95,t),yaw=turns===2?0:tau*turns;
   const pitch=.15*Math.sin(yaw)+morph*({horizon:0,interference:1.02,life:.24,lorenz:-.1}[scene]);
   const cy=Math.cos(yaw),sy=Math.sin(yaw),cx=Math.cos(pitch),sx=Math.sin(pitch);
-  const scale=.62*Math.min(width/2.7,height/2.5),points=mesh(detail);
+  const scale=.6*(1+.025*Math.sin(tau*t)*morph)*Math.min(width/2.7,height/2.5),points=mesh(detail);
   const target=morph>0?scenePoints(scene,elapsed/1000,points.length/6):points;
   for(let i=0;i<points.length;i+=6){
-    const x=points[i]!*(1-morph)+target[i]!*morph,y=points[i+1]!*(1-morph)+target[i+1]!*morph,z=points[i+2]!*(1-morph)+target[i+2]!*morph;
+    const curl=.18*Math.sin(Math.PI*morph)*Math.sin(Math.PI*t),angle=curl*Math.sin(i/6*2.399963);
+    const mx=points[i]!*(1-morph)+target[i]!*morph,my=points[i+1]!*(1-morph)+target[i+1]!*morph;
+    const x=mx*Math.cos(angle)-my*Math.sin(angle),y=mx*Math.sin(angle)+my*Math.cos(angle),z=points[i+2]!*(1-morph)+target[i+2]!*morph;
     const xx=x*cy+z*sy,zz=z*cy-x*sy,yy=y*cx-zz*sx,rotatedZ=y*sx+zz*cx;
     const perspective=4/(4-rotatedZ),px=Math.floor(width/2+xx*scale*perspective),py=Math.floor(height/2+yy*scale*perspective);
     const alpha=1-morph+target[i+5]!*morph;if(alpha<.05)continue;
@@ -78,7 +80,8 @@ export function introPng(elapsed: number, columns: number, rows: number, light =
     raw[y*(width*3+1)]=0;
     for(let x=0;x<width;x++) {
       const at=y*width+x;
-      if(shade[at]!<=(bayer[(y%4)*4+x%4]!+.5)/16) continue;
+      // Leave a pixel of black between fine dots instead of filling the surface with crosshatching.
+      if(x%2||y%2||shade[at]!<=(bayer[((y/2)%4)*4+(x/2)%4]!+.5)/16) continue;
       const rgb=orange[at] ? (light?[190,65,10]:[164,80,26]) : (light?[65,63,59]:[144,140,133]);
       const offset=y*(width*3+1)+1+x*3;
       for(let c=0;c<3;c++)raw[offset+c]=Math.round(light?250-(250-rgb[c]!)*gain:rgb[c]!*gain);

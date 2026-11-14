@@ -90,7 +90,7 @@ class Model(http.server.BaseHTTPRequestHandler):
         elif latest=='UI_PERMISSION_PROBE':
             if not Model.permission_issued:
                 Model.permission_issued=True
-                value['output']=[{'type':'function_call','name':'edit_file','call_id':'permission_probe','arguments':json.dumps({'path':'permission.txt','old':'before','new':'after'})}]
+                value['output']=[{'type':'function_call','name':'patch','call_id':'permission_probe','arguments':json.dumps({'patch':'*** Begin Patch\n*** Update File: permission.txt\n@@\n-before\n+after\n*** End Patch'})}]
             else: value['output']=message('PERMISSION_FLOW_OK')
         data = (('data: '+json.dumps({'type':'response.completed','response':value})+'\n\ndata: [DONE]\n\n').encode())
         if latest in ['QUEUE_FIRST','STREAM_SCROLL_PROBE']: data=tail+data
@@ -193,7 +193,7 @@ try:
     assert b'a=t,' not in transcript[settled:], 'stationary paper pixels must be retained rather than re-uploaded'
     result['native_paper_pixels_cached'] = True
     settled_image=graphics(transcript)[-1]
-    assert struct.unpack('>II',settled_image[16:24])==(60*6,30*12), 'fine image must have three times the linear dot resolution'
+    assert struct.unpack('>II',settled_image[16:24])==(52*6,26*12), 'smaller artwork must retain three times the linear dot resolution'
     result['central_morph_animates_then_settles'] = True
     before_hover=len(transcript)
     send(b'\x1b[<35;85;21M')
@@ -350,6 +350,8 @@ try:
     send(b'y')
     wait_for(lambda:b'PERMISSION_FLOW_OK' in transcript[at:])
     assert (repo/'permission.txt').read_text()=='after\n'
+    assert b'Approved patch permission.txt' in plain(transcript[at:])
+    assert b'Approved patch {"patch"' not in plain(transcript[at:])
     assert b'48;2;9;30;20m' in transcript[at:], 'applied diff must use the shaded addition surface'
     result['real_permission_dock_and_numbered_diff'] = True
     # Ordinary Enter messages remain separate FIFO turns while a response streams.
@@ -375,6 +377,14 @@ try:
     copied=base64.b64decode(copies[-1]).decode()
     assert 'SCROLL_LINE_' in copied and '\x1b' not in copied
     result['wheel_scrolling_and_drag_copy_plain_output']=True
+    # The track sits in the unused right gutter and scrolls without selecting text.
+    moved=len(transcript)
+    send(b'\x1b[<0;159;23M');send(b'\x1b[<32;159;6M');send(b'\x1b[<0;159;6m')
+    wait_for(lambda:b'end live' in plain(transcript[moved:]))
+    assert b'\x1b]52;c;' not in transcript[moved:], 'dragging the scroll track must not copy output'
+    send(b'\x1b[<0;159;39M');send(b'\x1b[<0;159;39m')
+    wait_for(lambda:b'SCROLL_LINE_199' in plain(transcript[moved:]))
+    result['transcript_scroll_track_drags_and_returns_to_live']=True
     send(b'\x1b');paste('STREAM_SCROLL_PROBE');send(b'\r')
     wait_for(lambda:b'STREAM_LINE_079' in plain(transcript))
     send(b'\x1b[<64;40;12M'*4)

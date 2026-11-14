@@ -1269,6 +1269,11 @@ fn parse_tool_invocation(item: &Value) -> Result<ToolInvocation, String> {
 
 fn summarize_args(tool: &str, args: &Value) -> String {
     match tool {
+        "patch" => args
+            .get("patch")
+            .and_then(Value::as_str)
+            .and_then(extract_patch_target)
+            .unwrap_or_else(|| "patch".to_string()),
         "run_shell" => args
             .get("cmd")
             .and_then(Value::as_str)
@@ -1757,7 +1762,7 @@ fn repo_relative_path(repo_root: &Path, raw: &str) -> String {
         .to_string()
 }
 
-fn extract_patch_target(patch: &str) -> Option<String> {
+pub(crate) fn extract_patch_target(patch: &str) -> Option<String> {
     patch.lines().find_map(|line| {
         let path = if let Some(raw) = line.strip_prefix("+++ ") {
             raw.strip_prefix("b/").unwrap_or(raw).trim()
@@ -2779,6 +2784,7 @@ mod tests {
         let patch =
             "*** Begin Patch\n*** Update File: README.md\n@@\n hello\n-sad\n+happy\n bye\n*** End Patch\n";
         let args = json!({ "patch": patch });
+        assert_eq!(summarize_args("patch", &args), "README.md");
 
         let events = pre_tool_events("patch", &args, &root);
         assert!(matches!(

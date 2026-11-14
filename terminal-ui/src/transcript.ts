@@ -1,6 +1,6 @@
 import {wrapTextWithAnsi,visibleWidth,stripTerminalSequences,sliceByColumn} from '@earendil-works/pi-tui';
 import {plain,fit} from './chrome.ts';
-export interface FileDiff {file:string;added?:number;removed?:number;preview?:boolean;lines:{text:string;kind:string;oldLine?:number|null;newLine?:number|null}[]}
+export interface FileDiff {file:string;added?:number;removed?:number;preview?:boolean;afterLog?:number|null;lines:{text:string;kind:string;oldLine?:number|null;newLine?:number|null}[]}
 const reset='\x1b[0m';
 export function diffLines(diff:FileDiff,width:number,light:boolean,expanded:boolean):string[]{
   const dim='\x1b[38;2;126;125;116m',ink=light?'\x1b[38;2;45;45;45m':'\x1b[38;2;205;204;193m';
