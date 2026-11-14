@@ -32,6 +32,11 @@ pub struct Panel {
     skills: Vec<crate::skills::Skill>,
     days: Vec<crate::usage::Day>,
     demo: bool,
+    opened: std::time::Instant,
+    picker: Option<usize>,
+    models: Vec<String>,
+    catalog: Option<std::sync::mpsc::Receiver<Result<Vec<String>, String>>>,
+    load_models: bool,
 }
 
 #[derive(Clone)]
@@ -46,6 +51,9 @@ enum Action {
     Art,
     Status(String),
     EditModel(usize),
+    CustomModel(usize),
+    ChooseProvider(String),
+    ChooseModel(String),
     ApplyModel,
     KeyBinding(String),
     Skill(String),
@@ -74,6 +82,9 @@ fn row(
 }
 #[derive(Serialize)]
 pub struct PanelView {
+    pub title: String,
+    pub selecting: bool,
+    pub elapsed: u64,
     pub sections: Vec<&'static str>,
     pub section: usize,
     pub query: String,
@@ -113,6 +124,11 @@ pub fn open(state: &mut AgentState, section: usize, model: Option<&ModelConfig>)
         model: model.cloned().unwrap_or_default(),
         edit: None,
         demo: section == 8,
+        opened: std::time::Instant::now(),
+        picker: None,
+        models: Vec::new(),
+        catalog: None,
+        load_models: false,
         days,
         capture: None,
         skills: if section == 6 {
@@ -123,8 +139,124 @@ pub fn open(state: &mut AgentState, section: usize, model: Option<&ModelConfig>)
     });
 }
 
+pub fn open_selector(state: &mut AgentState, provider: bool) {
+    let model = state.ui.presentation_model.clone().unwrap_or_default();
+    open(state, 2, Some(&model));
+    let panel = state.ui.panel.as_mut().unwrap();
+    panel.picker = Some(if provider { 0 } else { 1 });
+    panel.load_models = !provider;
+    if !provider {
+        panel.models.push(model.model);
+        panel.notice = "Loading models from your endpoint…".into();
+    }
+}
+
+pub fn choose_at(state: &mut AgentState, index: usize, label: &str) -> bool {
+    let Some(panel) = state.ui.panel.as_ref() else {
+        return false;
+    };
+    if panel.picker.is_none()
+        || panel.edit.is_some()
+        || entries(state, panel)
+            .get(index)
+            .is_none_or(|row| row.label != label)
+    {
+        return false;
+    }
+    state.ui.panel.as_mut().unwrap().selected = index;
+    handle_key(state, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    true
+}
+
+pub fn poll(state: &mut AgentState, agent: &crate::agent::Agent) -> bool {
+    let Some(panel) = state.ui.panel.as_mut() else {
+        return false;
+    };
+    if panel.load_models {
+        panel.load_models = false;
+        panel.catalog = Some(agent.model_catalog(panel.model.clone()));
+    }
+    let result = panel.catalog.as_ref().and_then(|rx| rx.try_recv().ok());
+    if let Some(result) = result {
+        panel.catalog = None;
+        match result {
+            Ok(models) => {
+                panel.models = models;
+                panel.notice =
+                    "Endpoint catalog · choose a Responses-compatible model, or enter a custom ID"
+                        .into();
+            }
+            Err(error) => panel.notice = format!("{error} · custom model IDs remain available"),
+        }
+        return true;
+    }
+    false
+}
+
 fn entries(state: &AgentState, panel: &Panel) -> Vec<Row> {
     let check = |b| if b { "on" } else { "off" };
+    if let Some(field) = panel.picker {
+        let mut choices = if field == 0 {
+            let mut providers = vec![
+                "openai".to_string(),
+                "groq".into(),
+                "mistral".into(),
+                "ollama".into(),
+            ];
+            if !providers.contains(&panel.model.provider) {
+                providers.insert(0, panel.model.provider.clone());
+            }
+            providers
+                .into_iter()
+                .map(|provider| {
+                    row(
+                        &provider,
+                        "Choose provider, then choose its model",
+                        if provider == panel.model.provider {
+                            "●"
+                        } else {
+                            ""
+                        },
+                        Action::ChooseProvider(provider.clone()),
+                    )
+                })
+                .collect::<Vec<_>>()
+        } else {
+            panel
+                .models
+                .iter()
+                .map(|model| {
+                    row(
+                        model,
+                        "Listed by this endpoint",
+                        if model == &panel.model.model {
+                            "●"
+                        } else {
+                            ""
+                        },
+                        Action::ChooseModel(model.clone()),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let query = panel.query.to_lowercase();
+        choices.retain(|r| r.label.to_lowercase().contains(&query));
+        choices.push(row(
+            if field == 0 {
+                "Custom provider…"
+            } else {
+                "Custom model…"
+            },
+            if panel.query.is_empty() {
+                "Enter an identifier".into()
+            } else {
+                format!("Enter {}", panel.query)
+            },
+            "↵",
+            Action::CustomModel(field),
+        ));
+        return choices;
+    }
     let mut rows = match panel.section {
         0 => commands::command_palette_items().iter().map(|c| row(c.cmd, c.desc, "↵", Action::Command(c.cmd.into()))).collect(),
         1 => {
@@ -199,6 +331,13 @@ pub fn view(state: &AgentState) -> Option<PanelView> {
     let panel = state.ui.panel.as_ref()?;
     let rows = entries(state, panel);
     Some(PanelView {
+        selecting: panel.picker.is_some() && panel.edit.is_none(),
+        title: match panel.picker {
+            Some(0) => "Choose provider".into(),
+            Some(_) => format!("Choose model · {}", panel.model.provider),
+            None => SECTIONS[panel.section].into(),
+        },
+        elapsed: panel.opened.elapsed().as_millis() as u64,
         sections: SECTIONS.to_vec(),
         section: panel.section,
         selected: panel.selected.min(rows.len().saturating_sub(1)),
@@ -220,6 +359,8 @@ pub fn view(state: &AgentState) -> Option<PanelView> {
         editing: panel.edit.is_some() || panel.capture.is_some(),
         footer: if panel.capture.is_some() {
             "press new chord · backspace default · delete unbind · esc cancel"
+        } else if panel.picker.is_some() && panel.edit.is_none() {
+            "type to filter · ↑↓ navigate · enter choose · esc back"
         } else if panel.section == 5 {
             "enter rebind · * customized · tab section · esc close"
         } else if panel.section == 8 {
@@ -316,9 +457,17 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
     let mut close = false;
     let mut changed = false;
     match key.code {
-        KeyCode::Esc => close = true,
+        KeyCode::Esc => {
+            if panel.picker.take().is_some() {
+                panel.query.clear();
+                panel.selected = 0;
+            } else {
+                close = true
+            }
+        }
         KeyCode::Char('d' | 'D') if panel.section == 8 => {
             panel.demo = !panel.demo;
+            panel.opened = std::time::Instant::now();
         }
         KeyCode::Tab | KeyCode::BackTab => {
             let back = key.code == KeyCode::BackTab || key.modifiers.contains(KeyModifiers::SHIFT);
@@ -328,6 +477,10 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
             panel.query.clear();
             panel.selected = 0;
             panel.notice.clear();
+            panel.picker = None;
+            panel.catalog = None;
+            panel.load_models = false;
+            panel.opened = std::time::Instant::now();
             if matches!(panel.section, 7 | 8) {
                 let (days, notice) = load_usage(state, panel.section);
                 panel.demo = panel.section == 8;
@@ -410,13 +563,56 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
                         }
                         changed = true;
                     }
-                    Action::EditModel(field) => {
+                    Action::ChooseProvider(provider) => {
+                        if &panel.model.provider != provider {
+                            panel.model.provider = provider.clone();
+                            panel.model.base_url = None;
+                            panel.models.clear();
+                        }
+                        panel.picker = Some(1);
+                        panel.load_models = true;
+                        panel.query.clear();
+                        panel.selected = 0;
+                        panel.notice = "Loading models from your endpoint…".into();
+                    }
+                    Action::ChooseModel(model) => {
+                        state.ui.requested_command = Some(format!(
+                            "/model {} {} {}",
+                            panel.model.provider,
+                            model,
+                            panel.model.base_url.as_deref().unwrap_or("")
+                        ));
+                        close = true;
+                    }
+                    Action::EditModel(field) if *field < 2 => {
+                        panel.picker = Some(*field);
+                        panel.query.clear();
+                        panel.selected = 0;
+                        panel.load_models = *field == 1;
+                        if *field == 1 {
+                            if panel.models.is_empty() {
+                                panel.models.push(panel.model.model.clone());
+                            }
+                            panel.notice = "Loading models from your endpoint…".into();
+                        }
+                    }
+                    Action::EditModel(field) | Action::CustomModel(field) => {
                         let text = match field {
                             0 => panel.model.provider.clone(),
                             1 => panel.model.model.clone(),
                             _ => panel.model.base_url.clone().unwrap_or_default(),
                         };
-                        panel.edit = Some((*field, text));
+                        panel.edit = Some((
+                            *field,
+                            if panel.query.is_empty() {
+                                text
+                            } else {
+                                panel.query.clone()
+                            },
+                        ));
+                        panel.picker = None;
+                        panel.query.clear();
+                        panel.selected = *field;
                     }
                     Action::ApplyModel => {
                         state.ui.requested_command = Some(format!(
@@ -606,6 +802,57 @@ mod tests {
         handle_key(&mut state, key(KeyCode::Esc));
         assert!(state.ui.panel.is_none());
     }
+    #[test]
+    fn footer_selectors_preserve_drafts_choose_models_and_cancel_without_applying() {
+        let mut state = crate::init_state();
+        state.ui.input = "draft stays".into();
+        state.ui.input_cursor = 5;
+        state.ui.presentation_model = Some(ModelConfig {
+            model: "current".into(),
+            ..ModelConfig::default()
+        });
+        open_selector(&mut state, false);
+        let panel = state.ui.panel.as_mut().unwrap();
+        panel.models = vec!["current".into(), "chosen".into()];
+        panel.load_models = false;
+        panel.selected = 1;
+        assert!(!choose_at(&mut state, 1, "stale catalog label"));
+        assert!(choose_at(&mut state, 1, "chosen"));
+        assert!(state.ui.panel.is_none());
+        assert!(state
+            .ui
+            .requested_command
+            .take()
+            .unwrap()
+            .starts_with("/model openai chosen"));
+        assert_eq!(state.ui.input, "draft stays");
+        assert_eq!(state.ui.input_cursor, 5);
+        open_selector(&mut state, true);
+        handle_key(&mut state, key(KeyCode::Down));
+        handle_key(&mut state, key(KeyCode::Enter));
+        let panel = state.ui.panel.as_ref().unwrap();
+        assert_eq!(panel.model.provider, "groq");
+        assert!(panel.model.base_url.is_none());
+        assert!(panel.load_models);
+        assert_eq!(panel.picker, Some(1));
+        handle_key(&mut state, key(KeyCode::Esc));
+        handle_key(&mut state, key(KeyCode::Esc));
+        assert!(state.ui.panel.is_none());
+        assert!(state.ui.requested_command.is_none());
+    }
+
+    #[test]
+    fn stats_reveal_restarts_only_for_entry_or_sample_toggle() {
+        let mut state = crate::init_state();
+        open(&mut state, 8, None);
+        state.ui.panel.as_mut().unwrap().opened =
+            std::time::Instant::now() - std::time::Duration::from_secs(2);
+        handle_key(&mut state, key(KeyCode::Down));
+        assert!(view(&state).unwrap().elapsed >= 2000);
+        handle_key(&mut state, key(KeyCode::Char('d')));
+        assert!(view(&state).unwrap().elapsed < 500);
+    }
+
     #[test]
     fn statusline_omits_unavailable_and_unknown_values_and_preserves_order() {
         let mut state = crate::init_state();

@@ -249,9 +249,9 @@ test('command picker fits small terminals, preserves the editor and supports lig
   }
 });
 
-test('quick actions keep surface padding on all four sides and a gap above the input',()=>{
+test('quick actions retain padding while attaching edge to edge to the composer',()=>{
  const v={...fixture(),input:'/',commands:[{cmd:'/skills',desc:'A long description '.repeat(20)}]},frame=render(v),surface='\x1b[48;2;22;22;22m',indices=frame.rows.map((r,i)=>r.includes(surface)?i:-1).filter(i=>i>=0),card=indices.map(i=>frame.rows[i]!);
  assert.ok(card.length>5);assert.equal(stripTerminalSequences(card[0]!).trim(),'');assert.ok(card.slice(-2).every(r=>stripTerminalSequences(r).trim()===''));
- for(const row of card){const content=stripTerminalSequences(row).slice(frame.input.x+2,frame.input.x+2+78);assert.ok(stripTerminalSequences(content).startsWith('  '));assert.ok(stripTerminalSequences(content).endsWith('   '));}
- assert.ok(indices[0]!>frame.execution.y);assert.ok(indices.at(-1)!<=frame.input.y-3);
+ for(const row of card){const content=stripTerminalSequences(row).slice(frame.input.x,frame.input.x+frame.input.width);assert.ok(stripTerminalSequences(content).startsWith('  '));assert.ok(stripTerminalSequences(content).endsWith('   '));}
+ assert.ok(indices[0]!>frame.execution.y);assert.ok(indices.at(-1)===frame.input.y-1);
 });

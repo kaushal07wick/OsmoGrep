@@ -1243,6 +1243,9 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
     let mut runtime = TuiRuntime::default();
 
     loop {
+        if ui::workbench::poll(&mut state, &agent) {
+            runtime.mark_dirty();
+        }
         runtime.draw_if_due(&mut terminal, &mut state, agent.model_config())?;
 
         if event::poll(runtime.poll_timeout(tui_live_activity(
@@ -1251,7 +1254,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
             running_jobs,
         )))? {
             let ev = event::read()?;
-            if !runtime.handle_visual_event(&ev) {
+            if !runtime.handle_visual_event(&ev, &mut state) {
                 handle_event(
                     &mut state,
                     ev,

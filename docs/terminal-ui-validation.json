@@ -1,10 +1,10 @@
 {
   "scope": "Local macOS validation of TypeScript presentation and existing Rust backend",
   "date": "2026-11-14",
-  "rust_tests_passed": 198,
-  "typescript_tests_passed": 35,
+  "rust_tests_passed": 202,
+  "typescript_tests_passed": 38,
   "node": "v26.13.1",
-  "installed_sha256": "aae5f9547534909ae227e7b3aaffb731d02f11acd56c0d954a7b6eb0ade2f47e",
+  "installed_sha256": "1cd354346d378836c1752336ef125d68450aca2c4ef5ddf2dccf60f40b001f50",
   "installed_first_on_path": true,
   "mac_pty_acceptance": {
     "typescript_renderer_started": true,
@@ -12,12 +12,14 @@
     "central_morph_animates_then_settles": true,
     "central_morph_ignores_hover_and_click_replays": true,
     "command_picker_navigation_and_execution": true,
+    "footer_provider_model_selectors": true,
     "settings_and_real_key_remapping": true,
     "statusline_and_skill_picker": true,
     "large_multiline_draft_editing": true,
     "real_thumbnail_sequence": true,
     "original_image_bytes_reached_provider": true,
     "selected_skill_reached_provider": true,
+    "weekly_chart_entry_animation": true,
     "reported_usage_and_pixel_history": true,
     "real_permission_dock_and_numbered_diff": true,
     "terminal_resize": true,
@@ -48,7 +50,7 @@
   "other_operating_systems_tested_locally": false,
   "brand_source": "https://osmogrep.com/",
   "brand_provenance": "terminal-ui/brand/provenance.json",
-  "pty_binary": "Optimized release; final static badge substitution followed by unit/build checks",
+  "pty_binary": "Optimized release, byte-identical to installed binary",
   "installed_cli_version_and_help": true,
   "layout": "Consistent container gutters and bottom padding; dotted section badges and arrow selection; readable weekly totals and dithered bars; native Kitty paper background with editable text",
   "artwork_visual_scale": 0.62,
@@ -120,8 +122,29 @@
     ],
     "scale": "shared linear token scale",
     "sample_mode": "Labeled sample data opens for design review; D toggles recorded usage; samples are never persisted",
-    "aggregation_tests": "Multiple models, cached subset excluded from extra counting, UTC Monday and year boundary"
+    "aggregation_tests": "Multiple models, cached subset excluded from extra counting, UTC Monday and year boundary",
+    "reveal": {
+      "duration_ms": 900,
+      "frame_interval_ms": 32,
+      "triggers": [
+        "open",
+        "section return",
+        "sample/recorded toggle"
+      ],
+      "stable_metrics": true,
+      "reduce_motion": true
+    }
   },
   "previous_compatibility_source_commit": "09600f0",
-  "native_graphics_limit": "Kitty-compatible terminal required for paper pixels; no new Windows/Linux visual checks"
+  "native_graphics_limit": "Kitty-compatible terminal required for paper pixels; no new Windows/Linux visual checks",
+  "footer_selectors": {
+    "interaction": "Separate model/provider targets; keyboard filtering and clickable rows",
+    "catalog": "Rust-only asynchronous GET /models; timeout 5s; 2 MiB limit; redirects disabled",
+    "fallback": "Custom identifiers and F5 model settings",
+    "credentials": "Scoped per provider; legacy keys preserved; never sent to renderer",
+    "real_provider_catalog_tested": false,
+    "local_mock_catalog_and_switching": true,
+    "stale_row_clicks_rejected": true
+  },
+  "command_tray": "Same width as composer, attached directly to its upper edge; padding retained"
 }

@@ -64,11 +64,16 @@ impl TuiRuntime {
         if (!self.dirty && !self.animating) || !self.frame.draw_due(now) {
             return Ok(());
         }
+        let animation_interval = if state.ui.panel.as_ref().is_some_and(|p| p.section == 8) {
+            32
+        } else {
+            70
+        };
         if !self.dirty
             && self.animating
-            && self
-                .last_visual
-                .is_some_and(|last| now.duration_since(last) < Duration::from_millis(70))
+            && self.last_visual.is_some_and(|last| {
+                now.duration_since(last) < Duration::from_millis(animation_interval)
+            })
         {
             return Ok(());
         }
@@ -129,9 +134,13 @@ impl TuiRuntime {
         self.dirty = true;
     }
 
-    pub fn handle_visual_event(&mut self, event: &crossterm::event::Event) -> bool {
+    pub fn handle_visual_event(
+        &mut self,
+        event: &crossterm::event::Event,
+        state: &mut AgentState,
+    ) -> bool {
         self.typescript
             .as_mut()
-            .is_some_and(|ui| ui.handle_visual_event(event))
+            .is_some_and(|ui| ui.handle_visual_event(event, state))
     }
 }

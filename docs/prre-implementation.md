@@ -671,3 +671,24 @@ and `terminal-ui-validation.json` for evidence and remaining platform limits.
   selection contrast, geometry limits, padding and UTC/year-boundary aggregation.
   Native pixel layering was inspected in a temporary Ghostty window. The chart
   was reviewed using renderer fixtures; other operating systems were not tested.
+
+### Attached command tray, interactive selectors and weekly reveal — 2026-11-14
+
+- Attached quick actions to the top edge of the composer at the same width in
+  both renderers. Kept internal padding; removed the intervening black gap.
+- Added separately sized model/provider footer hit regions and searchable
+  choosers. Both keyboard and row clicks use Rust-owned actions. Clicks carry
+  the displayed label so an asynchronously refreshed catalog cannot apply a
+  different model through a stale row index. Drafts and approval priority remain
+  intact; F5 and custom identifiers remain available.
+- Rust fetches bounded model metadata asynchronously only on chooser use. The
+  selected provider's credentials stay in Rust, redirects are disabled, and
+  failures leave custom entry available. Saved keys are now scoped by provider,
+  retaining legacy keys instead of reusing one provider's key for another.
+- Weekly bars reveal once over 900 ms at a 32 ms animation interval, with eased
+  growth and a restrained row stagger. Metrics remain stable. Entry, section
+  return and D restart it; redraw and hover do not. Reduce Motion skips it.
+- Validation: 202 Rust tests, 38 UI tests, 20 Mac PTY checks and 6 isolated
+  Neovim checks pass. The PTY suite now uses a temporary HOME and a local model
+  catalog, proving actual footer clicks, row selection, model changes, chart
+  animation, persisted settings and renderer recovery without real provider calls.

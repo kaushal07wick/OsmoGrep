@@ -16,7 +16,7 @@ export function weeklyUsage(history:Day[],count:number,now=Date.now()){
   return weeks;
 }
 const resetColor='\x1b[0m';
-export function statsLines(history:Day[],width:number,height:number,light:boolean,demo:boolean,now=Date.now()):string[]{
+export function statsLines(history:Day[],width:number,height:number,light:boolean,demo:boolean,now=Date.now(),progress=1):string[]{
   const data=demo?sampleHistory(now):history,days=new Set(data.filter(d=>d.input+d.output>0).map(d=>d.day));
   const total=data.reduce((n,d)=>n+d.input+d.output,0),calls=data.reduce((n,d)=>n+d.calls,0);
   const ink=light?'\x1b[38;2;65;60;54m':'\x1b[38;2;201;192;178m',warm=light?'\x1b[38;2;163;77;26m':'\x1b[38;2;222;147;90m',muted=light?'\x1b[38;2;115;110;104m':'\x1b[38;2;119;113;103m',inputColor=light?'\x1b[38;2;132;123;106m':'\x1b[38;2;122;119;109m';
@@ -29,7 +29,8 @@ export function statsLines(history:Day[],width:number,height:number,light:boolea
   const date=(t:number)=>{const d=new Date(t);return `${String(d.getUTCDate()).padStart(2,'0')} ${'Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec'.split(' ')[d.getUTCMonth()]}`;};
   const labelWidth=15,valueWidth=width>=60?12:8,barWidth=Math.max(1,width-labelWidth-valueWidth-3);
   for(let i=0;i<weeks.length;i++){
-    const week=weeks[i]!,amount=totals[i]!,length=Math.round(amount/peak*barWidth*2),input=Math.round(week.input/Math.max(1,amount)*length);
+    const t=Math.max(0,Math.min(1,(progress-i*.012)/(1-i*.012))),fill=1-Math.pow(1-t,3);
+    const week=weeks[i]!,amount=totals[i]!,full=Math.round(amount/peak*barWidth*2),length=Math.round(full*fill),input=Math.round(week.input/Math.max(1,amount)*full);
     let bar='';for(let x=0;x<barWidth;x++){
       const covered=Math.max(0,Math.min(2,length-x*2)),color=x*2<input?inputColor:warm;
       const pattern=covered===2?[0xf7,0xdf,0x7f,0xfe][(x+i)%4]!:covered===1?0x47:0;

@@ -66,6 +66,16 @@ impl Preview {
     }
 }
 #[derive(Deserialize)]
+struct Control {
+    id: String,
+    #[serde(default)]
+    index: Option<usize>,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(flatten)]
+    area: Region,
+}
+#[derive(Deserialize)]
 struct Frame {
     id: u64,
     rows: Vec<String>,
@@ -79,6 +89,8 @@ struct Frame {
     #[serde(default, rename = "cursorVisible")]
     cursor_visible: Option<bool>,
     images: Vec<Preview>,
+    #[serde(default)]
+    controls: Vec<Control>,
 }
 
 struct IntroInteraction {
@@ -132,6 +144,7 @@ pub struct TypeScriptUi {
     sequence: u64,
     previous: Vec<String>,
     images: Vec<Preview>,
+    controls: Vec<Control>,
     size: (u16, u16),
     intro: IntroInteraction,
 }
@@ -237,12 +250,53 @@ impl TypeScriptUi {
             sequence: 0,
             previous: Vec::new(),
             images: Vec::new(),
+            controls: Vec::new(),
             size: (0, 0),
             intro: IntroInteraction::default(),
         })
     }
 
-    pub fn handle_visual_event(&mut self, event: &Event) -> bool {
+    pub fn handle_visual_event(&mut self, event: &Event, state: &mut AgentState) -> bool {
+        if state.ui.pending_permission.is_none() && state.ui.pending_update.is_none() {
+            if let Event::Mouse(mouse) = event {
+                if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+                    && mouse.modifiers.is_empty()
+                {
+                    if let Some(control) = self.controls.iter().find(|c| {
+                        c.id == "choice" && c.area.rect().contains((mouse.column, mouse.row).into())
+                    }) {
+                        if let Some(index) = control.index {
+                            return super::workbench::choose_at(
+                                state,
+                                index,
+                                control.label.as_deref().unwrap_or(""),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        if state.ui.panel.is_none()
+            && state.ui.pending_permission.is_none()
+            && state.ui.pending_update.is_none()
+            && state.ui.input_mode != InputMode::ApiKey
+        {
+            if let Event::Mouse(mouse) = event {
+                if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+                    && mouse.modifiers.is_empty()
+                {
+                    if let Some(control) = self.controls.iter().find(|control| {
+                        control
+                            .area
+                            .rect()
+                            .contains((mouse.column, mouse.row).into())
+                    }) {
+                        super::workbench::open_selector(state, control.id == "provider");
+                        return true;
+                    }
+                }
+            }
+        }
         self.intro.handle_event(event)
     }
 
@@ -274,6 +328,15 @@ impl TypeScriptUi {
             || frame.rows.len() != height as usize
             || !frame.input.inside(width, height)
             || !frame.execution.inside(width, height)
+            || frame.controls.iter().any(|c| {
+                !matches!(c.id.as_str(), "model" | "provider" | "choice")
+                    || c.id == "choice"
+                        && (!c.index.is_some_and(|i| i <= 1000)
+                            || c.label.as_ref().is_none_or(|s| s.len() > 160))
+                    || c.area.width == 0
+                    || c.area.height != 1
+                    || !c.area.inside(width, height)
+            })
             || frame.cursor.x >= width
             || frame.cursor.y >= height
             || frame.editor_width == 0
@@ -294,7 +357,7 @@ impl TypeScriptUi {
             .map_err(|e| e.to_string())?;
         self.intro.area = frame.artwork.as_ref().map(Region::rect);
         self.intro.playing = self.intro.area.is_some() && frame.animate;
-        let capture = self.intro.area.is_some()
+        let capture = (self.intro.area.is_some() || !frame.controls.is_empty())
             && super::terminal::artwork_mouse_enabled()
             && !super::terminal::mouse_capture_enabled();
         if capture != self.intro.capture {
@@ -343,6 +406,7 @@ impl TypeScriptUi {
             }
         }
         self.images = frame.images;
+        self.controls = frame.controls;
         queue!(
             output,
             MoveTo(frame.cursor.x, frame.cursor.y),

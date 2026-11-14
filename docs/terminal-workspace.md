@@ -16,6 +16,22 @@ remain supported but are omitted from the menu.
 | `/stats` | Weekly token bars, exact aggregates and sample/recorded views |
 | `/status` | Workspace, run, session, verification and connected-tool status |
 
+The command tray attaches directly to the paper composer and shares its width.
+The model and provider labels in the status line are separate dropdown controls:
+click either one, type to filter, then click a row or press Enter. Choosing a
+provider opens its model chooser; choosing a listed model applies the pair for
+subsequent turns. Escape backs out while preserving the input draft. F5 opens
+the model settings for keyboard access, endpoint editing and custom identifiers.
+
+Model discovery runs in Rust against the chosen endpoint's `/models` metadata
+route, with a five-second timeout, no redirects and a 2 MiB response bound. No
+agent turn or completion request runs for discovery. Endpoints without a catalog
+retain custom entry. Listed models still need the Responses capability used by
+the existing agent. Saved credentials are scoped by provider, with legacy keys
+preserved; they never enter the renderer. Hold Shift to use terminal-native mouse
+text selection while button reporting is enabled; `OSMOGREP_MOUSE=off` leaves
+keyboard selectors available.
+
 Tab/Shift+Tab switches panel sections. Type to filter, Up/Down to navigate and
 Escape to close without losing a draft. Model-field editing supports paste,
 Backspace and Ctrl+U to replace a value. In shortcut capture, Backspace restores
@@ -41,7 +57,10 @@ with exact totals, input/output composition, this week, last week and the
 average over displayed weeks. The current week is partial. Bar lengths share
 one linear scale. Providers omitting usage create no fictional chart entries.
 Stats opens clearly labeled sample data for the current design review; press D
-to switch between sample and recorded mode. Samples never enter the usage ledger.
+to switch between sample and recorded mode. Samples never enter the usage ledger. Bars fill once over 900 ms on entry,
+section return and sample/recorded switches, with a small row stagger. Totals
+stay fixed. Reduce Motion skips the reveal; hover and normal redraws do not
+restart it.
 Legacy estimates remain labeled; prices, quotas and earlier activity are not
 reconstructed. Database failure is reported without failing the coding agent.
 

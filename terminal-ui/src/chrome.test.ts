@@ -30,3 +30,21 @@ test('weekly aggregates start on Monday in UTC, cross years and combine model ca
  const weeks=weeklyUsage(history,3,Date.UTC(2027,0,4,1));assert.deepEqual(weeks.map(w=>[new Date(w.start).toISOString().slice(0,10),w.input+w.output]),[['2026-12-21',110],['2026-12-28',550],['2027-01-04',990]]);
  const text=statsLines(history,100,24,false,false,Date.UTC(2027,0,4,1)).map(stripTerminalSequences).join('\n');assert.match(text,/THIS WEEK.*LAST WEEK.*AVG/);assert.match(text,/990/);assert.match(text,/28 Dec–03 Jan/);assert.match(text,/04 Jan–10 Jan/);
 });
+
+test('weekly bars fill on entry without changing totals, then settle and respect reduced motion',()=>{
+ const now=Date.UTC(2026,10,14),history=sampleHistory(now),frames=[0,.5,1].map(p=>statsLines(history,100,24,false,true,now,p).map(stripTerminalSequences));
+ const dots=(rows:string[])=>rows.join('').match(/[\u2801-\u28ff]/g)?.length??0;
+ assert.equal(dots(frames[0]!),0);assert.ok(dots(frames[1]!)>0);assert.ok(dots(frames[2]!)>dots(frames[1]!));assert.deepEqual(frames[0]!.slice(0,7),frames[2]!.slice(0,7));
+ const panel={sections:['','','','','','','','','Stats'],section:8,query:'',selected:0,editing:false,rows:[],notice:'',footer:'D sample / recorded',demo:true,elapsed:100};
+ const v={...fixture(),panel},animating=render(v);assert.equal(animating.animate,true);
+ assert.equal(render({...v,panel:{...panel,elapsed:900}}).animate,false);
+ assert.equal(render({...v,preferences:{status_fields:[],reduce_motion:true,ambient_art:true}}).animate,false);
+});
+test('model and provider have separate bounded footer targets and no targets cover credentials or permissions',()=>{
+ for(const width of [24,60,80,160]){
+  const v={...fixture(),width,model:'model-界',provider:'local',statusEntries:[{id:'model',value:'ignored'},{id:'directory',value:'~/long/workspace'}]},f=render(v);
+  assert.ok(f.controls?.some(c=>c.id==='model'));assert.ok(f.controls?.some(c=>c.id==='provider'));
+  for(const c of f.controls!){assert.ok(c.x>=0&&c.x+c.width<=width);assert.equal(c.y,v.height-1);}
+  assert.equal(render({...v,masked:true}).controls?.length,0);assert.equal(render({...v,permission:'Approve?'}).controls?.length,0);
+ }
+});

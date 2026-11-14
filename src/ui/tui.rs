@@ -180,11 +180,11 @@ pub fn draw_ui<B: Backend>(
         if !state.ui.command_items.is_empty() {
             let height = ((state.ui.command_items.len().min(10) + 2) as u16)
                 .min(input_rect.y.saturating_sub(area.y + 1));
-            let x = (input_rect.x + PROMPT.len() as u16).min(content.right());
+            let x = input_rect.x;
             hint_rect = Rect {
                 x,
-                y: input_rect.y.saturating_sub(height + 1),
-                width: content.right().saturating_sub(x).min(72),
+                y: input_rect.y.saturating_sub(height),
+                width: input_rect.width,
                 height,
             };
             render_command_palette(f, hint_rect, state);
@@ -198,10 +198,7 @@ pub fn draw_ui<B: Backend>(
                     .saturating_sub(count / 2)
                     .min(panel.rows.len().saturating_sub(count));
                 let mut lines = vec![
-                    Line::from(format!(
-                        "  ◌ {}  /  WORKSPACE",
-                        panel.sections[panel.section]
-                    )),
+                    Line::from(format!("  ◌ {}  /  WORKSPACE", panel.title)),
                     Line::from(""),
                     Line::from(format!(
                         "  {}{}",

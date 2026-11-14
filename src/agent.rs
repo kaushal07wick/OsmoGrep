@@ -133,12 +133,28 @@ impl CancelToken {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 struct Config {
     #[serde(default)]
     api_key: Option<String>,
     #[serde(default)]
     model: Option<ModelConfig>,
+    #[serde(default)]
+    api_keys: std::collections::BTreeMap<String, String>,
+}
+impl Config {
+    fn key_for(&self, provider: &str) -> Option<String> {
+        self.api_keys.get(provider).cloned().or_else(|| {
+            (self
+                .model
+                .as_ref()
+                .map(|m| m.provider.as_str())
+                .unwrap_or("openai")
+                == provider)
+                .then(|| self.api_key.clone())
+                .flatten()
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -436,6 +452,9 @@ impl Agent {
         }
         if let Ok(provider) = env::var("OSMOGREP_PROVIDER") {
             if !provider.trim().is_empty() {
+                if model_cfg.provider != provider {
+                    model_cfg.api_key_env = Some(default_api_key_env_for(&provider));
+                }
                 model_cfg.provider = provider;
             }
         }
@@ -445,11 +464,11 @@ impl Agent {
             }
         }
 
-        let cfg_api_key = cfg.as_ref().and_then(|c| c.api_key.clone());
+        let cfg_api_key = cfg.as_ref().and_then(|c| c.key_for(&model_cfg.provider));
         let env_key_name = model_cfg
             .api_key_env
             .clone()
-            .unwrap_or_else(default_api_key_env);
+            .unwrap_or_else(|| default_api_key_env_for(&model_cfg.provider));
         let api_key = env::var(&env_key_name).ok().or(cfg_api_key);
 
         Self { model_cfg, api_key }
@@ -466,10 +485,12 @@ impl Agent {
         }
 
         self.api_key = Some(key.clone());
-        let _ = save_config(&Config {
-            api_key: Some(key),
-            model: Some(self.model_cfg.clone()),
-        });
+        let mut cfg = load_config().unwrap_or_default();
+        cfg.api_keys
+            .insert(self.model_cfg.provider.clone(), key.clone());
+        cfg.api_key = Some(key);
+        cfg.model = Some(self.model_cfg.clone());
+        let _ = save_config(&cfg);
     }
 
     pub fn model_config(&self) -> &ModelConfig {
@@ -481,19 +502,48 @@ impl Agent {
     }
 
     pub fn set_model_config(&mut self, provider: String, model: String, base_url: Option<String>) {
+        let mut cfg = load_config().unwrap_or_default();
+        if let Some(key) = &self.api_key {
+            cfg.api_keys
+                .insert(self.model_cfg.provider.clone(), key.clone());
+        }
+        let changed = self.model_cfg.provider != provider;
         self.model_cfg.provider = provider;
         self.model_cfg.model = model;
         self.model_cfg.base_url = base_url;
         self.model_cfg.api_key_env = Some(default_api_key_env_for(&self.model_cfg.provider));
+        self.api_key = env::var(default_api_key_env_for(&self.model_cfg.provider))
+            .ok()
+            .or_else(|| {
+                if changed {
+                    cfg.key_for(&self.model_cfg.provider)
+                } else {
+                    self.api_key.clone()
+                }
+            });
+        cfg.api_key = self.api_key.clone();
+        cfg.model = Some(self.model_cfg.clone());
+        let _ = save_config(&cfg);
+    }
 
-        if let Some(key_name) = self.model_cfg.api_key_env.clone() {
-            self.api_key = env::var(key_name).ok().or(self.api_key.clone());
-        }
-
-        let _ = save_config(&Config {
-            api_key: self.api_key.clone(),
-            model: Some(self.model_cfg.clone()),
+    pub(crate) fn model_catalog(
+        &self,
+        model: ModelConfig,
+    ) -> mpsc::Receiver<Result<Vec<String>, String>> {
+        let key = if model.provider == self.model_cfg.provider
+            && model.base_url == self.model_cfg.base_url
+        {
+            self.api_key.clone()
+        } else {
+            env::var(default_api_key_env_for(&model.provider))
+                .ok()
+                .or_else(|| load_config().and_then(|c| c.key_for(&model.provider)))
+        };
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let _ = tx.send(fetch_model_catalog(&model, key.as_deref()));
         });
+        rx
     }
 
     pub fn spawn(
@@ -2614,6 +2664,65 @@ fn preview_begin_patch_after(patch: &str, before: &str) -> Option<String> {
     (after != before).then_some(after)
 }
 
+fn fetch_model_catalog(model: &ModelConfig, key: Option<&str>) -> Result<Vec<String>, String> {
+    let base = model
+        .base_url
+        .clone()
+        .unwrap_or_else(|| default_base_url_for(&model.provider));
+    let url = reqwest::Url::parse(&format!("{}/models", base.trim_end_matches('/')))
+        .map_err(|_| "Invalid endpoint")?;
+    if !matches!(url.scheme(), "http" | "https")
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err("Invalid endpoint".into());
+    }
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(Duration::from_secs(2))
+        .timeout(Duration::from_secs(5))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| "Catalog client unavailable")?;
+    let mut request = client.get(url);
+    if let Some(key) = key {
+        request = request.bearer_auth(key);
+    }
+    let response = request
+        .send()
+        .map_err(|_| "Could not reach model catalog")?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Catalog returned HTTP {}",
+            response.status().as_u16()
+        ));
+    }
+    let mut bytes = Vec::new();
+    response
+        .take(2 * 1024 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "Could not read model catalog")?;
+    if bytes.len() > 2 * 1024 * 1024 {
+        return Err("Model catalog too large".into());
+    }
+    let value: Value = serde_json::from_slice(&bytes).map_err(|_| "Invalid model catalog")?;
+    let mut models = value["data"]
+        .as_array()
+        .ok_or("Endpoint did not return a model list")?
+        .iter()
+        .filter_map(|m| m["id"].as_str())
+        .filter(|id| {
+            !id.is_empty()
+                && id.len() <= 160
+                && !id.chars().any(|c| c.is_whitespace() || c.is_control())
+        })
+        .take(1000)
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    models.sort();
+    models.dedup();
+    Ok(models)
+}
+
 fn default_base_url_for(provider: &str) -> String {
     match provider {
         "openai" => "https://api.openai.com/v1".to_string(),
@@ -2622,10 +2731,6 @@ fn default_base_url_for(provider: &str) -> String {
         "ollama" => "http://127.0.0.1:11434/v1".to_string(),
         _ => "https://api.openai.com/v1".to_string(),
     }
-}
-
-fn default_api_key_env() -> String {
-    "OPENAI_API_KEY".to_string()
 }
 
 fn default_api_key_env_for(provider: &str) -> String {
@@ -2642,6 +2747,64 @@ fn default_api_key_env_for(provider: &str) -> String {
 mod tests {
     use super::*;
     use uuid::Uuid;
+
+    #[test]
+    fn provider_keys_stay_scoped_and_legacy_credentials_are_preserved() {
+        let mut cfg: Config = toml::from_str("api_key = 'old-openai-key'").unwrap();
+        assert_eq!(cfg.key_for("openai").as_deref(), Some("old-openai-key"));
+        assert!(cfg.key_for("groq").is_none());
+        cfg.api_keys
+            .insert("openai".into(), cfg.key_for("openai").unwrap());
+        cfg.model = Some(ModelConfig {
+            provider: "groq".into(),
+            ..ModelConfig::default()
+        });
+        cfg.api_key = Some("groq-key".into());
+        let restored: Config = toml::from_str(&toml::to_string(&cfg).unwrap()).unwrap();
+        assert_eq!(
+            restored.key_for("openai").as_deref(),
+            Some("old-openai-key")
+        );
+        assert_eq!(restored.key_for("groq").as_deref(), Some("groq-key"));
+        assert!(restored.key_for("mistral").is_none());
+    }
+
+    #[test]
+    fn model_catalog_uses_bounded_metadata_requests_and_filters_unusable_ids() {
+        use std::io::Write;
+        use std::net::TcpListener;
+        let server = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = server.local_addr().unwrap();
+        let worker = std::thread::spawn(move || {
+            let (mut stream, _) = server.accept().unwrap();
+            let mut bytes = [0; 4096];
+            let n = stream.read(&mut bytes).unwrap();
+            let request = String::from_utf8_lossy(&bytes[..n]);
+            assert!(request.starts_with("GET /v1/models "));
+            assert!(request
+                .to_lowercase()
+                .contains("authorization: bearer catalog-test-key"));
+            let body = r#"{"data":[{"id":"second"},{"id":"first"},{"id":"first"},{"id":"bad id"},{"id":"bad\ncontrol"}]}"#;
+            write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
+        });
+        let config = ModelConfig {
+            base_url: Some(format!("http://{address}/v1")),
+            ..ModelConfig::default()
+        };
+        assert_eq!(
+            fetch_model_catalog(&config, Some("catalog-test-key")).unwrap(),
+            vec!["first", "second"]
+        );
+        worker.join().unwrap();
+        assert!(fetch_model_catalog(
+            &ModelConfig {
+                base_url: Some("https://user:secret@example.invalid".into()),
+                ..config
+            },
+            None
+        )
+        .is_err());
+    }
 
     #[test]
     fn final_output_event_is_sent_for_unstreamed_text() {

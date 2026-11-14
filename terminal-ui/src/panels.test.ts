@@ -32,3 +32,9 @@ test('workspace cards have outer margins and at least two blank surface rows bel
   const hint=card.findIndex(r=>r.includes('esc close'));assert.ok(hint>=0);assert.ok(card.slice(hint+1,hint+3).every(r=>stripTerminalSequences(r).trim()===''));assert.ok(card.length>=hint+3);
  }
 });
+
+test('selector clicks target the same filtered row that is displayed',()=>{
+ const view={...panel,selecting:true,title:'Choose model',selected:17},frame=drawPanel(view,100,40,false,'');
+ assert.ok(frame.controls.length>0);for(const c of frame.controls){assert.equal(c.label,panel.rows[c.index]!.label);assert.ok(stripTerminalSequences(frame.rows[c.y]!).includes(c.label));assert.ok(c.x+c.width<=100&&c.y<40);}
+ assert.equal(drawPanel(panel,100,40,false,'').controls.length,0);
+});

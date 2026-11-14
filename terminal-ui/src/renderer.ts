@@ -3,7 +3,7 @@ import { introDuration, websiteMark } from './brand.ts';
 import { introFrame, introPng } from './intro.ts';
 import { drawPanel, permissionLines, type PanelView } from './panels.ts';
 import type {Scene} from './scenes.ts';
-import {statusText,activity,type StatusEntry} from './chrome.ts';
+import {statusLayout,activity,type StatusEntry} from './chrome.ts';
 import {diffLines,type FileDiff} from './transcript.ts';
 import {paperRow,paperColors,paperGraphic} from './paper.ts';
 
@@ -36,6 +36,7 @@ export interface Rendered {
   editorWidth: number;
   animate: boolean;
   artwork: Rect | null;
+  controls?:{id:'model'|'provider'|'choice';index?:number;label?:string;x:number;y:number;width:number;height:number}[];
   images: { id: number; x: number; y: number; sequence: string; placement?:string }[];
 }
 const reset = '\x1b[0m';
@@ -80,6 +81,7 @@ export function render(v: View): Rendered {
   const accent = accents[v.accent as keyof typeof accents] ?? accents.orange;
   const bg = light ? '\x1b[48;2;240;240;240m' : '\x1b[48;2;30;30;30m';
   const paper=paperColors(light);
+  const controls:NonNullable<Rendered['controls']>=[];
   const paperGraphics=getCapabilities().images==='kitty';
   const tint = (color: string) => (s: string) => color + s + reset;
   const markdown = (text: string, n: number) => new Markdown(clean(text), 0, 0, {
@@ -205,22 +207,24 @@ export function render(v: View): Rendered {
     const right = dim+(v.running?`${v.shortcuts?.queue??'tab'} queue`:'/help')+reset;
     const reserve=width>=60?visibleWidth(right)+3:0;
     const entries=v.statusEntries??(v.statusLine?v.statusLine.map((value,i)=>({id:value.startsWith('~')||value.startsWith('/')?'directory':i===0?'model':'optional',value})):[{id:'permissions',value:`${v.profile} · ${permission}`}]);
-    const left=dim+statusText(entries,Math.max(1,width-pad*2-reserve))+reset;
+    const fields=entries.flatMap(e=>e.id==='model'?[{id:'model',value:clean(v.model)+' ▾'},{id:'provider',value:clean(v.provider)+' ▾'}]:[e]);
+    const layout=statusLayout(fields,Math.max(1,width-pad*2-reserve)),left=dim+layout.text+reset;
+    if(!v.panel&&!v.permission&&!v.update&&!v.masked)for(const item of layout.items)if(item.id==='model'||item.id==='provider')controls.push({id:item.id,x:gutter+pad+item.x,y:h-1,width:item.width,height:1});
     put(h-1,' '.repeat(pad)+left,width>=40?gutter:gutter,Math.max(1,width-pad));
     if(reserve)rows[h-1]+=' '.repeat(Math.max(1,width-pad*2-visibleWidth(left)-visibleWidth(right)))+right;
 
   }
   if (v.commands.length) {
-    const bottom = composerY - (status ? 3 : 2);
+    const bottom = composerY;
     const available = Math.max(0, bottom - execution.y), chrome = available >= 10 ? 7 : 0;
     const count = Math.min(5, v.commands.length, Math.max(0, available - chrome));
     const selected = Math.max(0, Math.min(v.commands.length - 1, v.selectedCommand));
     const first = Math.max(0, Math.min(selected - Math.floor(count / 2), v.commands.length - count));
-    const menuWidth = Math.max(1, Math.min(78, width - pad * 2 - 2)), menuY = bottom - count - chrome;
+    const menuWidth = Math.max(1, width), menuY = bottom - count - chrome;
     const surface = light ? '\x1b[48;2;240;240;240m' : '\x1b[48;2;22;22;22m';
     const paint = (y: number, text: string) => {
       const line = clip(text, Math.max(1,menuWidth-3));
-      put(y, surface + line + ' '.repeat(Math.max(0, menuWidth - visibleWidth(line))) + reset, gutter + pad, menuWidth);
+      put(y, surface + line + ' '.repeat(Math.max(0, menuWidth - visibleWidth(line))) + reset, gutter, menuWidth);
     };
     if (count && chrome) {
       const title = '   Commands / quick actions', position = `${selected + 1} · ${v.commands.length}`;
@@ -229,7 +233,7 @@ export function render(v: View): Rendered {
       paint(menuY + 2, '');
       paint(bottom - 4, '');
       paint(bottom - 3, dim + '  ↑↓ move   [enter] select   [esc] dismiss');
-      paint(bottom - 2, '');paint(bottom - 1, '');
+      paint(bottom - 2, '');paint(bottom - 1, status?accent+'  '+status+dim+(v.running?' · esc interrupt':''):'');
     }
     const commandWidth = Math.min(26, Math.floor(menuWidth * .4), Math.max(...v.commands.map(item => visibleWidth(clean(item.cmd)))));
     for (let i = 0; i < count; i++) {
@@ -243,8 +247,8 @@ export function render(v: View): Rendered {
   const rootBackground = light ? '\x1b[48;2;250;250;250m' : '\x1b[48;2;0;0;0m';
   if(paperGraphics)images.unshift({...paperGraphic(width,composerHeight,light,(process.pid*128+126)>>>0),x:gutter,y:composerY});
   if (v.panel && !v.permission && !v.update) {
-    const panel=drawPanel(v.panel,w,h,light,accent);
-    return {id:v.id,rows:panel.rows,input:inputRect,execution,editorWidth:textWidth,animate:false,artwork:null,cursor:panel.cursor,cursorVisible:v.panel.section!==8,images:[]};
+    const panel=drawPanel(v.panel,w,h,light,accent,!!v.preferences?.reduce_motion);
+    return {id:v.id,rows:panel.rows,input:inputRect,execution,editorWidth:textWidth,animate:v.panel.section===8&&!v.preferences?.reduce_motion&&(v.panel.elapsed??900)<900,artwork:null,cursor:panel.cursor,cursorVisible:v.panel.section!==8,images:[],controls:panel.controls};
   }
 
   return {
@@ -254,6 +258,6 @@ export function render(v: View): Rendered {
         + ' '.repeat(Math.max(0, w - visibleWidth(clipped))) + reset;
     }), input: inputRect, execution, editorWidth: textWidth, animate: v.running || !!artwork && introElapsed < introDuration, artwork,
     cursor: { x: Math.min(w - 1, gutter + pad + 2 + input.position.x), y: Math.min(h - 1, textY + input.position.y - topLine) },
-    images,
+    images, controls,
   };
 }

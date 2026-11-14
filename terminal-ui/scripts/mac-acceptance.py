@@ -47,6 +47,12 @@ class Model(http.server.BaseHTTPRequestHandler):
     permission_issued=False
     def log_message(self, *unused):
         pass
+    def do_GET(self):
+        assert self.path == '/models'
+        assert self.headers.get('Authorization') == 'Bearer local-ui-test-key'
+        data=json.dumps({'data':[{'id':'local-ui-test-model'},{'id':'local-ui-alternate'}]}).encode()
+        self.send_response(200);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
+
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         requests.append(body)
@@ -70,7 +76,9 @@ thread.start()
 master, slave = pty.openpty()
 fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',44,160,0,0))
 before = termios.tcgetattr(slave)
+test_home=repo/'test-home';test_home.mkdir()
 env = os.environ.copy()
+env['HOME']=str(test_home)
 env.update({'TERM':'xterm-ghostty','TERM_PROGRAM':'ghostty','COLORTERM':'truecolor',
             'OPENAI_API_KEY':'local-ui-test-key','OSMOGREP_BASE_URL':f'http://127.0.0.1:{server.server_port}',
             'OSMOGREP_PROVIDER':'openai','OSMOGREP_MODEL':'local-ui-test-model','OSMOGREP_MAX_ITERATIONS':'3',
@@ -165,9 +173,9 @@ try:
     result['central_morph_ignores_hover_and_click_replays'] = True
     paste('/')
     wait_for(lambda: b'Commands' in transcript and b'move' in transcript)
-    assert b'\x1b[?1000l' in transcript, 'typing must release automatic mouse capture'
+    assert b'\x1b[?1003h' not in transcript, 'selectors must capture buttons without hover tracking'
     send(b'\x1b[B' * 2)
-    assert '◆'.encode() in transcript
+    assert '›'.encode() in transcript
     send(b'\x1b[A' * 2)
     send(b'\r')
     wait_for(lambda: b'WORKSPACE' in transcript and b'Search' in transcript)
@@ -178,6 +186,23 @@ try:
     drain(.1)
     assert not requests, 'selecting /help must execute locally'
     result['command_picker_navigation_and_execution'] = True
+    # Footer hit regions open independent model/provider selectors and use real catalog metadata.
+    at=len(transcript)
+    send(b'\x1b[<0;5;44M')
+    wait_for(lambda:b'Choose model' in plain(transcript[at:]) and b'local-ui-alternate' in plain(transcript[at:]))
+    paste('local-ui-alternate')
+    send(b'\x1b[<0;8;10M')
+    wait_for(lambda:b'Switched model: provider=openai model=local-ui-alternate' in plain(transcript[at:]))
+    # The new shorter model label places its provider chip at columns 27 onward.
+    at=len(transcript)
+    send(b'\x1b[<0;29;44M')
+    wait_for(lambda:b'Choose provider' in plain(transcript[at:]))
+    paste('openai');send(b'\r')
+    wait_for(lambda:b'Choose model' in plain(transcript[at:]))
+    paste('local-ui-test-model');send(b'\r')
+    wait_for(lambda:b'Switched model: provider=openai model=local-ui-test-model' in plain(transcript[at:]))
+    assert not requests,'selector metadata requests must not run the agent'
+    result['footer_provider_model_selectors'] = True
     # Appearance changes use the existing persisted workspace setting.
     send(b'\x1bOQ')  # F2
     paste('Light')
@@ -210,7 +235,7 @@ try:
     paste('Git branch')
     send(b' ')
     send(b'\x1b')
-    saved=Path.home()/'Library/Application Support/osmogrep/sessions'/(hashlib.sha256(str(repo).encode()).hexdigest()+'.json')
+    saved=test_home/'Library/Application Support/osmogrep/sessions'/(hashlib.sha256(str(repo).encode()).hexdigest()+'.json')
     settings=json.loads(saved.read_text())
     assert settings['theme']=='dark'
     assert settings['preferences']['key_bindings']['commands']=='ctrl+p'
@@ -261,6 +286,9 @@ try:
     paste('/stats')
     send(b'\r')
     wait_for(lambda:b'SAMPLE DATA' in transcript and b'WEEKLY USAGE' in transcript)
+    filling=len(transcript);drain(.9)
+    assert b'\x1b[38;2;122;119;109m' in transcript[filling:], 'weekly bars must keep filling without key input'
+    result['weekly_chart_entry_animation']=True
     send(b'd')
     wait_for(lambda:b'RECORDED ACTIVITY' in transcript and b'1,290 tokens' in transcript)
     send(b'\x1b')
