@@ -370,7 +370,20 @@ impl TypeScriptUi {
                             .rect()
                             .contains((mouse.column, mouse.row).into())
                     }) {
-                        super::workbench::open_selector(state, control.id == "provider");
+                        match control.id.as_str() {
+                            "voice" => {
+                                state.ui.requested_command = Some(
+                                    if state.voice.enabled || state.voice.connected {
+                                        "/voice off"
+                                    } else {
+                                        "/voice on"
+                                    }
+                                    .into(),
+                                )
+                            }
+                            "team" => super::workbench::open(state, 11, None),
+                            _ => super::workbench::open_selector(state, control.id == "provider"),
+                        }
                         return true;
                     }
                 }
@@ -479,10 +492,12 @@ impl TypeScriptUi {
                     })
             })
             || frame.controls.iter().any(|c| {
-                !matches!(c.id.as_str(), "model" | "provider" | "choice")
-                    || c.id == "choice"
-                        && (!c.index.is_some_and(|i| i <= 1000)
-                            || c.label.as_ref().is_none_or(|s| s.len() > 160))
+                !matches!(
+                    c.id.as_str(),
+                    "model" | "provider" | "choice" | "voice" | "team"
+                ) || c.id == "choice"
+                    && (!c.index.is_some_and(|i| i <= 1000)
+                        || c.label.as_ref().is_none_or(|s| s.len() > 160))
                     || c.area.width == 0
                     || c.area.height != 1
                     || !c.area.inside(width, height)
@@ -689,6 +704,14 @@ fn view(state: &AgentState, model: &ModelConfig, id: u64, width: u16, height: u1
     snapshot["expandTools"] = json!(ui.expand_tools);
     snapshot["statusLine"] = json!(super::workbench::statusline(state));
     snapshot["preferences"] = serde_json::to_value(&state.preferences).unwrap_or(Value::Null);
+    snapshot["voiceState"] = json!({"enabled":state.voice.enabled,"connected":state.voice.connected,"partial":state.voice.partial.is_some()});
+    let project = ui
+        .team
+        .peers
+        .iter()
+        .find(|p| p.session == state.session.id)
+        .map(|p| &p.project);
+    snapshot["team"] = json!({"enabled":state.preferences.team_messages,"unread":ui.team.messages.len(),"online":ui.team.peers.iter().filter(|p|p.online&&p.session!=state.session.id&&Some(&p.project)==project).count()});
     snapshot
 }
 

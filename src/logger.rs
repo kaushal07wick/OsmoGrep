@@ -164,3 +164,25 @@ mod tests {
         assert_eq!(tool_summary(&patch), "README.md");
     }
 }
+
+/// Keep noninteractive sessions useful when opened or previewed in the terminal.
+pub fn record_runtime_event(state: &mut AgentState, event: &crate::agent::AgentEvent) {
+    use crate::agent::AgentEvent;
+    match event {
+        AgentEvent::ToolCall { name, args } => log_tool_call(state, name, tool_summary(args)),
+        AgentEvent::ToolResult { summary } => log_tool_result(state, summary),
+        AgentEvent::OutputText(text) => {
+            crate::log_final_output_once(state, text);
+        }
+        AgentEvent::StreamDelta(delta) => {
+            state.ui.streaming_active = true;
+            state.ui.streaming_transcript.push_str(delta);
+            state.ui.streaming_buffer.push_str(delta);
+            crate::update_streaming_log(state);
+        }
+        AgentEvent::StreamDone => crate::finish_streaming_output(state),
+        AgentEvent::Error(error) => log(state, LogLevel::Error, error),
+        AgentEvent::Cancelled => log_status(state, "Cancelled"),
+        _ => {}
+    }
+}

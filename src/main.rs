@@ -28,6 +28,7 @@ mod shell_guard;
 mod skills;
 mod state;
 mod subagents;
+mod team;
 mod test_harness;
 mod tool_budget;
 mod tool_guard;
@@ -90,6 +91,9 @@ enum JobEvent {
     about = "A lightweight Rust-based TUI Agent, for debugging, code reviews, and runtime bug catching."
 )]
 struct Cli {
+    /// Allow collaboration messages to enter active model turns in this session
+    #[arg(long, global = true)]
+    team: bool,
     /// Open the TUI with this session name
     #[arg(value_name = "SESSION_NAME", conflicts_with = "session")]
     session_name: Option<String>,
@@ -131,6 +135,8 @@ enum CliCommand {
         action: String,
         provider: String,
     },
+    /// Browse all saved sessions and live coding instances
+    Agents,
     /// Print version information
     Version,
     /// Print install, config, and session diagnostics
@@ -361,6 +367,18 @@ fn start_agent_run(
     agent_cancel: &mut Option<CancelToken>,
     agent_steer_tx: &mut Option<mpsc::Sender<String>>,
 ) {
+    if state.preferences.team_messages {
+        if let Some(error) = state.ui.team.error.clone() {
+            state.ui.queued_agent_prompts.push_front(text.to_string());
+            state.ui.queue_paused = true;
+            log(
+                state,
+                LogLevel::Error,
+                format!("{error}. Message retained; restore the team store or use /team off."),
+            );
+            return;
+        }
+    }
     if !agent.is_configured() {
         if !text.trim().is_empty() {
             state.ui.queued_agent_prompts.push_front(text.to_string());
@@ -614,11 +632,13 @@ fn deny_update(state: &mut AgentState) {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let _team = team::Cleanup;
     let _commands = command_sessions::Cleanup;
     let _mcp = mcp::Cleanup;
     let _language_servers = language_server::Cleanup;
     let cli = Cli::parse();
     let session_name = selected_session_name(&cli);
+    let team_enabled = cli.team;
     match cli.command {
         Some(CliCommand::Rpc {
             repo_root,
@@ -630,6 +650,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             session_id,
             PermissionProfile::parse(&permission_profile).ok_or("Invalid permission profile")?,
             auto_approve,
+            team_enabled,
         )?,
         Some(CliCommand::Auth { action, provider }) => match action.as_str() {
             "login" => auth::login(&provider)?,
@@ -646,6 +667,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
             ),
         },
+        Some(CliCommand::Agents) => run_terminal(
+            session_name,
+            cli.resume,
+            cli.fork,
+            cli.new_session,
+            team_enabled,
+            true,
+        )?,
         Some(CliCommand::Version) => {
             println!("osmogrep {}", env!("CARGO_PKG_VERSION"));
         }
@@ -659,11 +688,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             uninstall_current_binary(args)?;
         }
         Some(CliCommand::Run(args)) => {
-            let code = run_headless(args)?;
+            let code = run_headless(args, team_enabled)?;
             if code != 0 {
                 drop(_language_servers);
                 drop(_mcp);
                 drop(_commands);
+                drop(_team);
                 std::process::exit(code);
             }
         }
@@ -683,7 +713,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             intelligence::cli::mcp(args).map_err(|e| e as Box<dyn Error>)?
         }
         None => {
-            run_tui(session_name, cli.resume, cli.fork, cli.new_session)?;
+            run_terminal(
+                session_name,
+                cli.resume,
+                cli.fork,
+                cli.new_session,
+                team_enabled,
+                false,
+            )?;
         }
     }
     Ok(())
@@ -811,7 +848,7 @@ fn confirm_uninstall(path: &Path) -> Result<bool, Box<dyn Error>> {
     Ok(matches!(answer.trim(), "y" | "Y" | "yes" | "YES"))
 }
 
-fn run_headless(args: RunArgs) -> Result<i32, Box<dyn Error>> {
+fn run_headless(args: RunArgs, team_enabled: bool) -> Result<i32, Box<dyn Error>> {
     let prompt = match (args.prompt, args.prompt_file) {
         (Some(prompt), None) => prompt,
         (None, Some(path)) => fs::read_to_string(path)?,
@@ -838,7 +875,25 @@ fn run_headless(args: RunArgs) -> Result<i32, Box<dyn Error>> {
 
     let mut emitter = HeadlessEmitter::new(args.json_events, args.auto_approve);
     emitter.emit_run_start(&repo_root, &prompt);
+    let mut state = init_state();
+    state.repo_root = repo_root.clone();
+    state.session.update_latest = false;
+    state.permission_profile = permission_profile;
+    state.preferences.team_messages = team_enabled;
+    persistence::save(&state)?;
+    team::poll(&mut state, agent.model_config());
+    if args.json_events {
+        emitter.emit_json_value(
+            serde_json::json!({"type":"session_started","session_id":state.session.id}),
+        );
+    }
 
+    if team_enabled {
+        if let Some(error) = state.ui.team.error.as_ref() {
+            return Err(error.clone().into());
+        }
+    }
+    logger::log_user_input(&mut state, &prompt);
     let (tx, rx) = mpsc::channel();
     let _control = agent.spawn(
         repo_root,
@@ -852,13 +907,21 @@ fn run_headless(args: RunArgs) -> Result<i32, Box<dyn Error>> {
 
     let mut exit_code = 0;
     loop {
-        let evt = match rx.recv() {
+        team::poll(&mut state, agent.model_config());
+        let evt = match rx.recv_timeout(Duration::from_millis(250)) {
             Ok(evt) => evt,
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
             Err(_) => {
                 exit_code = exit_code.max(1);
                 break;
             }
         };
+        team::observe(&mut state, &evt);
+        logger::record_runtime_event(&mut state, &evt);
+        if let AgentEvent::ConversationUpdate(messages) = &evt {
+            state.conversation.set_messages(messages.clone());
+            persistence::save(&state)?;
+        }
 
         let done = matches!(evt, AgentEvent::Done);
         let failed = matches!(evt, AgentEvent::Error(_) | AgentEvent::Cancelled);
@@ -1254,12 +1317,40 @@ fn compact_json(value: &serde_json::Value) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string())
 }
 
+fn run_terminal(
+    mut name: Option<String>,
+    mut resume: Option<String>,
+    mut fork: Option<String>,
+    mut fresh: bool,
+    team: bool,
+    mut center: bool,
+) -> Result<(), Box<dyn Error>> {
+    loop {
+        let Some(next) = run_tui(name, resume, fork, fresh, team, center)? else {
+            return Ok(());
+        };
+        std::env::set_current_dir(&next.root)?;
+        name = None;
+        fresh = next.id.is_none();
+        if next.fork {
+            fork = next.id;
+            resume = None;
+        } else {
+            resume = next.id;
+            fork = None;
+        }
+        center = false;
+    }
+}
+
 fn run_tui(
     session_name: Option<String>,
     resume: Option<String>,
     fork: Option<String>,
     fresh: bool,
-) -> Result<(), Box<dyn Error>> {
+    team_enabled: bool,
+    open_center: bool,
+) -> Result<Option<state::SessionTarget>, Box<dyn Error>> {
     let mut terminal_session = setup_terminal()?;
 
     let backend = CrosstermBackend::new(io::stdout());
@@ -1277,6 +1368,11 @@ fn run_tui(
         persistence::save_or_log(&mut state);
     }
     let mut agent = Agent::new();
+    state.preferences.team_messages |= team_enabled;
+    if open_center {
+        team::poll(&mut state, agent.model_config());
+        ui::workbench::open(&mut state, 10, Some(agent.model_config()));
+    }
     if env_truthy("OSMOGREP_NV_TIPS", false) {
         log(
             &mut state,
@@ -1341,6 +1437,9 @@ fn run_tui(
     let mut runtime = TuiRuntime::default();
 
     loop {
+        if team::poll(&mut state, agent.model_config()) {
+            runtime.mark_dirty();
+        }
         if ui::workbench::poll(&mut state, &agent) {
             runtime.mark_dirty();
         }
@@ -1362,6 +1461,20 @@ fn run_tui(
                 );
             }
             runtime.mark_dirty();
+        }
+
+        if state.ui.open_session.is_some() {
+            if agent_rx.is_some() || running_jobs > 0 || state.ui.editor_session.is_some() {
+                state.ui.open_session = None;
+                log(
+                    &mut state,
+                    LogLevel::Warn,
+                    "Finish or cancel active work and close Neovim before switching sessions.",
+                );
+            } else {
+                persistence::save(&state)?;
+                break;
+            }
         }
 
         if state.ui.should_exit {
@@ -1566,6 +1679,9 @@ fn run_tui(
                         state.voice.last_inserted = None;
                     }
                     voice::VoiceEvent::Partial(delta) => {
+                        if state.ui.input_mode != InputMode::AgentText || !state.voice.enabled {
+                            continue;
+                        }
                         runtime.mark_dirty();
                         state.voice.partial = Some(delta);
                         state.voice.last_final = None;
@@ -1581,6 +1697,9 @@ fn run_tui(
                         }
                     }
                     voice::VoiceEvent::Final(text) => {
+                        if state.ui.input_mode != InputMode::AgentText || !state.voice.enabled {
+                            continue;
+                        }
                         runtime.mark_dirty();
                         let final_text = if text.trim().is_empty() {
                             state.voice.buffer.clone()
@@ -1681,338 +1800,344 @@ fn run_tui(
         if let Some(rx) = agent_rx.as_ref() {
             loop {
                 match rx.try_recv() {
-                    Ok(evt) => match evt {
-                        AgentEvent::Usage {
-                            usage: _,
-                            storage_error,
-                        } => {
-                            crate::ui::workbench::refresh_usage(&mut state);
-                            if let Some(error) = storage_error {
-                                log(
+                    Ok(evt) => {
+                        team::observe(&mut state, &evt);
+                        match evt {
+                            AgentEvent::Usage {
+                                usage: _,
+                                storage_error,
+                            } => {
+                                crate::ui::workbench::refresh_usage(&mut state);
+                                if let Some(error) = storage_error {
+                                    log(
+                                        &mut state,
+                                        LogLevel::Warn,
+                                        format!("Usage history was not saved: {error}"),
+                                    );
+                                }
+                                runtime.mark_dirty();
+                            }
+                            AgentEvent::ToolCall { name, args } => {
+                                runtime.mark_dirty();
+                                let cmd = logger::tool_summary(&args);
+
+                                log_tool_call(&mut state, &name, cmd);
+                                state.ui.run_phase = "tool".to_string();
+                                state.ui.current_tool = Some(name.clone());
+                                state.ui.current_tool_detail = Some(compact_json(&args));
+                                state.ui.active_edit_target = tool_target_path(&name, &args);
+                            }
+
+                            AgentEvent::ToolResult { summary } => {
+                                runtime.mark_dirty();
+                                state.ui.last_tool_status = Some(summary.clone());
+                                log_tool_result(&mut state, summary);
+                            }
+
+                            AgentEvent::PlanUpdate { items } => {
+                                runtime.mark_dirty();
+                                let completed = items.iter().filter(|item| item.done).count();
+                                let total = items.len();
+                                state.plan_items = items;
+                                log_status(
                                     &mut state,
-                                    LogLevel::Warn,
-                                    format!("Usage history was not saved: {error}"),
+                                    format!("plan updated: {completed}/{total} complete"),
+                                );
+                                persistence::save_or_log(&mut state);
+                            }
+
+                            AgentEvent::FileFocus {
+                                phase,
+                                path,
+                                line,
+                                reason,
+                                ..
+                            } => {
+                                runtime.mark_dirty();
+                                state.ui.run_phase = phase.clone();
+                                state.ui.active_edit_target = Some(path.clone());
+                                state.ui.run_detail = Some(reason.unwrap_or_else(|| {
+                                    line.map(|line| format!("{path}:{line}"))
+                                        .unwrap_or_else(|| path.clone())
+                                }));
+                            }
+
+                            AgentEvent::EditStart {
+                                path,
+                                operation,
+                                summary,
+                                ..
+                            } => {
+                                runtime.mark_dirty();
+                                state.ui.run_phase = "editing".to_string();
+                                state.ui.active_edit_target = Some(path.clone());
+                                state.ui.current_tool_detail = Some(summary.clone());
+                                log_status(&mut state, format!("{operation} {path}"));
+                            }
+
+                            AgentEvent::EditDelta {
+                                path,
+                                text,
+                                delta_kind,
+                                ..
+                            } => {
+                                runtime.mark_dirty();
+                                state.ui.diff_active = true;
+                                state.ui.active_edit_target = Some(path.clone());
+                                state.ui.diff_snapshot = vec![DiffSnapshot {
+                                    tool: format!("live:{delta_kind}"),
+                                    target: path,
+                                    before: String::new(),
+                                    after: text,
+                                }];
+                            }
+
+                            AgentEvent::EditComplete {
+                                path,
+                                changed,
+                                summary,
+                                ..
+                            } => {
+                                runtime.mark_dirty();
+                                state.ui.active_edit_target = Some(path.clone());
+                                state.ui.last_tool_status = Some(summary.clone());
+                                log_tool_result(
+                                    &mut state,
+                                    format!(
+                                        "{} {}",
+                                        if changed { "edited" } else { "unchanged" },
+                                        path
+                                    ),
                                 );
                             }
-                            runtime.mark_dirty();
-                        }
-                        AgentEvent::ToolCall { name, args } => {
-                            runtime.mark_dirty();
-                            let cmd = logger::tool_summary(&args);
 
-                            log_tool_call(&mut state, &name, cmd);
-                            state.ui.run_phase = "tool".to_string();
-                            state.ui.current_tool = Some(name.clone());
-                            state.ui.current_tool_detail = Some(compact_json(&args));
-                            state.ui.active_edit_target = tool_target_path(&name, &args);
-                        }
+                            AgentEvent::ValidationStart { command, .. } => {
+                                runtime.mark_dirty();
+                                state.ui.run_phase = "validating".to_string();
+                                state.ui.run_detail = Some(command.clone());
+                                log_status(&mut state, format!("validating: {command}"));
+                            }
 
-                        AgentEvent::ToolResult { summary } => {
-                            runtime.mark_dirty();
-                            state.ui.last_tool_status = Some(summary.clone());
-                            log_tool_result(&mut state, summary);
-                        }
+                            AgentEvent::ValidationComplete {
+                                command,
+                                passed,
+                                summary,
+                                ..
+                            } => {
+                                runtime.mark_dirty();
+                                state.ui.run_phase = if passed {
+                                    "validated".to_string()
+                                } else {
+                                    "validation_failed".to_string()
+                                };
+                                state.ui.last_tool_status = Some(summary.clone());
+                                log_tool_result(
+                                    &mut state,
+                                    format!(
+                                        "{}: {command}",
+                                        if passed {
+                                            "validation passed"
+                                        } else {
+                                            "validation failed"
+                                        }
+                                    ),
+                                );
+                            }
 
-                        AgentEvent::PlanUpdate { items } => {
-                            runtime.mark_dirty();
-                            let completed = items.iter().filter(|item| item.done).count();
-                            let total = items.len();
-                            state.plan_items = items;
-                            log_status(
-                                &mut state,
-                                format!("plan updated: {completed}/{total} complete"),
-                            );
-                            persistence::save_or_log(&mut state);
-                        }
-
-                        AgentEvent::FileFocus {
-                            phase,
-                            path,
-                            line,
-                            reason,
-                            ..
-                        } => {
-                            runtime.mark_dirty();
-                            state.ui.run_phase = phase.clone();
-                            state.ui.active_edit_target = Some(path.clone());
-                            state.ui.run_detail = Some(reason.unwrap_or_else(|| {
-                                line.map(|line| format!("{path}:{line}"))
-                                    .unwrap_or_else(|| path.clone())
-                            }));
-                        }
-
-                        AgentEvent::EditStart {
-                            path,
-                            operation,
-                            summary,
-                            ..
-                        } => {
-                            runtime.mark_dirty();
-                            state.ui.run_phase = "editing".to_string();
-                            state.ui.active_edit_target = Some(path.clone());
-                            state.ui.current_tool_detail = Some(summary.clone());
-                            log_status(&mut state, format!("{operation} {path}"));
-                        }
-
-                        AgentEvent::EditDelta {
-                            path,
-                            text,
-                            delta_kind,
-                            ..
-                        } => {
-                            runtime.mark_dirty();
-                            state.ui.diff_active = true;
-                            state.ui.active_edit_target = Some(path.clone());
-                            state.ui.diff_snapshot = vec![DiffSnapshot {
-                                tool: format!("live:{delta_kind}"),
-                                target: path,
-                                before: String::new(),
-                                after: text,
-                            }];
-                        }
-
-                        AgentEvent::EditComplete {
-                            path,
-                            changed,
-                            summary,
-                            ..
-                        } => {
-                            runtime.mark_dirty();
-                            state.ui.active_edit_target = Some(path.clone());
-                            state.ui.last_tool_status = Some(summary.clone());
-                            log_tool_result(
-                                &mut state,
-                                format!(
-                                    "{} {}",
-                                    if changed { "edited" } else { "unchanged" },
-                                    path
-                                ),
-                            );
-                        }
-
-                        AgentEvent::ValidationStart { command, .. } => {
-                            runtime.mark_dirty();
-                            state.ui.run_phase = "validating".to_string();
-                            state.ui.run_detail = Some(command.clone());
-                            log_status(&mut state, format!("validating: {command}"));
-                        }
-
-                        AgentEvent::ValidationComplete {
-                            command,
-                            passed,
-                            summary,
-                            ..
-                        } => {
-                            runtime.mark_dirty();
-                            state.ui.run_phase = if passed {
-                                "validated".to_string()
-                            } else {
-                                "validation_failed".to_string()
-                            };
-                            state.ui.last_tool_status = Some(summary.clone());
-                            log_tool_result(
-                                &mut state,
-                                format!(
-                                    "{}: {command}",
-                                    if passed {
-                                        "validation passed"
-                                    } else {
-                                        "validation failed"
-                                    }
-                                ),
-                            );
-                        }
-
-                        AgentEvent::ToolDiff {
-                            tool,
-                            target,
-                            before,
-                            after,
-                        } => {
-                            runtime.mark_dirty();
-                            let snap = DiffSnapshot {
+                            AgentEvent::ToolDiff {
                                 tool,
                                 target,
                                 before,
                                 after,
-                            };
+                            } => {
+                                runtime.mark_dirty();
+                                let snap = DiffSnapshot {
+                                    tool,
+                                    target,
+                                    before,
+                                    after,
+                                };
 
-                            state.session_changes.push(snap.clone());
-                            state.undo_stack.push(snap.clone());
-                            state.ui.diff_active = true;
-                            state.ui.diff_snapshot = vec![snap];
-                            state.ui.active_edit_target =
-                                state.ui.diff_snapshot.first().map(|d| d.target.clone());
-                            persistence::save_or_log(&mut state);
-                        }
+                                state.session_changes.push(snap.clone());
+                                state.undo_stack.push(snap.clone());
+                                state.ui.diff_active = true;
+                                state.ui.diff_snapshot = vec![snap];
+                                state.ui.active_edit_target =
+                                    state.ui.diff_snapshot.first().map(|d| d.target.clone());
+                                persistence::save_or_log(&mut state);
+                            }
 
-                        AgentEvent::PreviewDiff {
-                            tool,
-                            target,
-                            before,
-                            after,
-                        } => {
-                            runtime.mark_dirty();
-                            state.ui.diff_active = true;
-                            state.ui.diff_snapshot = vec![DiffSnapshot {
-                                tool: format!("preview:{tool}"),
+                            AgentEvent::PreviewDiff {
+                                tool,
                                 target,
                                 before,
                                 after,
-                            }];
-                        }
-
-                        AgentEvent::OutputText(text) => {
-                            runtime.mark_dirty();
-                            if log_final_output_once(&mut state, &text) {
-                                state.usage.completion_tokens += (text.len() / 4).max(1);
+                            } => {
+                                runtime.mark_dirty();
+                                state.ui.diff_active = true;
+                                state.ui.diff_snapshot = vec![DiffSnapshot {
+                                    tool: format!("preview:{tool}"),
+                                    target,
+                                    before,
+                                    after,
+                                }];
                             }
-                            persistence::save_or_log(&mut state);
-                        }
 
-                        AgentEvent::StreamDelta(delta) => {
-                            runtime.mark_dirty();
-                            state.ui.streaming_active = true;
-                            state.ui.streaming_transcript.push_str(&delta);
-                            state.ui.streaming_buffer.push_str(&delta);
-                            update_streaming_log(&mut state);
-                        }
+                            AgentEvent::OutputText(text) => {
+                                runtime.mark_dirty();
+                                if log_final_output_once(&mut state, &text) {
+                                    state.usage.completion_tokens += (text.len() / 4).max(1);
+                                }
+                                persistence::save_or_log(&mut state);
+                            }
 
-                        AgentEvent::StreamDone => {
-                            runtime.mark_dirty();
-                            finish_streaming_output(&mut state);
-                        }
+                            AgentEvent::StreamDelta(delta) => {
+                                runtime.mark_dirty();
+                                state.ui.streaming_active = true;
+                                state.ui.streaming_transcript.push_str(&delta);
+                                state.ui.streaming_buffer.push_str(&delta);
+                                update_streaming_log(&mut state);
+                            }
 
-                        AgentEvent::RunStatus {
-                            phase,
-                            detail,
-                            iteration,
-                            max_iterations,
-                        } => {
-                            runtime.mark_dirty();
-                            state.ui.run_phase = phase;
-                            state.ui.run_detail = Some(detail);
-                            state.ui.run_iteration = iteration;
-                            state.ui.run_iteration_limit = max_iterations;
-                        }
+                            AgentEvent::StreamDone => {
+                                runtime.mark_dirty();
+                                finish_streaming_output(&mut state);
+                            }
 
-                        AgentEvent::PermissionRequest {
-                            tool_name,
-                            args_summary,
-                            reply_tx,
-                        } => {
-                            runtime.mark_dirty();
-                            if state.ui.auto_approve {
-                                let _ = reply_tx.send(true);
-                                log_status(
-                                    &mut state,
-                                    format!("Auto-approved {} ({})", tool_name, args_summary),
-                                );
-                            } else {
-                                state.ui.permission_selected = 0;
-                                state.ui.pending_permission =
-                                    Some(crate::state::PendingPermission {
-                                        tool_name,
-                                        args_summary,
-                                        reply_tx,
+                            AgentEvent::RunStatus {
+                                phase,
+                                detail,
+                                iteration,
+                                max_iterations,
+                            } => {
+                                runtime.mark_dirty();
+                                state.ui.run_phase = phase;
+                                state.ui.run_detail = Some(detail);
+                                state.ui.run_iteration = iteration;
+                                state.ui.run_iteration_limit = max_iterations;
+                            }
+
+                            AgentEvent::PermissionRequest {
+                                tool_name,
+                                args_summary,
+                                reply_tx,
+                            } => {
+                                runtime.mark_dirty();
+                                if state.ui.auto_approve {
+                                    let _ = reply_tx.send(true);
+                                    log_status(
+                                        &mut state,
+                                        format!("Auto-approved {} ({})", tool_name, args_summary),
+                                    );
+                                } else {
+                                    state.ui.permission_selected = 0;
+                                    state.ui.pending_permission =
+                                        Some(crate::state::PendingPermission {
+                                            tool_name,
+                                            args_summary,
+                                            reply_tx,
+                                        });
+                                }
+                            }
+
+                            AgentEvent::ConversationUpdate(messages) => {
+                                runtime.mark_dirty();
+                                state.conversation.set_messages(messages);
+                                persistence::save_or_log(&mut state);
+                            }
+
+                            AgentEvent::Cancelled => {
+                                state.discard_diff_preview();
+                                runtime.mark_dirty();
+                                finish_streaming_output(&mut state);
+                                state.conversation.messages.push(serde_json::json!({"role":"assistant","content":"[The previous turn was cancelled before completion. Do not resume it without a new request.]"}));
+                                persistence::save_or_log(&mut state);
+                                log(&mut state, LogLevel::Warn, "Agent cancelled.");
+                                state.ui.spinner_started_at = None;
+                                state.ui.agent_running = false;
+                                state.ui.run_phase = "cancelled".to_string();
+                                state.ui.current_tool = None;
+                                state.ui.current_tool_detail = None;
+                                state.ui.pending_permission = None;
+                                state.ui.active_edit_target = None;
+                                agent_cancel = None;
+                                agent_steer_tx = None;
+                                agent_rx = None;
+                                break;
+                            }
+
+                            AgentEvent::Error(e) => {
+                                runtime.mark_dirty();
+                                log(&mut state, LogLevel::Error, e);
+                                finish_streaming_output(&mut state);
+                                state.conversation.messages.push(serde_json::json!({"role":"assistant","content":"[The previous turn failed; no successful completion was confirmed.]"}));
+                                persistence::save_or_log(&mut state);
+                                state.ui.spinner_started_at = None;
+                                state.ui.agent_running = false;
+                                state.ui.run_phase = "error".to_string();
+                                state.ui.current_tool = None;
+                                state.ui.current_tool_detail = None;
+                                state.ui.pending_permission = None;
+                                state.ui.active_edit_target = None;
+                                agent_cancel = None;
+                                agent_steer_tx = None;
+                                agent_rx = None;
+                                break;
+                            }
+
+                            AgentEvent::Done => {
+                                state.discard_diff_preview();
+                                if let Some(start) = state.ui.run_started_at {
+                                    log_status(
+                                        &mut state,
+                                        format!(
+                                            "Finished in {:.1}s",
+                                            start.elapsed().as_secs_f64()
+                                        ),
+                                    );
+                                }
+                                runtime.mark_dirty();
+                                state.ui.spinner_started_at = None;
+                                state.ui.agent_running = false;
+                                state.ui.run_phase = "idle".to_string();
+                                state.ui.current_tool = None;
+                                state.ui.current_tool_detail = None;
+                                state.ui.pending_permission = None;
+                                state.ui.active_edit_target = None;
+                                if state.session_changes.len() > state.ui.run_change_start {
+                                    warn_if_verification_needed(&mut state);
+                                }
+                                if should_queue_automatic_checks(&state) {
+                                    state.reviewed_change_count =
+                                        state.reviewed_change_count.max(state.ui.run_change_start);
+                                    queue_auto_review_if_needed(&mut state);
+                                    let id = state.next_job_id;
+                                    state.next_job_id += 1;
+                                    state.jobs.push(crate::state::JobRecord {
+                                        id,
+                                        kind: JobKind::Test,
+                                        input: String::new(),
+                                        status: JobStatus::Queued,
+                                        output: None,
                                     });
+                                    state.job_queue.push(crate::state::JobRequest {
+                                        id,
+                                        kind: JobKind::Test,
+                                        input: String::new(),
+                                    });
+                                    log(
+                                        &mut state,
+                                        LogLevel::Info,
+                                        format!("Auto-eval queued as job #{}", id),
+                                    );
+                                }
+                                agent_cancel = None;
+                                agent_steer_tx = None;
+                                agent_rx = None;
+                                break;
                             }
                         }
-
-                        AgentEvent::ConversationUpdate(messages) => {
-                            runtime.mark_dirty();
-                            state.conversation.set_messages(messages);
-                            persistence::save_or_log(&mut state);
-                        }
-
-                        AgentEvent::Cancelled => {
-                            state.discard_diff_preview();
-                            runtime.mark_dirty();
-                            finish_streaming_output(&mut state);
-                            state.conversation.messages.push(serde_json::json!({"role":"assistant","content":"[The previous turn was cancelled before completion. Do not resume it without a new request.]"}));
-                            persistence::save_or_log(&mut state);
-                            log(&mut state, LogLevel::Warn, "Agent cancelled.");
-                            state.ui.spinner_started_at = None;
-                            state.ui.agent_running = false;
-                            state.ui.run_phase = "cancelled".to_string();
-                            state.ui.current_tool = None;
-                            state.ui.current_tool_detail = None;
-                            state.ui.pending_permission = None;
-                            state.ui.active_edit_target = None;
-                            agent_cancel = None;
-                            agent_steer_tx = None;
-                            agent_rx = None;
-                            break;
-                        }
-
-                        AgentEvent::Error(e) => {
-                            runtime.mark_dirty();
-                            log(&mut state, LogLevel::Error, e);
-                            finish_streaming_output(&mut state);
-                            state.conversation.messages.push(serde_json::json!({"role":"assistant","content":"[The previous turn failed; no successful completion was confirmed.]"}));
-                            persistence::save_or_log(&mut state);
-                            state.ui.spinner_started_at = None;
-                            state.ui.agent_running = false;
-                            state.ui.run_phase = "error".to_string();
-                            state.ui.current_tool = None;
-                            state.ui.current_tool_detail = None;
-                            state.ui.pending_permission = None;
-                            state.ui.active_edit_target = None;
-                            agent_cancel = None;
-                            agent_steer_tx = None;
-                            agent_rx = None;
-                            break;
-                        }
-
-                        AgentEvent::Done => {
-                            state.discard_diff_preview();
-                            if let Some(start) = state.ui.run_started_at {
-                                log_status(
-                                    &mut state,
-                                    format!("Finished in {:.1}s", start.elapsed().as_secs_f64()),
-                                );
-                            }
-                            runtime.mark_dirty();
-                            state.ui.spinner_started_at = None;
-                            state.ui.agent_running = false;
-                            state.ui.run_phase = "idle".to_string();
-                            state.ui.current_tool = None;
-                            state.ui.current_tool_detail = None;
-                            state.ui.pending_permission = None;
-                            state.ui.active_edit_target = None;
-                            if state.session_changes.len() > state.ui.run_change_start {
-                                warn_if_verification_needed(&mut state);
-                            }
-                            if should_queue_automatic_checks(&state) {
-                                state.reviewed_change_count =
-                                    state.reviewed_change_count.max(state.ui.run_change_start);
-                                queue_auto_review_if_needed(&mut state);
-                                let id = state.next_job_id;
-                                state.next_job_id += 1;
-                                state.jobs.push(crate::state::JobRecord {
-                                    id,
-                                    kind: JobKind::Test,
-                                    input: String::new(),
-                                    status: JobStatus::Queued,
-                                    output: None,
-                                });
-                                state.job_queue.push(crate::state::JobRequest {
-                                    id,
-                                    kind: JobKind::Test,
-                                    input: String::new(),
-                                });
-                                log(
-                                    &mut state,
-                                    LogLevel::Info,
-                                    format!("Auto-eval queued as job #{}", id),
-                                );
-                            }
-                            agent_cancel = None;
-                            agent_steer_tx = None;
-                            agent_rx = None;
-                            break;
-                        }
-                    },
+                    }
 
                     Err(mpsc::TryRecvError::Empty) => break,
                     Err(mpsc::TryRecvError::Disconnected) => {
@@ -2191,6 +2316,10 @@ fn run_tui(
     drop(runtime);
     teardown_terminal(&mut terminal, &mut terminal_session)?;
 
+    if let Some(next) = state.ui.open_session.take() {
+        return Ok(Some(next));
+    }
+
     if managed_tmux {
         let target = managed_session.or_else(current_tmux_session_name);
         if let Some(session) = target {
@@ -2198,13 +2327,13 @@ fn run_tui(
                 .args(["kill-session", "-t", &session])
                 .status();
         }
-        return Ok(());
+        return Ok(None);
     }
 
     if let Some(session) = attach_session {
         editor::attach(&session);
     }
-    Ok(())
+    Ok(None)
 }
 
 fn tui_live_activity(state: &AgentState, agent_active: bool, running_jobs: usize) -> bool {

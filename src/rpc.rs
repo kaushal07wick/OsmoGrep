@@ -17,6 +17,7 @@ pub fn serve(
     resume: Option<String>,
     profile: PermissionProfile,
     auto_approve: bool,
+    team_enabled: bool,
 ) -> Result<(), String> {
     let mut state = crate::init_state();
     state.repo_root = root.canonicalize().map_err(|e| e.to_string())?;
@@ -26,6 +27,7 @@ pub fn serve(
     }
     state.permission_profile = profile;
     state.ui.auto_approve = auto_approve;
+    state.preferences.team_messages |= team_enabled;
     crate::persistence::save(&state)?;
     let agent = Agent::new();
     let (tx, rx) = mpsc::channel();
@@ -56,12 +58,13 @@ pub fn serve(
         }
     });
     let mut emitter = crate::HeadlessEmitter::new(true, auto_approve);
-    emitter.emit_json_value(json!({"type":"ready","protocol_version":1,"session_id":state.session.id,"methods":["prompt","steer","cancel","permission","session","compact","recover","checkpoints","rewind","shutdown"]}));
+    emitter.emit_json_value(json!({"type":"ready","protocol_version":1,"session_id":state.session.id,"methods":["prompt","steer","cancel","permission","session","compact","recover","checkpoints","rewind","team","shutdown"]}));
     let mut queue = VecDeque::<String>::new();
     let mut active: Option<(RunControl, mpsc::Receiver<AgentEvent>)> = None;
     let mut permissions = HashMap::<String, mpsc::Sender<bool>>::new();
     let mut input_closed = false;
     loop {
+        crate::team::poll(&mut state, agent.model_config());
         match rx.recv_timeout(Duration::from_millis(20)) {
             Ok(Ok(request)) => {
                 let id = request.get("id").cloned();
@@ -74,6 +77,9 @@ pub fn serve(
                                 .ok_or("Missing prompt")?;
                             if queue.len() >= 64 {
                                 return Err("Follow-up queue is full".into());
+                            }
+                            if state.preferences.team_messages && state.ui.team.error.is_some() {
+                                return Err(state.ui.team.error.clone().unwrap());
                             }
                             queue.push_back(prompt.into());
                             Ok(json!({"queued":active.is_some(),"session_id":state.session.id}))
@@ -129,6 +135,20 @@ pub fn serve(
                             );
                             active = Some((control, events));
                             Ok(json!({"compacting":true}))
+                        }
+                        "team" => {
+                            if request["params"]["action"] == "mode" {
+                                let enabled = request["params"]["enabled"]
+                                    .as_bool()
+                                    .ok_or("Missing enabled boolean")?;
+                                crate::team::enable(&state.repo_root, enabled)?;
+                                state.preferences.team_messages = enabled;
+                                crate::persistence::save(&state)?;
+                                Ok(json!({"enabled":enabled}))
+                            } else {
+                                crate::tools::ToolRegistry::with_root(state.repo_root.clone())
+                                    .call_cancellable("team", request["params"].clone(), &|| false)
+                            }
                         }
                         "recover" => {
                             if active.is_some() {
@@ -224,6 +244,16 @@ pub fn serve(
                         break;
                     }
                 };
+                crate::team::observe(&mut state, &event);
+                crate::logger::record_runtime_event(&mut state, &event);
+                if matches!(
+                    event,
+                    AgentEvent::ToolCall { .. }
+                        | AgentEvent::OutputText(_)
+                        | AgentEvent::StreamDone
+                ) {
+                    crate::persistence::save(&state)?;
+                }
                 match &event {
                     AgentEvent::ConversationUpdate(messages) => {
                         state.conversation.set_messages(messages.clone());
@@ -296,6 +326,7 @@ pub fn serve(
                     tx,
                 );
                 active = Some((control, events));
+                state.ui.agent_running = true;
             }
         }
     }

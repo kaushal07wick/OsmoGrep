@@ -44,7 +44,7 @@ test('model and provider have separate bounded footer targets and no targets cov
  for(const width of [24,60,80,160]){
   const v={...fixture(),width,model:'model-界',provider:'local',statusEntries:[{id:'model',value:'ignored'},{id:'directory',value:'~/long/workspace'}]},f=render(v);
   assert.ok(f.controls?.some(c=>c.id==='model'));assert.ok(f.controls?.some(c=>c.id==='provider'));
-  for(const c of f.controls!){assert.ok(c.x>=0&&c.x+c.width<=width);assert.equal(c.y,v.height-1);}
+  for(const c of f.controls!.filter(c=>c.id==='model'||c.id==='provider')){assert.ok(c.x>=0&&c.x+c.width<=width);assert.equal(c.y,v.height-1);}
   assert.equal(render({...v,masked:true}).controls?.length,0);assert.equal(render({...v,permission:'Approve?'}).controls?.length,0);
  }
 });

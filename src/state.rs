@@ -77,6 +77,8 @@ pub struct CommandItem {
 }
 
 pub struct UiState {
+    pub open_session: Option<SessionTarget>,
+    pub team: crate::team::Snapshot,
     pub compact_requested: bool,
     pub run_started_at: Option<Instant>,
     pub permission_selected: usize,
@@ -147,6 +149,8 @@ pub struct UiState {
 impl Default for UiState {
     fn default() -> Self {
         Self {
+            open_session: None,
+            team: crate::team::Snapshot::default(),
             compact_requested: false,
             run_started_at: None,
             permission_selected: 0,
@@ -213,6 +217,13 @@ impl Default for UiState {
             repo_branch: None,
         }
     }
+}
+
+#[derive(Clone)]
+pub struct SessionTarget {
+    pub root: PathBuf,
+    pub id: Option<String>,
+    pub fork: bool,
 }
 
 pub struct AgentState {

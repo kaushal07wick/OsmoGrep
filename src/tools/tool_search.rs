@@ -30,7 +30,12 @@ impl Tool for ToolSearch {
         let mut ranked = self
             .catalog
             .iter()
-            .filter(|tool| !matches!(tool["name"].as_str(), Some("subagent" | "worktree_swarm")))
+            .filter(|tool| {
+                !matches!(
+                    tool["name"].as_str(),
+                    Some("subagent" | "worktree_swarm" | "team")
+                )
+            })
             .map(|tool| {
                 let text = format!("{} {}", tool["name"], tool["description"]).to_lowercase();
                 let score = words.iter().filter(|word| text.contains(**word)).count();

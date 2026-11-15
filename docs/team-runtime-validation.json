@@ -1,0 +1,87 @@
+{
+  "date": "2026-11-15",
+  "scope": "Local macOS release, deterministic process fixtures, no endurance or remote-platform claim",
+  "installed_binary_sha256": "bea0870f9209132782c0b42cd9de12019f0d9cac3221469f7edf200120719407",
+  "rust": {
+    "passed": 256,
+    "default_ignored": 2
+  },
+  "typescript": {
+    "passed": 49,
+    "build": true
+  },
+  "team_process_acceptance": {
+    "binary_sha256": "bea0870f9209132782c0b42cd9de12019f0d9cac3221469f7edf200120719407",
+    "checks": [
+      "independent_process_presence_and_repository_isolation",
+      "durability_restart_deduplication_and_receipts_without_idle_paid_turns",
+      "concurrent_broadcast_delivery",
+      "safe_boundary_delivery_preserves_user_task_and_durable_ack",
+      "cross_process_edit_contention_release_and_automatic_updates",
+      "crashed_instance_expires_without_stealing_session"
+    ],
+    "processes": 5,
+    "fixture_model_requests": 8,
+    "paid_model_requests": 0
+  },
+  "harness_acceptance": {
+    "binary_sha256": "bea0870f9209132782c0b42cd9de12019f0d9cac3221469f7edf200120719407",
+    "passed": 13,
+    "checks": [
+      "greeting_without_tools",
+      "queued_turns_preserve_conversation",
+      "independent_session_resume_and_full_history",
+      "permission_denial_preserves_files",
+      "turn_checkpoint_restore_and_conflict_protection",
+      "background_command_incremental_output_and_stdin",
+      "cancellation_is_responsive_and_rpc_remains_usable",
+      "provider_context_overflow_compacts_and_retries_once",
+      "in_loop_model_aware_compaction_archives_original_context",
+      "explicit_worker_isolation_includes_uncommitted_parent_changes",
+      "worker_permissions_and_reviewable_changes",
+      "worker_recursion_disabled",
+      "crash_recovery_keeps_completed_tools_without_automatic_reexecution"
+    ],
+    "model_requests": 35,
+    "paid_provider_calls": 0,
+    "scope": "Local process, filesystem, JSONL RPC, and deterministic HTTP fixtures; no model-quality or ultra-long-run claim"
+  },
+  "mac_pty": {
+    "typescript_renderer_started": true,
+    "native_paper_pixels_cached": true,
+    "central_morph_animates_then_settles": true,
+    "central_morph_ignores_hover_and_click_replays": true,
+    "escape_does_not_exit_idle_app": true,
+    "greeting_has_no_tools_or_stale_background_jobs": true,
+    "session_center_live_preview_preserves_draft_and_ownership": true,
+    "command_picker_navigation_and_execution": true,
+    "footer_provider_model_selectors": true,
+    "light_cursor_has_explicit_contrast": true,
+    "settings_and_real_key_remapping": true,
+    "statusline_and_skill_picker": true,
+    "large_multiline_draft_editing": true,
+    "real_thumbnail_sequence": true,
+    "original_image_bytes_reached_provider": true,
+    "selected_skill_reached_provider": true,
+    "weekly_chart_entry_animation": true,
+    "reported_usage_and_pixel_history": true,
+    "real_permission_dock_and_numbered_diff": true,
+    "submitted_followups_are_distinct_fifo_turns": true,
+    "assistant_preface_does_not_skip_requested_tools": true,
+    "wheel_scrolling_and_drag_copy_plain_output": true,
+    "transcript_scroll_track_drags_and_returns_to_live": true,
+    "streaming_preserves_user_scroll_position": true,
+    "terminal_resize": true,
+    "existing_shell_command": true,
+    "renderer_crash_recovers_to_native_ui": true,
+    "terminal_state_restored": true,
+    "preferences_survive_real_restart": true
+  },
+  "editor": "6 checks passed on preceding team release; editor code unchanged",
+  "limits": [
+    "No live microphone recording",
+    "No multi-hour endurance run yet",
+    "File claims do not cover arbitrary shell/MCP/external editor writes",
+    "Messages do not start paid idle turns; local machine only"
+  ]
+}

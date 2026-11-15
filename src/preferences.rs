@@ -9,6 +9,7 @@ pub struct Preferences {
     pub disabled_skills: BTreeSet<String>,
     pub reduce_motion: bool,
     pub ambient_art: bool,
+    pub team_messages: bool,
 }
 
 impl Default for Preferences {
@@ -22,6 +23,7 @@ impl Default for Preferences {
             disabled_skills: BTreeSet::new(),
             reduce_motion: false,
             ambient_art: true,
+            team_messages: false,
         }
     }
 }

@@ -207,7 +207,29 @@ pub fn draw_ui<B: Backend>(
                     )),
                     Line::from(""),
                 ];
-                for (i, row) in panel.rows.iter().enumerate().skip(start).take(count) {
+                if panel.previewing {
+                    let at = panel
+                        .preview
+                        .len()
+                        .saturating_sub(count)
+                        .saturating_sub(panel.preview_offset);
+                    lines.extend(
+                        panel
+                            .preview
+                            .iter()
+                            .skip(at)
+                            .take(count)
+                            .cloned()
+                            .map(Line::from),
+                    );
+                }
+                for (i, row) in panel
+                    .rows
+                    .iter()
+                    .enumerate()
+                    .skip(start)
+                    .take(if panel.previewing { 0 } else { count })
+                {
                     lines.push(Line::styled(
                         format!(
                             "{} {:<26} {}",
@@ -403,6 +425,22 @@ fn execution_lines(state: &AgentState, width: u16) -> Vec<Line<'static>> {
             continue;
         }
 
+        if let Some(seconds) = text
+            .strip_prefix("· Finished in ")
+            .and_then(|s| s.strip_suffix('s'))
+        {
+            let time = format!("{seconds}s elapsed");
+            let width = width.saturating_sub(4) as usize;
+            lines.push(Line::default());
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "Done{}{time}",
+                    " ".repeat(width.saturating_sub(4 + time.len()).max(1))
+                ),
+                Style::default().fg(p.fg_muted),
+            )));
+            continue;
+        }
         if text.starts_with("· ") {
             lines.push(Line::from(Span::styled(
                 text,
@@ -693,7 +731,24 @@ fn render_running_badge(f: &mut Frame, area: Rect, state: &AgentState) {
     } else {
         String::new()
     };
-    let phase = if state.ui.run_phase.is_empty() {
+    let thought = [
+        "Thinking",
+        "Working through your request",
+        "Considering the next step",
+        "Connecting the pieces",
+    ];
+    let tick = if state.preferences.reduce_motion {
+        0
+    } else {
+        state
+            .ui
+            .spinner_started_at
+            .map_or(0, |t| t.elapsed().as_secs() as usize / 6)
+            % thought.len()
+    };
+    let phase = if state.ui.run_phase == "thinking" {
+        thought[tick]
+    } else if state.ui.run_phase.is_empty() {
         "running"
     } else {
         state.ui.run_phase.as_str()

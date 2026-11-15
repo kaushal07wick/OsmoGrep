@@ -1,3 +1,4 @@
+import {orb,activityInfo} from './activity.ts';
 import {truncateToWidth,visibleWidth,stripTerminalSequences} from '@earendil-works/pi-tui';
 export const plain=(s:string)=>stripTerminalSequences(s).replace(/[\x00-\x1f\x7f-\x9f]/g,' ');
 export const fit=(s:string,n:number)=>n>0?truncateToWidth(s,n,'…'):'';
@@ -26,10 +27,6 @@ export function statusLayout(entries:StatusEntry[],width:number) {
 export const statusText=(entries:StatusEntry[],width:number)=>statusLayout(entries,width).text;
 
 export function activity(elapsed:number,phase:string,tool:string|null,reduceMotion=false):string {
-  const seconds=Math.max(0,Math.floor(elapsed/1000)),time=seconds>=60?`${Math.floor(seconds/60)}m ${seconds%60}s`:`${seconds}s`;
-  const labels:Record<string,string>={list_dir:'Exploring files',read_file:'Reading source',edit_file:'Editing',shell:'Running command',test:'Testing'};
-  const label=tool?(labels[tool]??tool.replaceAll('_',' ')):phase==='thinking'?'Thinking':phase==='starting'?'Preparing context':phase.replaceAll('_',' ');
-  const frame=Math.floor(elapsed/110),glyphs=['·','⠂','⠆','⠖','⠶','⠷','⠶','⠖','⠆','⠂'];
-  const wave=reduceMotion?'⠶⠶⠶':Array.from({length:5},(_,i)=>glyphs[(frame+i*2)%glyphs.length]).join('');
-  return `${wave}  ${label}  ·  ${time}`;
+  const info=activityInfo(elapsed,phase,tool,reduceMotion);
+  return `${orb(elapsed,false,reduceMotion).rows[1]}  ${info.label}  ·  ${info.time}`;
 }

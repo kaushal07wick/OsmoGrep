@@ -223,7 +223,12 @@ impl Tool for LanguageServer {
         self.call_cancellable(args, &|| false)
     }
     fn call_cancellable(&self, args: Value, cancel: &dyn Fn() -> bool) -> ToolResult {
-        let root = std::env::current_dir().map_err(|e| e.to_string())?;
+        let root = args["_osmogrep_root"]
+            .as_str()
+            .map(std::path::PathBuf::from)
+            .map(Ok)
+            .unwrap_or_else(std::env::current_dir)
+            .map_err(|e| e.to_string())?;
         let path = crate::file_guard::workspace_path(
             &root,
             Path::new(args["path"].as_str().ok_or("Missing LSP path")?),

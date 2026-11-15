@@ -222,6 +222,15 @@ try:
     assert json.loads(legacy_state_path.read_text())['auto_eval'] is True, 'migration must preserve the original session'
     result['greeting_has_no_tools_or_stale_background_jobs']=True
     requests.clear()
+    at=len(transcript)
+    paste('keep center draft');send(b'\x1b[17~')  # F6
+    wait_for(lambda:b'Sessions' in plain(transcript[at:]) and b'Inactive' in plain(transcript[at:]))
+    send(b'\x1bOP')  # F1 preview of the current session
+    wait_for(lambda:b'GREETING_ONLY_OK' in plain(transcript[at:]) and b'esc sessions' in plain(transcript[at:]))
+    send(b'\x1b');send(b'\x1b')
+    assert not requests and process.poll() is None
+    send(b'\x15')
+    result['session_center_live_preview_preserves_draft_and_ownership']=True
     paste('/')
     wait_for(lambda: b'Commands' in transcript and b'move' in transcript)
     assert b'\x1b[?1003h' not in transcript, 'selectors must capture buttons without hover tracking'

@@ -1,10 +1,10 @@
 {
   "scope": "Local macOS validation of TypeScript presentation and existing Rust backend",
   "date": "2026-11-15",
-  "rust_tests_passed": 252,
-  "typescript_tests_passed": 44,
+  "rust_tests_passed": 256,
+  "typescript_tests_passed": 49,
   "node": "v26.13.1",
-  "installed_sha256": "c36f4ec91e4379fb856bbf1982f074df7873295846f9ee214a25c10a13646a5f",
+  "installed_sha256": "bea0870f9209132782c0b42cd9de12019f0d9cac3221469f7edf200120719407",
   "installed_first_on_path": true,
   "mac_pty_acceptance": {
     "typescript_renderer_started": true,
@@ -13,6 +13,7 @@
     "central_morph_ignores_hover_and_click_replays": true,
     "escape_does_not_exit_idle_app": true,
     "greeting_has_no_tools_or_stale_background_jobs": true,
+    "session_center_live_preview_preserves_draft_and_ownership": true,
     "command_picker_navigation_and_execution": true,
     "footer_provider_model_selectors": true,
     "light_cursor_has_explicit_contrast": true,

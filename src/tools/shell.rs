@@ -65,7 +65,9 @@ impl Tool for Shell {
 
 fn call_at(root: &std::path::Path, args: Value, is_cancelled: &dyn Fn() -> bool) -> ToolResult {
     if is_cancelled() {
-        return Err("cancelled".into());
+        return Ok(
+            json!({"cancelled":true,"running":false,"exit_code":null,"stdout":"","stderr":"cancelled before command start"}),
+        );
     }
     if args["session_id"]
         .as_str()
@@ -95,7 +97,9 @@ fn call_at(root: &std::path::Path, args: Value, is_cancelled: &dyn Fn() -> bool)
     let pre_hook =
         crate::hooks::run_hook_cancellable("pre_shell", &[("cmd", cmd)], root, is_cancelled)?;
     if is_cancelled() {
-        return Err("cancelled".into());
+        return Ok(
+            json!({"cancelled":true,"running":false,"exit_code":null,"stdout":"","stderr":"cancelled before command start"}),
+        );
     }
 
     let timeout = args["timeout_secs"]
@@ -130,12 +134,15 @@ mod tests {
     fn nullable_optional_fields_start_and_poll_a_command() {
         let root = std::env::temp_dir().join(format!("shell-nullable-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
-        assert!(call_at(
-            &root,
-            json!({"cmd":"printf bad > cancelled-marker"}),
-            &|| true
-        )
-        .is_err());
+        assert!(
+            call_at(
+                &root,
+                json!({"cmd":"printf bad > cancelled-marker"}),
+                &|| true
+            )
+            .unwrap()["cancelled"]
+                == true
+        );
         assert!(!root.join("cancelled-marker").exists());
         let started = call_at(
             &root,

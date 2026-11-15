@@ -1,0 +1,65 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {inflateSync} from 'node:zlib';
+import {setCapabilities,visibleWidth,stripTerminalSequences} from '@earendil-works/pi-tui';
+import {orb,activityInfo,completionLine} from './activity.ts';
+import {drawCenter} from './center.ts';
+import {render} from './renderer.ts';
+import {fixture} from './test-fixture.ts';
+
+test('working orb is small, dim, deterministic and still under reduced motion',()=>{
+ const a=orb(0),b=orb(1000);
+ assert.equal(a.png.readUInt32BE(16),36);assert.equal(a.png.readUInt32BE(20),36);
+ assert.deepEqual(a.rows.map(visibleWidth),[6,6,6]);assert.notDeepEqual(a.png,b.png);
+ assert.deepEqual(orb(0,false,true),orb(30000,false,true));assert.deepEqual(a,orb(4000));
+ const chunks:Buffer[]=[];for(let i=8;i<a.png.length;){const size=a.png.readUInt32BE(i);if(a.png.toString('ascii',i+4,i+8)==='IDAT')chunks.push(a.png.subarray(i+8,i+8+size));i+=size+12;}
+ assert.ok(Math.max(...inflateSync(Buffer.concat(chunks)))<220);
+ assert.equal(activityInfo(9000,'thinking',null).label,'Working through your request');
+ assert.equal(activityInfo(9000,'thinking',null,true).label,'Thinking');
+ assert.equal(activityInfo(9000,'tool','run_shell').label,'Running a command');
+});
+
+test('runtime status retains breathing room, completion alignment, and voice stays inside the composer',()=>{
+ setCapabilities({images:null,trueColor:true,hyperlinks:false});
+ const v={...fixture(),running:true,phase:'thinking',runElapsed:9000,voice:'voice connected',voiceState:{enabled:true,connected:true,partial:false},team:{enabled:true,unread:2,online:1}};
+ const f=render(v),text=f.rows.map(stripTerminalSequences).join('\n');
+ const sphere=orb(9000);sphere.rows.forEach((row,i)=>assert.ok(f.rows[f.input.y-4+i]!.includes(row)));
+ assert.match(text,/Working through your request/);assert.match(text,/Listening/);assert.match(text,/Team 1 · 2 new/);
+ assert.ok(f.execution.y+f.execution.height<=f.input.y-4);
+ assert.equal(f.rows.map(stripTerminalSequences)[f.input.y-1]!.trim(),'');
+ for(const id of ['voice','team'])assert.equal(f.controls?.find(c=>c.id===id)?.y,f.input.y);
+ assert.equal(completionLine('· Finished in 3.3s',70)?.length,70);
+ assert.match(completionLine('· Finished in 3.3s',70)!,/^Done +3\.3s elapsed$/);
+ assert.equal(completionLine('ordinary text',70),null);
+ const masked=render({...v,masked:true});assert.ok(!masked.controls?.some(c=>c.id==='voice'||c.id==='team'));
+});
+
+test('session center groups projects and uses stable session IDs for clicks within every viewport',()=>{
+ const rows=Array.from({length:30},(_,i)=>({id:`session-${i}`,label:'Repeated task name',description:`model · workspace · session-${i}`,value:'working · now',tag:i%3?'working':'inactive',group:i<15?'/projects/alpha':'/projects/beta'}));
+ const panel={sections:['Sessions'],section:10,query:'',selected:22,editing:false,rows,notice:'Live owners keep their edits',footer:'',counts:[30,0,20,0,10],center_filter:0};
+ for(const [width,height] of [[1,1],[20,8],[60,18],[100,32],[180,48]]){
+  const f=drawCenter(panel,width!,height!,false,'\x1b[38;2;235;155;105m');
+  assert.equal(f.rows.length,height);assert.ok(f.rows.every(row=>visibleWidth(row)<=width!));
+  for(const control of f.controls){assert.equal(control.label,rows[control.index]!.id);assert.ok(control.x>=0&&control.x+control.width<=width!&&control.y>=0&&control.y<height!);}
+  if(height!>=18)assert.ok(f.controls.some(c=>c.index===22));
+ }
+ const attack=drawCenter({...panel,rows:[{...rows[0]!,group:'\x1b[2J/project\x07'}]},100,32,false,'');
+ assert.ok(!attack.rows.join('').includes('\x1b[2J'));assert.ok(!attack.rows.join('').includes('\x07'));
+});
+
+
+test('compact approvals retain every decision while preserving transcript and a long draft',()=>{
+ const draft='long input '.repeat(100);
+ for(const height of [20,24,30]){
+  const v={...fixture(),width:80,height,input:draft,cursor:draft.length,running:true,phase:'tool',logs:[{level:'Info',text:'RECENT_OUTPUT'}],approval:{tool:'patch',args:'notes.txt',selected:2}};
+  const f=render(v),text=f.rows.map(stripTerminalSequences).join('\n');
+  assert.match(text,/RECENT_OUTPUT/);assert.match(text,/Allow once/);assert.match(text,/Deny/);assert.match(text,/Auto-approve this session/);
+  assert.ok(f.execution.height>=3);assert.ok(f.rows.every(r=>visibleWidth(r)<=80));
+ }
+});
+
+test('live session preview scrolls saved output without exposing action controls',()=>{
+ const panel={sections:['Sessions'],section:10,query:'',selected:0,editing:false,rows:[],notice:'Read only',footer:'',previewing:true,preview_offset:0,preview:Array.from({length:80},(_,i)=>'SAVED_'+i)};
+ const tail=drawCenter(panel,100,30,false,''),up=drawCenter({...panel,preview_offset:4},100,30,false,'');
+ assert.equal(tail.controls.length,0);assert.match(tail.rows.join('\n'),/SAVED_79/);assert.ok(!up.rows.join('\n').includes('SAVED_79'));
+});

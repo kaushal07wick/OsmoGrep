@@ -110,6 +110,8 @@ Start read-only, approve actions as they come, or enable full access through `/p
 
 Resume or fork independent conversations with `/sessions`, `/resume`, and `/fork`. Model-aware compaction archives original context; `/recover` opens an interrupted run without replaying unfinished tools. Interactive commands accept stdin and can keep running while the agent works. Subagents run only when you explicitly request delegation; writable workers use isolated worktrees.
 
+Open `/agents` or press **F6** to manage sessions across projects: search, filter, pin, preview, resume, and fork. Run separate instances with `--team` to exchange durable messages and shared progress in the same repository, with file claims to reduce conflicting edits. [Sessions and teams →](docs/team-runtime.md)
+
 Sessions and preferences stay on your machine. Prompts, attachments, and tool context go to the model provider you select. [Permissions and data handling →](docs/reference.md#permissions-and-data)
 
 ## Documentation
@@ -119,6 +121,7 @@ Sessions and preferences stay on your machine. Prompts, attachments, and tool co
 | [User reference](docs/reference.md) | Installation, providers, controls, configuration, and headless use |
 | [Terminal guide](terminal-ui/README.md) | Editing, attachments, graphics, and UI development |
 | [Workspace controls](docs/terminal-workspace.md) | Skills, shortcuts, permissions, and status-line settings |
+| [Sessions and teams](docs/team-runtime.md) | Session center, cross-process messaging, activity, and coordinated edits |
 | [Harness foundations](docs/harness-foundations.md) | Sessions, checkpoints, process sessions, MCP/LSP, credentials, and RPC |
 | [Provider design](docs/agent-provider-design.md) | API support, conversation handling, and integration limits |
 | [Regression intelligence](docs/prre.md) | Optional revision-aware indexing and analysis |

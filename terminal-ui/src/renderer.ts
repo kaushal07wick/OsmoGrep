@@ -1,3 +1,4 @@
+import {plain} from './chrome.ts';
 import { Image, Markdown, getCapabilities, renderImage, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import { introDuration, websiteMark } from './brand.ts';
 import { introFrame, introPng } from './intro.ts';
@@ -6,6 +7,7 @@ import type {Scene} from './scenes.ts';
 import {statusLayout,activity,type StatusEntry} from './chrome.ts';
 import {diffLines,highlightTranscript,selectedTranscript,type TranscriptSelection,type FileDiff} from './transcript.ts';
 import {paperRow,paperColors,paperGraphic} from './paper.ts';
+import {orb,activityInfo,completionLine} from './activity.ts';
 
 export interface Rect { x: number; y: number; width: number; height: number }
 export interface Attachment { id: number; label: string; thumbnail: string; width: number; height: number }
@@ -18,6 +20,8 @@ export interface View {
   input: string; cursor: number; selection: [number, number] | null; masked: boolean;
   inputMode: string; attachments: Attachment[]; running: boolean; phase: string; tool: string | null;
   followTail: boolean; scroll: number; stream: string; permission: string | null; update: string | null;
+  voiceState?:{enabled:boolean;connected:boolean;partial:boolean};
+  team?:{enabled:boolean;unread:number;online:number};
   voice: string | null; commands: { cmd: string; desc: string }[]; selectedCommand: number; tokens: number;
   introElapsed?: number;
   introScene?: Scene;
@@ -39,7 +43,7 @@ export interface Rendered {
   editorWidth: number;
   animate: boolean;
   artwork: Rect | null;
-  controls?:{id:'model'|'provider'|'choice';index?:number;label?:string;x:number;y:number;width:number;height:number}[];
+  controls?:{id:'model'|'provider'|'choice'|'voice'|'team';index?:number;label?:string;x:number;y:number;width:number;height:number}[];
   transcript?:{x:number;y:number;width:number;height:number;start:number;maxScroll:number;lineWidths:number[];scrollbar?:Rect|null};
   selectionText?:string;
   images: { id: number; x: number; y: number; sequence: string; placement?:string }[];
@@ -99,8 +103,8 @@ export function render(v: View): Rendered {
   const put = (y: number, text: string, x = gutter, n = width) => {
     if (y >= 0 && y < h) rows[y] = ' '.repeat(Math.min(x, w - 1)) + clip(text, Math.min(n, w - x));
   };
-  const headerY = h < 15 || v.density === 'compact' ? 0 : v.density === 'spacious' ? 2 : 1;
-  const headerHeight = h >= 15 && v.density !== 'compact' ? (v.density === 'spacious' ? 5 : 4) : h >= 8 ? 2 : 0;
+  const headerY = (v.approval&&h<32) || h < 15 || v.density === 'compact' ? 0 : v.density === 'spacious' ? 2 : 1;
+  const headerHeight = v.approval&&h<32?0:h >= 15 && v.density !== 'compact' ? (v.density === 'spacious' ? 5 : 4) : h >= 8 ? 2 : 0;
   const header = [
     fg + bold('osmogrep') + reset + dim + ` v${clean(v.version)}` + (v.session ? ` · ${clean(v.session)}` : '') + reset,
     dim + clean(`${v.model} · ${v.provider}`) + reset,
@@ -117,16 +121,17 @@ export function render(v: View): Rendered {
   const value = clean(v.input);
   const input = inputLines(value, Math.min(v.cursor, Array.from(value).length), textWidth);
   const attached = v.attachments.filter(a => value.includes(a.label));
-  const previewHeight = attached.length && h >= 20 ? 5 : 0;
-  const visible = Math.min(input.lines.length, Math.max(1, Math.min(8, Math.floor(h / 3) - previewHeight)));
+  const previewHeight = attached.length && h >= 20 && !v.approval ? 5 : 0;
+  const visible = Math.min(input.lines.length, Math.max(1, Math.min(v.approval?2:8, Math.floor(h / 3) - previewHeight)));
   const verticalPad = h >= 8 ? 1 : 0;
   const composerHeight = Math.min(h, visible + verticalPad * 2 + previewHeight);
   const footerHeight = h > composerHeight + headerHeight + headerY + 1 ? 2 : 0;
   const composerY = Math.max(0, h - footerHeight - composerHeight);
   const inputRect = { x: gutter, y: composerY, width, height: composerHeight };
-  const execution = { x: gutter, y: headerY + headerHeight, width, height: Math.max(0, composerY - headerY - headerHeight - (v.running || v.permission || v.update || v.voice ? 1 : 0)) };
-  const approvalRows=v.approval?permissionLines(v.approval.tool,v.approval.args,v.approval.selected??0,width,accent,light):[];
-  const approvalHeight=Math.min(approvalRows.length,Math.max(0,Math.floor(execution.height*.65)));
+  const activityHeight=v.running&&!v.update&&h>=24&&width>=36&&!v.approval?4:(v.running||v.permission||v.update?1:0);
+  const execution = { x: gutter, y: headerY + headerHeight, width, height: Math.max(0, composerY - headerY - headerHeight - activityHeight) };
+  const approvalRows=v.approval?permissionLines(v.approval.tool,v.approval.args,v.approval.selected??0,width,accent,light,h<32):[];
+  const approvalHeight=Math.min(approvalRows.length,Math.max(0,Math.max(0,execution.height-3)));
   execution.height=Math.max(0,execution.height-(approvalHeight?approvalHeight+1:0));
   const transcript: string[] = [];
   const insertedDiffs=new Set<FileDiff>();
@@ -139,6 +144,8 @@ export function render(v: View): Rendered {
       flush(); let command = text.slice(5), prefix = '❯ ';
       if (v.logs[i + 1]?.text === 'SHELL : $ ' + command) { i++; prefix = '$ '; }
       transcript.push('', ...wrapTextWithAnsi(accent + prefix + reset + fg + bold(command) + reset, Math.max(1, width - pad * 2)), '');
+    } else if (text.startsWith('· Finished in ')) {
+      flush();transcript.push('',dim+(completionLine(text,Math.max(1,width-pad*2))??text)+reset);
     } else if (text.trimStart().startsWith('└ ')) {
       flush();const results=[text];
       while(v.logs[i+1]?.text.trimStart().startsWith('└ '))results.push(clean(v.logs[++i]!.text));
@@ -189,10 +196,26 @@ export function render(v: View): Rendered {
     }
   }
 
-  const status = v.update ?? v.voice ?? (v.permission&&!v.approval?v.permission:null) ?? (v.running ? activity(v.runElapsed??v.elapsed,v.approval?'Waiting for permission':v.phase,v.approval||v.phase==='thinking'?null:v.tool,!!v.preferences?.reduce_motion) : '');
-  if(status){const action=v.running?'esc interrupt':'';const left=clip(status,Math.max(1,width-action.length-4));put(composerY-1,accent+left+reset+(width>action.length+visibleWidth(left)+3?' '.repeat(width-visibleWidth(left)-action.length)+dim+action+reset:''));}
-  if(approvalHeight){const y=composerY-approvalHeight-2;approvalRows.slice(0,approvalHeight).forEach((line,i)=>{const content=clip(line,width-2);put(y+i,bg+content.replaceAll(reset,reset+bg+fg)+' '.repeat(Math.max(0,width-visibleWidth(content)))+reset);});}
+  const status = v.update ?? (v.permission&&!v.approval?v.permission:null) ?? (v.running ? activity(v.runElapsed??v.elapsed,v.approval?'Waiting for permission':v.phase,v.approval||v.phase==='thinking'?null:v.tool,!!v.preferences?.reduce_motion) : '');
+  if(status){
+    if(v.running&&activityHeight===4&&!v.update){
+      const y=composerY-4,frame=orb(v.runElapsed??v.elapsed,light,!!v.preferences?.reduce_motion),info=activityInfo(v.runElapsed??v.elapsed,v.approval?'Waiting for approval':v.phase,v.approval?null:v.tool,!!v.preferences?.reduce_motion);
+      frame.rows.forEach((line,i)=>{
+        const label=i===1?accent+clip(info.label,Math.max(1,width-pad*2-8)):i===2?dim+clip(`${info.time} elapsed · esc interrupt`,Math.max(1,width-pad*2-8)):'';
+        put(y+i,dim+line+reset+'  '+label+reset,gutter+pad,Math.max(1,width-pad*2));
+      });
+      if(paperGraphics){const id=(process.pid*128+125)>>>0,graphic=renderImage(frame.png.toString('base64'),{widthPx:36,heightPx:36},{imageId:id,maxWidthCells:6,maxHeightCells:3,moveCursor:false});if(graphic)images.push({id,x:gutter+pad,y,sequence:graphic.sequence});}
+    }else{const action=v.running?'esc interrupt':'';const left=clip(status,Math.max(1,width-action.length-4));put(composerY-1,accent+left+reset+(width>action.length+visibleWidth(left)+3?' '.repeat(width-visibleWidth(left)-action.length)+dim+action+reset:''));}
+  }
+  if(approvalHeight){const y=composerY-approvalHeight-activityHeight-1;approvalRows.slice(0,approvalHeight).forEach((line,i)=>{const content=clip(line,width-2);put(y+i,bg+content.replaceAll(reset,reset+bg+fg)+' '.repeat(Math.max(0,width-visibleWidth(content)))+reset);});}
   for (let y = composerY; y < composerY + composerHeight; y++) put(y, paperRow('',width,y-composerY,composerHeight,light,paperGraphics));
+  if(verticalPad&&!v.masked&&!v.permission&&!v.update){
+    let right=gutter+width-pad;const capsules:{x:number;content:string}[]=[];
+    const capsule=(id:'voice'|'team',label:string)=>{const content=clip(label,Math.max(1,right-gutter-pad));if(!content)return;const x=right-visibleWidth(content);capsules.push({x,content});controls.push({id,x,y:composerY,width:visibleWidth(content),height:1});right=x-3;};
+    if(width>=44||v.voice) capsule('voice',v.voiceState?.connected?`◉ ${v.voiceState.partial?'Hearing you':'Listening'}`:v.voiceState?.enabled?'◌ Connecting voice':plain(v.voice??'○ Voice'));
+    if(v.team&&(v.team.enabled||v.team.unread))capsule('team',`◌ Team ${v.team.online}${v.team.unread?` · ${v.team.unread} new`:''}`);
+    let line='';for(const c of capsules.sort((a,b)=>a.x-b.x))line+=' '.repeat(Math.max(0,c.x-gutter-visibleWidth(line)))+c.content;if(capsules.length)put(composerY,paperRow(line,width,0,composerHeight,light,paperGraphics));
+  }
   if (previewHeight) {
     let x = gutter + pad + 2;
     for (const a of attached) {

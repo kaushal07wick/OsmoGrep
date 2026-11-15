@@ -91,6 +91,7 @@ pub struct ToolScope {
     include_worktree_swarm: bool,
     include_dynamic_workflow: bool,
     include_intelligence: bool,
+    include_team: bool,
     read_only: bool,
     chat_only: bool,
 }
@@ -100,6 +101,8 @@ impl ToolScope {
         let lower = prompt.to_ascii_lowercase();
         let ultracode = has_ultracode_suffix(&lower);
         Self {
+            include_team: crate::team::enabled()
+                || contains_any(&lower, &["team", "collaborat", "another instance"]),
             chat_only: is_small_talk(prompt),
             include_web: contains_any(
                 &lower,
@@ -177,6 +180,9 @@ impl ToolScope {
     }
 
     fn allows(&self, name: &str) -> bool {
+        if name == "team" {
+            return !self.chat_only && (self.include_team || crate::team::enabled());
+        }
         if self.chat_only {
             return false;
         }
@@ -278,6 +284,7 @@ impl ToolRegistry {
             Box::new(crate::project_context::Memory),
             Box::new(crate::subagents::Subagent),
             Box::new(crate::language_server::LanguageServer),
+            Box::new(crate::team::Team),
             Box::new(code_graph::CodeGraph {
                 root: repo_root.clone(),
             }),
@@ -317,14 +324,39 @@ impl ToolRegistry {
             .ok_or_else(|| format!("unknown tool: {}", name))?;
 
         let args = self.guard_args(name, args)?;
-        let result = self.call_in_repo_root(tool.as_ref(), args.clone(), is_cancelled)?;
+        let peer = crate::team::for_root(&self.repo_root);
+        let paths = crate::file_guard::edit_paths(name, &args);
+        let _lease = if !paths.is_empty() {
+            peer.as_ref().map(|p| p.claim(&paths, false)).transpose()?
+        } else {
+            None
+        };
+        let mut result = self.call_in_repo_root(tool.as_ref(), args.clone(), is_cancelled)?;
+        if !crate::tool_guard::tool_failed(name, &result) {
+            if let Some(peer) = peer {
+                for path in paths {
+                    if let Err(error) = peer.publish(
+                        "edit",
+                        &path,
+                        "File tool completed; read the current content before modifying it",
+                    ) {
+                        if result.is_object() {
+                            result["team_update_error"] = serde_json::json!(error);
+                        }
+                    }
+                }
+            }
+        }
         self.remember_read(name, &args, &result)?;
         Ok(result)
     }
 
     pub fn parallel_safe(&self, name: &str) -> bool {
         matches!(self.safety(name), Some(ToolSafety::Safe))
-            && !matches!(name, "update_plan" | "dynamic_workflow" | "tool_search")
+            && !matches!(
+                name,
+                "update_plan" | "dynamic_workflow" | "tool_search" | "team"
+            )
     }
 
     pub fn call_parallel_safe_cancellable(
@@ -348,6 +380,9 @@ impl ToolRegistry {
     }
 
     fn guard_args(&self, name: &str, mut args: Value) -> Result<Value, String> {
+        if name == "language_server" {
+            args["_osmogrep_root"] = serde_json::json!(self.repo_root);
+        }
         let editing = matches!(name, "write_file" | "edit_file" | "notebook_edit" | "patch");
         if crate::sandbox::mode() == "read-only"
             && (editing

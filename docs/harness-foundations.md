@@ -6,7 +6,7 @@ OsmoGrep keeps the coding loop in Rust. The renderer presents events; it cannot 
 
 Each conversation has an independent UUID, complete canonical tool history, and an exclusive writer lock. Existing repository sessions are imported without deleting their original files. A second writer must fork rather than overwrite an open session.
 
-- `/sessions [search]` lists/searches saved conversations.
+- `/sessions` opens the session center; `/sessions <search>` prints matching saved conversations. See [sessions and teams](team-runtime.md).
 - `/resume <UUID>` opens one; `/fork <UUID>` creates an independent copy.
 - `osmogrep --resume <UUID>`, `--fork <UUID>`, and `--new` select startup behavior.
 - `/recover <run-UUID>` opens an interrupted run in a new conversation. Completed tool results survive. An uncertain in-flight tool is marked for inspection, **never automatically replayed**.

@@ -33,6 +33,41 @@ pub fn handle_command(
 
     let cmd_raw = raw.trim();
     let cmd = normalize_command_prefix(cmd_raw);
+    if cmd.starts_with("/team ") {
+        let parts = cmd.splitn(4, ' ').collect::<Vec<_>>();
+        let mut receipts = Vec::new();
+        let result = (|| -> Result<Vec<String>, String> {
+            let mut peer =
+                crate::team::for_root(&state.repo_root).ok_or("Team runtime is unavailable")?;
+            match parts.get(1).copied().unwrap_or("") {
+                "on"|"off"=>{state.preferences.team_messages=parts[1]=="on";crate::team::enable(&state.repo_root,state.preferences.team_messages)?;persistence::save(state)?;Ok(vec![format!("Team messaging {}. Incoming messages enter active turns only; idle delivery does not start a model call.",parts[1])])},
+                "inbox"=>{let messages=peer.inbox()?;let lines=messages.iter().map(|m|format!("From {} · {} · #{}\n{}",m.sender_title,m.sender,m.id,m.body)).collect::<Vec<_>>();receipts=messages.iter().map(|m|m.id).collect();Ok(if lines.is_empty(){vec!["No unread team messages".into()]}else{lines})},
+                "history"=>Ok(peer.history(None)?.into_iter().map(|m|format!("#{} · {} → {}\n{}\nAcknowledgements: {}",m["message"]["id"],m["message"]["sender_title"],m["message"]["recipient"],m["message"]["body"].as_str().unwrap_or(""),m["receipts"].as_array().map_or(0,Vec::len))).collect()),
+                "updates"=>Ok(peer.updates(0)?.into_iter().map(|u|format!("{} · {} · {} · {}",u.session,u.kind,u.target,u.summary)).collect()),
+                "send"=>{peer.enabled=true;let recipient=parts.get(2).ok_or("Use /team send <session UUID> <message>")?;let body=parts.get(3).ok_or("Missing message")?;let id=peer.send(Some(recipient),body,&uuid::Uuid::new_v4().to_string())?;Ok(vec![format!("Message #{id} queued durably")])},
+                _=>Err("Use /team, /team on|off, /team inbox, /team updates, or /team send <session UUID> <message>".into())
+            }
+        })();
+        match result {
+            Ok(lines) => {
+                for line in lines {
+                    log(state, LogLevel::Info, line)
+                }
+                if !receipts.is_empty() {
+                    let result = persistence::save(state).and_then(|_| {
+                        crate::team::for_root(&state.repo_root)
+                            .ok_or("Team runtime unavailable")?
+                            .acknowledge(&receipts)
+                    });
+                    if let Err(e) = result {
+                        log(state, LogLevel::Error, e);
+                    }
+                }
+            }
+            Err(e) => log(state, LogLevel::Error, e),
+        }
+        return;
+    }
     if cmd == "/key migrate" {
         if let Some(agent) = agent {
             match agent.migrate_credentials(){Ok(count)=>log(state,LogLevel::Success,format!("Moved {count} saved provider credentials to the OS store; removed their plaintext config entries.")),Err(error)=>log(state,LogLevel::Error,error)}
@@ -181,7 +216,7 @@ pub fn handle_command(
         return;
     }
 
-    if cmd == "/sessions" || cmd.starts_with("/sessions ") {
+    if cmd.starts_with("/sessions ") {
         match persistence::search_sessions(cmd.strip_prefix("/sessions").unwrap().trim()) {
             Ok(sessions) => {
                 for session in sessions.into_iter().take(30) {
@@ -324,7 +359,12 @@ pub fn handle_command(
         "/exit" => exit_app(state),
         "/quit" | "/q" => quit_agent(state),
 
-        "/key" => enter_api_key_mode(state),
+        "/key" => {
+            if state.voice.enabled {
+                voice_off(state, voice_tx);
+            }
+            enter_api_key_mode(state);
+        }
         "/new" => new_conversation(state),
         "/approve" => toggle_auto_approve(state),
         "/status" => show_status(state, agent),
@@ -2595,6 +2635,14 @@ pub(crate) fn command_palette_items() -> &'static [CommandItem] {
         CommandItem {
             cmd: "/exit",
             desc: "Exit OsmoGrep",
+        },
+        CommandItem {
+            cmd: "/agents",
+            desc: "Manage sessions and live coding instances",
+        },
+        CommandItem {
+            cmd: "/team",
+            desc: "Coordinate with other instances in this repository",
         },
     ]
 }

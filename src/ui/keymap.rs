@@ -10,6 +10,13 @@ pub struct Binding {
 }
 pub const BINDINGS: &[Binding] = &[
     Binding {
+        id: "agents",
+        label: "Sessions and team",
+        group: "Workspace",
+        default: "f6",
+        command: Some("/agents"),
+    },
+    Binding {
         id: "details",
         label: "Expand tool output / diffs",
         group: "Transcript",

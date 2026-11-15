@@ -19,9 +19,21 @@ const SECTIONS: &[&str] = &[
     "Usage",
     "Stats",
     "Status",
+    "Sessions",
+    "Team",
 ];
 
 pub struct Panel {
+    filter: usize,
+    preview_session: Option<String>,
+    preview_lines: Vec<String>,
+    preview_offset: usize,
+    preview_refreshed: std::time::Instant,
+    selected_session: Option<String>,
+    message_to: Option<(String, String)>,
+    pending_receipt: Option<(i64, std::time::Instant)>,
+    import_sessions: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+    load_sessions: bool,
     pub section: usize,
     pub query: String,
     pub selected: usize,
@@ -41,6 +53,12 @@ pub struct Panel {
 
 #[derive(Clone)]
 enum Action {
+    Session {
+        id: String,
+        root: std::path::PathBuf,
+        online: bool,
+    },
+    TeamMode,
     Command(String),
     Theme(&'static str),
     Accent(&'static str),
@@ -64,6 +82,9 @@ enum Action {
 }
 #[derive(Serialize)]
 pub struct Row {
+    pub id: Option<String>,
+    pub group: Option<String>,
+    pub tag: Option<String>,
     pub label: String,
     pub description: String,
     pub value: String,
@@ -77,6 +98,9 @@ fn row(
     action: Action,
 ) -> Row {
     Row {
+        id: None,
+        group: None,
+        tag: None,
         label: label.into(),
         description: description.into(),
         value: value.into(),
@@ -85,6 +109,10 @@ fn row(
 }
 #[derive(Serialize)]
 pub struct PanelView {
+    pub previewing: bool,
+    pub preview_offset: usize,
+    pub center_filter: usize,
+    pub counts: Vec<usize>,
     pub title: String,
     pub selecting: bool,
     pub elapsed: u64,
@@ -113,6 +141,8 @@ pub fn section_for(command: &str) -> Option<usize> {
         "/usage" => 7,
         "/stats" => 8,
         "/status" | "/metrics" => 9,
+        "/agents" | "/sessions" => 10,
+        "/team" => 11,
         _ => return None,
     })
 }
@@ -120,6 +150,16 @@ pub fn open(state: &mut AgentState, section: usize, model: Option<&ModelConfig>)
     state.ui.command_items.clear();
     let (days, notice) = load_usage(state, section);
     state.ui.panel = Some(Panel {
+        filter: 0,
+        preview_session: None,
+        preview_lines: Vec::new(),
+        preview_offset: 0,
+        preview_refreshed: std::time::Instant::now(),
+        selected_session: None,
+        message_to: None,
+        pending_receipt: None,
+        import_sessions: None,
+        load_sessions: section == 10,
         section,
         query: String::new(),
         selected: 0,
@@ -158,15 +198,18 @@ pub fn choose_at(state: &mut AgentState, index: usize, label: &str) -> bool {
     let Some(panel) = state.ui.panel.as_ref() else {
         return false;
     };
-    if panel.picker.is_none()
+    if (panel.picker.is_none() && panel.section != 10)
         || panel.edit.is_some()
         || entries(state, panel)
             .get(index)
-            .is_none_or(|row| row.label != label)
+            .is_none_or(|row| row.id.as_deref().unwrap_or(&row.label) != label)
     {
         return false;
     }
+    let center = panel.section == 10;
     state.ui.panel.as_mut().unwrap().selected = index;
+    state.ui.panel.as_mut().unwrap().selected_session =
+        if center { Some(label.into()) } else { None };
     handle_key(state, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     true
 }
@@ -175,6 +218,57 @@ pub fn poll(state: &mut AgentState, agent: &crate::agent::Agent) -> bool {
     let Some(panel) = state.ui.panel.as_mut() else {
         return false;
     };
+    if let Some(id) = panel.preview_session.as_deref() {
+        if panel.preview_refreshed.elapsed() >= std::time::Duration::from_secs(1) {
+            panel.preview_refreshed = std::time::Instant::now();
+            match persistence::preview_session(id) {
+                Ok(lines) => panel.preview_lines = lines,
+                Err(e) => panel.notice = e,
+            }
+            return true;
+        }
+    }
+    if let Some((id, last)) = panel.pending_receipt.as_mut() {
+        if last.elapsed() >= std::time::Duration::from_secs(1) {
+            *last = std::time::Instant::now();
+            if let Some(peer) = crate::team::for_root(&state.repo_root) {
+                if let Ok(receipts) = peer.receipts(*id) {
+                    if !receipts.is_empty() {
+                        panel.notice=format!("Message #{id} acknowledged by the recipient · accepted into durable context");
+                        panel.pending_receipt = None;
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    if panel.load_sessions {
+        panel.load_sessions = false;
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(crate::team::Store::open().and_then(|s| s.import_sessions()));
+        });
+        panel.import_sessions = Some(rx);
+        panel.notice = "Loading saved sessions…".into();
+    }
+    if let Some(result) = panel
+        .import_sessions
+        .as_ref()
+        .and_then(|rx| rx.try_recv().ok())
+    {
+        panel.import_sessions = None;
+        match result {
+            Ok(()) => {
+                panel.notice="Live sessions keep their owner. Open an inactive session, or fork its history.".into();
+                match crate::team::Store::open().and_then(|s| s.peers(None)) {
+                    Ok(peers) => state.ui.team.peers = peers,
+                    Err(e) => panel.notice = e,
+                }
+            }
+            Err(e) => panel.notice = e,
+        }
+        return true;
+    }
     if panel.load_models {
         panel.load_models = false;
         panel.catalog = Some(agent.model_catalog(panel.model.clone()));
@@ -192,6 +286,96 @@ pub fn poll(state: &mut AgentState, agent: &crate::agent::Agent) -> bool {
         return true;
     }
     false
+}
+
+fn session_rows(state: &AgentState, panel: &Panel, filter: bool) -> Vec<Row> {
+    let mut peers = state
+        .ui
+        .team
+        .peers
+        .iter()
+        .filter(|p| {
+            !filter
+                || match panel.filter {
+                    1 => p.online && matches!(p.status.as_str(), "needs_you" | "error"),
+                    2 => p.online && p.status == "working",
+                    3 => p.online && p.status == "ready",
+                    4 => !p.online,
+                    _ => true,
+                }
+        })
+        .collect::<Vec<_>>();
+    peers.sort_by(|a, b| {
+        a.workspace
+            .cmp(&b.workspace)
+            .then(b.pinned.cmp(&a.pinned))
+            .then(a.title.to_lowercase().cmp(&b.title.to_lowercase()))
+            .then(a.session.cmp(&b.session))
+    });
+    peers
+        .into_iter()
+        .map(|p| {
+            let tag = if !p.online {
+                "inactive"
+            } else {
+                p.status.as_str()
+            };
+            let age = (chrono::Utc::now().timestamp_millis() - p.updated).max(0) / 1000;
+            let ago = if age < 2 {
+                "now".into()
+            } else if age < 60 {
+                format!("{age}s")
+            } else if age < 3600 {
+                format!("{}m", age / 60)
+            } else if age < 86400 {
+                format!("{}h", age / 3600)
+            } else {
+                format!("{}d", age / 86400)
+            };
+            let mut r = row(
+                format!("{}{}", if p.pinned { "● " } else { "" }, p.title),
+                format!("{} · {} · {}", p.workspace, p.model, p.session),
+                format!("{} · {ago}", tag.replace('_', " ")),
+                Action::Session {
+                    id: p.session.clone(),
+                    root: p.workspace.clone().into(),
+                    online: p.online,
+                },
+            );
+            r.id = Some(p.session.clone());
+            r.group = Some(p.workspace.clone());
+            r.tag = Some(tag.into());
+            r
+        })
+        .collect()
+}
+fn selected_index(panel: &Panel, rows: &[Row]) -> usize {
+    panel
+        .selected_session
+        .as_ref()
+        .and_then(|id| rows.iter().position(|r| r.id.as_ref() == Some(id)))
+        .unwrap_or(panel.selected.min(rows.len().saturating_sub(1)))
+}
+fn request_session(
+    state: &mut AgentState,
+    panel: &mut Panel,
+    id: Option<String>,
+    root: std::path::PathBuf,
+    fork: bool,
+) -> bool {
+    if state.ui.agent_running
+        || state
+            .jobs
+            .iter()
+            .any(|j| matches!(j.status, crate::state::JobStatus::Running))
+        || state.ui.editor_session.is_some()
+    {
+        panel.notice =
+            "Finish or cancel active work and close Neovim before switching sessions.".into();
+        return false;
+    }
+    state.ui.open_session = Some(crate::state::SessionTarget { id, root, fork });
+    true
 }
 
 fn entries(state: &AgentState, panel: &Panel) -> Vec<Row> {
@@ -264,6 +448,8 @@ fn entries(state: &AgentState, panel: &Panel) -> Vec<Row> {
         return choices;
     }
     let mut rows = match panel.section {
+        10 => session_rows(state,panel,true),
+        11 => vec![row("Team messaging", "Deliver collaborator context at safe boundaries; idle messages do not start model calls", if state.preferences.team_messages {"on"}else{"off"}, Action::TeamMode),row("Inbox",format!("{} unread messages · print and acknowledge in the transcript",state.ui.team.messages.len()),"↵",Action::Command("/team inbox".into())),row("Message history","Inspect sent messages and acknowledgement receipts","↵",Action::Command("/team history".into())),row("Shared activity","Read recorded tool/file progress from this repository","↵",Action::Command("/team updates".into()))],
         0 => commands::command_palette_items()
             .iter()
             .map(|c| row(c.cmd, c.desc, "↵", Action::Command(c.cmd.into())))
@@ -638,7 +824,27 @@ pub fn view(state: &AgentState) -> Option<PanelView> {
     let panel = state.ui.panel.as_ref()?;
     let rows = entries(state, panel);
     Some(PanelView {
-        selecting: panel.picker.is_some() && panel.edit.is_none(),
+        previewing: panel.preview_session.is_some(),
+        preview_offset: panel.preview_offset,
+        center_filter: panel.filter,
+        counts: (0..5)
+            .map(|filter| {
+                state
+                    .ui
+                    .team
+                    .peers
+                    .iter()
+                    .filter(|p| match filter {
+                        1 => p.online && matches!(p.status.as_str(), "needs_you" | "error"),
+                        2 => p.online && p.status == "working",
+                        3 => p.online && p.status == "ready",
+                        4 => !p.online,
+                        _ => true,
+                    })
+                    .count()
+            })
+            .collect(),
+        selecting: (panel.picker.is_some() || panel.section == 10) && panel.edit.is_none(),
         title: match panel.picker {
             Some(0) => "Choose provider".into(),
             Some(_) => format!("Choose model · {}", panel.model.provider),
@@ -647,7 +853,7 @@ pub fn view(state: &AgentState) -> Option<PanelView> {
         elapsed: panel.opened.elapsed().as_millis() as u64,
         sections: SECTIONS.to_vec(),
         section: panel.section,
-        selected: panel.selected.min(rows.len().saturating_sub(1)),
+        selected: selected_index(panel, &rows),
         rows,
         query: if panel.capture.is_some() {
             "Press shortcut…".into()
@@ -664,7 +870,9 @@ pub fn view(state: &AgentState) -> Option<PanelView> {
             panel.notice.clone()
         },
         editing: panel.edit.is_some() || panel.capture.is_some(),
-        footer: if panel.capture.is_some() {
+        footer: if panel.section == 10 {
+            "←/→ filter · enter open · F2 new · F3 fork · F4 message · F5 pin · esc back"
+        } else if panel.capture.is_some() {
             "press new chord · backspace default · delete unbind · esc cancel"
         } else if panel.picker.is_some() && panel.edit.is_none() {
             "type to filter · ↑↓ navigate · enter choose · esc back"
@@ -682,7 +890,11 @@ pub fn view(state: &AgentState) -> Option<PanelView> {
             "↑↓ navigate · enter select · tab section · esc close"
         }
         .into(),
-        preview: statusline(state),
+        preview: if panel.preview_session.is_some() {
+            panel.preview_lines.clone()
+        } else {
+            statusline(state)
+        },
         history: panel.days.clone(),
         demo: panel.demo,
     })
@@ -692,6 +904,46 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
     let Some(mut panel) = state.ui.panel.take() else {
         return false;
     };
+    if panel.preview_session.is_some() && panel.edit.is_none() {
+        match key.code {
+            KeyCode::Esc => {
+                panel.preview_session = None;
+                state.ui.panel = Some(panel);
+                return true;
+            }
+            KeyCode::Up | KeyCode::PageUp => {
+                panel.preview_offset = panel
+                    .preview_offset
+                    .saturating_add(if key.code == KeyCode::Up { 1 } else { 8 })
+                    .min(panel.preview_lines.len());
+                state.ui.panel = Some(panel);
+                return true;
+            }
+            KeyCode::Down | KeyCode::PageDown => {
+                panel.preview_offset = panel
+                    .preview_offset
+                    .min(panel.preview_lines.len())
+                    .saturating_sub(if key.code == KeyCode::Down { 1 } else { 8 });
+                state.ui.panel = Some(panel);
+                return true;
+            }
+            KeyCode::Home => {
+                panel.preview_offset = usize::MAX;
+                state.ui.panel = Some(panel);
+                return true;
+            }
+            KeyCode::End => {
+                panel.preview_offset = 0;
+                state.ui.panel = Some(panel);
+                return true;
+            }
+            KeyCode::F(3) | KeyCode::F(4) => {}
+            _ => {
+                state.ui.panel = Some(panel);
+                return true;
+            }
+        }
+    }
     if let Some(id) = panel.capture.take() {
         let binding = super::keymap::BINDINGS.iter().find(|b| b.id == id).unwrap();
         let value = match key.code {
@@ -717,9 +969,33 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
     }
     if let Some((field, text)) = panel.edit.as_mut() {
         match key.code {
-            KeyCode::Esc => panel.edit = None,
+            KeyCode::Esc => {
+                panel.edit = None;
+                panel.message_to = None;
+            }
             KeyCode::Enter => {
                 let text = text.trim().to_string();
+                if let Some((recipient, nonce)) = panel.message_to.clone() {
+                    let result = crate::team::for_root(&state.repo_root)
+                        .ok_or("Team runtime is unavailable".to_string())
+                        .and_then(|mut peer| {
+                            peer.enabled = true;
+                            peer.send(Some(&recipient), &text, &nonce)
+                        });
+                    match result {
+                        Ok(id) => {
+                            panel.pending_receipt = Some((id, std::time::Instant::now()));
+                            panel.edit = None;
+                            panel.message_to = None;
+                            panel.notice = format!(
+                                "Message #{id} queued durably · waiting for acknowledgement"
+                            );
+                        }
+                        Err(e) => panel.notice = e,
+                    }
+                    state.ui.panel = Some(panel);
+                    return true;
+                }
                 let field = *field;
                 if field < 2 && (text.is_empty() || text.chars().any(char::is_whitespace)) {
                     panel.notice = "Use a nonempty provider/model identifier without spaces".into();
@@ -760,7 +1036,8 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
         return true;
     }
     let rows = entries(state, &panel);
-    let index = panel.selected.min(rows.len().saturating_sub(1));
+    let index = selected_index(&panel, &rows);
+    panel.selected = index;
     let mut close = false;
     let mut changed = false;
     match key.code {
@@ -772,15 +1049,89 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
                 close = true
             }
         }
+        KeyCode::Left | KeyCode::Right if panel.section == 10 => {
+            panel.filter = (panel.filter + 5 + if key.code == KeyCode::Left { 4 } else { 1 }) % 5;
+            panel.selected = 0;
+            panel.selected_session = None;
+        }
+        KeyCode::F(1) if panel.section == 10 => {
+            if let Some(id) = rows.get(index).and_then(|r| r.id.as_ref()) {
+                panel.selected_session = Some(id.clone());
+                panel.preview_session = Some(id.clone());
+                panel.preview_offset = 0;
+                match persistence::preview_session(id) {
+                    Ok(lines) => panel.preview_lines = lines,
+                    Err(e) => panel.notice = e,
+                };
+            }
+        }
+        KeyCode::F(2) if panel.section == 10 => {
+            let root = rows
+                .get(index)
+                .and_then(|r| {
+                    if let Action::Session { root, .. } = &r.action {
+                        Some(root.clone())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| state.repo_root.clone());
+            close = request_session(state, &mut panel, None, root, false);
+        }
+        KeyCode::F(3) if panel.section == 10 => {
+            if let Some(Row {
+                action: Action::Session { id, root, .. },
+                ..
+            }) = rows.get(index)
+            {
+                close = request_session(state, &mut panel, Some(id.clone()), root.clone(), true);
+            }
+        }
+        KeyCode::F(4) if panel.section == 10 => {
+            if let Some(Row {
+                action: Action::Session { id, .. },
+                ..
+            }) = rows.get(index)
+            {
+                panel.message_to = Some((id.clone(), uuid::Uuid::new_v4().to_string()));
+                panel.edit = Some((100, String::new()));
+                panel.notice =
+                    "Message this collaborator. Enter sends; Escape preserves your original draft."
+                        .into();
+            }
+        }
+        KeyCode::F(5) if panel.section == 10 => {
+            if let Some(id) = rows.get(index).and_then(|r| r.id.as_ref()) {
+                panel.selected_session = Some(id.clone());
+                let pinned = state
+                    .ui
+                    .team
+                    .peers
+                    .iter()
+                    .find(|p| &p.session == id)
+                    .is_some_and(|p| p.pinned);
+                panel.notice = match crate::team::Store::open().and_then(|s| {
+                    s.pin(id, !pinned)?;
+                    state.ui.team.peers = s.peers(None)?;
+                    Ok(())
+                }) {
+                    Ok(()) => "Pin saved".into(),
+                    Err(e) => e,
+                };
+            }
+        }
         KeyCode::Char('d' | 'D') if panel.section == 8 => {
             panel.demo = !panel.demo;
             panel.opened = std::time::Instant::now();
         }
         KeyCode::Tab | KeyCode::BackTab => {
             let back = key.code == KeyCode::BackTab || key.modifiers.contains(KeyModifiers::SHIFT);
+            panel.selected_session = None;
+            panel.load_sessions = panel.section == 10;
             panel.section =
                 (panel.section + SECTIONS.len() + if back { SECTIONS.len() - 1 } else { 1 })
                     % SECTIONS.len();
+            panel.load_sessions = panel.section == 10;
             panel.query.clear();
             panel.selected = 0;
             panel.notice.clear();
@@ -827,6 +1178,34 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
         {
             if let Some(row) = rows.get(index) {
                 match &row.action {
+                    Action::Session { id, root, online } => {
+                        if id == &state.session.id {
+                            close = true;
+                        } else if *online {
+                            panel.selected_session = Some(id.clone());
+                            panel.preview_session = Some(id.clone());
+                            panel.preview_offset = 0;
+                            panel.notice="Read-only live snapshot · refreshed every second · session ownership preserved".into();
+                            match persistence::preview_session(id) {
+                                Ok(lines) => panel.preview_lines = lines,
+                                Err(e) => panel.notice = e,
+                            };
+                        } else {
+                            close = request_session(
+                                state,
+                                &mut panel,
+                                Some(id.clone()),
+                                root.clone(),
+                                false,
+                            );
+                        }
+                    }
+                    Action::TeamMode => {
+                        state.preferences.team_messages = !state.preferences.team_messages;
+                        let _ =
+                            crate::team::enable(&state.repo_root, state.preferences.team_messages);
+                        changed = true;
+                    }
                     Action::Command(cmd) => {
                         state.ui.requested_command = Some(cmd.clone());
                         close = true;
@@ -1024,6 +1403,24 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
         }
         _ => {}
     }
+    if panel.section == 10 {
+        if matches!(
+            key.code,
+            KeyCode::Up
+                | KeyCode::Down
+                | KeyCode::Home
+                | KeyCode::End
+                | KeyCode::PageUp
+                | KeyCode::PageDown
+        ) {
+            panel.selected_session = entries(state, &panel)
+                .get(panel.selected)
+                .and_then(|r| r.id.clone());
+        }
+        if matches!(key.code, KeyCode::Char(_) | KeyCode::Backspace) {
+            panel.selected_session = None;
+        }
+    }
     if changed {
         panel.notice = match persistence::save(state) {
             Ok(()) => "Saved to this workspace".into(),
@@ -1118,6 +1515,70 @@ mod tests {
     use super::*;
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+    fn peer(id: &str, title: &str, status: &str, online: bool) -> crate::team::Presence {
+        crate::team::Presence {
+            id: id.into(),
+            session: id.into(),
+            project: "project".into(),
+            workspace: "/project".into(),
+            title: title.into(),
+            model: "model".into(),
+            provider: "local".into(),
+            status: status.into(),
+            detail: String::new(),
+            updated: 0,
+            online,
+            enabled: true,
+            pinned: false,
+        }
+    }
+    #[test]
+    fn session_center_anchors_identity_and_filters_without_touching_composer() {
+        let mut state = crate::init_state();
+        state.insert_text("original draft");
+        state.ui.team.peers = vec![
+            peer("a", "Same task", "working", true),
+            peer("b", "Same task", "error", true),
+            peer("c", "Closed", "closed", false),
+        ];
+        open(&mut state, 10, None);
+        handle_key(&mut state, key(KeyCode::Down));
+        assert_eq!(
+            view(&state).unwrap().rows[view(&state).unwrap().selected]
+                .id
+                .as_deref(),
+            Some("a")
+        );
+        // A changing title reorders rows; the selected session must remain selected.
+        state.ui.team.peers[0].title = "ZZZ".into();
+        let v = view(&state).unwrap();
+        assert_eq!(v.rows[v.selected].id.as_deref(), Some("a"));
+        handle_key(&mut state, key(KeyCode::Right));
+        let v = super::view(&state).unwrap();
+        assert_eq!(v.rows.len(), 1);
+        assert_eq!(v.rows[0].id.as_deref(), Some("b"));
+        handle_key(&mut state, key(KeyCode::Esc));
+        assert_eq!(state.ui.input, "original draft");
+        assert!(!state.ui.should_exit);
+    }
+    #[test]
+    fn message_editor_never_applies_to_model_config_and_preserves_failed_drafts() {
+        let mut state = crate::init_state();
+        state.insert_text("keep prompt");
+        state.ui.team.peers = vec![peer("unregistered", "Peer", "ready", true)];
+        open(&mut state, 10, None);
+        let original = state.ui.panel.as_ref().unwrap().model.model.clone();
+        handle_key(&mut state, key(KeyCode::F(4)));
+        paste(&mut state, "Coordinate this change");
+        handle_key(&mut state, key(KeyCode::Enter));
+        let panel = state.ui.panel.as_ref().unwrap();
+        assert_eq!(panel.model.model, original);
+        assert!(panel.message_to.is_some());
+        assert_eq!(panel.edit.as_ref().unwrap().1, "Coordinate this change");
+        handle_key(&mut state, key(KeyCode::Esc));
+        assert_eq!(state.ui.input, "keep prompt");
+        assert!(state.ui.panel.is_some());
     }
     #[test]
     fn command_center_searches_without_touching_draft_and_queues_existing_command() {

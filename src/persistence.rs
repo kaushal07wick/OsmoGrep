@@ -259,6 +259,37 @@ fn session_path(id: &str) -> Result<PathBuf, String> {
     Ok(session_dir().join(format!("{id}.json")))
 }
 
+pub fn preview_session(id: &str) -> Result<Vec<String>, String> {
+    let path = session_path(id)?;
+    if fs::metadata(&path).map_err(|e| e.to_string())?.len() > 32 * 1024 * 1024 {
+        return Err(
+            "Session snapshot exceeds the 32 MiB preview limit; fork or resume to inspect it"
+                .into(),
+        );
+    }
+    let saved: PersistedState = serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+    Ok(saved
+        .logs
+        .into_iter()
+        .rev()
+        .take(200)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .flat_map(|(_, text)| {
+            text.lines()
+                .map(|s| {
+                    s.chars()
+                        .filter(|c| !c.is_control())
+                        .take(500)
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect())
+}
+
 pub fn load_id(state: &mut AgentState, id: &str, fork: bool) -> Result<(), String> {
     if !fork && id == state.session.id {
         return Ok(());
@@ -364,6 +395,8 @@ pub fn recover(state: &mut AgentState, run_id: &str) -> Result<(), String> {
 
 pub struct SessionSummary {
     pub id: String,
+    pub repo_root: String,
+    pub title: String,
     pub name: Option<String>,
     pub modified: Option<SystemTime>,
     pub prompt_tokens: usize,
@@ -402,6 +435,17 @@ fn list_sessions_in(dir: &Path) -> Result<Vec<SessionSummary>, String> {
             .to_string();
         sessions.push(SessionSummary {
             id,
+            repo_root: saved.repo_root,
+            title: saved
+                .conversation
+                .iter()
+                .rev()
+                .find(|m| m["role"] == "user")
+                .and_then(|m| m["content"].as_str())
+                .unwrap_or("New conversation")
+                .chars()
+                .take(100)
+                .collect(),
             name: saved.session_name,
             modified,
             prompt_tokens: saved.prompt_tokens,

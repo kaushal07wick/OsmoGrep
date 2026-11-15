@@ -1,13 +1,16 @@
 import {visibleWidth,wrapTextWithAnsi} from '@earendil-works/pi-tui';
 import {plain,fit} from './chrome.ts';
 import {statsLines,type Day} from './stats.ts';
+import {drawCenter} from './center.ts';
 export interface PanelView {
-  title?:string;elapsed?:number;selecting?:boolean;
+  previewing?:boolean; preview_offset?:number;
+  title?:string;elapsed?:number;selecting?:boolean;center_filter?:number;counts?:number[];
   sections:string[];section:number;query:string;selected:number;editing:boolean;
-  rows:{label:string;description:string;value:string}[];notice:string;footer:string;preview?:string[];history?:Day[];demo?:boolean;
+  rows:{label:string;description:string;value:string;id?:string|null;group?:string|null;tag?:string|null}[];notice:string;footer:string;preview?:string[];history?:Day[];demo?:boolean;
 }
 const reset='\x1b[0m',bold='\x1b[1m';
 export function drawPanel(panel:PanelView,width:number,height:number,light:boolean,accent:string,reduceMotion=false){
+  if(panel.section===10)return drawCenter(panel,width,height,light,accent);
   const root=light?'\x1b[48;2;250;250;250m':'\x1b[48;2;0;0;0m',surface=light?'\x1b[48;2;237;235;230m':'\x1b[48;2;18;18;18m';
   const fg=light?'\x1b[38;2;32;32;32m':'\x1b[38;2;225;220;210m',dim=light?'\x1b[38;2;105;105;105m':'\x1b[38;2;130;130;128m';
   const gutter=width>=60?3:width>=24?1:0,card=Math.max(1,width-2*gutter),pad=card>=40?3:1,inner=Math.max(1,card-2*pad),top=height>=14?2:0,available=Math.max(1,height-top-(height>=14?2:0));
@@ -26,7 +29,7 @@ export function drawPanel(panel:PanelView,width:number,height:number,light:boole
     const labelWidth=inner<60?Math.max(1,inner-4):Math.min(32,Math.floor(inner*.36));
     for(let i=0;i<n;i++){
       const r=panel.rows[start+i];if(!r)break;
-      if(panel.selecting)controls.push({id:'choice',index:start+i,label:r.label,x:gutter+pad,y:top+header.length+i,width:inner,height:1});const active=start+i===at,label=fit(plain(r.label),labelWidth);
+      if(panel.selecting)controls.push({id:'choice',index:start+i,label:r.id??r.label,x:gutter+pad,y:top+header.length+i,width:inner,height:1});const active=start+i===at,label=fit(plain(r.label),labelWidth);
       const value=fit(plain(r.value),Math.min(24,Math.floor(inner*.22))),descWidth=Math.max(0,inner-labelWidth-visibleWidth(value)-7);
       const suffix=inner>=60?' '.repeat(Math.max(1,labelWidth-visibleWidth(label)+2))+dim+fit(plain(r.description),descWidth)+' '.repeat(Math.max(1,descWidth-visibleWidth(fit(plain(r.description),descWidth))+2))+(active?accent:fg)+value:'';
       body.push((active?accent+'▸ '+bold:dim+'  ')+label+reset+suffix);
@@ -41,9 +44,10 @@ export function drawPanel(panel:PanelView,width:number,height:number,light:boole
   return {controls,rows:rows.map(s=>fit(s,width)),cursor:{x:Math.max(0,Math.min(width-1,gutter+pad+(panel.editing?6:8)+visibleWidth(plain(panel.query)))),y:Math.min(height-1,top+(header.length>=6?5:0))}};
 }
 
-export function permissionLines(tool:string,args:string,selected:number,width:number,accent:string,light:boolean):string[]{
+export function permissionLines(tool:string,args:string,selected:number,width:number,accent:string,light:boolean,compact=false):string[]{
   const fg=light?'\x1b[38;2;32;32;32m':'\x1b[38;2;225;220;210m',dim='\x1b[38;2;140;134;124m';
   const wrap=(s:string)=>wrapTextWithAnsi(s,Math.max(1,width-4));
+  if(compact)return [accent+'  Permission / '+fg+plain(tool),...wrap(dim+'  '+plain(args)).slice(0,1),...['Y  Allow once','N  Deny','A  Auto-approve this session'].map((s,i)=>(selected===i?accent+'  ▸ '+bold:dim+'    ')+s+reset),dim+'  ↑↓ select · enter confirm · esc cancel'];
   return ['',accent+'  PERMISSION  /  '+fg+plain(tool),...wrap(dim+'  '+plain(args)).slice(0,2),'',
     ...['Y  Allow once','N  Deny','A  Auto-approve this session'].map((s,i)=>(selected===i?accent+'  ▸ '+bold:dim+'    ')+s+reset),'',dim+'  ↑↓ select · enter confirm · esc cancel',''];
 }
