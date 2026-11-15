@@ -13,7 +13,7 @@ use std::{
 
 struct Session {
     root: PathBuf,
-    child: Child,
+    child: Option<Child>,
     input: Option<Box<dyn Write + Send>>,
     stdout: PathBuf,
     stderr: PathBuf,
@@ -99,7 +99,7 @@ fn start_command(
         .map(|s| Box::new(s) as Box<dyn Write + Send>);
     let session = Arc::new(Mutex::new(Session {
         root: root.to_path_buf(),
-        child,
+        child: Some(child),
         input,
         stdout,
         stderr,
@@ -175,29 +175,43 @@ fn pty_command(cmd: &str) -> Result<Command, String> {
 impl Session {
     fn refresh(&mut self) -> Result<bool, String> {
         if self.exit.is_none() {
-            if let Some(status) = self.child.try_wait().map_err(|e| e.to_string())? {
+            if let Some(status) = self
+                .child
+                .as_mut()
+                .ok_or("Command handle is closed")?
+                .try_wait()
+                .map_err(|e| e.to_string())?
+            {
                 self.exit = Some(status.code().unwrap_or(-1));
                 self.input = None;
             }
         }
-        Ok(self.exit.is_some() && self.readers.iter().all(|r| r.is_finished()))
+        let finished = self.exit.is_some() && self.readers.iter().all(|r| r.is_finished());
+        if finished {
+            self.child.take();
+        }
+        Ok(finished)
     }
     fn stop(&mut self, reason: &'static str) {
         if self.exit.is_some() && self.readers.iter().all(|r| r.is_finished()) {
+            self.child.take();
             return;
         }
         self.stopped = Some(reason);
         self.input = None;
+        let Some(child) = self.child.as_mut() else {
+            return;
+        };
         #[cfg(unix)]
-        crate::process_runner::kill_process_group(self.child.id());
+        crate::process_runner::kill_process_group(child.id());
         #[cfg(windows)]
         {
             let _ = Command::new("taskkill")
-                .args(["/T", "/F", "/PID", &self.child.id().to_string()])
+                .args(["/T", "/F", "/PID", &child.id().to_string()])
                 .output();
         }
-        let _ = self.child.kill();
-        if let Ok(status) = self.child.wait() {
+        let _ = child.kill();
+        if let Ok(status) = child.wait() {
             self.exit = Some(status.code().unwrap_or(-1));
         }
     }

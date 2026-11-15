@@ -157,6 +157,13 @@ mod tests {
                 .unwrap()["exit_code"],
             0
         );
+        for session in [&started["session_id"], &empty["session_id"]] {
+            let _ = tools.call_cancellable(
+                "run_shell",
+                json!({"session_id":session,"close":true,"yield_ms":0}),
+                &|| false,
+            );
+        }
         std::fs::remove_dir_all(root).unwrap();
     }
 }
