@@ -41,6 +41,9 @@ pub fn handle_event(
 }
 
 fn handle_paste(state: &mut AgentState, text: &str) {
+    if state.ui.update_check_pending || state.ui.pending_update.is_some() {
+        return;
+    }
     if state.ui.panel.is_some() {
         crate::ui::workbench::paste(state, text);
         return;
@@ -62,6 +65,15 @@ fn normalize_paste_text(text: &str) -> String {
 }
 
 fn handle_key(state: &mut AgentState, k: KeyEvent) {
+    if state.ui.update_check_pending {
+        if k.code == KeyCode::Esc {
+            state.ui.update_check_pending = false;
+        }
+        if k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL) {
+            state.ui.should_exit = true;
+        }
+        return;
+    }
     if matches!(k.code, KeyCode::Esc) && state.ui.agent_running {
         request_agent_cancel(state);
         return;
@@ -120,6 +132,15 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
         if update.installing {
             return;
         }
+        if update.progress.stage == "ready" {
+            if matches!(
+                k.code,
+                KeyCode::Enter | KeyCode::Char('r' | 'R' | 'u' | 'U')
+            ) {
+                state.ui.update_install_requested = true;
+            }
+            return;
+        }
         match k.code {
             KeyCode::Up => {
                 update.selected = update.selected.saturating_sub(1);
@@ -131,15 +152,18 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
             }
             _ => {}
         }
-        let action = if k.code == KeyCode::Enter {
-            [
-                UpdatePromptAction::Install,
-                UpdatePromptAction::Later,
-                UpdatePromptAction::Skip,
-            ][update.selected.min(2)]
-        } else {
-            update_prompt_action(&k)
-        };
+        let action =
+            if matches!(k.code, KeyCode::Char('r' | 'R')) && update.progress.stage == "failed" {
+                UpdatePromptAction::Install
+            } else if k.code == KeyCode::Enter {
+                [
+                    UpdatePromptAction::Install,
+                    UpdatePromptAction::Later,
+                    UpdatePromptAction::Skip,
+                ][update.selected.min(2)]
+            } else {
+                update_prompt_action(&k)
+            };
         match action {
             UpdatePromptAction::Install => {
                 state.ui.update_install_requested = true;
@@ -587,7 +611,7 @@ fn update_prompt_action(k: &KeyEvent) -> UpdatePromptAction {
 #[cfg(test)]
 mod tests {
     use super::{
-        handle_event, handle_key, input_control_action, scroll_back_offset,
+        handle_event, handle_key, handle_paste, input_control_action, scroll_back_offset,
         scroll_toward_tail_offset, update_prompt_action, InputControlAction, UpdatePromptAction,
     };
     use crate::state::{
@@ -843,6 +867,7 @@ mod tests {
             notes: vec!["New sessions".into()],
             selected: 1,
             installing: false,
+            progress: Default::default(),
         });
         handle_key(&mut state, key(KeyCode::Enter));
         assert!(state.ui.update_later_requested);
@@ -855,6 +880,17 @@ mod tests {
         state.ui.update_skip_requested = false;
         handle_key(&mut state, key(KeyCode::Up));
         handle_key(&mut state, key(KeyCode::Up));
+        handle_key(&mut state, key(KeyCode::Enter));
+        assert!(state.ui.update_install_requested);
+        state.ui.update_install_requested = false;
+        state.ui.pending_update.as_mut().unwrap().installing = true;
+        handle_paste(&mut state, "must not reach chat");
+        handle_key(&mut state, key(KeyCode::Char('u')));
+        assert!(!state.ui.update_install_requested);
+        assert_eq!(state.ui.input, "preserved draft");
+        let update = state.ui.pending_update.as_mut().unwrap();
+        update.installing = false;
+        update.progress.stage = "ready";
         handle_key(&mut state, key(KeyCode::Enter));
         assert!(state.ui.update_install_requested);
         assert_eq!(state.ui.input, "preserved draft");
@@ -926,6 +962,9 @@ mod tests {
 }
 
 fn handle_mouse(state: &mut AgentState, m: MouseEvent) {
+    if state.ui.update_check_pending || state.ui.pending_update.is_some() {
+        return;
+    }
     if state.ui.panel.is_some()
         && state.ui.pending_permission.is_none()
         && state.ui.pending_update.is_none()

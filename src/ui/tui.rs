@@ -91,6 +91,19 @@ fn centered_content(area: Rect) -> Rect {
 }
 
 fn header_height(state: &AgentState, available_height: u16) -> u16 {
+    if state.ui.agent_running
+        || state
+            .conversation
+            .messages
+            .iter()
+            .any(|m| m["role"] == "user")
+        || state
+            .logs
+            .iter()
+            .any(|l| parse_user_input_log(&l.text).is_some())
+    {
+        return 0;
+    }
     match state.density {
         UiDensity::Compact => 2,
         UiDensity::Standard if available_height < 24 => 2,
@@ -111,6 +124,10 @@ pub fn draw_ui<B: Backend>(
 
     terminal.draw(|f| {
         let area = f.size();
+        if state.ui.update_check_pending || state.ui.pending_update.is_some() {
+            render_update_screen(f, state);
+            return;
+        }
         let mut content = centered_content(area);
         let padding = top_padding(state).min(content.height / 2);
         content.y += padding;
@@ -268,6 +285,9 @@ pub fn draw_ui<B: Backend>(
 
 /// header with info
 fn render_header(f: &mut Frame, area: Rect, state: &AgentState) {
+    if area.height == 0 {
+        return;
+    }
     let p = palette(state);
     let branch = state
         .ui
@@ -650,6 +670,136 @@ fn render_plan_lines_for_items(plan_items: &[PlanItem], p: UiPalette) -> Vec<Lin
     }
 
     lines
+}
+
+fn render_update_screen(f: &mut Frame, state: &AgentState) {
+    let p = palette(state);
+    let area = f.size();
+    let width = area.width.saturating_sub(8).min(88).max(1).min(area.width);
+    let mut lines = vec![
+        Line::styled("osmogrep / update", Style::default().fg(p.accent)),
+        Line::default(),
+    ];
+    if let Some(update) = &state.ui.pending_update {
+        lines.push(Line::from(format!(
+            "{} → {}",
+            update.current_version, update.latest_version
+        )));
+        lines.push(Line::default());
+        for note in update.notes.iter().take(3) {
+            lines.push(Line::from(format!(
+                "+ {}",
+                truncate_for_badge(
+                    note.split(';').next().unwrap_or(note),
+                    width.saturating_sub(4) as usize
+                )
+            )));
+        }
+        lines.push(Line::default());
+        if update.installing {
+            let progress = &update.progress;
+            lines.push(Line::styled(
+                match progress.stage {
+                    "downloading" => "Downloading update",
+                    "verifying" => "Verifying checksum",
+                    "installing" => "Installing update",
+                    _ => "Fetching release checksum",
+                },
+                Style::default().fg(p.accent),
+            ));
+            let cells = width.saturating_sub(7).min(38) as usize;
+            let ratio = progress
+                .total
+                .filter(|total| *total > 0)
+                .map(|total| (progress.received as f64 / total as f64).clamp(0., 1.));
+            let bar = if let Some(ratio) = ratio {
+                let filled = (cells as f64 * ratio) as usize;
+                format!(
+                    "{}{} {}%",
+                    "━".repeat(filled),
+                    "─".repeat(cells - filled),
+                    (ratio * 100.) as u64
+                )
+            } else {
+                let at = if state.preferences.reduce_motion {
+                    0
+                } else {
+                    state.started_at.elapsed().as_millis() as usize / 100 % cells.max(1)
+                };
+                (0..cells)
+                    .map(|i| if i == at { '━' } else { '─' })
+                    .collect()
+            };
+            lines.push(Line::styled(bar, Style::default().fg(p.accent)));
+            if let Some(detail) = &progress.detail {
+                lines.push(Line::from(detail.clone()));
+            }
+        } else if update.progress.stage == "ready" {
+            lines.push(Line::styled(
+                "✓ Update installed",
+                Style::default().fg(Color::Green),
+            ));
+            lines.push(Line::from("R / enter  Restart & open chat"));
+        } else {
+            if update.progress.stage == "failed" {
+                lines.push(Line::styled(
+                    "Update interrupted · retry or continue",
+                    Style::default().fg(Color::Red),
+                ));
+                if let Some(detail) = &update.progress.detail {
+                    lines.push(Line::from(truncate_for_badge(
+                        detail,
+                        width.saturating_sub(2) as usize,
+                    )));
+                }
+                lines.push(Line::default());
+            }
+            for (i, label) in [
+                if update.progress.stage == "failed" {
+                    "R Retry update"
+                } else {
+                    "U Update now"
+                },
+                "L Later",
+                "S Skip this version",
+            ]
+            .iter()
+            .enumerate()
+            {
+                lines.push(Line::styled(
+                    format!("{} {label}", if i == update.selected { "›" } else { " " }),
+                    Style::default().fg(if i == update.selected {
+                        p.accent
+                    } else {
+                        p.fg_dim
+                    }),
+                ));
+            }
+            lines.push(Line::default());
+            lines.push(Line::styled(
+                "↑↓ choose · enter confirm · esc later",
+                Style::default().fg(p.fg_muted),
+            ));
+        }
+    } else {
+        lines.push(Line::from("Checking for updates…"));
+        lines.push(Line::default());
+        lines.push(Line::styled(
+            "esc continue to chat",
+            Style::default().fg(p.fg_muted),
+        ));
+    }
+    let height = (lines.len() as u16).min(area.height);
+    let rect = Rect::new(
+        area.x + (area.width - width) / 2,
+        area.y + (area.height - height) / 2,
+        width,
+        height,
+    );
+    f.render_widget(
+        Paragraph::new(lines).style(Style::default().fg(p.fg_main)),
+        rect,
+    );
 }
 
 pub(super) fn pending_update_prompt(update: &PendingUpdate) -> String {
@@ -1389,7 +1539,7 @@ mod tests {
         assert!(full.y > 40);
         assert!(full.bottom() <= 50);
         state.density = UiDensity::Compact;
-        assert_eq!(header_height(&state, 50), 2);
+        assert_eq!(header_height(&state, 50), 0);
     }
 
     #[test]
@@ -1541,6 +1691,7 @@ mod tests {
             installing,
             selected: 1,
             notes: vec!["Improved sessions".into()],
+            progress: Default::default(),
         }
     }
 

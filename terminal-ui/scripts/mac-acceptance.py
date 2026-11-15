@@ -160,7 +160,7 @@ def wait_for(check, seconds=12):
     while not check() and time.monotonic()<end: drain(.1)
     assert check(),bytes(transcript[-2000:])
 
-def graphics(data):
+def startup_graphics(data):
     frames=[]
     pending=b''
     displaying=False
@@ -171,7 +171,9 @@ def graphics(data):
         if not displaying: continue
         if payload: pending+=payload
         if pending and b'm=1' not in controls:
-            frames.append(base64.b64decode(pending))
+            image=base64.b64decode(pending)
+            # Provider logos are separate from the large startup artwork.
+            if min(struct.unpack('>II',image[16:24]))>=100: frames.append(image)
             pending=b''
     return frames
 
@@ -185,29 +187,29 @@ try:
     result['typescript_renderer_started'] = True
     first = len(transcript)
     drain(.7)
-    assert graphics(transcript[first:]), 'fine startup frames must use terminal graphics'
+    assert startup_graphics(transcript[first:]), 'fine startup frames must use terminal graphics'
     assert b'\x1b[?1002h' in transcript and b'\x1b[?1003h' not in transcript, 'idle artwork must request buttons, not hover events'
     drain(10)
-    assert len(set(graphics(transcript)))>3, 'startup must advance through distinct morph poses automatically'
+    assert len(set(startup_graphics(transcript)))>3, 'startup must advance through distinct morph poses automatically'
     settled = len(transcript)
     drain(.4)
-    assert not graphics(transcript[settled:]), 'central animation must settle after ten seconds'
+    assert not startup_graphics(transcript[settled:]), 'central animation must settle after ten seconds'
     assert b'a=t,' in transcript and b'z=-1073741825' in transcript, 'native paper must be uploaded behind text'
     assert b'a=t,' not in transcript[settled:], 'stationary paper pixels must be retained rather than re-uploaded'
     result['native_paper_pixels_cached'] = True
-    settled_image=graphics(transcript)[-1]
+    settled_image=startup_graphics(transcript)[-1]
     assert struct.unpack('>II',settled_image[16:24])==(52*6,26*12), 'smaller artwork must retain three times the linear dot resolution'
     result['central_morph_animates_then_settles'] = True
     before_hover=len(transcript)
     send(b'\x1b[<35;85;21M')
-    assert all(frame==settled_image for frame in graphics(transcript[before_hover:])), 'hover must not change the pose'
+    assert all(frame==settled_image for frame in startup_graphics(transcript[before_hover:])), 'hover must not change the pose'
     after_hover=len(transcript)
     drain(.4)
-    assert not graphics(transcript[after_hover:]), 'hover must not start playback'
+    assert not startup_graphics(transcript[after_hover:]), 'hover must not start playback'
     before_click=len(transcript)
     send(b'\x1b[<0;80;21M')
     drain(.7)
-    assert graphics(transcript[before_click:]), 'click must replay the morph'
+    assert startup_graphics(transcript[before_click:]), 'click must replay the morph'
     result['central_morph_ignores_hover_and_click_replays'] = True
     send(b'\x1b\x1b')
     assert process.poll() is None and b'OSMOGREP_UI_EXIT' not in transcript
@@ -267,14 +269,14 @@ try:
     result['command_picker_navigation_and_execution'] = True
     # Footer hit regions open independent model/provider selectors and use real catalog metadata.
     at=len(transcript)
-    send(b'\x1b[<0;5;44M')
+    send(b'\x1b[<0;11;44M')
     wait_for(lambda:b'Choose model' in plain(transcript[at:]) and b'local-ui-alternate' in plain(transcript[at:]))
     paste('local-ui-alternate')
     send(b'\x1b[<0;8;10M')
     wait_for(lambda:b'Switched model: provider=openai model=local-ui-alternate' in plain(transcript[at:]))
-    # The new shorter model label places its provider chip at columns 27 onward.
+    # The compact provider mark stays first, independently of model-name length.
     at=len(transcript)
-    send(b'\x1b[<0;29;44M')
+    send(b'\x1b[<0;5;44M')
     wait_for(lambda:b'Choose provider' in plain(transcript[at:]))
     paste('openai');send(b'\r')
     wait_for(lambda:b'Choose model' in plain(transcript[at:]))

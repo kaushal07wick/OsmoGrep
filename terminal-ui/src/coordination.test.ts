@@ -74,12 +74,13 @@ test('inactive voice is absent even after the status was previously shown',()=>{
 });
 
 
-test('release card keeps output and draft visible with three update decisions',()=>{
+test('release screen gates chat while preserving the draft in application state',()=>{
  for(const height of [20,24,32,36,40])for(const light of [false,true]){
   const f=render({...fixture(),height,theme:light?'light':'dark',input:'keep draft',cursor:10,logs:[{level:'Info',text:'RECENT_OUTPUT'}],update:'Update available',release:{current:'0.3.4',latest:'0.4.0',notes:['Better sessions','Improved input'],selected:1,installing:false}});
   const text=f.rows.map(stripTerminalSequences).join('\n');
-  for(const label of ['RECENT_OUTPUT','keep draft','OsmoGrep','Update now','Later','Skip this version'])assert.ok(text.includes(label),`${height}: ${label}`);
-  assert.ok(f.execution.height>=3);assert.ok(f.rows.every(row=>visibleWidth(row)<=f.input.width+2));
+  for(const label of ['osmogrep','Update now','Later','Skip this version'])assert.ok(text.includes(label),`${height}: ${label}`);
+  assert.ok(!text.includes('RECENT_OUTPUT')&&!text.includes('keep draft'));
+  assert.equal(f.execution.height,0);assert.equal(f.input.height,0);assert.ok(f.rows.every(row=>visibleWidth(row)<=f.input.width+2));
  }
 });
 

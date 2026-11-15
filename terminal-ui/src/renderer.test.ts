@@ -19,8 +19,38 @@ test('matches the reference geometry at idle and during conversation', () => {
   assert.match(stripTerminalSequences(idle.rows[1]!), /osmogrep.*test/);
   v.logs = [{ text: 'USER|Explain the code', level: 'Info' }, { text: 'A paragraph.\n\nAnother paragraph.', level: 'Info' }];
   const active = render(v);
+  assert.equal(active.execution.y,0);
+  assert.ok(!active.rows.map(stripTerminalSequences).join('').includes('osmogrep vtest'));
   assert.deepEqual(idle.input, active.input);
   assert.match(active.rows.map(row => stripTerminalSequences(row).trimEnd()).join('\n'), /A paragraph\.\n\s*\n.*Another paragraph\./);
+});
+
+test('the welcome header stays hidden while running, after completion and after clearing visible output',()=>{
+ const v=fixture();assert.ok(render(v).execution.y>0);
+ for(const change of [{running:true},{conversationStarted:true},{stream:'Hello'},{logs:[{text:'USER|Hello',level:'Info'}]}]){
+  const frame=render({...v,...change});assert.equal(frame.execution.y,0);assert.equal(frame.artwork,null);
+ }
+});
+
+test('update gate hides conversation and input, reports real bytes and keeps retry and restart controls reachable',()=>{
+ for(const [width,height] of [[1,1],[40,18],[80,30],[160,44]])for(const light of [true,false])for(const stage of ['', 'downloading','verifying','installing','failed','ready']){
+  const frame=render({...fixture(),width:width!,height:height!,theme:light?'light':'dark',logs:[{text:'PRIVATE TRANSCRIPT',level:'Info'}],release:{current:'0.3.4',latest:'0.3.5',notes:['Fresh sessions; restore previous work explicitly.'],selected:1,installing:['downloading','verifying','installing'].includes(stage),progress:{stage,received:500000,total:1000000,detail:stage==='failed'?'Connection lost':null}}});
+  const text=frame.rows.map(stripTerminalSequences).join('\n');
+  assert.equal(frame.input.height,0);assert.equal(frame.execution.height,0);assert.equal(frame.cursorVisible,false);assert.ok(!text.includes('PRIVATE TRANSCRIPT'));assert.ok(frame.rows.every(row=>visibleWidth(row)<=width!));
+  if(width!>=80){if(stage==='downloading')assert.match(text,/50%/);if(stage==='ready')assert.ok(frame.controls?.some(c=>c.id==='update'&&c.index===0));if(stage==='failed')assert.match(text,/Retry update/);}
+ }
+ const checking=render({...fixture(),checkingUpdate:true});assert.match(checking.rows.join(''),/Checking for updates/);assert.equal(checking.input.height,0);
+});
+
+test('graphical provider selector uses a bundled small logo and preserves the exact model ID',()=>{
+ try{
+  setCapabilities({images:'kitty',trueColor:true,hyperlinks:false});
+  const view={...fixture(),provider:'openai',model:'gpt-5.2-2025-12-11',conversationStarted:true,statusEntries:[{id:'model',value:'ignored'}]};
+  const frame=render(view),control=frame.controls?.find(c=>c.id==='provider');
+  assert.ok(control);assert.ok(frame.images.some(image=>image.x===control.x&&image.y===control.y));
+  assert.match(frame.rows.map(stripTerminalSequences).join(''),/gpt-5\.2-2025-12-11/);
+  assert.ok(!frame.rows.map(stripTerminalSequences).join('').includes('openai'));
+ }finally{setCapabilities({images:null,trueColor:true,hyperlinks:false});}
 });
 test('bounded layout, editor and cursor at tiny and wide sizes', () => {
   for (const [width, height] of [[1,1], [20,5], [40,12], [80,24], [160,44], [240,80]]) {

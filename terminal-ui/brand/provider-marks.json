@@ -1,0 +1,12 @@
+{
+  "openai": "https://github.com/openai.png?size=32",
+  "anthropic": "https://github.com/anthropics.png?size=32",
+  "groq": "https://github.com/groq.png?size=32",
+  "mistral": "https://github.com/mistralai.png?size=32",
+  "openrouter": "https://github.com/OpenRouterTeam.png?size=32",
+  "deepseek": "https://github.com/deepseek-ai.png?size=32",
+  "xai": "https://github.com/xai-org.png?size=32",
+  "ollama": "https://github.com/ollama.png?size=32",
+  "lmstudio": "https://github.com/lmstudio-ai.png?size=32",
+  "vllm": "https://github.com/vllm-project.png?size=32"
+}

@@ -501,6 +501,7 @@ fn plan_mode_prompt(text: &str) -> String {
 }
 
 fn handle_update_event(state: &mut AgentState, evt: updater::UpdateEvent) {
+    state.ui.update_check_pending = false;
     match evt {
         updater::UpdateEvent::Available(info) => {
             if updater::skipped(&info.latest_version) {
@@ -515,55 +516,52 @@ fn handle_update_event(state: &mut AgentState, evt: updater::UpdateEvent) {
                 installing: false,
                 selected: 1,
                 notes: info.notes,
+                progress: Default::default(),
             });
             state.ui.update_check_status = Some(format!(
                 "update available: {} -> {}",
                 info.current_version, info.latest_version
             ));
-            log(
-                state,
-                LogLevel::Warn,
-                format!(
-                    "Osmogrep update available: {} -> {}. Press u to update, l for later, s to skip this version.",
-                    info.current_version, info.latest_version
-                ),
-            );
         }
         updater::UpdateEvent::UpToDate(version) => {
             state.ui.update_check_status = Some(format!("up to date ({version})"));
         }
         updater::UpdateEvent::CheckFailed(error) => {
-            state.ui.update_check_status = Some("update check failed".to_string());
-            log_status(state, format!("Update check failed: {error}"));
+            state.ui.update_check_status = Some(format!("update check unavailable: {error}"));
         }
         updater::UpdateEvent::InstallStarted(info) => {
             if let Some(update) = state.ui.pending_update.as_mut() {
                 update.installing = true;
             }
             state.ui.update_check_status = Some(format!("installing {}", info.latest_version));
-            log_status(
-                state,
-                format!("Installing Osmogrep {}...", info.latest_version),
-            );
+        }
+        updater::UpdateEvent::Progress(progress) => {
+            if let Some(update) = state.ui.pending_update.as_mut() {
+                update.progress = progress;
+            }
         }
         updater::UpdateEvent::Installed(info) => {
-            state.ui.pending_update = None;
+            if let Some(update) = state.ui.pending_update.as_mut() {
+                update.installing = false;
+                update.progress = updater::InstallProgress {
+                    stage: "ready",
+                    ..Default::default()
+                };
+                update.selected = 0;
+            }
             state.ui.update_check_status = Some(format!("updated to {}", info.latest_version));
-            log(
-                state,
-                LogLevel::Success,
-                format!(
-                    "Osmogrep updated to {}. Restart the terminal session to use the new binary.",
-                    info.latest_version
-                ),
-            );
         }
         updater::UpdateEvent::InstallFailed(error) => {
             if let Some(update) = state.ui.pending_update.as_mut() {
                 update.installing = false;
+                update.progress = updater::InstallProgress {
+                    stage: "failed",
+                    detail: Some(error),
+                    ..Default::default()
+                };
+                update.selected = 0;
             }
             state.ui.update_check_status = Some("update install failed".to_string());
-            log(state, LogLevel::Error, format!("Update failed: {error}"));
         }
     }
 }
@@ -576,6 +574,10 @@ fn approve_update(state: &mut AgentState, update_tx: &mpsc::Sender<updater::Upda
         return;
     }
     update.installing = true;
+    update.progress = updater::InstallProgress {
+        stage: "checksum",
+        ..Default::default()
+    };
     let info = updater::UpdateInfo {
         current_version: update.current_version.clone(),
         latest_version: update.latest_version.clone(),
@@ -1325,6 +1327,7 @@ fn run_tui(
     team_enabled: bool,
     open_center: bool,
 ) -> Result<Option<state::SessionTarget>, Box<dyn Error>> {
+    let restart_executable = std::env::current_exe()?;
     let mut terminal_session = setup_terminal()?;
 
     let backend = CrosstermBackend::new(io::stdout());
@@ -1392,8 +1395,9 @@ fn run_tui(
     let mut agent_steer_tx: Option<mpsc::Sender<String>> = None;
     let (job_tx, job_rx) = mpsc::channel::<JobEvent>();
     let (update_tx, update_rx) = mpsc::channel::<updater::UpdateEvent>();
-    updater::spawn_update_check(update_tx.clone());
+    state.ui.update_check_pending = updater::spawn_update_check(update_tx.clone());
     let mut deferred_update = None;
+    let mut restart_after_update = false;
     let mut running_jobs = 0usize;
     let mut context_rx: Option<mpsc::Receiver<ContextEvent>>;
     let voice_silence_ms: u64 = std::env::var("VLLM_REALTIME_SILENCE_MS")
@@ -1464,19 +1468,24 @@ fn run_tui(
         if state.ui.update_install_requested {
             state.ui.update_install_requested = false;
             state.ui.update_skip_requested = false;
+            if state
+                .ui
+                .pending_update
+                .as_ref()
+                .is_some_and(|u| u.progress.stage == "ready")
+            {
+                persistence::save(&state)?;
+                restart_after_update = true;
+                break;
+            }
             approve_update(&mut state, &update_tx);
             runtime.mark_dirty();
         }
         if state.ui.update_later_requested {
             state.ui.update_later_requested = false;
             if let Some(update) = state.ui.pending_update.take() {
-                log_status(
-                    &mut state,
-                    format!(
-                        "Update {} postponed until the next launch.",
-                        update.latest_version
-                    ),
-                );
+                state.ui.update_check_status =
+                    Some(format!("Update {} postponed", update.latest_version));
             }
             runtime.mark_dirty();
         }
@@ -1529,7 +1538,9 @@ fn run_tui(
 
         loop {
             match update_rx.try_recv() {
-                Ok(updater::UpdateEvent::Available(info)) => deferred_update = Some(info),
+                Ok(updater::UpdateEvent::Available(info)) if !state.ui.update_check_pending => {
+                    deferred_update = Some(info)
+                }
                 Ok(evt) => {
                     handle_update_event(&mut state, evt);
                     runtime.mark_dirty();
@@ -1540,6 +1551,8 @@ fn run_tui(
         }
 
         if !state.ui.agent_running
+            && running_jobs == 0
+            && state.job_queue.is_empty()
             && state.ui.input.is_empty()
             && state.ui.pending_permission.is_none()
             && state.ui.panel.is_none()
@@ -1550,6 +1563,10 @@ fn run_tui(
                 handle_update_event(&mut state, updater::UpdateEvent::Available(info));
                 runtime.mark_dirty();
             }
+        }
+
+        if state.ui.update_check_pending || state.ui.pending_update.is_some() {
+            continue;
         }
 
         while running_jobs < 2 && !state.job_queue.is_empty() {
@@ -2319,6 +2336,23 @@ fn run_tui(
     drop(runtime);
     teardown_terminal(&mut terminal, &mut terminal_session)?;
 
+    if restart_after_update {
+        let args: Vec<_> = std::env::args_os().skip(1).collect();
+        drop(state);
+        drop(agent);
+        drop((team::Cleanup, command_sessions::Cleanup, mcp::Cleanup));
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            return Err(Command::new(restart_executable).args(args).exec().into());
+        }
+        #[cfg(not(unix))]
+        {
+            Command::new(restart_executable).args(args).status()?;
+            return Ok(None);
+        }
+    }
+
     if let Some(next) = state.ui.open_session.take() {
         return Ok(Some(next));
     }
@@ -2346,6 +2380,7 @@ fn tui_live_activity(state: &AgentState, agent_active: bool, running_jobs: usize
         || state.ui.agent_running
         || state.ui.indexing
         || state.ui.streaming_active
+        || state.ui.update_check_pending
         || state.voice.connected
         || state
             .ui

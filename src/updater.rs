@@ -1,12 +1,13 @@
 use std::env;
 use std::fs;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc::Sender;
 use std::thread;
 use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 const REPO: &str = "kaushal07wick/OsmoGrep";
@@ -27,8 +28,17 @@ pub enum UpdateEvent {
     UpToDate(String),
     CheckFailed(String),
     InstallStarted(UpdateInfo),
+    Progress(InstallProgress),
     Installed(UpdateInfo),
     InstallFailed(String),
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct InstallProgress {
+    pub stage: &'static str,
+    pub received: u64,
+    pub total: Option<u64>,
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -45,9 +55,9 @@ struct Asset {
     browser_download_url: String,
 }
 
-pub fn spawn_update_check(tx: Sender<UpdateEvent>) {
+pub fn spawn_update_check(tx: Sender<UpdateEvent>) -> bool {
     if env_flag("OSMOGREP_DISABLE_UPDATE_CHECK") {
-        return;
+        return false;
     }
     thread::spawn(move || {
         let mut offered = String::new();
@@ -69,12 +79,15 @@ pub fn spawn_update_check(tx: Sender<UpdateEvent>) {
             thread::sleep(Duration::from_secs(6 * 60 * 60));
         }
     });
+    true
 }
 
 pub fn spawn_update_install(info: UpdateInfo, tx: Sender<UpdateEvent>) {
     thread::spawn(move || {
         let _ = tx.send(UpdateEvent::InstallStarted(info.clone()));
-        let event = match install_update(&info) {
+        let event = match install_update(&info, |progress| {
+            let _ = tx.send(UpdateEvent::Progress(progress));
+        }) {
             Ok(()) => UpdateEvent::Installed(info),
             Err(error) => UpdateEvent::InstallFailed(error),
         };
@@ -158,7 +171,7 @@ fn release_notes(body: &str) -> Vec<String> {
 fn fetch_latest_release() -> Result<Release, String> {
     let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
     reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(20))
+        .timeout(Duration::from_secs(5))
         .build()
         .map_err(|e| e.to_string())?
         .get(url)
@@ -171,40 +184,140 @@ fn fetch_latest_release() -> Result<Release, String> {
         .map_err(|e| e.to_string())
 }
 
-fn install_update(info: &UpdateInfo) -> Result<(), String> {
+fn install_update(
+    info: &UpdateInfo,
+    mut progress: impl FnMut(InstallProgress),
+) -> Result<(), String> {
     let current = env::current_exe().map_err(|e| e.to_string())?;
     let install_path = canonical_install_path(&current);
     let tmp_dir = env::temp_dir().join(format!("osmogrep-update-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
-    let archive_path = tmp_dir.join(&info.asset_name);
-    download(&info.asset_url, &archive_path)?;
-    let checksum_path = tmp_dir.join(format!("{}.sha256", info.asset_name));
-    download(&info.checksum_url, &checksum_path)?;
-    install_verified_archive(
-        &archive_path,
-        &checksum_path,
-        &info.asset_name,
-        &install_path,
-        &tmp_dir,
-    )?;
+    let result = (|| {
+        let archive_path = tmp_dir.join(&info.asset_name);
+        let checksum_path = tmp_dir.join(format!("{}.sha256", info.asset_name));
+        download(
+            &info.checksum_url,
+            &checksum_path,
+            "checksum",
+            &mut progress,
+        )?;
+        expected_checksum(&checksum_path, &info.asset_name)?;
+        download(&info.asset_url, &archive_path, "downloading", &mut progress)?;
+        progress(InstallProgress {
+            stage: "verifying",
+            ..Default::default()
+        });
+        verify_checksum(&archive_path, &checksum_path, &info.asset_name)?;
+        let binary_path = unpack_archive(&archive_path, &tmp_dir)?;
+        progress(InstallProgress {
+            stage: "installing",
+            ..Default::default()
+        });
+        replace_binary(&binary_path, &install_path)
+    })();
     let _ = fs::remove_dir_all(tmp_dir);
-    Ok(())
+    result
 }
 
-fn download(url: &str, path: &Path) -> Result<(), String> {
-    let bytes = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(60))
+fn download(
+    url: &str,
+    path: &Path,
+    stage: &'static str,
+    progress: &mut impl FnMut(InstallProgress),
+) -> Result<(), String> {
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(180))
         .build()
-        .map_err(|e| e.to_string())?
-        .get(url)
-        .header("User-Agent", "osmogrep-updater")
-        .send()
-        .map_err(|e| e.to_string())?
-        .error_for_status()
-        .map_err(|e| e.to_string())?
-        .bytes()
         .map_err(|e| e.to_string())?;
-    fs::write(path, bytes).map_err(|e| e.to_string())
+    for attempt in 0..3 {
+        progress(InstallProgress {
+            stage,
+            detail: (attempt > 0).then(|| format!("Connection interrupted · retry {attempt}/2")),
+            ..Default::default()
+        });
+        let result = (|| {
+            let response = client
+                .get(url)
+                .header("User-Agent", "osmogrep-updater")
+                .send();
+            let mut response = response
+                .and_then(|response| response.error_for_status())
+                .map_err(|error| {
+                    let retry = error.is_connect()
+                        || error.is_timeout()
+                        || error.is_body()
+                        || error.status().is_some_and(|s| {
+                            s.is_server_error() || matches!(s.as_u16(), 408 | 429)
+                        });
+                    let message = error.without_url();
+                    let mut message_text = message.to_string();
+                    let mut source = std::error::Error::source(&message);
+                    while let Some(cause) = source {
+                        message_text.push_str(&format!(": {cause}"));
+                        source = cause.source();
+                    }
+                    (message_text, retry)
+                })?;
+            let total = response.content_length();
+            let mut file = fs::File::create(path).map_err(|e| (e.to_string(), false))?;
+            transfer(&mut response, &mut file, total, |received| {
+                progress(InstallProgress {
+                    stage,
+                    received,
+                    total,
+                    detail: None,
+                })
+            })
+            .map_err(|e| {
+                (
+                    e.to_string(),
+                    e.kind() != std::io::ErrorKind::PermissionDenied,
+                )
+            })
+        })();
+        match result {
+            Ok(()) => return Ok(()),
+            Err((error, retry)) if !retry || attempt == 2 => {
+                return Err(format!("{stage}: {error}"))
+            }
+            Err(_) => thread::sleep(Duration::from_millis(500 * (attempt + 1))),
+        }
+    }
+    unreachable!()
+}
+
+fn transfer(
+    reader: &mut impl Read,
+    writer: &mut impl Write,
+    total: Option<u64>,
+    mut progress: impl FnMut(u64),
+) -> std::io::Result<()> {
+    let mut buffer = [0; 64 * 1024];
+    let mut received = 0;
+    let mut last = std::time::Instant::now();
+    progress(0);
+    loop {
+        let count = reader.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        writer.write_all(&buffer[..count])?;
+        received += count as u64;
+        if last.elapsed() >= Duration::from_millis(100) {
+            progress(received);
+            last = std::time::Instant::now();
+        }
+    }
+    if total.is_some_and(|expected| expected != received) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "download was incomplete",
+        ));
+    }
+    writer.flush()?;
+    progress(received);
+    Ok(())
 }
 
 fn verify_checksum(archive: &Path, checksum_file: &Path, asset_name: &str) -> Result<(), String> {
@@ -219,6 +332,7 @@ fn verify_checksum(archive: &Path, checksum_file: &Path, asset_name: &str) -> Re
     }
 }
 
+#[cfg(test)]
 fn install_verified_archive(
     archive: &Path,
     checksum_file: &Path,
@@ -320,7 +434,12 @@ fn replace_binary(src: &Path, dst: &Path) -> Result<(), String> {
         let _ = fs::remove_file(&backup);
         fs::rename(dst, &backup).map_err(|e| e.to_string())?;
     }
-    fs::rename(&tmp, dst).map_err(|e| e.to_string())?;
+    if let Err(error) = fs::rename(&tmp, dst) {
+        if backup.exists() {
+            fs::rename(&backup, dst).map_err(|restore| format!("Installation failed: {error}; could not restore previous executable: {restore}. Backup: {}", backup.display()))?;
+        }
+        return Err(error.to_string());
+    }
     let _ = fs::remove_file(backup);
     Ok(())
 }
@@ -394,6 +513,65 @@ fn env_flag(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn download_transfer_reports_bytes_and_rejects_truncation() {
+        let input = vec![42; 180_000];
+        let mut output = Vec::new();
+        let mut counts = Vec::new();
+        transfer(
+            &mut input.as_slice(),
+            &mut output,
+            Some(input.len() as u64),
+            |n| counts.push(n),
+        )
+        .unwrap();
+        assert_eq!(input, output);
+        assert_eq!(counts.first(), Some(&0));
+        assert_eq!(counts.last(), Some(&(input.len() as u64)));
+        assert!(counts.windows(2).all(|pair| pair[0] <= pair[1]));
+        assert_eq!(
+            transfer(&mut &b"short"[..], &mut Vec::new(), Some(20), |_| {})
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::UnexpectedEof
+        );
+        transfer(&mut &b"unknown length"[..], &mut Vec::new(), None, |_| {}).unwrap();
+    }
+
+    #[test]
+    fn download_retries_transient_failure_before_reporting_complete() {
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = server.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            for status in ["503 Service Unavailable", "200 OK"] {
+                let (mut socket, _) = server.accept().unwrap();
+                let mut request = [0; 4096];
+                socket.read(&mut request).unwrap();
+                write!(
+                    socket,
+                    "HTTP/1.1 {status}\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello"
+                )
+                .unwrap();
+            }
+        });
+        let path = env::temp_dir().join(format!("osmogrep-download-{}", uuid::Uuid::new_v4()));
+        let mut updates = Vec::new();
+        download(
+            &format!("http://{address}/release"),
+            &path,
+            "downloading",
+            &mut |p| updates.push(p),
+        )
+        .unwrap();
+        handle.join().unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"hello");
+        assert!(updates
+            .iter()
+            .any(|p| p.detail.as_ref().is_some_and(|d| d.contains("retry 1/2"))));
+        assert_eq!(updates.last().unwrap().received, 5);
+        fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn release_highlights_are_bounded_and_cannot_inject_terminal_controls() {

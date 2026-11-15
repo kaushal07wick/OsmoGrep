@@ -9,6 +9,7 @@ import {statusLayout,activity,type StatusEntry} from './chrome.ts';
 import {diffLines,highlightTranscript,selectedTranscript,type TranscriptSelection,type FileDiff} from './transcript.ts';
 import {paperRow,paperColors,paperGraphic} from './paper.ts';
 import {orb,activityInfo,completionLine} from './activity.ts';
+import {providerMarks} from './provider-marks.ts';
 
 export interface Rect { x: number; y: number; width: number; height: number }
 export interface Attachment { id: number; label: string; thumbnail: string; width: number; height: number }
@@ -27,6 +28,8 @@ export interface View {
   introElapsed?: number;
   introScene?: Scene;
   introBright?: boolean;
+  conversationStarted?:boolean;
+  checkingUpdate?:boolean;
   panel?: PanelView | null;
   approval?: {tool:string;args:string;selected?:number} | null;
   statusLine?: string[];
@@ -46,7 +49,7 @@ export interface Rendered {
   editorWidth: number;
   animate: boolean;
   artwork: Rect | null;
-  controls?:{id:'model'|'provider'|'choice'|'voice'|'team'|'copy';index?:number;label?:string;x:number;y:number;width:number;height:number}[];
+  controls?:{id:'model'|'provider'|'choice'|'voice'|'team'|'copy'|'update';index?:number;label?:string;x:number;y:number;width:number;height:number}[];
   transcript?:{x:number;y:number;width:number;height:number;start:number;maxScroll:number;lineWidths:number[];scrollbar?:Rect|null};
   selectionText?:string;
   images: { id: number; x: number; y: number; sequence: string; placement?:string }[];
@@ -106,8 +109,22 @@ export function render(v: View): Rendered {
   const put = (y: number, text: string, x = gutter, n = width) => {
     if (y >= 0 && y < h) rows[y] = ' '.repeat(Math.min(x, w - 1)) + clip(text, Math.min(n, w - x));
   };
-  const headerY = (v.approval&&h<32) || h < 15 || v.density === 'compact' ? 0 : v.density === 'spacious' ? 2 : 1;
-  const headerHeight = v.approval&&h<32?0:h >= 15 && v.density !== 'compact' ? (v.density === 'spacious' ? 5 : 4) : h >= 8 ? 2 : 0;
+  if(v.release||v.checkingUpdate){
+    const boxWidth=Math.max(1,Math.min(88,w-8)),inset=boxWidth>=30?2:0,inner=Math.max(1,boxWidth-inset*2);
+    const lines=v.release?updateLines(v.release,inner,accent,light,h<25,v.preferences?.reduce_motion?0:v.elapsed):[fg+bold('osmogrep')+reset,'',accent+'Checking for updates…','',dim+'esc continue to chat'];
+    const shown=lines.slice(0,Math.max(1,h-2)),x=Math.max(0,Math.floor((w-boxWidth)/2))+inset,y=Math.max(0,Math.floor((h-shown.length)/2));
+    shown.forEach((line,i)=>put(y+i,line,x,inner));
+    if(v.release&&!v.release.installing){
+      const labels=v.release.progress?.stage==='ready'?['R Restart & open chat']:[v.release.progress?.stage==='failed'?'R Retry update':'U Update now','L Later','S Skip this version'];
+      labels.forEach((label,index)=>{const row=shown.findIndex(line=>stripTerminalSequences(line).includes(label));if(row>=0){const before=stripTerminalSequences(shown[row]!).split(label)[0]!;controls.push({id:'update',index,x:x+visibleWidth(before),y:y+row,width:Math.min(label.length,inner-visibleWidth(before)),height:1});}});
+    }
+    const root=light?'\x1b[48;2;250;250;250m':'\x1b[48;2;0;0;0m';
+    const empty={x:0,y:0,width:w,height:0};
+    return {id:v.id,rows:rows.map(row=>root+fg+clip(row,w)+' '.repeat(Math.max(0,w-visibleWidth(clip(row,w))))+reset),input:empty,execution:empty,editorWidth:inner,animate:!!v.release?.installing&&!v.preferences?.reduce_motion,artwork:null,cursor:{x:0,y:0},cursorVisible:false,images:[],controls};
+  }
+  const conversationStarted=v.conversationStarted||v.running||!!v.stream||v.logs.some(log=>log.text.startsWith('USER|'));
+  const headerY = conversationStarted || (v.approval&&h<32) || h < 15 || v.density === 'compact' ? 0 : v.density === 'spacious' ? 2 : 1;
+  const headerHeight = conversationStarted || v.approval&&h<32?0:h >= 15 && v.density !== 'compact' ? (v.density === 'spacious' ? 5 : 4) : h >= 8 ? 2 : 0;
   const header = [
     fg + bold('osmogrep') + reset + dim + ` v${clean(v.version)}` + (v.session ? ` · ${clean(v.session)}` : '') + reset,
     dim + clean(`${v.model} · ${v.provider}`) + reset,
@@ -187,7 +204,7 @@ export function render(v: View): Rendered {
   let artwork: Rect | null = null;
   const images: Rendered['images'] = [];
   const introElapsed = v.preferences?.reduce_motion ? introDuration : v.introElapsed ?? v.elapsed;
-  if (v.preferences?.ambient_art!==false && !v.panel && !value && !v.masked && !transcript.length && !v.running && !v.permission && !v.update && !v.voice && !v.commands.length
+  if (!conversationStarted && v.preferences?.ambient_art!==false && !v.panel && !value && !v.masked && !transcript.length && !v.running && !v.permission && !v.update && !v.voice && !v.commands.length
     && width >= 36 && execution.height >= 16) {
     const clearance=Math.max(3,Math.min(6,Math.floor(execution.height*.15)));
     const height = Math.min(26, execution.height-clearance-1), columns = Math.min(56, height*2, width-6);
@@ -259,10 +276,16 @@ export function render(v: View): Rendered {
     const right = dim+((v.queuedMessages??0)>0?`${v.queuedMessages} queued${v.queuePaused?' · enter resume':''}`:!v.followTail&&maxScroll>0?`${maxScroll-start} ↑ · end live`:v.running?`${v.shortcuts?.queue??'tab'} queue`:maxScroll>0?'scroll · pgup/pgdn':`${sessionsKey} sessions`)+reset;
     const reserve=width>=60?visibleWidth(right)+3:0;
     const entries=v.statusEntries??(v.statusLine?v.statusLine.map((value,i)=>({id:value.startsWith('~')||value.startsWith('/')?'directory':i===0?'model':'optional',value})):[{id:'permissions',value:`${v.profile} · ${permission}`}]);
-    const fields=entries.flatMap(e=>e.id==='model'?[{id:'model',value:clean(v.model)+' ▾'},{id:'provider',value:clean(v.provider)+' ▾'}]:[e]);
+    const providerMark=paperGraphics?providerMarks[v.provider.toLowerCase()]:undefined;
+    const fields=entries.flatMap(e=>e.id==='model'?[{id:'provider',value:providerMark?'  ▾':clean(v.provider)+' ▾'},{id:'model',value:clean(v.model)+' ▾'}]:[e]);
     const layout=statusLayout(fields,Math.max(1,width-pad*2-reserve)),left=dim+layout.text+reset;
     if(!v.panel&&!v.permission&&!v.update&&!v.masked)for(const item of layout.items)if(item.id==='model'||item.id==='provider')controls.push({id:item.id,x:gutter+pad+item.x,y:statusY,width:item.width,height:1});
     put(statusY,' '.repeat(pad)+left,width>=40?gutter:gutter,Math.max(1,width-pad));
+    const providerItem=layout.items.find(item=>item.id==='provider');
+    if(providerMark&&providerItem&&providerItem.width>=2){
+      const id=(process.pid*128+124)>>>0,graphic=renderImage(providerMark,{widthPx:16,heightPx:16},{imageId:id,maxWidthCells:2,maxHeightCells:1,moveCursor:false});
+      if(graphic)images.push({id,x:gutter+pad+providerItem.x,y:statusY,sequence:graphic.sequence.replace('a=T','a=t'),placement:`\x1b_Ga=p,i=${id},p=1,c=2,r=1,C=1,q=2;\x1b\\`});
+    }
     if(reserve)rows[statusY]+=' '.repeat(Math.max(1,width-pad*2-visibleWidth(left)-visibleWidth(right)))+right;
 
     if(showHints){const keys=(v.shortcuts?.keymap??'f8').toUpperCase();put(h-1,' '.repeat(pad)+dim+`${sessionsKey} sessions · ${keys} shortcuts`+reset);}

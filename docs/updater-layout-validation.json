@@ -1,0 +1,64 @@
+{
+  "checked_at": "2026-11-15T18:18:11.889830+00:00",
+  "design": "Approved Quiet Prompt \u00d7 Split Edition",
+  "rust_tests": {
+    "passed": 273,
+    "ignored": 2
+  },
+  "terminal_ui_tests": {
+    "passed": 60
+  },
+  "macos_terminal_checks": {
+    "typescript_renderer_started": true,
+    "native_paper_pixels_cached": true,
+    "central_morph_animates_then_settles": true,
+    "central_morph_ignores_hover_and_click_replays": true,
+    "escape_does_not_exit_idle_app": true,
+    "greeting_has_no_tools_or_stale_background_jobs": true,
+    "inactive_voice_has_no_composer_badge": true,
+    "session_center_live_preview_preserves_draft_and_ownership": true,
+    "settings_categories_without_hidden_tab_navigation": true,
+    "command_picker_navigation_and_execution": true,
+    "footer_provider_model_selectors": true,
+    "light_cursor_has_explicit_contrast": true,
+    "settings_and_real_key_remapping": true,
+    "statusline_and_skill_picker": true,
+    "large_multiline_draft_editing": true,
+    "real_thumbnail_sequence": true,
+    "original_image_bytes_reached_provider": true,
+    "selected_skill_reached_provider": true,
+    "weekly_chart_entry_animation": true,
+    "reported_usage_and_pixel_history": true,
+    "real_permission_dock_and_numbered_diff": true,
+    "highlighted_command_card_click_copies_only_code": true,
+    "submitted_followups_are_distinct_fifo_turns": true,
+    "assistant_preface_does_not_skip_requested_tools": true,
+    "wheel_scrolling_and_drag_copy_plain_output": true,
+    "transcript_scroll_track_drags_and_returns_to_live": true,
+    "streaming_preserves_user_scroll_position": true,
+    "terminal_resize": true,
+    "existing_shell_command": true,
+    "renderer_crash_recovers_to_native_ui": true,
+    "terminal_state_restored": true,
+    "startup_is_fresh_until_saved_session_selected": true,
+    "preferences_survive_real_restart": true
+  },
+  "real_github_update": {
+    "release": "v0.3.5",
+    "fixture_version": "0.3.4",
+    "scope": "Isolated temporary executable; installed user binary unchanged",
+    "checks": {
+      "later_enters_chat_and_preserves_input_boundary": true,
+      "real_release_download_sha256_install_isolated_copy": true,
+      "real_download_bytes_visible": true,
+      "completion_waits_before_entering_chat": true,
+      "restart_runs_replaced_executable": true,
+      "installed_user_binary_untouched": true,
+      "paid_model_requests": 0
+    }
+  },
+  "limits": [
+    "Installed executable and published v0.3.5 assets were not replaced by this change.",
+    "Native graphical provider logos require Kitty graphics; unsupported terminals retain readable provider names."
+  ]
+}

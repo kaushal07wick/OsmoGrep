@@ -131,6 +131,7 @@ pub struct UiState {
     pub auto_approve: bool,
     pub pending_permission: Option<PendingPermission>,
     pub pending_update: Option<PendingUpdate>,
+    pub update_check_pending: bool,
     pub update_check_status: Option<String>,
     pub update_install_requested: bool,
     pub update_skip_requested: bool,
@@ -203,6 +204,7 @@ impl Default for UiState {
             auto_approve: false,
             pending_permission: None,
             pending_update: None,
+            update_check_pending: false,
             update_check_status: None,
             update_install_requested: false,
             update_skip_requested: false,
@@ -948,6 +950,7 @@ pub struct PendingUpdate {
     pub installing: bool,
     pub selected: usize,
     pub notes: Vec<String>,
+    pub progress: crate::updater::InstallProgress,
 }
 
 pub struct ConversationHistory {

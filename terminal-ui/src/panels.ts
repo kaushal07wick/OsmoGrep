@@ -3,6 +3,7 @@ import {plain,fit} from './chrome.ts';
 import {statsLines,type Day} from './stats.ts';
 import {drawCenter} from './center.ts';
 import {usageLines} from './usage.ts';
+import {websiteMark} from './brand.ts';
 export interface PanelView {
   settings?:boolean;previewing?:boolean; preview_offset?:number;
   title?:string;elapsed?:number;selecting?:boolean;center_filter?:number;counts?:number[];
@@ -55,18 +56,41 @@ export function permissionLines(tool:string,args:string,selected:number,width:nu
 }
 
 
-export interface ReleaseView {current:string;latest:string;notes:string[];selected:number;installing:boolean}
-export function updateLines(release:ReleaseView,width:number,accent:string,light:boolean,compact=false):string[]{
+export interface ReleaseView {current:string;latest:string;notes:string[];selected:number;installing:boolean;progress?:{stage:string;received:number;total:number|null;detail:string|null}}
+export function updateLines(release:ReleaseView,width:number,accent:string,light:boolean,compact=false,elapsed=0):string[]{
  const fg=light?'\x1b[38;2;32;32;32m':'\x1b[38;2;225;220;210m',dim=light?'\x1b[38;2;100;100;95m':'\x1b[38;2;145;140;132m';
- const inner=Math.max(1,width-4),wrap=(text:string)=>wrapTextWithAnsi(text,inner).slice(0,2);
- const notes=release.notes.length?release.notes:['A new release is ready to install.'];
- if(compact)return [accent+bold+'  ◌ OsmoGrep '+plain(release.latest)+reset+dim+' · from '+plain(release.current),
-  ...wrap(dim+'  • '+plain(notes[0]!)).slice(0,1),
-  release.installing?accent+'  Installing · verifying checksum…':['U Update now','L Later','S Skip this version'].map((label,i)=>(release.selected===i?accent+bold+'▸ ':dim)+label+reset).join('   '),
-  dim+'  ↑↓ choose · enter confirm · esc later'];
- return ['',accent+bold+'  ◌ OsmoGrep update'+reset,dim+`  ${plain(release.current)} → `+fg+plain(release.latest),'',
-  ...notes.slice(0,compact?2:5).flatMap(note=>wrap(dim+'  • '+plain(note))), '',
-  ...(release.installing?[accent+'  Installing · verifying download checksum…']:[
-   ...['U  Update now','L  Later','S  Skip this version'].map((label,i)=>(i===release.selected?accent+'  ▸ '+bold:dim+'    ')+label+reset),
-   '',dim+'  ↑↓ choose · enter confirm · esc later']), ''];
+ const split=width>=66,leftWidth=14,bodyWidth=Math.max(1,width-(split?leftWidth+4:0));
+ const stage=release.progress?.stage??(release.installing?'checksum':'');
+ const busy=release.installing,ready=stage==='ready',failed=stage==='failed';
+ const body=[fg+bold+'osmogrep'+reset+dim+' / update','',fg+(ready?'Ready for your next conversation.':failed?'Let’s try that again.':'A better workspace is ready.')];
+ const notes=release.notes.length?release.notes:['Improvements and fixes in this release.'];
+ if(!compact)body.push('',...notes.slice(0,3).flatMap(note=>{
+  const wrapped=wrapTextWithAnsi(plain(note.split(';')[0]!),Math.max(1,bodyWidth-2));
+  return [accent+'+ '+dim+wrapped[0],...(wrapped.length>1?[dim+'  '+fit(wrapped.slice(1).join(' '),Math.max(1,bodyWidth-2))]:[])];
+ }));
+ body.push('');
+ if(busy){
+  const p=release.progress,known=stage==='downloading'&&p?.total!=null&&p.total>0;
+  const ratio=known?Math.max(0,Math.min(1,p!.received/p!.total!)):0;
+  const barWidth=Math.max(1,Math.min(38,bodyWidth-7)),filled=Math.floor(barWidth*ratio),tick=Math.floor(elapsed/100);
+  body.push(accent+({'checksum':'Fetching release checksum','downloading':'Downloading update','verifying':'Verifying checksum','installing':'Installing update'}[stage]??'Preparing update'));
+  body.push(known?accent+'━'.repeat(filled)+dim+'─'.repeat(barWidth-filled)+accent+` ${Math.floor(ratio*100)}%`:Array.from({length:barWidth},(_,i)=>Math.abs(i-tick%(barWidth+5)+2)<2?accent+'━':dim+'─').join(''));
+  body.push(dim+(known?`${(p!.received/1e6).toFixed(1)} / ${(p!.total!/1e6).toFixed(1)} MB`:stage==='downloading'?`${((p?.received??0)/1e6).toFixed(1)} MB received`:stage==='verifying'?'Checking the downloaded release.':stage==='installing'?'Your conversations stay saved.':'Connecting to GitHub…'));
+  if(p?.detail)body.push(dim+fit(plain(p.detail),bodyWidth));
+  body.push('',dim+'Chat opens after the update.');
+ }else if(ready){
+  body.push('\x1b[38;2;130;185;135m✓ Update installed',dim+'Restart to use '+plain(release.latest)+'.','',accent+bold+'› R Restart & open chat'+reset);
+ }else{
+  if(failed){
+   body.push('\x1b[38;2;230;130;120mDownload or installation interrupted.',...wrapTextWithAnsi(dim+plain(release.progress?.detail??'Please retry when your connection is ready.'),bodyWidth).slice(0,2),dim+'The update did not complete.','');
+  }
+  const labels=[failed?'R Retry update':'U Update now','L Later','S Skip this version'];
+  body.push(...labels.map((label,i)=>(release.selected===i?accent+bold+'› ':dim+'  ')+label+reset));
+  body.push('',dim+'↑↓ choose · enter confirm · esc later');
+ }
+ const left=split?[...websiteMark(light),'',fg+bold+plain(release.latest)+reset,dim+'from '+plain(release.current)]:[fg+plain(release.latest)+dim+' · from '+plain(release.current)];
+ if(!split)return [...left,'',...body].map(row=>fit(row,width));
+ return Array.from({length:Math.max(left.length,body.length)},(_,i)=>{
+  const label=fit(left[i]??'',leftWidth);return label+' '.repeat(Math.max(0,leftWidth-visibleWidth(label)))+dim+' │  '+(body[i]??'');
+ }).map(row=>fit(row,width));
 }

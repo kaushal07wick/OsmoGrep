@@ -304,6 +304,32 @@ impl TypeScriptUi {
     }
 
     pub fn handle_visual_event(&mut self, event: &Event, state: &mut AgentState) -> bool {
+        if let Some(update) = state.ui.pending_update.as_mut() {
+            if let Event::Mouse(mouse) = event {
+                if mouse.kind == MouseEventKind::Down(MouseButton::Left) && !update.installing {
+                    if let Some(index) = self
+                        .controls
+                        .iter()
+                        .find(|c| {
+                            c.id == "update"
+                                && c.area.rect().contains((mouse.column, mouse.row).into())
+                        })
+                        .and_then(|c| c.index)
+                    {
+                        match index {
+                            0 => state.ui.update_install_requested = true,
+                            1 => state.ui.update_later_requested = true,
+                            2 => state.ui.update_skip_requested = true,
+                            _ => {}
+                        }
+                    }
+                }
+                return true;
+            }
+        }
+        if state.ui.update_check_pending && matches!(event, Event::Mouse(_)) {
+            return true;
+        }
         if matches!(event,Event::Mouse(m) if m.kind==MouseEventKind::Down(MouseButton::Left)) {
             self.selecting = false;
             self.copy_pending = false;
@@ -516,10 +542,11 @@ impl TypeScriptUi {
             || frame.controls.iter().any(|c| {
                 !matches!(
                     c.id.as_str(),
-                    "model" | "provider" | "choice" | "voice" | "team" | "copy"
+                    "model" | "provider" | "choice" | "voice" | "team" | "copy" | "update"
                 ) || c.id == "choice"
                     && (!c.index.is_some_and(|i| i <= 1000)
                         || c.label.as_ref().is_none_or(|s| s.len() > 160))
+                    || c.id == "update" && !c.index.is_some_and(|i| i <= 2)
                     || c.id == "copy"
                         && c.label.as_ref().is_none_or(|s| {
                             s.is_empty() || s.len() > 100_000 || s.contains('\u{1b}')
@@ -706,6 +733,12 @@ fn view(state: &AgentState, model: &ModelConfig, id: u64, width: u16, height: u1
         "selectedCommand":ui.command_selected, "tokens":state.usage.prompt_tokens+state.usage.completion_tokens,
     });
     snapshot["queuedMessages"] = json!(ui.queued_agent_prompts.len());
+    snapshot["conversationStarted"] = json!(state
+        .conversation
+        .messages
+        .iter()
+        .any(|message| message.get("role").and_then(Value::as_str) == Some("user")));
+    snapshot["checkingUpdate"] = json!(ui.update_check_pending);
     snapshot["queuePaused"] = json!(ui.queue_paused);
     snapshot["transcriptSelection"] = json!(ui.transcript_selection);
     if !ui.follow_tail && ui.exec_scroll_max != usize::MAX {
@@ -723,7 +756,7 @@ fn view(state: &AgentState, model: &ModelConfig, id: u64, width: u16, height: u1
         .into_iter()
         .map(|(id, value)| json!({"id":id,"value":value}))
         .collect::<Vec<_>>());
-    snapshot["release"] = json!(ui.pending_update.as_ref().map(|u|json!({"current":u.current_version,"latest":u.latest_version,"notes":u.notes,"selected":u.selected,"installing":u.installing})));
+    snapshot["release"] = json!(ui.pending_update.as_ref().map(|u|json!({"current":u.current_version,"latest":u.latest_version,"notes":u.notes,"selected":u.selected,"installing":u.installing,"progress":u.progress})));
     snapshot["runElapsed"] = json!(ui
         .run_started_at
         .map(|t| t.elapsed().as_millis() as u64)
