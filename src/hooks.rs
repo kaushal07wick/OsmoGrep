@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::Deserialize;
@@ -31,6 +31,23 @@ fn load_hooks() -> Option<Hooks> {
 }
 
 pub fn run_hook(name: &str, vars: &[(&str, &str)]) -> Result<Option<String>, String> {
+    run_hook_cancellable(
+        name,
+        vars,
+        &std::env::current_dir().map_err(|e| e.to_string())?,
+        &|| false,
+    )
+}
+
+pub fn run_hook_cancellable(
+    name: &str,
+    vars: &[(&str, &str)],
+    root: &Path,
+    cancel: &dyn Fn() -> bool,
+) -> Result<Option<String>, String> {
+    if cancel() {
+        return Err("cancelled".into());
+    }
     let hooks = match load_hooks() {
         Some(h) => h,
         None => return Ok(None),
@@ -48,11 +65,16 @@ pub fn run_hook(name: &str, vars: &[(&str, &str)]) -> Result<Option<String>, Str
     };
 
     let cmd = expand_template(&template, vars);
-    let out = Command::new("sh")
-        .arg("-lc")
-        .arg(&cmd)
-        .output()
-        .map_err(|e| e.to_string())?;
+    let mut command = Command::new("sh");
+    command.args(["-lc", &cmd]).current_dir(root);
+    let out = crate::process_runner::run_command_cancellable(
+        command,
+        crate::process_runner::timeout_from_env("OSMOGREP_HOOK_TIMEOUT_SECS", 15),
+        cancel,
+    )?;
+    if out.cancelled || out.timed_out {
+        return Err("Hook cancelled or timed out; action stopped".into());
+    }
 
     let mut text = String::new();
     text.push_str(&String::from_utf8_lossy(&out.stdout));
@@ -65,16 +87,12 @@ pub fn run_hook(name: &str, vars: &[(&str, &str)]) -> Result<Option<String>, Str
 
     let trimmed = text.trim();
     if trimmed.is_empty() {
-        Ok(Some(format!(
-            "hook={} exit={}",
-            name,
-            out.status.code().unwrap_or(-1)
-        )))
+        Ok(Some(format!("hook={} exit={}", name, out.exit_code)))
     } else {
         Ok(Some(format!(
             "hook={} exit={} output={}",
             name,
-            out.status.code().unwrap_or(-1),
+            out.exit_code,
             trim_one_line(trimmed)
         )))
     }

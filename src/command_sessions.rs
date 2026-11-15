@@ -61,7 +61,21 @@ fn start_command(
     let mut registry = sessions()
         .lock()
         .map_err(|_| "Command registry unavailable")?;
-    registry.retain(|_, s| s.lock().map(|s| !s.delivered).unwrap_or(true));
+    if registry.len() >= 64 {
+        let oldest = registry
+            .iter()
+            .filter_map(|(id, s)| {
+                s.lock()
+                    .ok()
+                    .filter(|s| s.delivered)
+                    .map(|s| (id.clone(), s.started))
+            })
+            .min_by_key(|(_, started)| *started)
+            .map(|(id, _)| id);
+        if let Some(id) = oldest {
+            registry.remove(&id);
+        }
+    }
     if registry.len() >= 64 {
         return Err(
             "Command session limit reached (64); close a completed session before starting another"
