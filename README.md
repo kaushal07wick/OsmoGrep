@@ -1,14 +1,8 @@
 <p align="center">
   <a href="https://osmogrep.com">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg" />
-      <source media="(prefers-color-scheme: light)" srcset="docs/assets/logo-light.svg" />
-      <img src="docs/assets/logo-light.svg" alt="OsmoGrep pixel-ring logo" width="88" height="80" />
-    </picture>
+    <img src="docs/assets/readme-brand.svg" alt="OsmoGrep — white pixel-ring logo and wordmark" width="432" />
   </a>
 </p>
-
-<h1 align="center">OsmoGrep</h1>
 
 <p align="center"><strong>Catch the bug. Ship the fix.</strong></p>
 <p align="center">Build features, understand a codebase, and fix bugs from your terminal.</p>

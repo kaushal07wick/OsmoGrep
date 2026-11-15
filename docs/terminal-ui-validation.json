@@ -396,7 +396,9 @@
         "contributors"
       ],
       "badge_svgs_valid": true,
-      "local_links_valid": true
+      "local_links_valid": true,
+      "header": "docs/assets/readme-brand.svg",
+      "layout": "White pixel ring and wordmark side by side in one graphic; no separate heading or theme-switching fallback"
     }
   }
 }
