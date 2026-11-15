@@ -356,7 +356,7 @@
       {
         "file": "docs/assets/terminal-cotton.png",
         "width": 1276,
-        "height": 944,
+        "height": 769,
         "frames": 1
       },
       {
@@ -374,9 +374,12 @@
       {
         "file": "docs/assets/terminal-workspace.png",
         "width": 1276,
-        "height": 944,
+        "height": 769,
         "frames": 1
       }
-    ]
+    ],
+    "local_links_checked": 35,
+    "product_overview": "README.md",
+    "technical_reference": "docs/reference.md"
   }
 }
