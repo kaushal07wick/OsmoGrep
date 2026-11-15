@@ -65,6 +65,8 @@ class Model(http.server.BaseHTTPRequestHandler):
             assert body['tool_choice']=='none' and body['tools']==[]
             assert 'obsolete instructions' not in json.dumps(body['input'][0]).lower()
             value.pop('usage');value['output']=message('GREETING_ONLY_OK')
+        elif latest=='CODE_COPY_PROBE':
+            value.pop('usage');value['output']=message('Run this:\n\n```bash\npython hey_bro_triangle.py\n```\n\nCODE_BLOCK_READY')
         elif latest.startswith('QUEUE_'):
             value.pop('usage');value['output']=message(latest+'_COMPLETE')
             if latest=='QUEUE_FIRST':
@@ -223,14 +225,31 @@ try:
     result['greeting_has_no_tools_or_stale_background_jobs']=True
     requests.clear()
     at=len(transcript)
-    paste('keep center draft');send(b'\x1b[17~')  # F6
+    paste('/voice');send(b'\r')
+    wait_for(lambda:b'Voice: off' in plain(transcript[at:]))
+    assert b'VOICE (off)' not in plain(transcript[at:])
+    result['inactive_voice_has_no_composer_badge']=True
+    at=len(transcript)
+    paste('keep center draft');send(b'\x1b[1;2D')  # Shift+Left
     wait_for(lambda:b'Sessions' in plain(transcript[at:]) and b'Inactive' in plain(transcript[at:]))
     send(b'\x1bOP')  # F1 preview of the current session
     wait_for(lambda:b'GREETING_ONLY_OK' in plain(transcript[at:]) and b'esc sessions' in plain(transcript[at:]))
+    restored=len(transcript)
     send(b'\x1b');send(b'\x1b')
+    wait_for(lambda:b'keep center draft' in plain(transcript[restored:]))
+    assert b'VOICE (off)' not in plain(transcript)
     assert not requests and process.poll() is None
     send(b'\x15')
     result['session_center_live_preview_preserves_draft_and_ownership']=True
+    at=len(transcript);paste('/settings');send(b'\r')
+    wait_for(lambda:b'Choose a category' in plain(transcript[at:]) and b'Keyboard' in plain(transcript[at:]))
+    send(b'\x1b[B'*2);send(b'\r')
+    wait_for(lambda:b'esc categories' in plain(transcript[at:]) and b'Ask for approval' in plain(transcript[at:]))
+    at=len(transcript);send(b'\x1b')
+    wait_for(lambda:b'Choose a category' in plain(transcript[at:]))
+    send(b'\x1b')
+    assert not requests
+    result['settings_categories_without_hidden_tab_navigation']=True
     paste('/')
     wait_for(lambda: b'Commands' in transcript and b'move' in transcript)
     assert b'\x1b[?1003h' not in transcript, 'selectors must capture buttons without hover tracking'
@@ -264,7 +283,8 @@ try:
     assert not requests,'selector metadata requests must not run the agent'
     result['footer_provider_model_selectors'] = True
     # Appearance changes use the existing persisted workspace setting.
-    send(b'\x1bOQ')  # F2
+    send(b'\x1bOQ')  # F2: settings categories
+    send(b'\r')  # Appearance
     paste('Light')
     send(b'\r')
     wait_for(lambda:b'\x1b[48;2;237;235;230m' in transcript)
@@ -273,7 +293,7 @@ try:
     send(b'\x15')
     paste('Dark')
     send(b'\r')
-    send(b'\x1b')
+    send(b'\x1b');send(b'\x1b')  # Categories, then close
     # Remap a real key and prove the new chord opens the command center.
     send(b'\x1b[19~')  # F8
     paste('Command center')
@@ -343,7 +363,7 @@ try:
     result['selected_skill_reached_provider'] = True
     paste('/usage')
     send(b'\r')
-    wait_for(lambda:b'Reported input' in transcript and b'1234' in transcript)
+    wait_for(lambda:b'REPORTED TOKENS' in transcript and b'1,234' in transcript and b'CACHE REUSE' in transcript)
     send(b'\x1b')
     paste('/stats')
     send(b'\r')
@@ -368,6 +388,22 @@ try:
     assert b'Approved patch {"patch"' not in plain(transcript[at:])
     assert b'48;2;9;30;20m' in transcript[at:], 'applied diff must use the shaded addition surface'
     result['real_permission_dock_and_numbered_diff'] = True
+    assert b'Fresh passing evidence is required' not in plain(transcript[at:])
+    at=len(transcript);paste('CODE_COPY_PROBE');send(b'\r')
+    wait_for(lambda:b'CODE_BLOCK_READY' in plain(transcript[at:]) and b'[Copy]' in plain(transcript[at:]))
+    # Follow ANSI cursor positions to click the actual header, not hard-coded output rows.
+    data=bytes(transcript[at:]);row=col=1;target=None
+    for token in re.findall(rb'\x1b\[[0-?]*[ -/]*[@-~]|[^\x1b]+',data):
+        cursor=re.fullmatch(rb'\x1b\[(\d+);(\d+)H',token)
+        if cursor: row,col=map(int,cursor.groups());continue
+        if token.startswith(b'\x1b['):continue
+        if b'[Copy]' in token: target=(col+len(token[:token.index(b'[Copy]')].decode(errors='replace')),row)
+        col+=len(token.decode(errors='replace'))
+    assert target,'code Copy target must be drawn'
+    send(f'\x1b[<0;{target[0]};{target[1]}M'.encode())
+    expected=base64.b64encode(b'python hey_bro_triangle.py')
+    wait_for(lambda:expected in transcript[at:] and b'[Copied]' in plain(transcript[at:]))
+    result['highlighted_command_card_click_copies_only_code']=True
     # Ordinary Enter messages remain separate FIFO turns while a response streams.
     at=len(requests);paste('QUEUE_FIRST');send(b'\r');paste('QUEUE_SECOND');send(b'\r');paste('QUEUE_THIRD');send(b'\r')
     wait_for(lambda:b'QUEUE_THIRD_COMPLETE' in plain(transcript),seconds=15)
@@ -396,7 +432,7 @@ try:
     send(b'\x1b[<0;159;23M');send(b'\x1b[<32;159;6M');send(b'\x1b[<0;159;6m')
     wait_for(lambda:b'end live' in plain(transcript[moved:]))
     assert b'\x1b]52;c;' not in transcript[moved:], 'dragging the scroll track must not copy output'
-    send(b'\x1b[<0;159;39M');send(b'\x1b[<0;159;39m')
+    send(b'\x1b[<0;159;38M');send(b'\x1b[<0;159;38m')  # Bottom of transcript, above the new blank margin
     wait_for(lambda:b'SCROLL_LINE_199' in plain(transcript[moved:]))
     result['transcript_scroll_track_drags_and_returns_to_live']=True
     send(b'\x1b');paste('STREAM_SCROLL_PROBE');send(b'\r')

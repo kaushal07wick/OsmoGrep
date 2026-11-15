@@ -2636,14 +2636,6 @@ pub(crate) fn command_palette_items() -> &'static [CommandItem] {
             cmd: "/exit",
             desc: "Exit OsmoGrep",
         },
-        CommandItem {
-            cmd: "/agents",
-            desc: "Manage sessions and live coding instances",
-        },
-        CommandItem {
-            cmd: "/team",
-            desc: "Coordinate with other instances in this repository",
-        },
     ]
 }
 
@@ -2704,6 +2696,8 @@ mod tests {
             "/autofix",
             "/gh",
             "/q",
+            "/agents",
+            "/team",
         ] {
             assert!(!items.iter().any(|item| item.cmd == manual), "{manual}");
         }

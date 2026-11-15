@@ -39,3 +39,9 @@ test('overflowing edit output exposes a bounded scroll track and a return-to-liv
  assert.match(top.rows.map(stripTerminalSequences).join('\n'),/end live/);
  assert.ok(top.rows.every(row=>stripTerminalSequences(row).length<=v.width));
 });
+
+test('completion status has one clear row above the composer while quick actions stay attached',()=>{
+ const f=render({...fixture(),logs:[...Array.from({length:60},(_,i)=>({level:'Success',text:'Line '+i})),{level:'Info',text:'· Finished in 2.1s'}]});
+ assert.equal(stripTerminalSequences(f.rows[f.input.y-1]!).trim(),'');
+ assert.match(stripTerminalSequences(f.rows[f.input.y-2]!),/Done.*2\.1s elapsed/);
+});

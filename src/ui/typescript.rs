@@ -188,6 +188,7 @@ pub struct TypeScriptUi {
     selecting: bool,
     scrolling: bool,
     copy_pending: bool,
+    copied_code: Option<String>,
 }
 
 impl TypeScriptUi {
@@ -298,6 +299,7 @@ impl TypeScriptUi {
             selecting: false,
             scrolling: false,
             copy_pending: false,
+            copied_code: None,
         })
     }
 
@@ -380,6 +382,25 @@ impl TypeScriptUi {
                                     }
                                     .into(),
                                 )
+                            }
+                            "copy" => {
+                                if let Some(text) = control
+                                    .label
+                                    .as_deref()
+                                    .filter(|text| !text.is_empty() && text.len() <= 100_000)
+                                {
+                                    match crate::clipboard::copy_text_to_clipboard(text) {
+                                        Ok(_) => {
+                                            self.copied_code = Some(text.into());
+                                            state.ui.input_clipboard = text.into();
+                                        }
+                                        Err(error) => crate::logger::log(
+                                            state,
+                                            crate::state::LogLevel::Error,
+                                            format!("Copy failed: {error}"),
+                                        ),
+                                    }
+                                }
                             }
                             "team" => super::workbench::open(state, 11, None),
                             _ => super::workbench::open_selector(state, control.id == "provider"),
@@ -468,6 +489,7 @@ impl TypeScriptUi {
         snapshot["introScene"] =
             json!(["horizon", "interference", "life", "lorenz"][self.intro.variant]);
         snapshot["introBright"] = json!(self.intro.bright);
+        snapshot["copiedCode"] = json!(self.copied_code);
         self.input.try_send(snapshot).map_err(|e| e.to_string())?;
         let raw = self
             .frames
@@ -494,10 +516,14 @@ impl TypeScriptUi {
             || frame.controls.iter().any(|c| {
                 !matches!(
                     c.id.as_str(),
-                    "model" | "provider" | "choice" | "voice" | "team"
+                    "model" | "provider" | "choice" | "voice" | "team" | "copy"
                 ) || c.id == "choice"
                     && (!c.index.is_some_and(|i| i <= 1000)
                         || c.label.as_ref().is_none_or(|s| s.len() > 160))
+                    || c.id == "copy"
+                        && c.label.as_ref().is_none_or(|s| {
+                            s.is_empty() || s.len() > 100_000 || s.contains('\u{1b}')
+                        })
                     || c.area.width == 0
                     || c.area.height != 1
                     || !c.area.inside(width, height)
@@ -675,7 +701,7 @@ fn view(state: &AgentState, model: &ModelConfig, id: u64, width: u16, height: u1
         "stream":if ui.streaming_active {ui.streaming_buffer.rsplit('\n').next().unwrap_or("")} else {""},
         "permission":ui.pending_permission.as_ref().map(|p|format!("Allow {} ({})? [y]es [n]o [a]lways", p.tool_name,p.args_summary)),
         "update":ui.pending_update.as_ref().map(super::tui::pending_update_prompt),
-        "voice":if state.voice.visible || state.voice.enabled || state.voice.connected {Some(super::tui::voice_bar_text(state))} else {None},
+        "voice":if state.voice.enabled || state.voice.connected {Some(super::tui::voice_bar_text(state))} else {None},
         "commands":ui.command_items.iter().map(|c|json!({"cmd":c.cmd,"desc":c.desc})).collect::<Vec<_>>(),
         "selectedCommand":ui.command_selected, "tokens":state.usage.prompt_tokens+state.usage.completion_tokens,
     });
@@ -697,6 +723,7 @@ fn view(state: &AgentState, model: &ModelConfig, id: u64, width: u16, height: u1
         .into_iter()
         .map(|(id, value)| json!({"id":id,"value":value}))
         .collect::<Vec<_>>());
+    snapshot["release"] = json!(ui.pending_update.as_ref().map(|u|json!({"current":u.current_version,"latest":u.latest_version,"notes":u.notes,"selected":u.selected,"installing":u.installing})));
     snapshot["runElapsed"] = json!(ui
         .run_started_at
         .map(|t| t.elapsed().as_millis() as u64)
@@ -821,6 +848,19 @@ mod tests {
         let animation: Preview =
             serde_json::from_value(json!({"id":127,"x":1,"y":2,"sequence":"frame"})).unwrap();
         assert!(!animation.retained_in(&[animation.clone()]));
+    }
+
+    #[test]
+    fn inactive_voice_status_is_not_sent_to_the_renderer() {
+        let mut state = crate::init_state();
+        state.voice.visible = true;
+        let frame = view(&state, &ModelConfig::default(), 1, 160, 44);
+        assert!(frame["voice"].is_null());
+        state.voice.enabled = true;
+        assert!(view(&state, &ModelConfig::default(), 2, 160, 44)["voice"]
+            .as_str()
+            .unwrap()
+            .contains("connecting"));
     }
 
     #[test]

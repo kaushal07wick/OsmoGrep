@@ -63,3 +63,22 @@ test('live session preview scrolls saved output without exposing action controls
  const tail=drawCenter(panel,100,30,false,''),up=drawCenter({...panel,preview_offset:4},100,30,false,'');
  assert.equal(tail.controls.length,0);assert.match(tail.rows.join('\n'),/SAVED_79/);assert.ok(!up.rows.join('\n').includes('SAVED_79'));
 });
+
+test('inactive voice is absent even after the status was previously shown',()=>{
+ for(const voice of [null,'VOICE (off)','voice disconnected']){
+  const f=render({...fixture(),voice,voiceState:{enabled:false,connected:false,partial:false}});
+  assert.ok(!f.controls?.some(c=>c.id==='voice'));
+  assert.ok(!f.rows.map(stripTerminalSequences).join('\n').includes('VOICE (off)'));
+  assert.equal(stripTerminalSequences(f.rows[f.input.y]!).trim(),'');
+ }
+});
+
+
+test('release card keeps output and draft visible with three update decisions',()=>{
+ for(const height of [20,24,32,36,40])for(const light of [false,true]){
+  const f=render({...fixture(),height,theme:light?'light':'dark',input:'keep draft',cursor:10,logs:[{level:'Info',text:'RECENT_OUTPUT'}],update:'Update available',release:{current:'0.3.4',latest:'0.4.0',notes:['Better sessions','Improved input'],selected:1,installing:false}});
+  const text=f.rows.map(stripTerminalSequences).join('\n');
+  for(const label of ['RECENT_OUTPUT','keep draft','OsmoGrep','Update now','Later','Skip this version'])assert.ok(text.includes(label),`${height}: ${label}`);
+  assert.ok(f.execution.height>=3);assert.ok(f.rows.every(row=>visibleWidth(row)<=f.input.width+2));
+ }
+});

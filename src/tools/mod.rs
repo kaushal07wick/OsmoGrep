@@ -101,8 +101,7 @@ impl ToolScope {
         let lower = prompt.to_ascii_lowercase();
         let ultracode = has_ultracode_suffix(&lower);
         Self {
-            include_team: crate::team::enabled()
-                || contains_any(&lower, &["team", "collaborat", "another instance"]),
+            include_team: crate::team::enabled() || crate::team::mentions_peer(prompt),
             chat_only: is_small_talk(prompt),
             include_web: contains_any(
                 &lower,

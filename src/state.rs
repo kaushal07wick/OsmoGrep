@@ -134,6 +134,7 @@ pub struct UiState {
     pub update_check_status: Option<String>,
     pub update_install_requested: bool,
     pub update_skip_requested: bool,
+    pub update_later_requested: bool,
     pub streaming_buffer: String,
     pub streaming_transcript: String,
     pub last_rendered_output: Option<String>,
@@ -205,6 +206,7 @@ impl Default for UiState {
             update_check_status: None,
             update_install_requested: false,
             update_skip_requested: false,
+            update_later_requested: false,
             streaming_buffer: String::new(),
             streaming_transcript: String::new(),
             last_rendered_output: None,
@@ -944,6 +946,8 @@ pub struct PendingUpdate {
     pub asset_name: String,
     pub checksum_url: String,
     pub installing: bool,
+    pub selected: usize,
+    pub notes: Vec<String>,
 }
 
 pub struct ConversationHistory {

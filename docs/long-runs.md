@@ -15,7 +15,7 @@ osmogrep task start \
 
 Run in the project or add `task --repo-root /path/to/project`. The `--auto-approve` flag authorizes dangerous actions within the selected permission profile; omit it to deny actions needing approval in this noninteractive command. `--permission-profile read-only` keeps project mutations blocked. Existing tool policies and sandbox settings still apply. This supervised mode runs one coding agent. Nested subagent/swarm/AI-workflow tools are unavailable until they can share the supervisor’s budget; ordinary explicitly requested subagents remain available outside this mode.
 
-Add global `--team` to coordinate with independent OsmoGrep instances in the same repository. The task's session also appears in `/agents` in another terminal.
+Ask in the objective to coordinate with another OsmoGrep instance in the same repository. The task's session also appears in the session center (**Shift+Left**) in another terminal.
 
 ## What survives
 

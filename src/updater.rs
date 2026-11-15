@@ -18,6 +18,7 @@ pub struct UpdateInfo {
     pub asset_url: String,
     pub asset_name: String,
     pub checksum_url: String,
+    pub notes: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -33,6 +34,8 @@ pub enum UpdateEvent {
 #[derive(Debug, Deserialize)]
 struct Release {
     tag_name: String,
+    #[serde(default)]
+    body: Option<String>,
     assets: Vec<Asset>,
 }
 
@@ -47,12 +50,24 @@ pub fn spawn_update_check(tx: Sender<UpdateEvent>) {
         return;
     }
     thread::spawn(move || {
-        let event = match check_for_update() {
-            Ok(Some(info)) => UpdateEvent::Available(info),
-            Ok(None) => UpdateEvent::UpToDate(current_version()),
-            Err(error) => UpdateEvent::CheckFailed(error),
-        };
-        let _ = tx.send(event);
+        let mut offered = String::new();
+        loop {
+            let event = match check_for_update() {
+                Ok(Some(info)) if info.latest_version != offered => {
+                    offered = info.latest_version.clone();
+                    Some(UpdateEvent::Available(info))
+                }
+                Ok(Some(_)) => None,
+                Ok(None) => Some(UpdateEvent::UpToDate(current_version())),
+                Err(error) => Some(UpdateEvent::CheckFailed(error)),
+            };
+            if let Some(event) = event {
+                if tx.send(event).is_err() {
+                    break;
+                }
+            }
+            thread::sleep(Duration::from_secs(6 * 60 * 60));
+        }
     });
 }
 
@@ -80,6 +95,13 @@ fn check_for_update() -> Result<Option<UpdateInfo>, String> {
         .iter()
         .find(|asset| asset.name.contains(&target) && !asset.name.ends_with(".sha256"))
         .ok_or_else(|| format!("no release asset found for target {target}"))?;
+    let release_prefix = format!("https://github.com/{REPO}/releases/download/");
+    if Path::new(&asset.name).file_name().and_then(|s| s.to_str()) != Some(asset.name.as_str())
+        || asset.name.contains(['/', '\\'])
+        || !asset.browser_download_url.starts_with(&release_prefix)
+    {
+        return Err("invalid release asset".into());
+    }
     let checksum_name = format!("{}.sha256", asset.name);
     let checksum_asset = latest
         .assets
@@ -87,13 +109,50 @@ fn check_for_update() -> Result<Option<UpdateInfo>, String> {
         .find(|asset| asset.name == checksum_name)
         .ok_or_else(|| format!("no checksum asset found for {}", asset.name))?;
 
+    if !checksum_asset
+        .browser_download_url
+        .starts_with(&release_prefix)
+    {
+        return Err("invalid release checksum URL".into());
+    }
     Ok(Some(UpdateInfo {
         current_version,
         latest_version,
         asset_url: asset.browser_download_url.clone(),
         asset_name: asset.name.clone(),
         checksum_url: checksum_asset.browser_download_url.clone(),
+        notes: release_notes(latest.body.as_deref().unwrap_or("")),
     }))
+}
+
+pub fn skipped(version: &str) -> bool {
+    fs::read_to_string(crate::persistence::config_dir().join("skipped-update"))
+        .is_ok_and(|saved| saved.trim() == version)
+}
+pub fn skip(version: &str) -> Result<(), String> {
+    let root = crate::persistence::config_dir();
+    fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    crate::persistence::atomic_write(&root.join("skipped-update"), version.as_bytes())
+        .map_err(|e| e.to_string())
+}
+fn release_notes(body: &str) -> Vec<String> {
+    body.lines()
+        .map(str::trim)
+        .filter(|line| {
+            !line.is_empty()
+                && !line.starts_with(['#', '<', '`'])
+                && !line.starts_with("**Full Changelog")
+        })
+        .map(|line| {
+            line.trim_start_matches(['-', '*', '+', ' '])
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(180)
+                .collect::<String>()
+        })
+        .filter(|line| !line.is_empty())
+        .take(5)
+        .collect()
 }
 
 fn fetch_latest_release() -> Result<Release, String> {
@@ -336,6 +395,17 @@ fn env_flag(name: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn release_highlights_are_bounded_and_cannot_inject_terminal_controls() {
+        let notes = release_notes(
+            "## What's new\n\n- Better sessions\n* Safer updates\n+ Fix \u{1b}[2J reset\n```sh\n\n",
+        );
+        assert_eq!(notes.len(), 3);
+        assert_eq!(notes[0], "Better sessions");
+        assert!(!notes.join("").contains('\u{1b}'));
+        assert_eq!(release_notes(&"x".repeat(500))[0].len(), 180);
+        assert!(release_notes("").is_empty());
+    }
     #[test]
     fn compares_semver_like_versions() {
         assert!(is_newer_version("0.3.3", "0.3.2"));

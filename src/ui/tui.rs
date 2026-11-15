@@ -119,7 +119,7 @@ pub fn draw_ui<B: Backend>(
         let input_lines =
             calculate_input_lines(&state.ui.input, content.width as usize, PROMPT.len());
         let cmd_height = (input_lines.min(3) + 2) as u16;
-        let show_voice = state.voice.visible || state.voice.enabled || state.voice.connected;
+        let show_voice = state.voice.enabled || state.voice.connected;
         let voice_height = if show_voice {
             calculate_input_lines(&voice_bar_text(state), content.width as usize, 0).min(
                 content
@@ -137,7 +137,7 @@ pub fn draw_ui<B: Backend>(
                 .unwrap_or(u16::MAX)
                 .saturating_add(2)
         }
-        .saturating_add(u16::from(state.ui.agent_running));
+        .saturating_add(1);
         if !state.ui.command_items.is_empty() {
             transcript_height =
                 transcript_height.max((state.ui.command_items.len().min(10) + 3) as u16);
@@ -166,6 +166,9 @@ pub fn draw_ui<B: Backend>(
             execution.height -= 1;
             running.y = execution.bottom();
             running.height = 1;
+        }
+        if !state.ui.agent_running {
+            execution.height = execution.height.saturating_sub(1);
         }
         input_rect = panels[3];
         exec_rect = execution;
@@ -518,6 +521,9 @@ fn execution_lines(state: &AgentState, width: u16) -> Vec<Line<'static>> {
 
     if let Some(update) = &state.ui.pending_update {
         lines.push(Line::from(""));
+        for note in &update.notes {
+            lines.push(Line::from(format!("  • {note}")));
+        }
         lines.push(Line::from(Span::styled(
             pending_update_prompt(update),
             Style::default()
@@ -651,7 +657,7 @@ pub(super) fn pending_update_prompt(update: &PendingUpdate) -> String {
         format!("Installing Osmogrep {}...", update.latest_version)
     } else {
         format!(
-            "Update Osmogrep {} -> {}? [y]es [n]o",
+            "Update OsmoGrep {} → {} · [u] now · [l] later · [s] skip version",
             update.current_version, update.latest_version
         )
     }
@@ -1485,7 +1491,7 @@ mod tests {
 
         assert_eq!(
             pending_update_prompt(&available),
-            "Update Osmogrep 0.3.2 -> 0.3.3? [y]es [n]o"
+            "Update OsmoGrep 0.3.2 → 0.3.3 · [u] now · [l] later · [s] skip version"
         );
         assert_eq!(update_status_label(&available), " · update available");
         assert_eq!(
@@ -1533,6 +1539,8 @@ mod tests {
             asset_name: "osmogrep.tar.gz".to_string(),
             checksum_url: "https://example.com/osmogrep.tar.gz.sha256".to_string(),
             installing,
+            selected: 1,
+            notes: vec!["Improved sessions".into()],
         }
     }
 

@@ -1,19 +1,18 @@
 # Sessions and teams
 
-OsmoGrep instances coordinate through a private local SQLite database. Open two or three terminals in the same repository, enable team messaging, and give each instance its own task. They remain separate coding sessions with their own model, context, permissions, and process ownership.
+OsmoGrep instances coordinate through a private local SQLite database. Each has a stable session ID and records its project, current task, provider/model, status, and recent activity.
 
-```sh
-cd your-project
-osmogrep --new --team
-# In another terminal, in the same project:
-osmogrep --new --team
-```
+Open two terminals in the same repository with `osmogrep --new`, then ask naturally:
 
-`/team on` enables coordination in an existing session. `/team off` suspends automatic incoming context and model-initiated sends. Presence and file-tool activity remain visible. Messaging never starts another agent, silently creates a paid turn, or grants permissions.
+> Talk to the other agent and ask what it is working on.
+
+> Ask the agent handling retries whether its changes affect the API.
+
+The coding agent discovers matching sessions, selects the target by its metadata, and sends the message. It asks for clarification when the target is ambiguous. You do not need a slash command or a manual messaging toggle. Each instance keeps its own task, context, permissions, and process ownership; messaging does not authorize spawning more agents or expanding another agent’s task.
 
 ## Session center
 
-Open `/agents`, `/sessions`, F6, or `osmogrep agents`. Search titles, directories, models, and session IDs. Sessions are grouped by project, with filters for working, ready, inactive, and needs-you states. Errors appear under Needs you. Elapsed update age reflects actual activity rather than heartbeat traffic.
+Press **Shift+Left** (or run `osmogrep agents` from your shell). Search titles, directories, models, and session IDs. Sessions are grouped by project, with filters for working, ready, inactive, and needs-you states. Errors appear under Needs you. Elapsed update age reflects actual activity rather than heartbeat traffic.
 
 | Control | Action |
 | --- | --- |
@@ -35,14 +34,11 @@ Previews refresh once a second; Up/down, PageUp/PageDown, Home/End scroll saved 
 
 The Team view shows unread messages and recorded progress. The composer shows a Team capsule when enabled or when messages are waiting. Click it to open the view.
 
-- `/team inbox` prints and durably saves unread messages before acknowledging them.
-- `/team history` shows recent sent/received messages and acknowledgement counts.
-- `/team updates` shows recorded status, tool, and file activity.
-- `/team send <session-UUID> <message>` explicitly sends one message, even when automatic messaging is off.
+Ask for unread messages, a teammate’s status, or a specific update in ordinary language. The Team view also provides Inbox, Message history, and Shared activity controls. The session center’s F4 shortcut can send a message directly to a selected session.
 
-The agent's `team` tool supports peers, inbox, history, updates, send, acknowledge, claim, and release. Sends require a stable client message ID, so retrying a send does not duplicate it. Broadcasts reach sessions already registered when sent; direct messages survive an offline recipient's restart. Acknowledgement means accepted into durable context or explicitly reviewed, not a guarantee that the model acted on it. The sender's UI tracks the latest outgoing acknowledgement.
+The agent's `team` tool supports peers, inbox, history, updates, send, acknowledge, claim, and release. Sends use a stable client message ID, so retrying a send does not duplicate it. Broadcasts reach sessions already registered when sent; direct messages survive an offline recipient's restart. Acknowledgement means accepted into durable context or explicitly reviewed, not a guarantee that the model acted on it. The sender's UI tracks the latest outgoing acknowledgement.
 
-During an active task, incoming messages are added at a completed tool boundary before the next model request. They are clearly marked collaborator reference data; they cannot replace the user's objective, grant tool approval, or authorize delegation. An idle instance shows an unread indicator until the user starts work or reads its inbox.
+During an active task, incoming messages are added at a completed tool boundary before the next model request. They are clearly marked collaborator reference data; they cannot replace the user's objective, grant tool approval, or authorize delegation. An idle instance shows an unread indicator until the user starts work or reads its inbox. Messages never silently create a paid turn.
 
 Status and completed file-tool edits are recorded automatically. Raw shell arguments, provider credentials, and full tool output are not broadcast into the shared activity feed. Message bodies are visible to collaborating sessions and may reach their selected model providers.
 
@@ -62,6 +58,20 @@ This is coordination between processes on one machine/user account. It does not 
 
 A cached fine-dot sphere replaces the previous working wave. Labels distinguish thinking, reading, commands, edits, and waiting for permission; the timer reports elapsed wall time. Reduce Motion keeps the visual still. Kitty-compatible terminals use a 36px graphic; other terminals use a small Braille fallback. Completion timing sits on its own aligned line.
 
-The composer voice capsule starts/stops the existing voice connection and reflects its actual connection state. It does not simulate microphone levels. Entering an API key pauses voice, and late transcripts cannot enter a protected input field.
+The composer voice capsule appears only while voice is connecting or active, and reflects its actual connection state. It does not simulate microphone levels. Entering an API key pauses voice, and late transcripts cannot enter a protected input field.
 
 The implementation uses the existing Rust runtime and pi-tui renderer. References included local Codex session discovery/overview behavior and the [TermUI component catalog](https://www.termui.io/components); no UI framework replacement was required.
+
+
+### Settings and release notices
+
+`/settings` opens eight visible categories. Choose one with Up/Down and Enter, or click it. Escape returns to the categories before closing; the composer draft stays intact. Direct shortcuts such as `/model` and `/permissions` still open their controls.
+
+OsmoGrep checks GitHub releases at launch and every six hours. A release card appears when the agent is idle and the composer is empty, with short release highlights and three choices: **Update now**, **Later** (next launch), and **Skip this version** (remembered across launches; a newer version can still appear). Later is selected by default. Downloads use the existing checksum verification and binary replacement; the current session continues until you restart. `OSMOGREP_DISABLE_UPDATE_CHECK=1` disables the finder.
+
+Ordinary edits retain numbered red/green diffs without a blanket stale-verification warning. Explicit verification and recorded command results remain available. The working orb keeps its original look and motion, with a slightly smaller silhouette.
+
+
+Usage opens a compact provider-reported token summary with an input/output bar, cached-input reuse, call count and provider wait. Context remains an explicitly labeled estimate, without invented account limits or pricing. Weekly history is available in Stats.
+
+Fenced code uses a separate highlighted surface with a **Copy** button. Clicking it copies the block contents without Markdown fences or display colors; **Copied** confirms success. Copy targets scroll with the block and remain separate from the composer. Completed turns leave one blank row before the input surface.

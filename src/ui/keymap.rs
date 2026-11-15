@@ -13,8 +13,8 @@ pub const BINDINGS: &[Binding] = &[
         id: "agents",
         label: "Sessions and team",
         group: "Workspace",
-        default: "f6",
-        command: Some("/agents"),
+        default: "shift+left",
+        command: None,
     },
     Binding {
         id: "details",
@@ -261,6 +261,7 @@ pub fn assign(prefs: &mut Preferences, id: &str, value: &str) -> Result<(), Stri
     Ok(())
 }
 pub enum Resolved {
+    Sessions,
     Command(&'static str),
     Key(KeyEvent),
     Ignore,
@@ -272,7 +273,9 @@ pub fn resolve(prefs: &Preferences, key: KeyEvent) -> Resolved {
     };
     for b in BINDINGS {
         if effective(prefs, b) == value {
-            return if let Some(cmd) = b.command {
+            return if b.id == "agents" {
+                Resolved::Sessions
+            } else if let Some(cmd) = b.command {
                 Resolved::Command(cmd)
             } else {
                 Resolved::Key(event(b.default).unwrap())
@@ -291,6 +294,27 @@ pub fn resolve(prefs: &Preferences, key: KeyEvent) -> Resolved {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn session_center_uses_shift_left_and_can_be_remapped() {
+        let mut prefs = Preferences::default();
+        assert!(matches!(
+            resolve(&prefs, event("shift+left").unwrap()),
+            Resolved::Sessions
+        ));
+        assert!(matches!(
+            resolve(&prefs, event("f6").unwrap()),
+            Resolved::Unchanged
+        ));
+        assign(&mut prefs, "agents", "ctrl+j").unwrap();
+        assert!(matches!(
+            resolve(&prefs, event("ctrl+j").unwrap()),
+            Resolved::Sessions
+        ));
+        assert!(matches!(
+            resolve(&prefs, event("shift+left").unwrap()),
+            Resolved::Ignore
+        ));
+    }
     #[test]
     fn remapping_disables_old_key_and_rejects_conflicts_and_unsafe_chords() {
         let mut p = Preferences::default();

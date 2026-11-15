@@ -1,8 +1,9 @@
 import {plain} from './chrome.ts';
+import {codeBlocks,type CodeCopy} from './code.ts';
 import { Image, Markdown, getCapabilities, renderImage, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import { introDuration, websiteMark } from './brand.ts';
 import { introFrame, introPng } from './intro.ts';
-import { drawPanel, permissionLines, type PanelView } from './panels.ts';
+import { drawPanel, permissionLines, updateLines, type ReleaseView, type PanelView } from './panels.ts';
 import type {Scene} from './scenes.ts';
 import {statusLayout,activity,type StatusEntry} from './chrome.ts';
 import {diffLines,highlightTranscript,selectedTranscript,type TranscriptSelection,type FileDiff} from './transcript.ts';
@@ -30,6 +31,8 @@ export interface View {
   approval?: {tool:string;args:string;selected?:number} | null;
   statusLine?: string[];
   statusEntries?: StatusEntry[];
+  copiedCode?:string;
+  release?:ReleaseView|null;
   runElapsed?:number;
   expandTools?:boolean;
   scrollTop?:number;
@@ -43,7 +46,7 @@ export interface Rendered {
   editorWidth: number;
   animate: boolean;
   artwork: Rect | null;
-  controls?:{id:'model'|'provider'|'choice'|'voice'|'team';index?:number;label?:string;x:number;y:number;width:number;height:number}[];
+  controls?:{id:'model'|'provider'|'choice'|'voice'|'team'|'copy';index?:number;label?:string;x:number;y:number;width:number;height:number}[];
   transcript?:{x:number;y:number;width:number;height:number;start:number;maxScroll:number;lineWidths:number[];scrollbar?:Rect|null};
   selectionText?:string;
   images: { id: number; x: number; y: number; sequence: string; placement?:string }[];
@@ -128,15 +131,17 @@ export function render(v: View): Rendered {
   const footerHeight = h > composerHeight + headerHeight + headerY + 1 ? 2 : 0;
   const composerY = Math.max(0, h - footerHeight - composerHeight);
   const inputRect = { x: gutter, y: composerY, width, height: composerHeight };
-  const activityHeight=v.running&&!v.update&&h>=24&&width>=36&&!v.approval?4:(v.running||v.permission||v.update?1:0);
+  const activityHeight=v.running&&!v.update&&h>=24&&width>=36&&!v.approval?4:1;
   const execution = { x: gutter, y: headerY + headerHeight, width, height: Math.max(0, composerY - headerY - headerHeight - activityHeight) };
-  const approvalRows=v.approval?permissionLines(v.approval.tool,v.approval.args,v.approval.selected??0,width,accent,light,h<32):[];
+  const approvalRows=v.approval?permissionLines(v.approval.tool,v.approval.args,v.approval.selected??0,width,accent,light,h<32):v.release?updateLines(v.release,width,accent,light,h<40):[];
   const approvalHeight=Math.min(approvalRows.length,Math.max(0,Math.max(0,execution.height-3)));
   execution.height=Math.max(0,execution.height-(approvalHeight?approvalHeight+1:0));
   const transcript: string[] = [];
   const insertedDiffs=new Set<FileDiff>();
+  const codeCopies:CodeCopy[]=[];
+  const appendMarkdown=(text:string)=>{const block=codeBlocks(text,Math.max(1,width-pad*2),light,text=>markdown(text,width-pad*2),v.copiedCode);codeCopies.push(...block.copies.map(copy=>({...copy,row:copy.row+transcript.length})));transcript.push(...block.rows);};
   let paragraph: string[] = [];
-  const flush = () => { if (paragraph.length) { transcript.push(...markdown(paragraph.join('\n'), width - pad * 2)); paragraph = []; } };
+  const flush = () => { if (paragraph.length) { appendMarkdown(paragraph.join('\n')); paragraph = []; } };
   for (let i = 0; i < v.logs.length; i++) {
     const firstLog=i;
     const entry = v.logs[i]!; const text = clean(entry.text);
@@ -156,18 +161,19 @@ export function render(v: View): Rendered {
       flush();
       const color = entry.level === 'Error' ? rgb(230, 100, 100) : entry.level === 'Warn' ? rgb(225, 185, 75) : text.startsWith('● ') ? accent : dim;
       transcript.push(...wrapTextWithAnsi(color + text + reset, Math.max(1, width - pad * 2)));
-    } else { paragraph.push(text); }
+    } else { paragraph.push(stripTerminalSequences(entry.text).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g,'')); }
     for(const diff of v.diffs)if(diff.afterLog!=null&&diff.afterLog>=firstLog&&diff.afterLog<=i){
       flush();transcript.push(...diffLines(diff,Math.max(1,width-pad*2),light,!!v.expandTools));insertedDiffs.add(diff);
     }
   }
   flush();
   for(const diff of v.diffs)if(!insertedDiffs.has(diff))transcript.push(...diffLines(diff,Math.max(1,width-pad*2),light,!!v.expandTools));
-  if(v.stream)transcript.push(...markdown(v.stream+'▍',width-pad*2));
+  if(v.stream)appendMarkdown(v.stream+'▍');
   if (v.plan.length) transcript.push('', ...v.plan.map(p => `${p.done ? '✓' : p.active ? '›' : '·'} ${clean(p.text)}`));
   const maxScroll = Math.max(0, transcript.length - execution.height);
   const start = v.followTail ? maxScroll : Math.max(0,Math.min(maxScroll,v.scrollTop??maxScroll-v.scroll));
   transcript.slice(start, start + execution.height).forEach((line, i) => put(execution.y + i, highlightTranscript(line,start+i,v.transcriptSelection,light), gutter + pad, width - pad * 2));
+  if(!v.masked&&!v.approval&&!v.update)for(const copy of codeCopies){const y=execution.y+copy.row-start;if(copy.text&&Buffer.byteLength(copy.text)<=100000&&y>=execution.y&&y<execution.y+execution.height)controls.push({id:'copy',label:copy.text,x:gutter+pad+copy.x,y,width:copy.width,height:1});}
   const scrollbar=maxScroll>0&&width>=20&&execution.height>=3?{x:gutter+width-1,y:execution.y,width:1,height:execution.height}:null;
   if(scrollbar){
     const thumb=Math.max(1,Math.floor(scrollbar.height*scrollbar.height/transcript.length));
@@ -196,7 +202,7 @@ export function render(v: View): Rendered {
     }
   }
 
-  const status = v.update ?? (v.permission&&!v.approval?v.permission:null) ?? (v.running ? activity(v.runElapsed??v.elapsed,v.approval?'Waiting for permission':v.phase,v.approval||v.phase==='thinking'?null:v.tool,!!v.preferences?.reduce_motion) : '');
+  const status = v.release?'':v.update ?? (v.permission&&!v.approval?v.permission:null) ?? (v.running ? activity(v.runElapsed??v.elapsed,v.approval?'Waiting for permission':v.phase,v.approval||v.phase==='thinking'?null:v.tool,!!v.preferences?.reduce_motion) : '');
   if(status){
     if(v.running&&activityHeight===4&&!v.update){
       const y=composerY-4,frame=orb(v.runElapsed??v.elapsed,light,!!v.preferences?.reduce_motion),info=activityInfo(v.runElapsed??v.elapsed,v.approval?'Waiting for approval':v.phase,v.approval?null:v.tool,!!v.preferences?.reduce_motion);
@@ -212,7 +218,7 @@ export function render(v: View): Rendered {
   if(verticalPad&&!v.masked&&!v.permission&&!v.update){
     let right=gutter+width-pad;const capsules:{x:number;content:string}[]=[];
     const capsule=(id:'voice'|'team',label:string)=>{const content=clip(label,Math.max(1,right-gutter-pad));if(!content)return;const x=right-visibleWidth(content);capsules.push({x,content});controls.push({id,x,y:composerY,width:visibleWidth(content),height:1});right=x-3;};
-    if(width>=44||v.voice) capsule('voice',v.voiceState?.connected?`◉ ${v.voiceState.partial?'Hearing you':'Listening'}`:v.voiceState?.enabled?'◌ Connecting voice':plain(v.voice??'○ Voice'));
+    if(v.voiceState?.enabled||v.voiceState?.connected||(!v.voiceState&&v.voice)) capsule('voice',v.voiceState?.connected?`◉ ${v.voiceState.partial?'Hearing you':'Listening'}`:v.voiceState?.enabled?'◌ Connecting voice':plain(v.voice??'○ Voice'));
     if(v.team&&(v.team.enabled||v.team.unread))capsule('team',`◌ Team ${v.team.online}${v.team.unread?` · ${v.team.unread} new`:''}`);
     let line='';for(const c of capsules.sort((a,b)=>a.x-b.x))line+=' '.repeat(Math.max(0,c.x-gutter-visibleWidth(line)))+c.content;if(capsules.length)put(composerY,paperRow(line,width,0,composerHeight,light,paperGraphics));
   }
@@ -247,7 +253,8 @@ export function render(v: View): Rendered {
   }
   if (footerHeight) {
     const permission = v.planMode ? 'plan mode' : v.autoApprove ? 'auto-approve on' : 'ask approvals';
-    const right = dim+((v.queuedMessages??0)>0?`${v.queuedMessages} queued${v.queuePaused?' · enter resume':''}`:!v.followTail&&maxScroll>0?`${maxScroll-start} ↑ · end live`:v.running?`${v.shortcuts?.queue??'tab'} queue`:maxScroll>0?'scroll · pgup/pgdn':'/help')+reset;
+    const sessionsKey=(v.shortcuts?.agents??'shift+left').replace('shift+left','shift+←');
+    const right = dim+((v.queuedMessages??0)>0?`${v.queuedMessages} queued${v.queuePaused?' · enter resume':''}`:!v.followTail&&maxScroll>0?`${maxScroll-start} ↑ · end live`:v.running?`${v.shortcuts?.queue??'tab'} queue`:maxScroll>0?'scroll · pgup/pgdn':`${sessionsKey} sessions`)+reset;
     const reserve=width>=60?visibleWidth(right)+3:0;
     const entries=v.statusEntries??(v.statusLine?v.statusLine.map((value,i)=>({id:value.startsWith('~')||value.startsWith('/')?'directory':i===0?'model':'optional',value})):[{id:'permissions',value:`${v.profile} · ${permission}`}]);
     const fields=entries.flatMap(e=>e.id==='model'?[{id:'model',value:clean(v.model)+' ▾'},{id:'provider',value:clean(v.provider)+' ▾'}]:[e]);

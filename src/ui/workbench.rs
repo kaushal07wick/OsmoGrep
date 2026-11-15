@@ -21,9 +21,11 @@ const SECTIONS: &[&str] = &[
     "Status",
     "Sessions",
     "Team",
+    "Settings",
 ];
 
 pub struct Panel {
+    settings: bool,
     filter: usize,
     preview_session: Option<String>,
     preview_lines: Vec<String>,
@@ -53,12 +55,12 @@ pub struct Panel {
 
 #[derive(Clone)]
 enum Action {
+    Section(usize),
     Session {
         id: String,
         root: std::path::PathBuf,
         online: bool,
     },
-    TeamMode,
     Command(String),
     Theme(&'static str),
     Accent(&'static str),
@@ -109,6 +111,7 @@ fn row(
 }
 #[derive(Serialize)]
 pub struct PanelView {
+    pub settings: bool,
     pub previewing: bool,
     pub preview_offset: usize,
     pub center_filter: usize,
@@ -132,7 +135,8 @@ pub struct PanelView {
 pub fn section_for(command: &str) -> Option<usize> {
     Some(match command {
         "/help" => 0,
-        "/settings" | "/config" | "/theme" | "/color" | "/type" => 1,
+        "/settings" | "/config" => 12,
+        "/theme" | "/color" | "/type" => 1,
         "/model" | "/providers" | "/account" => 2,
         "/permissions" | "/profile" => 3,
         "/statusline" => 4,
@@ -141,7 +145,7 @@ pub fn section_for(command: &str) -> Option<usize> {
         "/usage" => 7,
         "/stats" => 8,
         "/status" | "/metrics" => 9,
-        "/agents" | "/sessions" => 10,
+        "/sessions" => 10,
         "/team" => 11,
         _ => return None,
     })
@@ -150,6 +154,7 @@ pub fn open(state: &mut AgentState, section: usize, model: Option<&ModelConfig>)
     state.ui.command_items.clear();
     let (days, notice) = load_usage(state, section);
     state.ui.panel = Some(Panel {
+        settings: section == 12,
         filter: 0,
         preview_session: None,
         preview_lines: Vec::new(),
@@ -198,8 +203,9 @@ pub fn choose_at(state: &mut AgentState, index: usize, label: &str) -> bool {
     let Some(panel) = state.ui.panel.as_ref() else {
         return false;
     };
-    if (panel.picker.is_none() && panel.section != 10)
+    if (panel.picker.is_none() && panel.section != 10 && !panel.settings)
         || panel.edit.is_some()
+        || panel.capture.is_some()
         || entries(state, panel)
             .get(index)
             .is_none_or(|row| row.id.as_deref().unwrap_or(&row.label) != label)
@@ -448,8 +454,49 @@ fn entries(state: &AgentState, panel: &Panel) -> Vec<Row> {
         return choices;
     }
     let mut rows = match panel.section {
-        10 => session_rows(state,panel,true),
-        11 => vec![row("Team messaging", "Deliver collaborator context at safe boundaries; idle messages do not start model calls", if state.preferences.team_messages {"on"}else{"off"}, Action::TeamMode),row("Inbox",format!("{} unread messages · print and acknowledge in the transcript",state.ui.team.messages.len()),"↵",Action::Command("/team inbox".into())),row("Message history","Inspect sent messages and acknowledgement receipts","↵",Action::Command("/team history".into())),row("Shared activity","Read recorded tool/file progress from this repository","↵",Action::Command("/team updates".into()))],
+        12 => [
+            (1, "Appearance", "Theme, paper, accent and motion"),
+            (2, "Model & provider", "Models, reasoning and connection"),
+            (3, "Permissions", "Choose what tools may do"),
+            (4, "Status line", "Choose and arrange footer items"),
+            (5, "Keyboard", "Find and change shortcuts"),
+            (6, "Skills", "Browse available agent skills"),
+            (7, "Usage", "Tokens and context for this session"),
+            (8, "Activity", "Weekly usage and recorded history"),
+        ]
+        .into_iter()
+        .map(|(section, label, description)| row(label, description, "→", Action::Section(section)))
+        .collect(),
+        10 => session_rows(state, panel, true),
+        11 => vec![
+            row(
+                "Message a teammate",
+                "Ask naturally: talk to the agent working on retries",
+                "plain language",
+                Action::None,
+            ),
+            row(
+                "Inbox",
+                format!(
+                    "{} unread messages · print and acknowledge in the transcript",
+                    state.ui.team.messages.len()
+                ),
+                "↵",
+                Action::Command("/team inbox".into()),
+            ),
+            row(
+                "Message history",
+                "Inspect sent messages and acknowledgement receipts",
+                "↵",
+                Action::Command("/team history".into()),
+            ),
+            row(
+                "Shared activity",
+                "Read recorded tool/file progress from this repository",
+                "↵",
+                Action::Command("/team updates".into()),
+            ),
+        ],
         0 => commands::command_palette_items()
             .iter()
             .map(|c| row(c.cmd, c.desc, "↵", Action::Command(c.cmd.into())))
@@ -824,6 +871,7 @@ pub fn view(state: &AgentState) -> Option<PanelView> {
     let panel = state.ui.panel.as_ref()?;
     let rows = entries(state, panel);
     Some(PanelView {
+        settings: panel.settings,
         previewing: panel.preview_session.is_some(),
         preview_offset: panel.preview_offset,
         center_filter: panel.filter,
@@ -844,7 +892,9 @@ pub fn view(state: &AgentState) -> Option<PanelView> {
                     .count()
             })
             .collect(),
-        selecting: (panel.picker.is_some() || panel.section == 10) && panel.edit.is_none(),
+        selecting: (panel.picker.is_some() || panel.section == 10 || panel.settings)
+            && panel.edit.is_none()
+            && panel.capture.is_none(),
         title: match panel.picker {
             Some(0) => "Choose provider".into(),
             Some(_) => format!("Choose model · {}", panel.model.provider),
@@ -870,7 +920,15 @@ pub fn view(state: &AgentState) -> Option<PanelView> {
             panel.notice.clone()
         },
         editing: panel.edit.is_some() || panel.capture.is_some(),
-        footer: if panel.section == 10 {
+        footer: if panel.section == 12 {
+            "↑↓ choose category · enter open · click to open · esc close"
+        } else if panel.settings
+            && panel.edit.is_none()
+            && panel.capture.is_none()
+            && panel.picker.is_none()
+        {
+            "↑↓ navigate · enter select · esc categories"
+        } else if panel.section == 10 {
             "←/→ filter · enter open · F2 new · F3 fork · F4 message · F5 pin · esc back"
         } else if panel.capture.is_some() {
             "press new chord · backspace default · delete unbind · esc cancel"
@@ -1045,6 +1103,9 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
             if panel.picker.take().is_some() {
                 panel.query.clear();
                 panel.selected = 0;
+            } else if panel.settings && panel.section != 12 {
+                open(state, 12, Some(&panel.model));
+                return true;
             } else {
                 close = true
             }
@@ -1124,7 +1185,7 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
             panel.demo = !panel.demo;
             panel.opened = std::time::Instant::now();
         }
-        KeyCode::Tab | KeyCode::BackTab => {
+        KeyCode::Tab | KeyCode::BackTab if !panel.settings => {
             let back = key.code == KeyCode::BackTab || key.modifiers.contains(KeyModifiers::SHIFT);
             panel.selected_session = None;
             panel.load_sessions = panel.section == 10;
@@ -1178,6 +1239,11 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
         {
             if let Some(row) = rows.get(index) {
                 match &row.action {
+                    Action::Section(section) => {
+                        open(state, *section, Some(&panel.model));
+                        state.ui.panel.as_mut().unwrap().settings = true;
+                        return true;
+                    }
                     Action::Session { id, root, online } => {
                         if id == &state.session.id {
                             close = true;
@@ -1199,12 +1265,6 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
                                 false,
                             );
                         }
-                    }
-                    Action::TeamMode => {
-                        state.preferences.team_messages = !state.preferences.team_messages;
-                        let _ =
-                            crate::team::enable(&state.repo_root, state.preferences.team_messages);
-                        changed = true;
                     }
                     Action::Command(cmd) => {
                         state.ui.requested_command = Some(cmd.clone());
@@ -1532,6 +1592,26 @@ mod tests {
             enabled: true,
             pinned: false,
         }
+    }
+    #[test]
+    fn settings_categories_open_by_keyboard_or_click_and_escape_returns_home() {
+        let mut state = crate::init_state();
+        state.insert_text("keep my draft");
+        assert_eq!(section_for("/settings"), Some(12));
+        open(&mut state, 12, None);
+        assert_eq!(view(&state).unwrap().rows.len(), 8);
+        handle_key(&mut state, key(KeyCode::Tab));
+        assert_eq!(view(&state).unwrap().section, 12);
+        assert!(choose_at(&mut state, 2, "Permissions"));
+        assert_eq!(view(&state).unwrap().section, 3);
+        handle_key(&mut state, key(KeyCode::Esc));
+        assert_eq!(view(&state).unwrap().section, 12);
+        handle_key(&mut state, key(KeyCode::Enter));
+        assert_eq!(view(&state).unwrap().section, 1);
+        handle_key(&mut state, key(KeyCode::Esc));
+        handle_key(&mut state, key(KeyCode::Esc));
+        assert!(state.ui.panel.is_none());
+        assert_eq!(state.ui.input, "keep my draft");
     }
     #[test]
     fn session_center_anchors_identity_and_filters_without_touching_composer() {

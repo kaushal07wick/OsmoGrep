@@ -116,16 +116,39 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
         return;
     }
 
-    if let Some(update) = state.ui.pending_update.as_ref() {
+    if let Some(update) = state.ui.pending_update.as_mut() {
         if update.installing {
             return;
         }
-        match update_prompt_action(&k) {
+        match k.code {
+            KeyCode::Up => {
+                update.selected = update.selected.saturating_sub(1);
+                return;
+            }
+            KeyCode::Down => {
+                update.selected = (update.selected + 1).min(2);
+                return;
+            }
+            _ => {}
+        }
+        let action = if k.code == KeyCode::Enter {
+            [
+                UpdatePromptAction::Install,
+                UpdatePromptAction::Later,
+                UpdatePromptAction::Skip,
+            ][update.selected.min(2)]
+        } else {
+            update_prompt_action(&k)
+        };
+        match action {
             UpdatePromptAction::Install => {
                 state.ui.update_install_requested = true;
             }
             UpdatePromptAction::Skip => {
                 state.ui.update_skip_requested = true;
+            }
+            UpdatePromptAction::Later => {
+                state.ui.update_later_requested = true;
             }
             UpdatePromptAction::Ignore => {}
         }
@@ -136,6 +159,11 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
         return;
     }
     let k = match crate::ui::keymap::resolve(&state.preferences, k) {
+        crate::ui::keymap::Resolved::Sessions => {
+            let model = state.ui.presentation_model.clone();
+            crate::ui::workbench::open(state, 10, model.as_ref());
+            return;
+        }
         crate::ui::keymap::Resolved::Command(cmd) => {
             state.ui.requested_command = Some(cmd.into());
             return;
@@ -542,14 +570,16 @@ fn apply_input_control_action(state: &mut AgentState, action: InputControlAction
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum UpdatePromptAction {
     Install,
+    Later,
     Skip,
     Ignore,
 }
 
 fn update_prompt_action(k: &KeyEvent) -> UpdatePromptAction {
     match k.code {
-        KeyCode::Char('y') | KeyCode::Char('Y') => UpdatePromptAction::Install,
-        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => UpdatePromptAction::Skip,
+        KeyCode::Char('y' | 'Y' | 'u' | 'U') => UpdatePromptAction::Install,
+        KeyCode::Char('n' | 'N' | 's' | 'S') => UpdatePromptAction::Skip,
+        KeyCode::Char('l' | 'L') | KeyCode::Esc => UpdatePromptAction::Later,
         _ => UpdatePromptAction::Ignore,
     }
 }
@@ -573,18 +603,40 @@ mod tests {
     }
 
     #[test]
-    fn shift_arrows_select_text_and_typing_replaces_it() {
+    fn shift_right_selects_text_and_typing_replaces_it() {
         let mut state = agent_state();
         state.insert_text("one 界two");
+        state.ui.input_cursor = "one ".len();
         for _ in 0..4 {
             handle_key(
                 &mut state,
-                KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT),
+                KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT),
             );
         }
         assert_eq!(&state.ui.input[state.input_selection().unwrap()], "界two");
         handle_key(&mut state, key(KeyCode::Char('x')));
         assert_eq!(state.ui.input, "one x");
+    }
+
+    #[test]
+    fn shift_left_opens_sessions_directly_and_preserves_draft() {
+        let mut state = agent_state();
+        state.insert_text("keep this 界 draft");
+        let cursor = state.ui.input_cursor;
+        handle_key(&mut state, key(KeyCode::F(6)));
+        assert!(state.ui.panel.is_none());
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT),
+        );
+        assert_eq!(state.ui.panel.as_ref().unwrap().section, 10);
+        assert_eq!(state.ui.input, "keep this 界 draft");
+        assert_eq!(state.ui.input_cursor, cursor);
+        assert!(state.ui.requested_command.is_none());
+        assert!(!state.ui.execution_pending);
+        handle_key(&mut state, key(KeyCode::Esc));
+        assert!(state.ui.panel.is_none());
+        assert!(!state.ui.should_exit);
     }
 
     fn ctrl(c: char) -> KeyEvent {
@@ -779,6 +831,35 @@ mod tests {
     }
 
     #[test]
+    fn update_menu_defaults_to_later_and_never_installs_without_a_choice() {
+        let mut state = agent_state();
+        state.insert_text("preserved draft");
+        state.ui.pending_update = Some(crate::state::PendingUpdate {
+            current_version: "0.3.4".into(),
+            latest_version: "0.4.0".into(),
+            asset_url: String::new(),
+            asset_name: String::new(),
+            checksum_url: String::new(),
+            notes: vec!["New sessions".into()],
+            selected: 1,
+            installing: false,
+        });
+        handle_key(&mut state, key(KeyCode::Enter));
+        assert!(state.ui.update_later_requested);
+        assert!(!state.ui.update_install_requested);
+        assert!(!state.ui.update_skip_requested);
+        state.ui.update_later_requested = false;
+        handle_key(&mut state, key(KeyCode::Down));
+        handle_key(&mut state, key(KeyCode::Enter));
+        assert!(state.ui.update_skip_requested);
+        state.ui.update_skip_requested = false;
+        handle_key(&mut state, key(KeyCode::Up));
+        handle_key(&mut state, key(KeyCode::Up));
+        handle_key(&mut state, key(KeyCode::Enter));
+        assert!(state.ui.update_install_requested);
+        assert_eq!(state.ui.input, "preserved draft");
+    }
+    #[test]
     fn update_prompt_accepts_yes_keys() {
         assert_eq!(
             update_prompt_action(&key(KeyCode::Char('y'))),
@@ -802,7 +883,7 @@ mod tests {
         );
         assert_eq!(
             update_prompt_action(&key(KeyCode::Esc)),
-            UpdatePromptAction::Skip
+            UpdatePromptAction::Later
         );
     }
 

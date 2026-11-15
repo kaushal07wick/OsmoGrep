@@ -270,49 +270,6 @@ fn run_shell(state: &mut AgentState, cmd: &str) {
     }
 }
 
-fn warn_if_verification_needed(state: &mut AgentState) {
-    if state.session_changes.is_empty() {
-        return;
-    }
-
-    let status = crate::verification::latest_status(&state.repo_root);
-    if !status.needs_verification {
-        return;
-    }
-
-    let level = if status.status == "failed" {
-        LogLevel::Error
-    } else {
-        LogLevel::Warn
-    };
-    log(
-        state,
-        level,
-        format!(
-            "Verification status is {}. Fresh passing evidence is required before claiming the work is complete.",
-            status.status
-        ),
-    );
-
-    if !status.verifiable_changed_paths.is_empty() {
-        let mut paths = status
-            .verifiable_changed_paths
-            .iter()
-            .take(6)
-            .map(|path| format!("`{path}`"))
-            .collect::<Vec<_>>();
-        let remaining = status.verifiable_changed_paths.len().saturating_sub(6);
-        if remaining > 0 {
-            paths.push(format!("+{remaining} more"));
-        }
-        log(
-            state,
-            LogLevel::Warn,
-            format!("Unverified paths: {}", paths.join(", ")),
-        );
-    }
-}
-
 fn should_queue_automatic_checks(state: &AgentState) -> bool {
     state.auto_eval && state.session_changes.len() > state.ui.run_change_start
 }
@@ -546,6 +503,9 @@ fn plan_mode_prompt(text: &str) -> String {
 fn handle_update_event(state: &mut AgentState, evt: updater::UpdateEvent) {
     match evt {
         updater::UpdateEvent::Available(info) => {
+            if updater::skipped(&info.latest_version) {
+                return;
+            }
             state.ui.pending_update = Some(crate::state::PendingUpdate {
                 current_version: info.current_version.clone(),
                 latest_version: info.latest_version.clone(),
@@ -553,6 +513,8 @@ fn handle_update_event(state: &mut AgentState, evt: updater::UpdateEvent) {
                 asset_name: info.asset_name,
                 checksum_url: info.checksum_url,
                 installing: false,
+                selected: 1,
+                notes: info.notes,
             });
             state.ui.update_check_status = Some(format!(
                 "update available: {} -> {}",
@@ -562,7 +524,7 @@ fn handle_update_event(state: &mut AgentState, evt: updater::UpdateEvent) {
                 state,
                 LogLevel::Warn,
                 format!(
-                    "Osmogrep update available: {} -> {}. Press y to update, n to skip.",
+                    "Osmogrep update available: {} -> {}. Press u to update, l for later, s to skip this version.",
                     info.current_version, info.latest_version
                 ),
             );
@@ -620,12 +582,20 @@ fn approve_update(state: &mut AgentState, update_tx: &mpsc::Sender<updater::Upda
         asset_url: update.asset_url.clone(),
         asset_name: update.asset_name.clone(),
         checksum_url: update.checksum_url.clone(),
+        notes: update.notes.clone(),
     };
     updater::spawn_update_install(info, update_tx.clone());
 }
 
 fn deny_update(state: &mut AgentState) {
     if let Some(update) = state.ui.pending_update.take() {
+        if let Err(error) = updater::skip(&update.latest_version) {
+            log(
+                state,
+                LogLevel::Error,
+                format!("Could not save skipped version: {error}"),
+            );
+        }
         state.ui.update_check_status = Some(format!("skipped {}", update.latest_version));
         log_status(
             state,
@@ -1419,6 +1389,7 @@ fn run_tui(
     let (job_tx, job_rx) = mpsc::channel::<JobEvent>();
     let (update_tx, update_rx) = mpsc::channel::<updater::UpdateEvent>();
     updater::spawn_update_check(update_tx.clone());
+    let mut deferred_update = None;
     let mut running_jobs = 0usize;
     let mut context_rx: Option<mpsc::Receiver<ContextEvent>>;
     let voice_silence_ms: u64 = std::env::var("VLLM_REALTIME_SILENCE_MS")
@@ -1492,6 +1463,19 @@ fn run_tui(
             approve_update(&mut state, &update_tx);
             runtime.mark_dirty();
         }
+        if state.ui.update_later_requested {
+            state.ui.update_later_requested = false;
+            if let Some(update) = state.ui.pending_update.take() {
+                log_status(
+                    &mut state,
+                    format!(
+                        "Update {} postponed until the next launch.",
+                        update.latest_version
+                    ),
+                );
+            }
+            runtime.mark_dirty();
+        }
         if state.ui.update_skip_requested {
             state.ui.update_skip_requested = false;
             deny_update(&mut state);
@@ -1541,12 +1525,26 @@ fn run_tui(
 
         loop {
             match update_rx.try_recv() {
+                Ok(updater::UpdateEvent::Available(info)) => deferred_update = Some(info),
                 Ok(evt) => {
                     handle_update_event(&mut state, evt);
                     runtime.mark_dirty();
                 }
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => break,
+            }
+        }
+
+        if !state.ui.agent_running
+            && state.ui.input.is_empty()
+            && state.ui.pending_permission.is_none()
+            && state.ui.panel.is_none()
+            && state.ui.pending_update.is_none()
+            && !state.ui.input_masked
+        {
+            if let Some(info) = deferred_update.take() {
+                handle_update_event(&mut state, updater::UpdateEvent::Available(info));
+                runtime.mark_dirty();
             }
         }
 
@@ -2108,9 +2106,6 @@ fn run_tui(
                                 state.ui.current_tool_detail = None;
                                 state.ui.pending_permission = None;
                                 state.ui.active_edit_target = None;
-                                if state.session_changes.len() > state.ui.run_change_start {
-                                    warn_if_verification_needed(&mut state);
-                                }
                                 if should_queue_automatic_checks(&state) {
                                     state.reviewed_change_count =
                                         state.reviewed_change_count.max(state.ui.run_change_start);

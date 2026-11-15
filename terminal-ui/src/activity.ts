@@ -9,7 +9,7 @@ export function orb(elapsed:number,light=false,reduced=false){
  const angle=frame*Math.PI/16,bg=light?250:0,raw=Buffer.alloc((36*3+1)*36),dots=new Uint8Array(12*12);
  for(let y=0;y<36;y++){raw[y*109]=0;for(let x=0;x<36;x++){
   const offset=y*109+1+x*3;raw.fill(bg,offset,offset+3);
-  const u=(x-17.5)/16,v=(y-17.5)/16,r=u*u+v*v;if(r>=1||x%2||y%2)continue;
+  const u=(x-17.5)/13.5,v=(y-17.5)/13.5,r=u*u+v*v;if(r>=1||x%2||y%2)continue;
   const z=Math.sqrt(1-r),longitude=Math.atan2(u,z)+angle,latitude=Math.asin(v);
   const ribbons=.55+.45*Math.sin(longitude*5+latitude*3+Math.sin(latitude*4+angle)*.4)**2;
   const lightness=Math.max(.08,(.3+z*.5-u*.24-v*.22)*ribbons);

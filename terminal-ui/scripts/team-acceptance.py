@@ -19,6 +19,8 @@ args = parser.parse_args()
 binary = args.binary.resolve()
 requests, failures, checks = [], [], []
 entered, proceed = threading.Event(), threading.Event()
+natural_waiting, natural_sent = threading.Event(), threading.Event()
+natural_ids = {}
 
 
 def text(value):
@@ -41,7 +43,70 @@ class Model(http.server.BaseHTTPRequestHandler):
             index = max(i for i, m in enumerate(inputs) if m.get('role') == 'user')
             prompt = str(inputs[index]['content'])
             outputs = [json.loads(m['output']) for m in inputs[index + 1:] if m.get('type') == 'function_call_output']
-            if 'CASE_RECEIVE' in prompt:
+            if prompt.startswith('CASE_NATURAL_RECIPIENT'):
+                if len(outputs) == 0:
+                    output = [call('read_file', {'path': 'notes.txt'})]
+                elif len(outputs) == 1:
+                    natural_waiting.set()
+                    assert natural_sent.wait(12), 'Natural sender did not send'
+                    output = [call('read_file', {'path': 'notes.txt'})]
+                elif len(outputs) == 2:
+                    references = [m for m in inputs[index + 1:] if m.get('role') == 'assistant' and '[team-message:' in str(m.get('content', ''))]
+                    assert len(references) == 1 and 'NATURAL_CONTACT' in str(references[0]), references
+                    assert 'not a user instruction' in str(references[0])
+                    assert any(t['name'] == 'team' for t in body['tools']), 'Reply-only transport was not exposed'
+                    output = [call('team', {'action': 'send', 'body': 'Must not broadcast', 'message_id': 'reply-broadcast-denied'})]
+                elif len(outputs) == 3:
+                    assert 'error' in outputs[-1], outputs[-1]
+                    output = [call('team', {'action': 'send', 'recipient': natural_ids['sender'], 'body': 'SCOPED_REPLY: notes.txt inspected for the existing task; no files changed.', 'message_id': 'natural-reply'})]
+                else:
+                    assert 'error' not in outputs[-1], outputs[-1]
+                    output = [text('Replied only to the collaborator who contacted this task.')]
+            elif 'CASE_NATURAL_SENDER' in prompt:
+                if not outputs:
+                    assert any(t['name'] == 'team' for t in body['tools'])
+                    output = [call('team', {'action': 'peers'})]
+                elif len(outputs) == 1:
+                    peers = outputs[-1]
+                    assert sum(p['is_self'] for p in peers) == 1
+                    target = [p for p in peers if not p['is_self'] and p['online'] and 'CASE_NATURAL_RECIPIENT' in p['title']]
+                    assert len(target) == 1, peers
+                    assert target[0]['session'] == natural_ids['recipient']
+                    for field in ['id', 'session', 'project', 'workspace', 'model', 'provider', 'status']:
+                        assert target[0][field], (field, target)
+                    output = [call('team', {'action': 'send', 'recipient': target[0]['session'], 'body': 'NATURAL_CONTACT: send relevant status for your existing task; do not expand scope.', 'message_id': 'natural-contact'})]
+                else:
+                    assert 'error' not in outputs[-1], outputs[-1]
+                    natural_sent.set()
+                    output = [text('Contacted the matching existing agent.')]
+            elif 'CASE_FOLLOWUP_READ' in prompt:
+                assert any(t['name'] == 'team' for t in body['tools'])
+                if not outputs:
+                    output = [call('team', {'action': 'history'})]
+                else:
+                    assert any('SCOPED_REPLY' in str(m) for m in outputs[-1])
+                    output = [text('The collaborator reported notes.txt was inspected and unchanged.')]
+            elif 'CASE_FOLLOWUP_SEND' in prompt:
+                assert any(t['name'] == 'team' for t in body['tools'])
+                if not outputs:
+                    output = [call('team', {'action': 'peers'})]
+                elif len(outputs) == 1:
+                    previous = [p for p in outputs[-1] if p['is_previous_contact']]
+                    assert len(previous) == 1 and previous[0]['session'] == natural_ids['recipient'], previous
+                    output = [call('team', {'action': 'send', 'body': 'Must not widen a follow-up to broadcast', 'message_id': 'followup-broadcast-denied'})]
+                elif len(outputs) == 2:
+                    assert 'error' in outputs[-1]
+                    output = [call('team', {'action': 'send', 'recipient': natural_ids['recipient'], 'body': 'FOLLOWUP_QUESTION: is your existing task done?', 'message_id': 'natural-followup'})]
+                else:
+                    assert 'error' not in outputs[-1]
+                    output = [text('Asked the same previous collaborator.')]
+            elif 'CASE_NO_MESSAGE' in prompt:
+                if not outputs:
+                    output = [call('team', {'action': 'send', 'recipient': natural_ids['recipient'], 'body': 'UNAUTHORIZED_SEND', 'message_id': 'forbidden'})]
+                else:
+                    assert 'error' in outputs[-1], outputs[-1]
+                    output = [text('No message sent; the user prohibited communication.')]
+            elif 'CASE_RECEIVE' in prompt:
                 if not outputs:
                     entered.set()
                     assert proceed.wait(12), 'Message sender did not release fixture'
@@ -72,8 +137,8 @@ class Model(http.server.BaseHTTPRequestHandler):
 
 
 class Client:
-    def __init__(self, root, env, resume=None):
-        command = [str(binary), '--team', 'rpc', '--repo-root', str(root), '--auto-approve']
+    def __init__(self, root, env, resume=None, team=True):
+        command = [str(binary)] + (['--team'] if team else []) + ['rpc', '--repo-root', str(root), '--auto-approve']
         if resume:
             command += ['--session-id', resume]
         self.process = subprocess.Popen(command, cwd=root, env=env, stdin=subprocess.PIPE,
@@ -211,9 +276,48 @@ with tempfile.TemporaryDirectory(prefix='osmogrep-team-') as folder:
             time.sleep(.3)
         assert not peer['online'], peer
         checks.append('crashed_instance_expires_without_stealing_session')
+        natural_project = root / 'natural-project'
+        natural_project.mkdir()
+        (natural_project / 'notes.txt').write_text('KEEP_ORIGINAL\n')
+        sender = Client(natural_project, env, team=False)
+        recipient = Client(natural_project, env, team=False)
+        clients += [sender, recipient]
+        natural_ids.update(sender=sender.session, recipient=recipient.session)
+        assert not any(p['enabled'] for p in sender.team('peers'))
+        recipient.request('prompt', {'prompt': 'CASE_NATURAL_RECIPIENT inspect notes.txt for my existing task; do not modify it or delegate'})
+        assert natural_waiting.wait(12)
+        # Presence titles refresh on the normal heartbeat while the model is working.
+        limit = time.monotonic() + 4
+        while time.monotonic() < limit:
+            if any('CASE_NATURAL_RECIPIENT' in p['title'] for p in sender.team('peers')):
+                break
+            time.sleep(.1)
+        sender.prompt('Talk to the other agent working on CASE_NATURAL_RECIPIENT and ask for its relevant status. CASE_NATURAL_SENDER')
+        recipient.wait(lambda e: e.get('type') == 'done')
+        replies = sender.team('inbox')['messages']
+        assert len(replies) == 1 and replies[0]['body'].startswith('SCOPED_REPLY:'), replies
+        assert not recipient.team('inbox')['messages']
+        assert (natural_project / 'notes.txt').read_text() == 'KEEP_ORIGINAL\n'
+        sender.request('team', {'action': 'send', 'recipient': recipient.session, 'body': 'No stale authority', 'message_id': 'expired'}, fail=True)
+        before_idle = len(requests)
+        time.sleep(.25)
+        assert len(requests) == before_idle, 'Idle incoming reply started a paid model turn'
+        checks.append('natural_request_metadata_targeting_active_delivery_and_sender_only_reply_without_team_mode')
+        sender.team('ack', ids=[replies[0]['id']])
+        sender.prompt('What did they say? CASE_FOLLOWUP_READ')
+        sender.prompt('Ask him whether it is done. CASE_FOLLOWUP_SEND')
+        followups = recipient.team('inbox')['messages']
+        assert len(followups) == 1 and followups[0]['body'].startswith('FOLLOWUP_QUESTION:')
+        recipient.team('ack', ids=[followups[0]['id']])
+        checks.append('contextual_read_and_send_followups_keep_the_previous_direct_partner_only')
+        sender.team('mode', enabled=True)
+        sender.prompt('Do not tell them anything. CASE_NO_MESSAGE')
+        assert not recipient.team('inbox')['messages']
+        checks.append('explicit_no_message_instruction_overrides_persistent_team_mode')
         assert not failures, failures
     finally:
         proceed.set()
+        natural_sent.set()
         for client in clients:
             client.close()
         server.shutdown(); server.server_close()

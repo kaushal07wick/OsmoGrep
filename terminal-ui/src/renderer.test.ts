@@ -168,7 +168,7 @@ test('composer has a continuous padded surface with room around text and footer'
     assert.ok(/\x1b\[48;2;3[2-9];3[2-9];(?:2[8-9]|3[0-9])m/.test(f.rows[y]!));
     assert.ok(!stripTerminalSequences(f.rows[y]!).includes('─'));
   }
-  assert.equal(stripTerminalSequences(f.rows[f.input.y]!).trim(), '○ Voice');
+  assert.equal(stripTerminalSequences(f.rows[f.input.y]!).trim(), '');
   assert.equal(stripTerminalSequences(f.rows[f.input.y+2]!).trim(), '');
   assert.equal(stripTerminalSequences(f.rows[v.height-2]!).trim(), '');
   v.input='first\nsecond\nthird';v.cursor=Array.from(v.input).length;

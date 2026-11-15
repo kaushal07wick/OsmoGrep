@@ -43,6 +43,8 @@ osmogrep
 
 Requires Rust 1.89+ to install and **Node.js 22.19+** for the full terminal UI. You can enter your key with `/key` instead, or connect another provider below. [Installation options and platform notes →](docs/reference.md#quickstart)
 
+New GitHub releases appear in the terminal with a short changelog and **Update now**, **Later**, or **Skip this version**. Nothing installs without your choice.
+
 ## From a question to a code change
 
 ```text
@@ -51,7 +53,7 @@ Add retry support for HTTP 429 responses.
 Review these changes before I commit them.
 ```
 
-OsmoGrep can search your code, follow symbols, edit files, apply patches, run commands, and check the result. Tool activity stays visible. Changes have numbered diffs. The final reply tells you what changed.
+OsmoGrep can search your code, follow symbols, edit files, apply patches, run commands, and check the result. Tool activity stays visible. Changes have numbered diffs. Commands and snippets have highlighted code blocks with click-to-copy. The final reply tells you what changed.
 
 | Work | What OsmoGrep brings |
 | --- | --- |
@@ -88,7 +90,7 @@ The central logo morphs and settles into the background. Click to replay; Reduce
 
 <img src="docs/assets/terminal-morph.gif" alt="OsmoGrep pixel-ring morph, shown during click replay" width="680" />
 
-Weekly usage puts this week, last week, and input/output totals on one readable scale. `/stats` switches between recorded activity and an explicitly labeled sample view.
+`/usage` summarizes input, output, cache reuse and context at a glance. Weekly usage puts this week, last week, and input/output totals on one readable scale. `/stats` switches between recorded activity and an explicitly labeled sample view.
 
 ![Weekly token usage with sample data clearly labeled](docs/assets/terminal-usage.png)
 
@@ -110,7 +112,7 @@ Start read-only, approve actions as they come, or enable full access through `/p
 
 Resume or fork independent conversations with `/sessions`, `/resume`, and `/fork`. Model-aware compaction archives original context; `/recover` opens an interrupted run without replaying unfinished tools. Interactive commands accept stdin and can keep running while the agent works. Subagents run only when you explicitly request delegation; writable workers use isolated worktrees.
 
-Open `/agents` or press **F6** to manage sessions across projects: search, filter, pin, preview, resume, and fork. Run separate instances with `--team` to exchange durable messages and shared progress in the same repository, with file claims to reduce conflicting edits. [Sessions and teams →](docs/team-runtime.md)
+Press **Shift+Left** to manage sessions across projects: search, filter, pin, preview, resume, and fork. Ask naturally to talk to another agent in the same repository. Instances discover one another by session ID and task metadata, exchange durable messages and progress, and use file claims to reduce conflicting edits. [Sessions and teams →](docs/team-runtime.md)
 
 For sustained work, `osmogrep task start` adds a durable objective, acceptance criteria, progress checkpoints, and explicit time/request/token budgets. Interrupted tasks can resume without replaying uncertain tools. [Supervised long runs →](docs/long-runs.md)
 

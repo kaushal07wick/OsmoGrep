@@ -38,3 +38,16 @@ test('selector clicks target the same filtered row that is displayed',()=>{
  assert.ok(frame.controls.length>0);for(const c of frame.controls){assert.equal(c.label,panel.rows[c.index]!.label);assert.ok(stripTerminalSequences(frame.rows[c.y]!).includes(c.label));assert.ok(c.x+c.width<=100&&c.y<40);}
  assert.equal(drawPanel(panel,100,40,false,'').controls.length,0);
 });
+
+
+test('settings lists every category at normal size without hidden tab navigation',()=>{
+ const categories=['Appearance','Model & provider','Permissions','Status line','Keyboard','Skills','Usage','Activity'];
+ const settings={...panel,section:12,settings:true,selecting:true,selected:0,title:'Settings',rows:categories.map(label=>({label,description:'Configure this category',value:'→'})),footer:'↑↓ choose category · enter open · esc close'};
+ for(const [width,height] of [[80,24],[120,40]]){
+  const f=drawPanel(settings,width!,height!,false,''),text=f.rows.map(stripTerminalSequences).join('\n');
+  for(const label of categories)assert.ok(text.includes(label),label);
+  assert.equal(f.controls.length,8);assert.ok(!text.includes('tab'));
+ }
+ const category=drawPanel({...settings,section:3,sections:['','','','Permissions'],title:'Permissions',footer:'esc categories'},80,30,false,'');
+ assert.match(category.rows.map(stripTerminalSequences).join('\n'),/Settings \/ Permissions/);
+});
