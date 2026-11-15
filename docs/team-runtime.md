@@ -12,7 +12,7 @@ The coding agent discovers matching sessions, selects the target by its metadata
 
 ## Session center
 
-Press **Shift+Left** (or run `osmogrep agents` from your shell). Search titles, directories, models, and session IDs. Sessions are grouped by project, with filters for working, ready, inactive, and needs-you states. Errors appear under Needs you. Elapsed update age reflects actual activity rather than heartbeat traffic.
+Press **⌘←** (or **Ctrl+S**) (or run `osmogrep agents` from your shell). Search titles, directories, models, and session IDs. Sessions are ordered by recent activity and show their project, with filters for working, ready, inactive, and needs-you states. Errors appear under Needs you. Elapsed update age reflects actual activity rather than heartbeat traffic.
 
 | Control | Action |
 | --- | --- |
@@ -20,7 +20,7 @@ Press **Shift+Left** (or run `osmogrep agents` from your shell). Search titles, 
 | Up/down | Select a session |
 | Enter | Resume an inactive session; preview a live owner's saved output |
 | F1 | Preview saved output without taking ownership |
-| F2 | New session in the selected project's directory |
+| Ctrl+N | New session in the selected project's directory |
 | F3 | Fork the selected session's saved history |
 | F4 | Send a message to the selected session in this repository |
 | F5 | Pin/unpin a session within its project |
@@ -79,6 +79,8 @@ Fenced code uses a separate highlighted surface with a **Copy** button. Clicking
 
 ### Fresh sessions and the editor workspace
 
-A normal launch starts a fresh conversation. Workspace theme, density, appearance preferences and key bindings carry over; the selected permission profile also stays in effect. Previous prompts, output, queued work, one-off approvals and jobs do not carry over. Saved conversations remain available in Shift+Left. `--resume` and `--fork` still select an explicit saved thread.
+A normal launch starts a fresh conversation. Workspace theme, density, appearance preferences and key bindings carry over; the selected permission profile also stays in effect. Previous prompts, output, queued work, one-off approvals and jobs do not carry over. Saved conversations remain available in the session center. `--resume` and `--fork` still select an explicit saved thread.
 
 `/nv [file]` opens a black Neovim editor beside the agent at 96 columns and wider. The editor has an OsmoGrep status line and file browser, without loading your personal Neovim plugins or welcome screen. Your normal Neovim configuration is not changed. In a managed workspace, Alt+Left/Right or a mouse click switches panes; in Neovim, Escape then Space a returns to chat and Space e browses files. `:q` closes the editor and expands the agent. Smaller terminals retain separate full-width windows. Moving a standalone agent into this workspace explicitly resumes its current session after releasing the previous writer lock.
+
+On macOS, ⌘← requires the terminal to forward the Command modifier. Ghostty defaults convert it to Ctrl+A; Ctrl+S opens sessions without changing your terminal configuration.

@@ -643,7 +643,7 @@ mod tests {
     }
 
     #[test]
-    fn shift_left_opens_sessions_directly_and_preserves_draft() {
+    fn command_left_opens_sessions_directly_and_preserves_draft() {
         let mut state = agent_state();
         state.insert_text("keep this 界 draft");
         let cursor = state.ui.input_cursor;
@@ -651,7 +651,7 @@ mod tests {
         assert!(state.ui.panel.is_none());
         handle_key(
             &mut state,
-            KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT),
+            KeyEvent::new(KeyCode::Left, KeyModifiers::SUPER),
         );
         assert_eq!(state.ui.panel.as_ref().unwrap().section, 10);
         assert_eq!(state.ui.input, "keep this 界 draft");

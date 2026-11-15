@@ -13,7 +13,14 @@ pub const BINDINGS: &[Binding] = &[
         id: "agents",
         label: "Sessions and team",
         group: "Workspace",
-        default: "shift+left",
+        default: "super+left",
+        command: None,
+    },
+    Binding {
+        id: "sessions-fallback",
+        label: "Sessions (terminal fallback)",
+        group: "Workspace",
+        default: "ctrl+s",
         command: None,
     },
     Binding {
@@ -164,7 +171,9 @@ pub fn chord(key: KeyEvent) -> Option<String> {
         KeyCode::Right => "right".into(),
         _ => return None,
     };
-    if matches!(key.code, KeyCode::Char(_)) && !key.modifiers.intersects(M::CONTROL | M::ALT) {
+    if matches!(key.code, KeyCode::Char(_))
+        && !key.modifiers.intersects(M::CONTROL | M::ALT | M::SUPER)
+    {
         return None;
     }
     let mut value = String::new();
@@ -172,6 +181,7 @@ pub fn chord(key: KeyEvent) -> Option<String> {
         (M::CONTROL, "ctrl+"),
         (M::ALT, "alt+"),
         (M::SHIFT, "shift+"),
+        (M::SUPER, "super+"),
     ] {
         if key.modifiers.contains(flag) {
             value.push_str(prefix)
@@ -193,6 +203,7 @@ pub fn event(value: &str) -> Option<KeyEvent> {
             "ctrl" => mods |= M::CONTROL,
             "alt" => mods |= M::ALT,
             "shift" => mods |= M::SHIFT,
+            "super" | "cmd" | "command" => mods |= M::SUPER,
             _ => return None,
         }
     }
@@ -214,7 +225,7 @@ pub fn event(value: &str) -> Option<KeyEvent> {
                 KeyCode::F(f)
             } else if name.len() == 1
                 && name.as_bytes()[0].is_ascii_alphabetic()
-                && mods.intersects(M::CONTROL | M::ALT)
+                && mods.intersects(M::CONTROL | M::ALT | M::SUPER)
             {
                 KeyCode::Char(name.chars().next()?)
             } else {
@@ -232,6 +243,8 @@ pub fn effective<'a>(prefs: &'a Preferences, b: &'a Binding) -> &'a str {
         .unwrap_or(b.default)
 }
 pub fn assign(prefs: &mut Preferences, id: &str, value: &str) -> Result<(), String> {
+    let canonical = event(value).and_then(chord);
+    let value = canonical.as_deref().unwrap_or(value);
     if !BINDINGS.iter().any(|b| b.id == id) {
         return Err("Unknown action".into());
     }
@@ -241,7 +254,7 @@ pub fn assign(prefs: &mut Preferences, id: &str, value: &str) -> Result<(), Stri
     if value != "unbound" {
         if event(value).is_none() || value == "ctrl+c" {
             return Err(
-                "Use a function key or supported Ctrl/Alt chord; Escape and Ctrl+C are reserved"
+                "Use a function key or supported Ctrl/Alt/Command chord; Escape and Ctrl+C are reserved"
                     .into(),
             );
         }
@@ -273,7 +286,7 @@ pub fn resolve(prefs: &Preferences, key: KeyEvent) -> Resolved {
     };
     for b in BINDINGS {
         if effective(prefs, b) == value {
-            return if b.id == "agents" {
+            return if matches!(b.id, "agents" | "sessions-fallback") {
                 Resolved::Sessions
             } else if let Some(cmd) = b.command {
                 Resolved::Command(cmd)
@@ -295,14 +308,26 @@ pub fn resolve(prefs: &Preferences, key: KeyEvent) -> Resolved {
 mod tests {
     use super::*;
     #[test]
-    fn session_center_uses_shift_left_and_can_be_remapped() {
+    fn session_center_uses_command_left_and_terminal_fallback() {
         let mut prefs = Preferences::default();
         assert!(matches!(
-            resolve(&prefs, event("shift+left").unwrap()),
+            resolve(&prefs, event("super+left").unwrap()),
             Resolved::Sessions
         ));
         assert!(matches!(
             resolve(&prefs, event("f6").unwrap()),
+            Resolved::Unchanged
+        ));
+        assert_eq!(
+            chord(event("cmd+left").unwrap()).as_deref(),
+            Some("super+left")
+        );
+        assert!(matches!(
+            resolve(&prefs, event("ctrl+s").unwrap()),
+            Resolved::Sessions
+        ));
+        assert!(matches!(
+            resolve(&prefs, event("shift+left").unwrap()),
             Resolved::Unchanged
         ));
         assign(&mut prefs, "agents", "ctrl+j").unwrap();
@@ -311,7 +336,7 @@ mod tests {
             Resolved::Sessions
         ));
         assert!(matches!(
-            resolve(&prefs, event("shift+left").unwrap()),
+            resolve(&prefs, event("super+left").unwrap()),
             Resolved::Ignore
         ));
     }

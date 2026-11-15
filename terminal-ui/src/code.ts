@@ -20,9 +20,10 @@ export function codeBlocks(text:string,width:number,light:boolean,markdown:(text
  text=stripTerminalSequences(text).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g,'');
  const rows:string[]=[],copies:CodeCopy[]=[];let prose:string[]=[];
  const flush=()=>{if(prose.length){rows.push(...markdown(prose.join('\n')));prose=[];}};
- const lines=text.split('\n'),bg=light?'\x1b[48;2;240;238;231m':'\x1b[48;2;19;22;24m';
+ const lines=text.split('\n'),bg=light?'\x1b[48;2;242;240;234m':'\x1b[48;2;16;17;17m';
  const dim=light?'\x1b[38;2;100;100;95m':'\x1b[38;2;140;145;145m';
- const surface=(line:string)=>bg+line.replaceAll(reset,reset+bg)+' '.repeat(Math.max(0,width-visibleWidth(line)))+reset;
+ const inset=width>=40?1:0,card=Math.max(1,width-inset*2),pad=width>=28?2:1;
+ const surface=(line:string)=>' '.repeat(inset)+bg+line.replaceAll(reset,reset+bg)+' '.repeat(Math.max(0,card-visibleWidth(line)))+reset+' '.repeat(inset);
  for(let i=0;i<lines.length;i++){
   const open=/^ {0,3}(`{3,}|~{3,})([^`]*)$/.exec(lines[i]!);
   if(!open){prose.push(lines[i]!);continue;}
@@ -34,11 +35,13 @@ export function codeBlocks(text:string,width:number,light:boolean,markdown:(text
   }
   const code=source.join('\n');
   if(width<14){rows.push(...source.flatMap(line=>wrapTextWithAnsi(highlight(line.replaceAll('\t','    '),language,light),Math.max(1,width))));continue;}
-  const button=copied===code?'[Copied]':'[Copy]',x=width-button.length-1,languageLabel=fit(language||'code',Math.max(1,x-2));
-  copies.push({row:rows.length,x,width:button.length,text:code});
-  rows.push(surface(dim+' '+languageLabel+' '.repeat(Math.max(1,x-visibleWidth(languageLabel)-1))+button));
+  const button=copied===code?'✓ Copied':'⧉ Copy',x=width-inset-pad-visibleWidth(button),languageLabel=fit((/^(sh|bash|shell|console)$/.test(language)?'shell':language||'code').toUpperCase(),Math.max(1,x-inset-pad-2));
+  const action=copied===code?(light?'\x1b[38;2;40;120;65m':'\x1b[38;2;135;185;145m'):(light?'\x1b[38;2;70;75;70m':'\x1b[38;2;185;185;175m');
+  rows.push(surface(''));
+  copies.push({row:rows.length,x,width:visibleWidth(button),text:code});
+  rows.push(surface(' '.repeat(pad)+dim+languageLabel+' '.repeat(Math.max(1,x-inset-pad-visibleWidth(languageLabel)))+action+button),surface(''));
   for(const line of source){
-   for(const wrapped of wrapTextWithAnsi(highlight(line.replaceAll('\t','    '),language,light),width-4))rows.push(surface('  '+wrapped));
+   for(const wrapped of wrapTextWithAnsi(highlight(line.replaceAll('\t','    '),language,light),Math.max(1,card-pad*2)))rows.push(surface(' '.repeat(pad)+wrapped));
   }
   rows.push(surface(''));prose.push('');
  }

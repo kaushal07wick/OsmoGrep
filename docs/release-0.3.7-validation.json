@@ -1,0 +1,59 @@
+{
+  "checked_at": "2026-11-15T19:23:13.773539+00:00",
+  "version": "0.3.7",
+  "rust_tests": {
+    "passed": 275,
+    "ignored": 2
+  },
+  "terminal_ui_tests": {
+    "passed": 61
+  },
+  "provider_marks": {
+    "providers": 10,
+    "themeVariants": 20,
+    "transparentCorners": true,
+    "nonemptyVectorMarks": true,
+    "revision": "55746b0b082258211121c70bd26e6878fd3bd292"
+  },
+  "macos_terminal_checks": {
+    "typescript_renderer_started": true,
+    "native_paper_pixels_cached": true,
+    "central_morph_animates_then_settles": true,
+    "central_morph_ignores_hover_and_click_replays": true,
+    "escape_does_not_exit_idle_app": true,
+    "greeting_has_no_tools_or_stale_background_jobs": true,
+    "inactive_voice_has_no_composer_badge": true,
+    "session_center_live_preview_preserves_draft_and_ownership": true,
+    "settings_categories_without_hidden_tab_navigation": true,
+    "command_picker_navigation_and_execution": true,
+    "footer_provider_model_selectors": true,
+    "light_cursor_has_explicit_contrast": true,
+    "settings_and_real_key_remapping": true,
+    "statusline_and_skill_picker": true,
+    "large_multiline_draft_editing": true,
+    "real_thumbnail_sequence": true,
+    "original_image_bytes_reached_provider": true,
+    "selected_skill_reached_provider": true,
+    "weekly_chart_entry_animation": true,
+    "reported_usage_and_pixel_history": true,
+    "real_permission_dock_and_numbered_diff": true,
+    "highlighted_command_card_click_copies_only_code": true,
+    "submitted_followups_are_distinct_fifo_turns": true,
+    "assistant_preface_does_not_skip_requested_tools": true,
+    "wheel_scrolling_and_drag_copy_plain_output": true,
+    "transcript_scroll_track_drags_and_returns_to_live": true,
+    "streaming_preserves_user_scroll_position": true,
+    "terminal_resize": true,
+    "existing_shell_command": true,
+    "renderer_crash_recovers_to_native_ui": true,
+    "terminal_state_restored": true,
+    "startup_is_fresh_until_saved_session_selected": true,
+    "forwarded_command_left_opens_sessions": true,
+    "control_n_creates_fresh_session_from_center": true,
+    "preferences_survive_real_restart": true
+  },
+  "limits": [
+    "Ghostty configuration is unchanged; Ctrl+S works with its default Command+Left interception.",
+    "The installed application was not replaced during validation."
+  ]
+}

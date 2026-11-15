@@ -232,7 +232,7 @@ try:
     assert b'VOICE (off)' not in plain(transcript[at:])
     result['inactive_voice_has_no_composer_badge']=True
     at=len(transcript)
-    paste('keep center draft');send(b'\x1b[1;2D')  # Shift+Left
+    paste('keep center draft');send(b'\x13')  # Ctrl+S: works with Ghostty's unchanged Command+Left binding
     wait_for(lambda:b'Sessions' in plain(transcript[at:]) and b'Inactive' in plain(transcript[at:]))
     send(b'\x1bOP')  # F1 preview of the current session
     wait_for(lambda:b'GREETING_ONLY_OK' in plain(transcript[at:]) and b'esc sessions' in plain(transcript[at:]))
@@ -392,19 +392,19 @@ try:
     result['real_permission_dock_and_numbered_diff'] = True
     assert b'Fresh passing evidence is required' not in plain(transcript[at:])
     at=len(transcript);paste('CODE_COPY_PROBE');send(b'\r')
-    wait_for(lambda:b'CODE_BLOCK_READY' in plain(transcript[at:]) and b'[Copy]' in plain(transcript[at:]))
+    wait_for(lambda:b'CODE_BLOCK_READY' in plain(transcript[at:]) and '⧉ Copy'.encode() in plain(transcript[at:]))
     # Follow ANSI cursor positions to click the actual header, not hard-coded output rows.
     data=bytes(transcript[at:]);row=col=1;target=None
     for token in re.findall(rb'\x1b\[[0-?]*[ -/]*[@-~]|[^\x1b]+',data):
         cursor=re.fullmatch(rb'\x1b\[(\d+);(\d+)H',token)
         if cursor: row,col=map(int,cursor.groups());continue
         if token.startswith(b'\x1b['):continue
-        if b'[Copy]' in token: target=(col+len(token[:token.index(b'[Copy]')].decode(errors='replace')),row)
+        if '⧉ Copy'.encode() in token: target=(col+len(token[:token.index('⧉ Copy'.encode())].decode(errors='replace')),row)
         col+=len(token.decode(errors='replace'))
     assert target,'code Copy target must be drawn'
     send(f'\x1b[<0;{target[0]};{target[1]}M'.encode())
     expected=base64.b64encode(b'python hey_bro_triangle.py')
-    wait_for(lambda:expected in transcript[at:] and b'[Copied]' in plain(transcript[at:]))
+    wait_for(lambda:expected in transcript[at:] and '✓ Copied'.encode() in plain(transcript[at:]))
     result['highlighted_command_card_click_copies_only_code']=True
     # Ordinary Enter messages remain separate FIFO turns while a response streams.
     at=len(requests);paste('QUEUE_FIRST');send(b'\r');paste('QUEUE_SECOND');send(b'\r');paste('QUEUE_THIRD');send(b'\r')
@@ -505,11 +505,22 @@ try:
     fresh=json.loads((state_path.parent/(fresh_id+'.json')).read_text())
     assert len(fresh['conversation'])==1 and fresh['logs']==[]
     assert previous_path.read_bytes()==previous_bytes
-    send(b'\x1b[1;2D');paste(previous_id);send(b'\r')
+    send(b'\x1b[1;9D');paste(previous_id);send(b'\r')
     wait_for(lambda:latest_marker.read_text().strip()==previous_id)
     assert len(requests)==request_count,'opening and selecting saved sessions must not call the model'
     assert len(json.loads(previous_path.read_text())['conversation'])>1
     result['startup_is_fresh_until_saved_session_selected']=True
+    result['forwarded_command_left_opens_sessions']=True
+    before_new=latest_marker.read_text().strip()
+    new_at=len(transcript)
+    send(b'\x13')  # Ctrl+S terminal fallback
+    wait_for(lambda:b'ctrl+n new' in plain(transcript[new_at:]))
+    send(b'\x0e')  # Ctrl+N, not a Mac brightness key
+    wait_for(lambda:latest_marker.read_text().strip()!=before_new)
+    newest=json.loads((state_path.parent/(latest_marker.read_text().strip()+'.json')).read_text())
+    assert len(newest['conversation'])==1 and newest['logs']==[]
+    assert len(requests)==request_count
+    result['control_n_creates_fresh_session_from_center']=True
     send(b'\x10')
     wait_for(lambda:b'WORKSPACE' in transcript[at:])
     send(b'\x1b')

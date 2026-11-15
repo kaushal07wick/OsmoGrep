@@ -312,8 +312,9 @@ fn session_rows(state: &AgentState, panel: &Panel, filter: bool) -> Vec<Row> {
         })
         .collect::<Vec<_>>();
     peers.sort_by(|a, b| {
-        a.workspace
-            .cmp(&b.workspace)
+        b.updated
+            .cmp(&a.updated)
+            .then(a.workspace.cmp(&b.workspace))
             .then(b.pinned.cmp(&a.pinned))
             .then(a.title.to_lowercase().cmp(&b.title.to_lowercase()))
             .then(a.session.cmp(&b.session))
@@ -929,7 +930,7 @@ pub fn view(state: &AgentState) -> Option<PanelView> {
         {
             "↑↓ navigate · enter select · esc categories"
         } else if panel.section == 10 {
-            "←/→ filter · enter open · F2 new · F3 fork · F4 message · F5 pin · esc back"
+            "←/→ filter · enter open · ctrl+n new · F3 fork · F4 message · F5 pin · esc back"
         } else if panel.capture.is_some() {
             "press new chord · backspace default · delete unbind · esc cancel"
         } else if panel.picker.is_some() && panel.edit.is_none() {
@@ -1020,7 +1021,7 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
             };
         } else if key.code != KeyCode::Esc {
             panel.capture = Some(id);
-            panel.notice = "Use a function key or Ctrl/Alt chord".into();
+            panel.notice = "Use a function key or Ctrl/Alt/Command chord".into();
         }
         state.ui.panel = Some(panel);
         return true;
@@ -1096,6 +1097,7 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
     let rows = entries(state, &panel);
     let index = selected_index(&panel, &rows);
     panel.selected = index;
+    let selected_before = rows.get(index).and_then(|row| row.id.clone());
     let mut close = false;
     let mut changed = false;
     match key.code {
@@ -1126,7 +1128,9 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
                 };
             }
         }
-        KeyCode::F(2) if panel.section == 10 => {
+        KeyCode::Char('n' | 'N')
+            if panel.section == 10 && key.modifiers.contains(KeyModifiers::CONTROL) =>
+        {
             let root = rows
                 .get(index)
                 .and_then(|r| {
@@ -1480,6 +1484,14 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
         if matches!(key.code, KeyCode::Char(_) | KeyCode::Backspace) {
             panel.selected_session = None;
         }
+        let next_rows = entries(state, &panel);
+        if next_rows
+            .get(selected_index(&panel, &next_rows))
+            .and_then(|row| row.id.as_ref())
+            != selected_before.as_ref()
+        {
+            panel.opened = std::time::Instant::now();
+        }
     }
     if changed {
         panel.notice = match persistence::save(state) {
@@ -1594,6 +1606,26 @@ mod tests {
         }
     }
     #[test]
+    fn new_session_uses_control_n_without_consuming_search_text() {
+        let mut state = crate::init_state();
+        state.insert_text("keep this draft");
+        let root = state.repo_root.clone();
+        open(&mut state, 10, None);
+        handle_key(&mut state, key(KeyCode::F(2)));
+        assert!(state.ui.open_session.is_none());
+        handle_key(&mut state, key(KeyCode::Char('n')));
+        assert_eq!(state.ui.panel.as_ref().unwrap().query, "n");
+        handle_key(
+            &mut state,
+            crossterm::event::KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL),
+        );
+        let next = state.ui.open_session.as_ref().unwrap();
+        assert!(next.id.is_none());
+        assert_eq!(next.root, root);
+        assert_eq!(state.ui.input, "keep this draft");
+    }
+
+    #[test]
     fn settings_categories_open_by_keyboard_or_click_and_escape_returns_home() {
         let mut state = crate::init_state();
         state.insert_text("keep my draft");
@@ -1613,6 +1645,35 @@ mod tests {
         assert!(state.ui.panel.is_none());
         assert_eq!(state.ui.input, "keep my draft");
     }
+    #[test]
+    fn session_center_sorts_recent_activity_across_projects_and_keeps_selection_identity() {
+        let mut state = crate::init_state();
+        let mut old = peer("old", "AAA", "closed", false);
+        old.workspace = "/aaa/project".into();
+        old.updated = 10;
+        let mut recent = peer("recent", "ZZZ", "ready", true);
+        recent.workspace = "/zzz/project".into();
+        recent.updated = 30;
+        let mut middle = peer("middle", "BBB", "closed", false);
+        middle.updated = 20;
+        state.ui.team.peers = vec![old, recent, middle];
+        open(&mut state, 10, None);
+        assert_eq!(
+            view(&state)
+                .unwrap()
+                .rows
+                .iter()
+                .map(|r| r.id.as_deref().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["recent", "middle", "old"]
+        );
+        handle_key(&mut state, key(KeyCode::Down));
+        state.ui.team.peers[0].updated = 40;
+        let next = view(&state).unwrap();
+        assert_eq!(next.rows[0].id.as_deref(), Some("old"));
+        assert_eq!(next.rows[next.selected].id.as_deref(), Some("middle"));
+    }
+
     #[test]
     fn session_center_anchors_identity_and_filters_without_touching_composer() {
         let mut state = crate::init_state();

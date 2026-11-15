@@ -34,7 +34,7 @@ test('runtime status retains breathing room, completion alignment, and voice sta
  const masked=render({...v,masked:true});assert.ok(!masked.controls?.some(c=>c.id==='voice'||c.id==='team'));
 });
 
-test('session center groups projects and uses stable session IDs for clicks within every viewport',()=>{
+test('session center shows compact project names and stable session IDs within every viewport',()=>{
  const rows=Array.from({length:30},(_,i)=>({id:`session-${i}`,label:'Repeated task name',description:`model · workspace · session-${i}`,value:'working · now',tag:i%3?'working':'inactive',group:i<15?'/projects/alpha':'/projects/beta'}));
  const panel={sections:['Sessions'],section:10,query:'',selected:22,editing:false,rows,notice:'Live owners keep their edits',footer:'',counts:[30,0,20,0,10],center_filter:0};
  for(const [width,height] of [[1,1],[20,8],[60,18],[100,32],[180,48]]){
@@ -45,6 +45,16 @@ test('session center groups projects and uses stable session IDs for clicks with
  }
  const attack=drawCenter({...panel,rows:[{...rows[0]!,group:'\x1b[2J/project\x07'}]},100,32,false,'');
  assert.ok(!attack.rows.join('').includes('\x1b[2J'));assert.ok(!attack.rows.join('').includes('\x07'));
+});
+
+test('selected session dot fills once, settles and respects reduced motion',()=>{
+ const panel={sections:['Sessions'],section:10,query:'',selected:0,editing:false,rows:[{id:'s1',label:'Recent task',description:'model',value:'ready · now',tag:'ready',group:'/projects/alpha'}],notice:'',footer:''};
+ const frames=[0,55,110,165,240].map(elapsed=>drawCenter({...panel,elapsed},100,30,false,'').rows.map(stripTerminalSequences).join('\n'));
+ assert.ok(frames[0]!.includes('○ Recent task'));assert.ok(frames[2]!.includes('◑ Recent task'));assert.ok(frames[4]!.includes('● Recent task'));
+ assert.equal(drawCenter({...panel,elapsed:0},100,30,false,'',true).rows.map(stripTerminalSequences).join('\n'),frames[4]);
+ assert.ok(!frames[4]!.includes('/projects/alpha'));assert.match(frames[4]!,/alpha/);
+ assert.equal(render({...fixture(),panel:{...panel,elapsed:0}}).animate,true);
+ assert.equal(render({...fixture(),panel:{...panel,elapsed:240}}).animate,false);
 });
 
 
@@ -88,7 +98,7 @@ test('release screen gates chat while preserving the draft in application state'
 test('established conversations show session and shortcut hints below the selectors',()=>{
  const v={...fixture(),elapsed:180000,logs:[{level:'Info',text:'USER|Explain this function'}],statusEntries:[{id:'model',value:'test-model · local'}]};
  const f=render(v),text=f.rows.map(stripTerminalSequences);
- assert.match(text.at(-1)!,/shift\+← sessions · F8 shortcuts/);
+ assert.match(text.at(-1)!,/⌘← \/ ctrl\+s sessions · F8 shortcuts/);
  assert.equal(f.controls?.find(c=>c.id==='model')?.y,v.height-2);
  assert.ok(!render({...v,running:true}).rows.map(stripTerminalSequences).at(-1)!.includes('F8 shortcuts'));
 });

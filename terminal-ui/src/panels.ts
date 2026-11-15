@@ -12,7 +12,7 @@ export interface PanelView {
 }
 const reset='\x1b[0m',bold='\x1b[1m';
 export function drawPanel(panel:PanelView,width:number,height:number,light:boolean,accent:string,reduceMotion=false){
-  if(panel.section===10)return drawCenter(panel,width,height,light,accent);
+  if(panel.section===10)return drawCenter(panel,width,height,light,accent,reduceMotion);
   const root=light?'\x1b[48;2;250;250;250m':'\x1b[48;2;0;0;0m',surface=light?'\x1b[48;2;237;235;230m':'\x1b[48;2;18;18;18m';
   const fg=light?'\x1b[38;2;32;32;32m':'\x1b[38;2;225;220;210m',dim=light?'\x1b[38;2;105;105;105m':'\x1b[38;2;130;130;128m';
   const gutter=width>=60?3:width>=24?1:0,card=Math.max(1,width-2*gutter),pad=card>=40?3:1,inner=Math.max(1,card-2*pad),top=height>=14?2:0,available=Math.max(1,height-top-(height>=14?2:0));

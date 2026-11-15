@@ -1,12 +1,17 @@
 {
-  "openai": "https://github.com/openai.png?size=32",
-  "anthropic": "https://github.com/anthropics.png?size=32",
-  "groq": "https://github.com/groq.png?size=32",
-  "mistral": "https://github.com/mistralai.png?size=32",
-  "openrouter": "https://github.com/OpenRouterTeam.png?size=32",
-  "deepseek": "https://github.com/deepseek-ai.png?size=32",
-  "xai": "https://github.com/xai-org.png?size=32",
-  "ollama": "https://github.com/ollama.png?size=32",
-  "lmstudio": "https://github.com/lmstudio-ai.png?size=32",
-  "vllm": "https://github.com/vllm-project.png?size=32"
+  "source": "https://github.com/lobehub/lobe-icons",
+  "revision": "55746b0b082258211121c70bd26e6878fd3bd292",
+  "license": "providers/LICENSE",
+  "icons": {
+    "openai": "https://raw.githubusercontent.com/lobehub/lobe-icons/55746b0b082258211121c70bd26e6878fd3bd292/packages/static-svg/icons/openai.svg",
+    "anthropic": "https://raw.githubusercontent.com/lobehub/lobe-icons/55746b0b082258211121c70bd26e6878fd3bd292/packages/static-svg/icons/anthropic.svg",
+    "groq": "https://raw.githubusercontent.com/lobehub/lobe-icons/55746b0b082258211121c70bd26e6878fd3bd292/packages/static-svg/icons/groq.svg",
+    "mistral": "https://raw.githubusercontent.com/lobehub/lobe-icons/55746b0b082258211121c70bd26e6878fd3bd292/packages/static-svg/icons/mistral.svg",
+    "openrouter": "https://raw.githubusercontent.com/lobehub/lobe-icons/55746b0b082258211121c70bd26e6878fd3bd292/packages/static-svg/icons/openrouter.svg",
+    "deepseek": "https://raw.githubusercontent.com/lobehub/lobe-icons/55746b0b082258211121c70bd26e6878fd3bd292/packages/static-svg/icons/deepseek.svg",
+    "xai": "https://raw.githubusercontent.com/lobehub/lobe-icons/55746b0b082258211121c70bd26e6878fd3bd292/packages/static-svg/icons/xai.svg",
+    "ollama": "https://raw.githubusercontent.com/lobehub/lobe-icons/55746b0b082258211121c70bd26e6878fd3bd292/packages/static-svg/icons/ollama.svg",
+    "lmstudio": "https://raw.githubusercontent.com/lobehub/lobe-icons/55746b0b082258211121c70bd26e6878fd3bd292/packages/static-svg/icons/lmstudio.svg",
+    "vllm": "https://raw.githubusercontent.com/lobehub/lobe-icons/55746b0b082258211121c70bd26e6878fd3bd292/packages/static-svg/icons/vllm.svg"
+  }
 }

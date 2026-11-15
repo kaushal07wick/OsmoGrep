@@ -272,11 +272,12 @@ export function render(v: View): Rendered {
     const showHints=!v.running&&!v.panel&&!v.masked&&!v.permission&&!v.update&&v.elapsed>=120000&&v.logs.some(log=>log.text.startsWith('USER|'));
     const statusY=showHints?h-2:h-1;
     const permission = v.planMode ? 'plan mode' : v.autoApprove ? 'auto-approve on' : 'ask approvals';
-    const sessionsKey=(v.shortcuts?.agents??'shift+left').replace('shift+left','shift+←');
-    const right = dim+((v.queuedMessages??0)>0?`${v.queuedMessages} queued${v.queuePaused?' · enter resume':''}`:!v.followTail&&maxScroll>0?`${maxScroll-start} ↑ · end live`:v.running?`${v.shortcuts?.queue??'tab'} queue`:maxScroll>0?'scroll · pgup/pgdn':`${sessionsKey} sessions`)+reset;
+    const sessionsKey=(v.shortcuts?.agents??'super+left').replace('super+left','⌘←').replace('shift+left','shift+←');
+    const sessionsHint=sessionsKey==='⌘←'?(width>=90?`⌘← / ${(v.shortcuts?.['sessions-fallback']??'ctrl+s')}`:(v.shortcuts?.['sessions-fallback']??'ctrl+s')):sessionsKey;
+    const right = dim+((v.queuedMessages??0)>0?`${v.queuedMessages} queued${v.queuePaused?' · enter resume':''}`:!v.followTail&&maxScroll>0?`${maxScroll-start} ↑ · end live`:v.running?`${v.shortcuts?.queue??'tab'} queue`:maxScroll>0?'scroll · pgup/pgdn':`${sessionsHint} sessions`)+reset;
     const reserve=width>=60?visibleWidth(right)+3:0;
     const entries=v.statusEntries??(v.statusLine?v.statusLine.map((value,i)=>({id:value.startsWith('~')||value.startsWith('/')?'directory':i===0?'model':'optional',value})):[{id:'permissions',value:`${v.profile} · ${permission}`}]);
-    const providerMark=paperGraphics?providerMarks[v.provider.toLowerCase()]:undefined;
+    const providerMark=paperGraphics?providerMarks[v.provider.toLowerCase()]?.[light?'light':'dark']:undefined;
     const fields=entries.flatMap(e=>e.id==='model'?[{id:'provider',value:providerMark?'  ▾':clean(v.provider)+' ▾'},{id:'model',value:clean(v.model)+' ▾'}]:[e]);
     const layout=statusLayout(fields,Math.max(1,width-pad*2-reserve)),left=dim+layout.text+reset;
     if(!v.panel&&!v.permission&&!v.update&&!v.masked)for(const item of layout.items)if(item.id==='model'||item.id==='provider')controls.push({id:item.id,x:gutter+pad+item.x,y:statusY,width:item.width,height:1});
@@ -288,7 +289,7 @@ export function render(v: View): Rendered {
     }
     if(reserve)rows[statusY]+=' '.repeat(Math.max(1,width-pad*2-visibleWidth(left)-visibleWidth(right)))+right;
 
-    if(showHints){const keys=(v.shortcuts?.keymap??'f8').toUpperCase();put(h-1,' '.repeat(pad)+dim+`${sessionsKey} sessions · ${keys} shortcuts`+reset);}
+    if(showHints){const keys=(v.shortcuts?.keymap??'f8').toUpperCase();put(h-1,' '.repeat(pad)+dim+`${sessionsKey} / ${(v.shortcuts?.['sessions-fallback']??'ctrl+s')} sessions · ${keys} shortcuts`+reset);}
   }
   if (v.commands.length) {
     const bottom = composerY;
@@ -324,7 +325,7 @@ export function render(v: View): Rendered {
   if(paperGraphics)images.unshift({...paperGraphic(width,composerHeight,light,(process.pid*128+126)>>>0),x:gutter,y:composerY});
   if (v.panel && !v.permission && !v.update) {
     const panel=drawPanel(v.panel,w,h,light,accent,!!v.preferences?.reduce_motion);
-    return {id:v.id,rows:panel.rows,input:inputRect,execution,editorWidth:textWidth,animate:v.panel.section===8&&!v.preferences?.reduce_motion&&(v.panel.elapsed??900)<900,artwork:null,cursor:panel.cursor,cursorVisible:v.panel.section!==8,images:[],controls:panel.controls};
+    return {id:v.id,rows:panel.rows,input:inputRect,execution,editorWidth:textWidth,animate:!v.preferences?.reduce_motion&&((v.panel.section===8&&(v.panel.elapsed??900)<900)||(v.panel.section===10&&!v.panel.previewing&&(v.panel.elapsed??900)<240)),artwork:null,cursor:panel.cursor,cursorVisible:v.panel.section!==8,images:[],controls:panel.controls};
   }
 
   return {
