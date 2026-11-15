@@ -61,7 +61,7 @@ impl Tool for Plan {
             .get("action")
             .and_then(Value::as_str)
             .ok_or("missing action")?;
-        let root = std::env::current_dir().map_err(|e| e.to_string())?;
+        let root = crate::tools::repo_root()?;
         let path = plan_path(&root);
         let mut items = load_plan(&path)?;
 

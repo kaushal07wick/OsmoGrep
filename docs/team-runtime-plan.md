@@ -11,4 +11,4 @@ This follows the harness foundations and precedes ultra-long-run supervision. Us
 
 References: local Codex `agents_overview*.rs`, discovery/actions/view and status-feed code; TermUI's component catalog and MIT source. Reuse compatible patterns in the existing renderer instead of replacing the terminal framework. This plan records scope, not completion evidence.
 
-Validation: see [team-runtime-validation.json](team-runtime-validation.json). Local process fixtures, UI checks, installation, and documentation are complete. Cross-platform CI is tracked after pushing; ultra-long supervision follows as a separate change.
+Validation: see [team-runtime-validation.json](team-runtime-validation.json). Local process fixtures, UI checks, installation, and documentation are complete. Cross-platform CI is tracked after pushing; the separate [long-run supervisor](long-runs.md) is implemented and validated locally.

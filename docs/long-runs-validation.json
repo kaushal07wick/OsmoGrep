@@ -1,0 +1,294 @@
+{
+  "date": "2026-11-15",
+  "scope": "Exact installed macOS release, deterministic process acceptance and one opt-in paid-model toy task; not multi-hour endurance or full provider/platform parity",
+  "installed_binary_sha256": "a6c8110193bd4d421f98f5a489490166d40f105b3266aed8834b1c9cfa9ab946",
+  "rust": {
+    "passed": 262,
+    "default_ignored": 2
+  },
+  "typescript": {
+    "passed": 49,
+    "bundle_sha256": "dec7e10725ec54cefb43ac11c38cfcd9442738ac5a1d3797b45f6651a1b78527"
+  },
+  "process_checks": {
+    "long_run": {
+      "binary_sha256": "a6c8110193bd4d421f98f5a489490166d40f105b3266aed8834b1c9cfa9ab946",
+      "checks": [
+        "over_100_model_rounds_with_repeated_compaction_and_durable_criteria",
+        "premature_answers_and_external_blockers_never_become_completion",
+        "request_token_and_retry_budgets_enforced_before_provider_calls",
+        "wall_deadline_interrupts_running_process",
+        "cross_process_stop_interrupts_waiting_provider",
+        "repeated_identical_tool_failures_stop_after_durable_results",
+        "exclusive_ownership_crash_review_and_recovery_preserve_budgets_and_user_edits"
+      ],
+      "provider_requests": 154,
+      "counts": {
+        "CASE_LONG": 106,
+        "summaries": 24,
+        "CASE_PREMATURE": 3,
+        "CASE_BLOCKED": 1,
+        "CASE_BUDGET": 3,
+        "CASE_RETRY": 2,
+        "CASE_DEADLINE": 1,
+        "CASE_STOP": 1,
+        "CASE_LOOP": 8,
+        "CASE_CRASH": 5
+      },
+      "paid_requests": 0,
+      "scope": "Fast deterministic process acceptance, not a multi-hour endurance or model-quality guarantee"
+    },
+    "harness": {
+      "binary_sha256": "a6c8110193bd4d421f98f5a489490166d40f105b3266aed8834b1c9cfa9ab946",
+      "passed": 13,
+      "checks": [
+        "greeting_without_tools",
+        "queued_turns_preserve_conversation",
+        "independent_session_resume_and_full_history",
+        "permission_denial_preserves_files",
+        "turn_checkpoint_restore_and_conflict_protection",
+        "background_command_incremental_output_and_stdin",
+        "cancellation_is_responsive_and_rpc_remains_usable",
+        "provider_context_overflow_compacts_and_retries_once",
+        "in_loop_model_aware_compaction_archives_original_context",
+        "explicit_worker_isolation_includes_uncommitted_parent_changes",
+        "worker_permissions_and_reviewable_changes",
+        "worker_recursion_disabled",
+        "crash_recovery_keeps_completed_tools_without_automatic_reexecution"
+      ],
+      "model_requests": 34,
+      "paid_provider_calls": 0,
+      "scope": "Local process, filesystem, JSONL RPC, and deterministic HTTP fixtures; no model-quality or ultra-long-run claim"
+    },
+    "team": {
+      "binary_sha256": "a6c8110193bd4d421f98f5a489490166d40f105b3266aed8834b1c9cfa9ab946",
+      "checks": [
+        "independent_process_presence_and_repository_isolation",
+        "durability_restart_deduplication_and_receipts_without_idle_paid_turns",
+        "concurrent_broadcast_delivery",
+        "safe_boundary_delivery_preserves_user_task_and_durable_ack",
+        "cross_process_edit_contention_release_and_automatic_updates",
+        "crashed_instance_expires_without_stealing_session"
+      ],
+      "processes": 5,
+      "fixture_model_requests": 8,
+      "paid_model_requests": 0
+    },
+    "live_documentation": {
+      "scope": "Opt-in live coding tasks with independent result checks; three cases are not a general coding benchmark",
+      "binary_sha256": "a6c8110193bd4d421f98f5a489490166d40f105b3266aed8834b1c9cfa9ab946",
+      "proprietary_repository_sent": false,
+      "cases": [
+        {
+          "supervised": true,
+          "task": {
+            "charged_tokens": 22685,
+            "completion_requested": true,
+            "criteria": [
+              "The requested change is complete, original content/tests are preserved, and any explicitly requested verification passed."
+            ],
+            "evidence": [
+              "README.md now contains the added section:\n- `## Installation` with code block `python3 -m pip install example`\n- existing line `USER_NOTE_KEEP_947` remains unchanged (verified via file read)."
+            ],
+            "id": "6f93e251-e6af-48bd-85d2-016948d276b1",
+            "max_ms": 150000,
+            "max_requests": 18,
+            "max_tokens": 300000,
+            "objective": "In README.md add a short section describing installation with python3 -m pip install example. Preserve all existing content exactly. Do not commit, delegate, or run tests. Finish with one short summary.",
+            "progress": [
+              "Added Installation section to README.md."
+            ],
+            "reason": "Model reported every criterion satisfied; see recorded evidence",
+            "requests": 7,
+            "revision": 2,
+            "root": "/private/var/folders/tq/d0zgg_9n56n75b8t4n0dkvb00000gn/T/osmogrep-live-coding-8zyrfxiz",
+            "run_id": "b6a6862d-8950-494d-ace9-52d5bc870712",
+            "session": "1cff0c07-9e35-424e-8e60-42341091e25c",
+            "status": "completed",
+            "updated": 1794755386490,
+            "used_ms": 32673
+          },
+          "case": "documentation",
+          "passed": true,
+          "tools": [
+            "read_file",
+            "patch",
+            "read_file",
+            "task_progress",
+            "git_diff",
+            "task_progress"
+          ],
+          "exit_code": 0,
+          "errors": [],
+          "original_tests_preserved": true,
+          "independent_result_passed": true,
+          "tool_calls": [
+            {
+              "name": "read_file",
+              "args": {
+                "end_line": 2000,
+                "limit": 2000,
+                "offset": 0,
+                "path": "README.md",
+                "start_line": 1
+              }
+            },
+            {
+              "name": "patch",
+              "args": {
+                "patch": "*** Begin Patch\n*** Update File: README.md\n@@\n # Example\n \n+## Installation\n+\n+```bash\n+python3 -m pip install example\n+```\n+\n USER_NOTE_KEEP_947\n*** End Patch"
+              }
+            },
+            {
+              "name": "read_file",
+              "args": {
+                "end_line": 2000,
+                "limit": 2000,
+                "offset": 0,
+                "path": "README.md",
+                "start_line": 1
+              }
+            },
+            {
+              "name": "task_progress",
+              "args": {
+                "action": "checkpoint",
+                "evidence": [
+                  "Patched README.md to insert an \"Installation\" section with `python3 -m pip install example` command without modifying existing lines."
+                ],
+                "summary": "Added Installation section to README.md."
+              }
+            },
+            {
+              "name": "git_diff",
+              "args": {
+                "path": "README.md"
+              }
+            },
+            {
+              "name": "task_progress",
+              "args": {
+                "action": "complete",
+                "evidence": [
+                  "README.md now contains the added section:\n- `## Installation` with code block `python3 -m pip install example`\n- existing line `USER_NOTE_KEEP_947` remains unchanged (verified via file read)."
+                ],
+                "summary": "Inserted a short Installation section into README.md with a `python3 -m pip install example` command, preserving all existing content; no commits or tests were run."
+              }
+            }
+          ],
+          "tool_results": [
+            "read 3 lines",
+            "workspace edited; verification stale for README.md",
+            "read 9 lines",
+            "ok",
+            "ok",
+            "ok"
+          ]
+        }
+      ]
+    }
+  },
+  "providers": {
+    "scope": "Isolated local HTTP fixtures with actual file tools; no paid provider calls",
+    "cases": [
+      {
+        "protocol": "chat-completions",
+        "streaming": false,
+        "passed": true,
+        "model_requests": 2,
+        "conversation_updates": 3,
+        "tools": [
+          "read_file",
+          "read_file"
+        ],
+        "fixture_errors": [],
+        "agent_errors": []
+      },
+      {
+        "protocol": "chat-completions",
+        "streaming": true,
+        "passed": true,
+        "model_requests": 2,
+        "conversation_updates": 3,
+        "tools": [
+          "read_file",
+          "read_file"
+        ],
+        "fixture_errors": [],
+        "agent_errors": []
+      },
+      {
+        "protocol": "anthropic-messages",
+        "streaming": false,
+        "passed": true,
+        "model_requests": 2,
+        "conversation_updates": 3,
+        "tools": [
+          "read_file",
+          "read_file"
+        ],
+        "fixture_errors": [],
+        "agent_errors": []
+      },
+      {
+        "protocol": "anthropic-messages",
+        "streaming": true,
+        "passed": true,
+        "model_requests": 2,
+        "conversation_updates": 3,
+        "tools": [
+          "read_file",
+          "read_file"
+        ],
+        "fixture_errors": [],
+        "agent_errors": []
+      }
+    ]
+  },
+  "mac_pty": {
+    "typescript_renderer_started": true,
+    "native_paper_pixels_cached": true,
+    "central_morph_animates_then_settles": true,
+    "central_morph_ignores_hover_and_click_replays": true,
+    "escape_does_not_exit_idle_app": true,
+    "greeting_has_no_tools_or_stale_background_jobs": true,
+    "session_center_live_preview_preserves_draft_and_ownership": true,
+    "command_picker_navigation_and_execution": true,
+    "footer_provider_model_selectors": true,
+    "light_cursor_has_explicit_contrast": true,
+    "settings_and_real_key_remapping": true,
+    "statusline_and_skill_picker": true,
+    "large_multiline_draft_editing": true,
+    "real_thumbnail_sequence": true,
+    "original_image_bytes_reached_provider": true,
+    "selected_skill_reached_provider": true,
+    "weekly_chart_entry_animation": true,
+    "reported_usage_and_pixel_history": true,
+    "real_permission_dock_and_numbered_diff": true,
+    "submitted_followups_are_distinct_fifo_turns": true,
+    "assistant_preface_does_not_skip_requested_tools": true,
+    "wheel_scrolling_and_drag_copy_plain_output": true,
+    "transcript_scroll_track_drags_and_returns_to_live": true,
+    "streaming_preserves_user_scroll_position": true,
+    "terminal_resize": true,
+    "existing_shell_command": true,
+    "renderer_crash_recovers_to_native_ui": true,
+    "terminal_state_restored": true,
+    "preferences_survive_real_restart": true
+  },
+  "mac_editor": {
+    "narrow_full_width_windows_no_status_bar": true,
+    "toggle_preserves_unsaved_changes": true,
+    "closing_editor_restores_full_agent": true,
+    "wide_split_keeps_agent_readable": true,
+    "resize_and_renderer_survive_editor_close": true,
+    "clean_exit_restores_terminal": true
+  },
+  "limits": [
+    "No multi-hour endurance benchmark",
+    "No live microphone recording",
+    "Task supervision currently uses one coding agent; separate team instances have independent budgets",
+    "Token charging uses estimates and is not an exact billing cap",
+    "File claims cover OsmoGrep file tools, not arbitrary shell/MCP/external editor writes"
+  ]
+}

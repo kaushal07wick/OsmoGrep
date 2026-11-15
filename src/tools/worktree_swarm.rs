@@ -37,7 +37,7 @@ impl Tool for WorktreeSwarm {
             .get("task")
             .and_then(Value::as_str)
             .ok_or("missing task")?;
-        let root = std::env::current_dir().map_err(|e| e.to_string())?;
+        let root = crate::tools::repo_root()?;
         let results = crate::worktree::run_worktree_swarm(&root, task)?;
         let agents = results
             .into_iter()

@@ -1,6 +1,6 @@
 # Harness foundations
 
-OsmoGrep keeps the coding loop in Rust. The renderer presents events; it cannot grant tool permissions. The supported provider protocols are Responses, Chat Completions, and Anthropic Messages. These foundations are implemented before the separate ultra-long-run endurance work.
+OsmoGrep keeps the coding loop in Rust. The renderer presents events; it cannot grant tool permissions. The supported provider protocols are Responses, Chat Completions, and Anthropic Messages. Explicit sustained work uses the [long-run supervisor](long-runs.md); multi-hour endurance remains a separate validation claim.
 
 ## Sessions and recovery
 

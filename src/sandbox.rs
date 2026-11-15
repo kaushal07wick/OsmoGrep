@@ -37,7 +37,8 @@ fn wrap_with(command: Command, mode: &str, network: bool) -> Result<Command, Str
     let root = command
         .get_current_dir()
         .map(Path::to_path_buf)
-        .unwrap_or(std::env::current_dir().map_err(|e| e.to_string())?)
+        .map(Ok)
+        .unwrap_or_else(crate::tools::repo_root)?
         .canonicalize()
         .map_err(|e| e.to_string())?;
     #[cfg(any(target_os = "linux", target_os = "macos"))]

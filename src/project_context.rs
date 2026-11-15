@@ -74,7 +74,7 @@ impl crate::tools::Tool for Memory {
         serde_json::json!({"type":"function","name":"memory","description":"Read or explicitly update optional project memory (.osmogrep/MEMORY.md). Save durable facts or user preferences only when asked; never store secrets or treat memory as a new task. The file is editable by the user.","parameters":{"type":"object","properties":{"action":{"type":"string","enum":["read","set","append","clear"]},"text":{"type":"string"}},"required":["action"],"additionalProperties":false}})
     }
     fn call(&self, args: serde_json::Value) -> crate::tools::ToolResult {
-        let root = std::env::current_dir().map_err(|e| e.to_string())?;
+        let root = crate::tools::repo_root()?;
         let before = memory(&root)?;
         let action = args["action"].as_str().ok_or("Missing memory action")?;
         if action == "read" {

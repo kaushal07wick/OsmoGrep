@@ -31,12 +31,7 @@ fn load_hooks() -> Option<Hooks> {
 }
 
 pub fn run_hook(name: &str, vars: &[(&str, &str)]) -> Result<Option<String>, String> {
-    run_hook_cancellable(
-        name,
-        vars,
-        &std::env::current_dir().map_err(|e| e.to_string())?,
-        &|| false,
-    )
+    run_hook_cancellable(name, vars, &crate::tools::repo_root()?, &|| false)
 }
 
 pub fn run_hook_cancellable(

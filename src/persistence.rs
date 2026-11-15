@@ -360,9 +360,9 @@ pub fn search_sessions(query: &str) -> Result<Vec<SessionSummary>, String> {
         .collect())
 }
 
-pub fn recover(state: &mut AgentState, run_id: &str) -> Result<(), String> {
+pub fn recovery_checkpoint(root: &Path, run_id: &str) -> Result<Value, String> {
     uuid::Uuid::parse_str(run_id).map_err(|_| "Use the run UUID from .context/osmogrep-runs")?;
-    let dir = state.repo_root.join(".context/osmogrep-runs");
+    let dir = root.join(".context/osmogrep-runs");
     let path = fs::read_dir(dir)
         .map_err(|e| e.to_string())?
         .filter_map(Result::ok)
@@ -375,6 +375,11 @@ pub fn recover(state: &mut AgentState, run_id: &str) -> Result<(), String> {
         .ok_or("No recovery checkpoint for that run")?;
     let saved: Value = serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
+    Ok(saved)
+}
+
+pub fn recover(state: &mut AgentState, run_id: &str) -> Result<(), String> {
+    let saved = recovery_checkpoint(&state.repo_root, run_id)?;
     let mut messages = saved["input"]
         .as_array()
         .cloned()

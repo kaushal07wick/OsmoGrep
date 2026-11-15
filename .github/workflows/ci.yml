@@ -68,3 +68,4 @@ jobs:
           python3 terminal-ui/scripts/provider-acceptance.py --binary target/debug/osmogrep --output /tmp/osmogrep-provider-acceptance.json
           python3 terminal-ui/scripts/harness-acceptance.py --binary target/debug/osmogrep --output /tmp/osmogrep-harness-acceptance.json
           python3 terminal-ui/scripts/team-acceptance.py --binary target/debug/osmogrep --output /tmp/osmogrep-team-acceptance.json
+          python3 terminal-ui/scripts/long-run-acceptance.py --binary target/debug/osmogrep --output /tmp/osmogrep-long-run-acceptance.json

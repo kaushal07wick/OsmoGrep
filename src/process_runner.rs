@@ -68,6 +68,11 @@ fn run_captured(
     timeout: Duration,
     is_cancelled: &dyn Fn() -> bool,
 ) -> Result<ProcessRun, String> {
+    if command.get_current_dir().is_none() {
+        if let Some(root) = crate::tools::context_root() {
+            command.current_dir(root);
+        }
+    }
     command = crate::sandbox::wrap(command)?;
     let started = Instant::now();
     command.stdout(Stdio::piped()).stderr(Stdio::piped());

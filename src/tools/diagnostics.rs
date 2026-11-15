@@ -1,6 +1,5 @@
 use regex::Regex;
 use serde_json::{json, Value};
-use std::path::Path;
 
 use super::{Tool, ToolResult, ToolSafety};
 
@@ -76,15 +75,16 @@ impl Tool for Diagnostics {
 }
 
 fn default_command() -> String {
-    if Path::new("Cargo.toml").exists() {
+    let root = crate::tools::context_root().unwrap_or_default();
+    if root.join("Cargo.toml").exists() {
         "cargo check --message-format short".to_string()
-    } else if Path::new("Package.swift").exists() {
+    } else if root.join("Package.swift").exists() {
         "swift build".to_string()
-    } else if Path::new("pyproject.toml").exists() {
+    } else if root.join("pyproject.toml").exists() {
         "ruff check . || pytest -q".to_string()
-    } else if Path::new("package.json").exists() {
+    } else if root.join("package.json").exists() {
         "npm run lint --silent || npm test -- --runInBand".to_string()
-    } else if Path::new("go.mod").exists() {
+    } else if root.join("go.mod").exists() {
         "go test ./...".to_string()
     } else {
         "echo 'No diagnostics command detected'".to_string()

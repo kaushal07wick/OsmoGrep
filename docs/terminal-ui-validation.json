@@ -1,10 +1,10 @@
 {
   "scope": "Local macOS validation of TypeScript presentation and existing Rust backend",
   "date": "2026-11-15",
-  "rust_tests_passed": 256,
+  "rust_tests_passed": 262,
   "typescript_tests_passed": 49,
   "node": "v26.13.1",
-  "installed_sha256": "bea0870f9209132782c0b42cd9de12019f0d9cac3221469f7edf200120719407",
+  "installed_sha256": "a6c8110193bd4d421f98f5a489490166d40f105b3266aed8834b1c9cfa9ab946",
   "installed_first_on_path": true,
   "mac_pty_acceptance": {
     "typescript_renderer_started": true,

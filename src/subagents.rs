@@ -69,7 +69,7 @@ impl Tool for Subagent {
         if std::env::var("OSMOGREP_DELEGATED").as_deref() == Ok("1") {
             return Err("Delegated workers cannot recursively delegate".into());
         }
-        let parent = std::env::current_dir().map_err(|e| e.to_string())?;
+        let parent = crate::tools::repo_root()?;
         if args["action"] == "spawn" {
             return spawn(&parent, &args, cancel);
         }

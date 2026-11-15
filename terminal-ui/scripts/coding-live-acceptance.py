@@ -11,6 +11,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--binary', type=Path, required=True)
 parser.add_argument('--output', type=Path, required=True)
 parser.add_argument('--allow-paid', action='store_true', required=True)
+parser.add_argument('--supervised', action='store_true', help='Exercise the durable task supervisor with the same independent result checks')
 parser.add_argument('--case', choices=['documentation','bug_fix','multi_file_change'])
 args = parser.parse_args()
 binary = args.binary.resolve()
@@ -37,7 +38,10 @@ for name, files, prompt, validate in cases:
             (root/path).write_text(value)
         env = os.environ.copy()
         env.update(OSMOGREP_DISABLE_UPDATE_CHECK='1', OSMOGREP_MAX_ITERATIONS='10')
-        completed = subprocess.run([str(binary),'run','--repo-root',str(root),'--prompt',prompt,'--json-events','--permission-profile','workspace-auto','--auto-approve'], cwd=root, env=env, capture_output=True, text=True, timeout=180)
+        command = [str(binary),'run','--repo-root',str(root),'--prompt',prompt,'--json-events','--permission-profile','workspace-auto','--auto-approve']
+        if args.supervised:
+            command = [str(binary),'task','--repo-root',str(root),'start','--objective',prompt,'--criterion','The requested change is complete, original content/tests are preserved, and any explicitly requested verification passed.','--max-requests','18','--max-tokens','300000','--max-seconds','150','--json-events','--permission-profile','workspace-auto','--auto-approve']
+        completed = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True, timeout=180)
         events = []
         for line in completed.stdout.splitlines():
             try: events.append(json.loads(line))
@@ -47,10 +51,12 @@ for name, files, prompt, validate in cases:
         response = ''.join(event.get('delta',event.get('text','')) for event in events if event.get('type') in ['stream_delta','output_text'])
         unchanged_tests = all((root/path).read_text() == value for path,value in files.items() if path.startswith('test_'))
         result_correct = validate(root)
-        passed = completed.returncode == 0 and not errors and bool(response.strip()) and unchanged_tests and result_correct
+        task = next((event['task'] for event in events if event.get('type') == 'task_finished'),None)
+        passed = (not args.supervised or (task is not None and task['status'] == 'completed' and len(task['evidence']) == 1))
+        passed = passed and completed.returncode == 0 and not errors and bool(response.strip()) and unchanged_tests and result_correct
         passed = passed and not any('Use cmd to start OR session_id' in event.get('summary','') for event in events if event.get('type')=='tool_result')
         passed = passed and not any(tool in ['subagent','worktree_swarm','git_commit'] for tool in tools)
-        result = {'case':name,'passed':passed,'tools':tools,'exit_code':completed.returncode,'errors':errors,'original_tests_preserved':unchanged_tests,'independent_result_passed':result_correct,'tool_calls':[{'name':event['name'],'args':event.get('args')} for event in events if event.get('type')=='tool_call'],'tool_results':[event.get('summary','') for event in events if event.get('type')=='tool_result']}
+        result = {'supervised':args.supervised,'task':task,'case':name,'passed':passed,'tools':tools,'exit_code':completed.returncode,'errors':errors,'original_tests_preserved':unchanged_tests,'independent_result_passed':result_correct,'tool_calls':[{'name':event['name'],'args':event.get('args')} for event in events if event.get('type')=='tool_call'],'tool_results':[event.get('summary','') for event in events if event.get('type')=='tool_result']}
         results.append(result)
         print(json.dumps(result),flush=True)
 args.output.parent.mkdir(parents=True,exist_ok=True)

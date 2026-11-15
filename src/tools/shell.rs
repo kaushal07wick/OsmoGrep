@@ -58,7 +58,7 @@ impl Tool for Shell {
     }
 
     fn call_cancellable(&self, args: Value, is_cancelled: &dyn Fn() -> bool) -> ToolResult {
-        let root = std::env::current_dir().map_err(|e| e.to_string())?;
+        let root = crate::tools::repo_root()?;
         call_at(&root, args, is_cancelled)
     }
 }

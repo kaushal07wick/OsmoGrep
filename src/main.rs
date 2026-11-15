@@ -16,6 +16,7 @@ mod hooks;
 mod intelligence;
 mod language_server;
 mod logger;
+mod long_runs;
 mod mcp;
 mod model_options;
 mod persistence;
@@ -118,6 +119,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum CliCommand {
+    /// Start, resume or inspect an explicitly supervised long-running coding task
+    Task(long_runs::TaskArgs),
     /// Serve the versioned JSONL integration and worker control protocol
     Rpc {
         #[arg(long, default_value = ".")]
@@ -640,6 +643,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let session_name = selected_session_name(&cli);
     let team_enabled = cli.team;
     match cli.command {
+        Some(CliCommand::Task(args)) => long_runs::run(args, team_enabled)?,
         Some(CliCommand::Rpc {
             repo_root,
             session_id,

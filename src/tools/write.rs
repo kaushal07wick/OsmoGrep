@@ -58,7 +58,7 @@ impl Tool for Write {
             previous.as_deref().map(str::as_bytes),
             content.as_bytes(),
         )?;
-        let root = std::env::current_dir().map_err(|e| e.to_string())?;
+        let root = crate::tools::repo_root()?;
         let verification_stale = crate::verification::mark_workspace_edited(&root, [path]);
         let post_hook = crate::hooks::run_hook("post_edit", &[("path", path)])
             .ok()

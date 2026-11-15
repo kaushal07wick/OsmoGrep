@@ -65,7 +65,7 @@ fn native_call(
     timeout: Duration,
     cancel: &dyn Fn() -> bool,
 ) -> Result<Value, String> {
-    let root = std::env::current_dir().map_err(|e| e.to_string())?;
+    let root = crate::tools::repo_root()?;
     let token = cfg
         .bearer_env
         .as_ref()

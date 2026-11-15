@@ -58,7 +58,7 @@ impl Tool for Patch {
         }) {
             return Err("Use explicit file tools for binary, renamed, quoted-path, or mode-only changes; text patch checkpoints require ordinary paths".into());
         }
-        let root = std::env::current_dir().map_err(|e| e.to_string())?;
+        let root = crate::tools::repo_root()?;
         let paths = crate::file_guard::edit_paths("patch", &args)
             .into_iter()
             .collect::<std::collections::BTreeSet<_>>();
@@ -181,7 +181,7 @@ fn apply_begin_patch(patch: &str) -> ToolResult {
         }
         applied.push(change);
     }
-    let root = std::env::current_dir().map_err(|e| e.to_string())?;
+    let root = crate::tools::repo_root()?;
     let stale =
         crate::verification::mark_workspace_edited(&root, changes.iter().map(|c| c.path.as_str()));
     let rows=changes.iter().map(|c|json!({"path":c.path,"before":c.before.as_deref().unwrap_or(""),"after":c.after.as_deref().unwrap_or(""),"created":c.before.is_none(),"deleted":c.after.is_none()})).collect::<Vec<_>>();
@@ -194,30 +194,29 @@ fn apply_begin_patch(patch: &str) -> ToolResult {
     Ok(result)
 }
 fn read_optional(path: &str) -> Result<Option<String>, String> {
-    match fs::metadata(path) {
+    let path = crate::tools::repo_root()?.join(path);
+    match fs::metadata(&path) {
         Ok(m) if m.len() > 50 * 1024 * 1024 => return Err("Patch target exceeds 50 MiB".into()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e.to_string()),
         _ => {}
     }
-    fs::read_to_string(path)
+    fs::read_to_string(&path)
         .map(Some)
         .map_err(|e| e.to_string())
 }
 fn apply_change(path: &str, before: Option<&str>, after: Option<&str>) -> Result<(), String> {
+    let resolved = crate::tools::repo_root()?.join(path);
     if let Some(after) = after {
-        if let Some(parent) = Path::new(path)
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-        {
+        if let Some(parent) = resolved.parent().filter(|p| !p.as_os_str().is_empty()) {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        crate::file_guard::replace(Path::new(path), before.map(str::as_bytes), after.as_bytes())
+        crate::file_guard::replace(&resolved, before.map(str::as_bytes), after.as_bytes())
     } else {
         if read_optional(path)?.as_deref() != before {
             return Err("File changed before deletion; user changes preserved".into());
         }
-        fs::remove_file(path).map_err(|e| e.to_string())
+        fs::remove_file(resolved).map_err(|e| e.to_string())
     }
 }
 fn stage_begin_patch(patch: &str) -> Result<Vec<StagedChange>, String> {

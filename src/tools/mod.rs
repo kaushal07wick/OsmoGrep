@@ -1,7 +1,7 @@
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 
 mod code_graph;
 mod diagnostics;
@@ -180,6 +180,9 @@ impl ToolScope {
     }
 
     fn allows(&self, name: &str) -> bool {
+        if name == "task_progress" {
+            return !self.chat_only;
+        }
         if name == "team" {
             return !self.chat_only && (self.include_team || crate::team::enabled());
         }
@@ -312,6 +315,27 @@ impl ToolRegistry {
         }
     }
 
+    pub fn with_task(mut self, task: std::sync::Arc<crate::long_runs::Task>) -> Self {
+        // Nested model processes need shared reservations before they can obey this budget.
+        for name in ["subagent", "worktree_swarm", "dynamic_workflow"] {
+            self.tools.remove(name);
+        }
+        self.tools
+            .insert("task_progress", Box::new(crate::long_runs::Progress(task)));
+        self.tools.insert(
+            "tool_search",
+            Box::new(tool_search::ToolSearch {
+                catalog: self
+                    .tools
+                    .iter()
+                    .filter(|(name, _)| **name != "tool_search")
+                    .map(|(_, tool)| tool.schema())
+                    .collect(),
+                enabled: self.enabled.clone(),
+            }),
+        );
+        self
+    }
     pub fn call_cancellable(
         &self,
         name: &str,
@@ -323,7 +347,7 @@ impl ToolRegistry {
             .get(name)
             .ok_or_else(|| format!("unknown tool: {}", name))?;
 
-        let args = self.guard_args(name, args)?;
+        let args = self.guard_args(name, self.resolve_parallel_args(name, args))?;
         let peer = crate::team::for_root(&self.repo_root);
         let paths = crate::file_guard::edit_paths(name, &args);
         let _lease = if !paths.is_empty() {
@@ -355,7 +379,7 @@ impl ToolRegistry {
         matches!(self.safety(name), Some(ToolSafety::Safe))
             && !matches!(
                 name,
-                "update_plan" | "dynamic_workflow" | "tool_search" | "team"
+                "update_plan" | "dynamic_workflow" | "tool_search" | "team" | "task_progress"
             )
     }
 
@@ -374,16 +398,31 @@ impl ToolRegistry {
             .get(name)
             .ok_or_else(|| format!("unknown tool: {}", name))?;
         let args = self.guard_args(name, self.resolve_parallel_args(name, args))?;
-        let result = tool.call_cancellable(args.clone(), is_cancelled)?;
+        let result = in_root(&self.repo_root, || {
+            tool.call_cancellable(args.clone(), is_cancelled)
+        })?;
         self.remember_read(name, &args, &result)?;
         Ok(result)
     }
 
     fn guard_args(&self, name: &str, mut args: Value) -> Result<Value, String> {
-        if name == "language_server" {
-            args["_osmogrep_root"] = serde_json::json!(self.repo_root);
+        if !args.is_object() {
+            return Err("Tool arguments must be a JSON object".into());
         }
         let editing = matches!(name, "write_file" | "edit_file" | "notebook_edit" | "patch");
+        if editing {
+            let root = self.repo_root.canonicalize().map_err(|e| e.to_string())?;
+            for path in crate::file_guard::edit_paths(name, &args) {
+                let path = crate::file_guard::workspace_path(&root, Path::new(&path), true)?;
+                if path
+                    .strip_prefix(&root)
+                    .is_ok_and(|p| p.starts_with(".context/osmogrep-tasks"))
+                {
+                    return Err("Task supervisor records cannot be edited through file tools; use task_progress or task controls".into());
+                }
+            }
+        }
+
         if crate::sandbox::mode() == "read-only"
             && (editing
                 || (name == "memory" && args["action"].as_str().unwrap_or("read") != "read"))
@@ -511,33 +550,9 @@ impl ToolRegistry {
         args: Value,
         is_cancelled: &dyn Fn() -> bool,
     ) -> ToolResult {
-        let _guard = tool_cwd_lock()
-            .lock()
-            .map_err(|_| "tool cwd lock poisoned".to_string())?;
-        let previous = std::env::current_dir().map_err(|e| e.to_string())?;
-        std::env::set_current_dir(&self.repo_root).map_err(|e| {
-            format!(
-                "failed to enter tool repo root {}: {}",
-                self.repo_root.display(),
-                e
-            )
-        })?;
-
-        let result = tool.call_cancellable(args, is_cancelled);
-        let restore = std::env::set_current_dir(&previous).map_err(|e| {
-            format!(
-                "failed to restore working directory {}: {}",
-                previous.display(),
-                e
-            )
-        });
-
-        match (result, restore) {
-            (Ok(value), Ok(())) => Ok(value),
-            (Err(err), Ok(())) => Err(err),
-            (Ok(_), Err(err)) => Err(err),
-            (Err(err), Err(restore_err)) => Err(format!("{err}; {restore_err}")),
-        }
+        in_root(&self.repo_root, || {
+            tool.call_cancellable(args, is_cancelled)
+        })
     }
 
     fn resolve_parallel_args(&self, name: &str, args: Value) -> Value {
@@ -602,9 +617,26 @@ fn contains_any(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| haystack.contains(needle))
 }
 
-fn tool_cwd_lock() -> &'static Mutex<()> {
-    static TOOL_CWD_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    TOOL_CWD_LOCK.get_or_init(|| Mutex::new(()))
+thread_local! {static ROOT_CONTEXT:std::cell::RefCell<Option<PathBuf>>=const{std::cell::RefCell::new(None)};}
+pub fn context_root() -> Option<PathBuf> {
+    ROOT_CONTEXT.with(|root| root.borrow().clone())
+}
+pub fn repo_root() -> Result<PathBuf, String> {
+    context_root()
+        .map(Ok)
+        .unwrap_or_else(std::env::current_dir)
+        .map_err(|e| e.to_string())
+}
+fn in_root<T>(root: &Path, call: impl FnOnce() -> T) -> T {
+    struct Restore(Option<PathBuf>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            ROOT_CONTEXT.with(|root| *root.borrow_mut() = self.0.take());
+        }
+    }
+    let previous = ROOT_CONTEXT.with(|slot| slot.replace(Some(root.to_path_buf())));
+    let _restore = Restore(previous);
+    call()
 }
 
 #[cfg(test)]
@@ -614,6 +646,83 @@ mod tests {
     use std::fs;
     use uuid::Uuid;
 
+    #[test]
+    fn invalid_arguments_and_supervisor_record_writes_are_rejected() {
+        let root = std::env::temp_dir().join(format!("tool-boundaries-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let registry = ToolRegistry::with_root(root.clone());
+        assert!(registry
+            .guard_args("language_server", json!([]))
+            .unwrap_err()
+            .contains("JSON object"));
+        assert!(registry
+            .guard_args(
+                "write_file",
+                json!({"path":".context/osmogrep-tasks/task.json","content":"reset budget"})
+            )
+            .unwrap_err()
+            .contains("supervisor"));
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn concurrent_tool_contexts_never_change_process_directory() {
+        struct Probe {
+            root: PathBuf,
+            process_root: PathBuf,
+        }
+        impl Tool for Probe {
+            fn name(&self) -> &'static str {
+                "probe_root"
+            }
+            fn schema(&self) -> Value {
+                json!({})
+            }
+            fn safety(&self) -> ToolSafety {
+                ToolSafety::Safe
+            }
+            fn call(&self, _: Value) -> ToolResult {
+                assert_eq!(repo_root()?, self.root);
+                assert_eq!(std::env::current_dir().unwrap(), self.process_root);
+                let out = crate::process_runner::run_shell_command(
+                    if cfg!(windows) { "pwd -W" } else { "pwd" },
+                    None,
+                    std::time::Duration::from_secs(3),
+                )?;
+                assert_eq!(
+                    PathBuf::from(String::from_utf8_lossy(&out.stdout).trim())
+                        .canonicalize()
+                        .unwrap(),
+                    self.root.canonicalize().unwrap()
+                );
+                Ok(json!({"ok":true}))
+            }
+        }
+        let root = std::env::temp_dir().join(format!("concurrent-context-{}", Uuid::new_v4()));
+        let process_root = std::env::current_dir().unwrap();
+        std::thread::scope(|scope| {
+            for name in ["a", "b"] {
+                let path = root.join(name);
+                fs::create_dir_all(&path).unwrap();
+                let mut registry = ToolRegistry::with_root(path.clone());
+                registry.tools.insert(
+                    "probe_root",
+                    Box::new(Probe {
+                        root: path,
+                        process_root: process_root.clone(),
+                    }),
+                );
+                scope.spawn(move || {
+                    for _ in 0..5 {
+                        registry
+                            .call_cancellable("probe_root", json!({}), &|| false)
+                            .unwrap();
+                    }
+                });
+            }
+        });
+        assert_eq!(std::env::current_dir().unwrap(), process_root);
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn tool_discovery_preserves_policy_and_does_not_enable_delegation() {
         let root = std::env::temp_dir();
@@ -697,7 +806,6 @@ mod tests {
         fs::create_dir_all(&nested).unwrap();
         fs::write(nested.join("readme.txt"), "parallel scoped").unwrap();
 
-        let _cwd_guard = tool_cwd_lock().lock().unwrap();
         let previous = std::env::current_dir().unwrap();
         let registry = ToolRegistry::with_root(root.clone());
         let result = registry

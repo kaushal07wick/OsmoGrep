@@ -35,7 +35,7 @@ impl Tool for Test {
 
     fn call_cancellable(&self, args: Value, is_cancelled: &dyn Fn() -> bool) -> ToolResult {
         let target = args.get("target").and_then(Value::as_str);
-        let root = std::env::current_dir().map_err(|e| e.to_string())?;
+        let root = crate::tools::repo_root()?;
 
         let run = crate::test_harness::run_tests_cancellable(&root, target, is_cancelled)
             .map_err(|e| format!("test harness error: {}", e))?;

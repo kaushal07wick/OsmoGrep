@@ -104,7 +104,7 @@ impl Tool for NotebookEdit {
                 .map_err(|e| e.to_string())?
                 .as_bytes(),
         )?;
-        let root = std::env::current_dir().map_err(|e| e.to_string())?;
+        let root = crate::tools::repo_root()?;
         let verification_stale = crate::verification::mark_workspace_edited(&root, [path]);
 
         Ok(json!({

@@ -405,7 +405,9 @@ fn workflow_summary(record: &WorkflowRecord) -> Value {
 }
 
 fn workflow_dir() -> PathBuf {
-    PathBuf::from(WORKFLOW_DIR)
+    crate::tools::context_root()
+        .unwrap_or_default()
+        .join(WORKFLOW_DIR)
 }
 
 fn workflow_path(id: &str) -> PathBuf {
