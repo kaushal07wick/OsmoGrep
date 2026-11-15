@@ -380,6 +380,23 @@
     ],
     "local_links_checked": 35,
     "product_overview": "README.md",
-    "technical_reference": "docs/reference.md"
+    "technical_reference": "docs/reference.md",
+    "branding": {
+      "logos": [
+        "docs/assets/logo-dark.svg",
+        "docs/assets/logo-light.svg"
+      ],
+      "source_geometry": "terminal-ui/brand/logo.svg",
+      "live_badges": [
+        "release",
+        "ci",
+        "downloads",
+        "license",
+        "stars",
+        "contributors"
+      ],
+      "badge_svgs_valid": true,
+      "local_links_valid": true
+    }
   }
 }

@@ -1,7 +1,26 @@
+<p align="center">
+  <a href="https://osmogrep.com">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg" />
+      <source media="(prefers-color-scheme: light)" srcset="docs/assets/logo-light.svg" />
+      <img src="docs/assets/logo-light.svg" alt="OsmoGrep pixel-ring logo" width="88" height="80" />
+    </picture>
+  </a>
+</p>
+
 <h1 align="center">OsmoGrep</h1>
 
 <p align="center"><strong>Catch the bug. Ship the fix.</strong></p>
 <p align="center">Build features, understand a codebase, and fix bugs from your terminal.</p>
+
+<p align="center">
+  <a href="https://github.com/kaushal07wick/OsmoGrep/releases/latest"><img src="https://img.shields.io/github/v/release/kaushal07wick/OsmoGrep?style=flat-square&amp;logo=github&amp;label=release&amp;labelColor=161b22&amp;color=ea580c" alt="Latest release" /></a>
+  <a href="https://github.com/kaushal07wick/OsmoGrep/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/kaushal07wick/OsmoGrep/ci.yml?branch=master&amp;style=flat-square&amp;logo=github&amp;label=CI&amp;labelColor=161b22" alt="CI status on master" /></a>
+  <a href="https://github.com/kaushal07wick/OsmoGrep/releases"><img src="https://img.shields.io/github/downloads/kaushal07wick/OsmoGrep/total?style=flat-square&amp;labelColor=161b22&amp;color=ea580c" alt="Release downloads" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/kaushal07wick/OsmoGrep?style=flat-square&amp;labelColor=161b22&amp;color=ea580c" alt="MIT license" /></a>
+  <a href="https://github.com/kaushal07wick/OsmoGrep/stargazers"><img src="https://img.shields.io/github/stars/kaushal07wick/OsmoGrep?style=flat-square&amp;logo=github&amp;labelColor=161b22&amp;color=ea580c" alt="GitHub stars" /></a>
+  <a href="https://github.com/kaushal07wick/OsmoGrep/graphs/contributors"><img src="https://img.shields.io/github/contributors/kaushal07wick/OsmoGrep?style=flat-square&amp;labelColor=161b22&amp;color=ea580c" alt="Contributors" /></a>
+</p>
 
 <p align="center">
   <a href="https://osmogrep.com">Website</a> ·
