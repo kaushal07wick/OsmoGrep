@@ -19,6 +19,7 @@ output.mkdir(parents=True, exist_ok=True)
 source = r'''
 import {render} from './terminal-ui/src/renderer.ts';
 import {fixture} from './terminal-ui/src/test-fixture.ts';
+import {websiteMark} from './terminal-ui/src/brand.ts';
 import {setCapabilities} from '@earendil-works/pi-tui';
 import {readFileSync} from 'node:fs';
 setCapabilities({images:'kitty',trueColor:true,hyperlinks:false});
@@ -33,6 +34,7 @@ if(commands.length<20)throw Error('Could not read the command registry');
 const views=[['workspace',{...base,logs,diffs}],['commands',{...base,height:27,input:'/',cursor:1,commands,selectedCommand:2}],['cotton',{...base,theme:'light',logs,diffs}],['usage',{...base,height:44,panel:{title:'Stats',sections:['Commands','Appearance','Model','Permissions','Status line','Keymap','Skills','Usage','Stats','Status'],section:8,selected:0,query:'',rows:[],editing:false,notice:'',footer:'d sample / recorded · tab section · esc close',history:[],demo:true,elapsed:1000}}]];
 const exportView=(view)=>{const frame=render(view);return {width:view.width,height:view.height,light:view.theme==='light',rows:frame.rows,cursor:frame.cursor,cursorVisible:frame.cursorVisible!==false,images:frame.images.map(image=>({rect:image.placement?frame.input:frame.artwork,data:[...image.sequence.matchAll(/\x1b_G[^;]*;([A-Za-z0-9+/=]+)\x1b\\/g)].map(m=>m[1]).join('')}))};};
 const images=Object.fromEntries(views.map(([name,view])=>[name,exportView(view)]));
+images.brand=[websiteMark(false),websiteMark(true)];
 images.animation=Array.from({length:41},(_,i)=>exportView({...base,height:40,introElapsed:i*250,introScene:'horizon',introBright:true}));
 console.log(JSON.stringify(images));
 '''
@@ -50,6 +52,41 @@ for bold,italic,index,suffix in [(True,False,1,'Bold'),(False,True,2,'Oblique'),
         fonts[bold,italic]=ImageFont.truetype(str(candidate),18) if candidate.exists() else font
 cell_w, cell_h, margin = 11, 25, 22
 esc = re.compile(r'(\x1b\[[0-9;]*m)')
+
+def brand_pixels(rows):
+    pixels = []
+    for row, line in enumerate(rows):
+        fg, bg, column = None, None, 0
+        for token in esc.split(line):
+            if token.startswith('\x1b['):
+                codes = [int(n) for n in token[2:-1].split(';')]
+                if codes == [0]: fg, bg = None, None
+                else:
+                    assert len(codes) == 5 and codes[:2] in ([38,2],[48,2]), codes
+                    color = '#%02x%02x%02x' % tuple(codes[2:])
+                    if codes[0] == 38: fg = color
+                    else: bg = color
+                continue
+            for ch in token:
+                assert ch in ' █▀▄', ch
+                for half, color in enumerate((fg if ch in '█▀' else bg, fg if ch in '█▄' else bg)):
+                    if color: pixels.append((column,row*2+half,color))
+                column += 1
+        assert column == 7, column
+    assert len(rows) == 3 and len(pixels) == 14, pixels
+    return pixels
+
+# Export the actual terminal glyphs, including their half-cell proportions.
+for light, rows in enumerate(views.pop('brand')):
+    pixels = brand_pixels(rows)
+    ink = '#18181b' if light else '#e9e5dc'
+    assert {color for _,_,color in pixels} == {ink,'#ea580c'}
+    rects = '\n'.join(f'    <rect x="{x}" y="{y}" width="1" height="1" fill="{color}"/>' for x,y,color in pixels)
+    mark = f'  <g transform="translate(0 0) scale(11 12.5)" shape-rendering="crispEdges">\n{rects}\n  </g>'
+    (output/f'logo-{"light" if light else "dark"}.svg').write_text(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 77 75" role="img" aria-label="OsmoGrep">\n{mark}\n</svg>\n')
+    if not light:
+        mark = mark.replace('translate(0 0)', 'translate(29.5 18.5)')
+        (output/'readme-brand.svg').write_text(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 432 112" width="432" height="112" role="img" aria-labelledby="title">\n  <title id="title">OsmoGrep</title>\n{mark}\n  <text x="136" y="75" fill="{ink}" font-family="Menlo, Consolas, monospace" font-size="56" font-weight="700" textLength="270" lengthAdjust="spacingAndGlyphs">osmogrep</text>\n</svg>\n')
 
 def preview(view):
     default = (250,250,250) if view['light'] else (0,0,0)

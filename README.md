@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://osmogrep.com">
-    <img src="docs/assets/readme-brand.svg" alt="OsmoGrep — white pixel-ring logo and wordmark" width="432" />
+    <img src="docs/assets/readme-brand.svg" alt="OsmoGrep — terminal logo and wordmark" width="432" />
   </a>
 </p>
 

@@ -386,7 +386,7 @@
         "docs/assets/logo-dark.svg",
         "docs/assets/logo-light.svg"
       ],
-      "source_geometry": "terminal-ui/brand/logo.svg",
+      "source_geometry": "terminal-ui/src/brand.ts::websiteMark (actual 7 by 6 terminal pixels and palette)",
       "live_badges": [
         "release",
         "ci",
@@ -398,7 +398,7 @@
       "badge_svgs_valid": true,
       "local_links_valid": true,
       "header": "docs/assets/readme-brand.svg",
-      "layout": "White pixel ring and wordmark side by side in one graphic; no separate heading or theme-switching fallback"
+      "layout": "Exact terminal pixel ring and lowercase wordmark side by side; generated from websiteMark by terminal-ui/scripts/readme-previews.py"
     }
   }
 }
