@@ -60,3 +60,10 @@ jobs:
 
       - name: Test
         run: cargo test --locked
+
+      - name: Harness integration contracts
+        if: runner.os != 'Windows'
+        run: |
+          cargo build --locked
+          python3 terminal-ui/scripts/provider-acceptance.py --binary target/debug/osmogrep --output /tmp/osmogrep-provider-acceptance.json
+          python3 terminal-ui/scripts/harness-acceptance.py --binary target/debug/osmogrep --output /tmp/osmogrep-harness-acceptance.json

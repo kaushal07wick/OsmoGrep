@@ -1,5 +1,5 @@
 use std::{
-    fs::{self, OpenOptions},
+    fs::OpenOptions,
     io::Write,
     path::{Path, PathBuf},
 };
@@ -10,6 +10,32 @@ use uuid::Uuid;
 
 const DEFAULT_THRESHOLD_CHARS: usize = 100_000;
 const DEFAULT_PREVIEW_CHARS: usize = 1_500;
+
+pub fn model_output(root: &Path, label: &str, value: &serde_json::Value) -> Result<String, String> {
+    let text = serde_json::to_string(value).map_err(|e| e.to_string())?;
+    let output = budget_text(root, label, &text);
+    if !output.truncated {
+        return Ok(text);
+    }
+    let path=output.full_path.ok_or("Tool output is too large and could not be archived; inspect the workspace before continuing")?;
+    let mut small = serde_json::json!({"truncated":true,"full_output_path":path,"preview":output.text,"instruction":"Read full_output_path in chunks when additional details are needed."});
+    for key in [
+        "error",
+        "path",
+        "exit_code",
+        "running",
+        "session_id",
+        "stdout_cursor",
+        "stderr_cursor",
+        "cancelled",
+        "timed_out",
+    ] {
+        if let Some(value) = value.get(key) {
+            small[key] = value.clone();
+        }
+    }
+    serde_json::to_string(&small).map_err(|e| e.to_string())
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BudgetedText {
@@ -63,16 +89,18 @@ fn env_usize(key: &str, default: usize) -> usize {
 }
 
 fn persist_result(repo_root: &Path, label: &str, text: &str) -> Result<PathBuf, String> {
-    let dir = repo_root.join(".context").join("osmogrep-results");
-    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let dir = crate::file_guard::internal_dir(repo_root, ".context/osmogrep-results")?;
     let safe_label = safe_label(label);
     let stamp = Utc::now().format("%Y%m%dT%H%M%SZ");
     let path = dir.join(format!("{}-{}-{}.txt", stamp, Uuid::new_v4(), safe_label));
-    let mut file = OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&path)
-        .map_err(|e| e.to_string())?;
+    let mut options = OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&path).map_err(|e| e.to_string())?;
     file.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
     Ok(path)
 }

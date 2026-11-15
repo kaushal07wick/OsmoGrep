@@ -2,9 +2,10 @@
 use super::{AgentEvent, CancelToken, ModelConfig};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+#[cfg(test)]
+use std::io::{BufRead, BufReader, Read};
 use std::{
     collections::{BTreeMap, HashSet},
-    io::{BufRead, BufReader, Read},
     sync::mpsc::{self, Sender},
     time::Duration,
 };
@@ -169,6 +170,8 @@ fn append_message(messages: &mut Vec<Value>, role: &str, content: Value) {
     messages.push(json!({"role":role,"content":content}));
 }
 pub fn payload(cfg: &ModelConfig, canonical: &Value) -> Result<Value, String> {
+    let configured = crate::model_options::apply(cfg, canonical)?;
+    let canonical = &configured;
     let protocol = api(cfg);
     if protocol == Api::Responses {
         return Ok(canonical.clone());
@@ -279,8 +282,22 @@ pub fn payload(cfg: &ModelConfig, canonical: &Value) -> Result<Value, String> {
             .get("max_output_tokens")
             .cloned()
             .unwrap_or(json!(8192));
+        if let Some(budget) = canonical["thinking_budget"].as_u64() {
+            if budget < 1024 || budget >= result["max_tokens"].as_u64().unwrap_or(8192) {
+                return Err(
+                    "Anthropic thinking_budget must be at least 1024 and below max_output_tokens"
+                        .into(),
+                );
+            }
+            result["thinking"] = json!({"type":"enabled","budget_tokens":budget});
+        }
     } else if let Some(limit) = canonical.get("max_output_tokens") {
         result["max_tokens"] = limit.clone();
+    }
+    if !anthropic {
+        if let Some(effort) = canonical.pointer("/reasoning/effort") {
+            result["reasoning_effort"] = effort.clone();
+        }
     }
     if let Some(tools) = canonical["tools"].as_array().filter(|a| !a.is_empty()) {
         result["tools"]=json!(tools.iter().map(|t|if anthropic {json!({"name":t["name"],"description":t["description"],"input_schema":t["parameters"]})}else{json!({"type":"function","function":{"name":t["name"],"description":t["description"],"parameters":t["parameters"]}})}).collect::<Vec<_>>());
@@ -630,111 +647,57 @@ pub fn request(
     let cfg = cfg.clone();
     let key = key.to_string();
     let protocol = api(&cfg);
-    let (send, recv) = mpsc::sync_channel(32);
-    // shortcut: a cancelled blocking HTTP reader exits at its 120s deadline; use async I/O if sustained cancellation leaves too many readers.
-    std::thread::spawn(move || {
-        let result = (|| -> Result<Value, Failure> {
-            let client = reqwest::blocking::Client::builder()
-                .connect_timeout(Duration::from_secs(10))
-                .timeout(Duration::from_secs(120))
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .map_err(|e| Failure::from(e.to_string()))?;
-            let response = authenticate(client.post(url).json(&body), &cfg, &key)
-                .send()
-                .map_err(|e| Failure {
-                    message: format!("Provider connection failed: {}", e.without_url()),
-                    retryable: true,
-                })?;
-            let status = response.status();
+    let (send, recv) = mpsc::channel();
+    let worker_cancel = cancel.clone();
+    crate::mcp::runtime().spawn(async move {
+        let fetch=async {
+            let client=reqwest::Client::builder().connect_timeout(Duration::from_secs(10)).timeout(Duration::from_secs(120))
+                .redirect(reqwest::redirect::Policy::none()).build().map_err(|e|Failure::from(e.to_string()))?;
+            let request=client.post(url).json(&body);
+            let request=if protocol==Api::AnthropicMessages {request.header("x-api-key",&key).header("anthropic-version","2023-06-01")}
+                else if key.is_empty(){request}else{request.bearer_auth(&key)};
+            let mut response=request.send().await.map_err(|e|Failure {message:format!("Provider connection failed: {}",e.without_url()),retryable:true})?;
+            let status=response.status();
             if !status.is_success() {
-                let mut text = String::new();
-                let _ = response.take(64 * 1024).read_to_string(&mut text);
-                return Err(Failure {
-                    message: super::format_api_error(&status.to_string(), &text)
-                        .replace(&key, if key.is_empty() { "" } else { "[redacted]" }),
-                    retryable: status.as_u16() == 429 || status.is_server_error(),
-                });
+                let bytes=read_body(response,64*1024).await?;
+                return Err(Failure {message:super::format_api_error(&status.to_string(),&String::from_utf8_lossy(&bytes)),retryable:status.as_u16()==429 || status.is_server_error()});
             }
-            if !response
-                .headers()
-                .get("content-type")
-                .and_then(|v| v.to_str().ok())
-                .is_some_and(|s| s.contains("text/event-stream"))
-            {
-                let mut bytes = Vec::new();
-                response
-                    .take(32 * 1024 * 1024 + 1)
-                    .read_to_end(&mut bytes)
-                    .map_err(|e| Failure::from(e.to_string()))?;
-                if bytes.len() > 32 * 1024 * 1024 {
-                    return Err("Provider response too large".to_string().into());
-                }
-                return normalized(
-                    &cfg,
-                    serde_json::from_slice(&bytes).map_err(|e| Failure::from(e.to_string()))?,
-                )
-                .map_err(Failure::from);
+            if !response.headers().get("content-type").and_then(|v|v.to_str().ok()).is_some_and(|s|s.contains("text/event-stream")) {
+                let bytes=read_body(response,32*1024*1024).await?;
+                return normalized(&cfg,serde_json::from_slice(&bytes).map_err(|e|Failure::from(e.to_string()))?).map_err(Failure::from);
             }
-            let mut state = StreamState::new(protocol);
-            let mut data = String::new();
-            let mut reader = BufReader::new(response);
-            let mut total = 0;
-            let mut closed = false;
-            loop {
-                let mut bytes = Vec::new();
-                let n = reader
-                    .by_ref()
-                    .take(1024 * 1024 + 1)
-                    .read_until(b'\n', &mut bytes)
-                    .map_err(|e| Failure::from(e.to_string()))?;
-                total += n;
-                if n > 1024 * 1024 || total > 32 * 1024 * 1024 {
-                    return Err("Provider stream too large".to_string().into());
-                }
-                let line = std::str::from_utf8(&bytes)
-                    .map_err(|_| Failure::from("Invalid UTF-8 in provider stream".to_string()))?
-                    .trim_end_matches(['\r', '\n']);
-                if line.is_empty() {
-                    if !data.is_empty() {
-                        if data.trim() == "[DONE]" {
-                            if protocol == Api::ChatCompletions {
-                                state.finished = true;
+            let mut state=StreamState::new(protocol);
+            let mut data=String::new(); let mut line=Vec::new(); let mut total=0usize; let mut closed=false;
+            'stream: while let Some(chunk)=response.chunk().await.map_err(|e|Failure::from(e.without_url().to_string()))? {
+                total+=chunk.len(); if total>32*1024*1024 {return Err("Provider stream too large".to_string().into());}
+                for byte in chunk {
+                    if byte!=b'\n' {line.push(byte);if line.len()>1024*1024 {return Err("Provider event too large".to_string().into());}continue;}
+                    let text=std::str::from_utf8(&line).map_err(|_|Failure::from("Invalid UTF-8 in provider stream".to_string()))?.trim_end_matches('\r');
+                    if text.is_empty() {
+                        if !data.is_empty() {
+                            if data.trim()=="[DONE]" {if protocol==Api::ChatCompletions {state.finished=true;}closed=true;}
+                            else {
+                                let event=serde_json::from_str(&data).map_err(|_|Failure::from("Malformed provider stream event".to_string()))?;
+                                if let Some(delta)=state.event(protocol,event).map_err(Failure::from)? {if !delta.is_empty() && send.send(Ok(Err(delta))).is_err(){return Err("cancelled".to_string().into());}}
                             }
-                            closed = true;
-                        } else {
-                            let event: Value = serde_json::from_str(&data).map_err(|_| {
-                                Failure::from("Malformed provider stream event".to_string())
-                            })?;
-                            if let Some(delta) =
-                                state.event(protocol, event).map_err(Failure::from)?
-                            {
-                                if !delta.is_empty() && send.send(Ok(Err(delta))).is_err() {
-                                    return Err("cancelled".to_string().into());
-                                }
-                            }
+                            data.clear();
                         }
-                        data.clear();
+                        if closed || state.finished && protocol!=Api::ChatCompletions {break 'stream;}
+                    }else if let Some(text)=text.strip_prefix("data:") {
+                        if !data.is_empty(){data.push('\n');}data.push_str(text.strip_prefix(' ').unwrap_or(text));
+                        if data.len()>1024*1024 {return Err("Provider event too large".to_string().into());}
                     }
-                    if closed || state.finished && protocol != Api::ChatCompletions {
-                        break;
-                    }
-                } else if let Some(s) = line.strip_prefix("data:") {
-                    if !data.is_empty() {
-                        data.push('\n');
-                    }
-                    data.push_str(s.strip_prefix(' ').unwrap_or(s));
-                    if data.len() > 1024 * 1024 {
-                        return Err("Provider event too large".to_string().into());
-                    }
-                }
-                if n == 0 {
-                    break;
+                    line.clear();
                 }
             }
-            normalized(&cfg, state.finish(protocol).map_err(Failure::from)?).map_err(Failure::from)
-        })();
-        let _ = send.send(result.map(Ok));
+            normalized(&cfg,state.finish(protocol).map_err(Failure::from)?).map_err(Failure::from)
+        };
+        // Dropping the in-flight HTTP future closes the socket on cancellation.
+        let result=tokio::select! {
+            result=fetch=>result,
+            _=async {while !worker_cancel.is_cancelled(){tokio::time::sleep(Duration::from_millis(20)).await;}}=>Err("cancelled".to_string().into()),
+        };
+        let _=send.send(result.map(Ok));
     });
     let mut streamed = false;
     loop {
@@ -762,6 +725,21 @@ pub fn request(
             Err(_) => return Err("Provider worker stopped unexpectedly".to_string().into()),
         }
     }
+}
+
+async fn read_body(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>, Failure> {
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| Failure::from(e.without_url().to_string()))?
+    {
+        if bytes.len() + chunk.len() > limit {
+            return Err("Provider response too large".to_string().into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
 }
 
 #[cfg(test)]

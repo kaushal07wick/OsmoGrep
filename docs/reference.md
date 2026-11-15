@@ -16,7 +16,7 @@ export OPENAI_API_KEY="your-api-key"
 osmogrep
 ```
 
-A Rust toolchain is required to build. Install **Node.js 22.19 or newer** for the TypeScript UI; the renderer bundle is already included, so users do not need to run npm. Without Node, OsmoGrep uses its native Rust terminal interface. Linux source builds also require `pkg-config` and ALSA development headers, as configured in [CI](../.github/workflows/ci.yml).
+Rust 1.89+ is required to build. Install **Node.js 22.19 or newer** for the TypeScript UI; the renderer bundle is already included, so users do not need to run npm. Without Node, OsmoGrep uses its native Rust terminal interface. Linux source builds also require `pkg-config` and ALSA development headers, as configured in [CI](../.github/workflows/ci.yml).
 
 Use `/key` inside the app to set credentials instead of an environment variable. `osmogrep doctor` reports installation and configuration details. For an existing checkout, pull the changes and repeat `cargo install --path . --locked` to update it.
 
@@ -128,7 +128,7 @@ Choose a profile through `/permissions`:
 
 These are application-level tool policies, not an operating-system sandbox. A shell guard blocks known destructive command patterns. `/undo` can restore the last captured agent edit; it does not reverse arbitrary shell side effects.
 
-Prompts, relevant context, attached images, and tool results go to your selected model provider. Provider credentials stay in the Rust process and are not sent to the TypeScript renderer. Keys entered through `/key` are saved locally in configuration; they are not stored in an OS keychain. Environment variables can be used instead. Headless events mask secret-like values on a best-effort basis.
+Prompts, relevant context, attached images, and tool results go to your selected model provider. Provider credentials stay in the Rust process and are not sent to the TypeScript renderer. New keys entered through `/key` use macOS Keychain, Linux Secret Service (`secret-tool`), or Windows user-bound DPAPI. `/key migrate` moves legacy plaintext provider keys out of configuration; environment variables remain supported. Headless events mask secret-like values on a best-effort basis.
 
 Repository indexing and run artifacts live under `.context/`:
 
@@ -151,7 +151,7 @@ Automatic review/test scheduling is **off by default**. A greeting or unrelated 
 - **Repository instructions:** root `.osmogrep.md`, `AGENTS.md`, `CLAUDE.md`, and `.cursorrules` are loaded within a shared size budget. They guide requested work rather than create tasks of their own.
 - **Skills:** browse `/skills` and invoke a selected skill with `$skill-name`. Discovery includes repository `skills/`, `.agents/skills/`, `.osmogrep/skills/`, and corresponding supported user skill directories.
 - **Neovim:** `/nv [file]` opens the editor through an isolated tmux integration. Narrow terminals use full-width windows; wide terminals can split. Requires tmux and Neovim.
-- **MCP and hooks:** `/mcp` inspects configured command bridges. Optional `pre_shell`, `pre_edit`, and `post_edit` hooks are configured in `config.toml`.
+- **MCP and hooks:** `/mcp` inspects configured native stdio/Streamable HTTP servers and legacy command bridges. Optional `pre_shell`, `pre_edit`, and `post_edit` hooks are configured in `config.toml`.
 - **Advanced workflows:** GitHub triage, voice input, explicit worktree swarms, and bounded `ultracode` workflows remain available. They are optional and may need external services or tools.
 - **Regression intelligence:** optional revision-aware indexing, context queries, and prediction are documented in [the intelligence guide](prre.md). Normal coding does not depend on that integration.
 
@@ -184,7 +184,9 @@ osmogrep run \
 
 `--json-events` emits newline-delimited JSON for streaming text, tool calls/results, permissions, usage, and completion. `--prompt-file` reads a longer request from a file. Headless dangerous actions are denied unless `--auto-approve` is supplied; pick the permission profile deliberately.
 
-Other CLI entry points include `sessions`, `doctor`, `triage`, `index`, `context`, `predict`, `intelligence-mcp`, and `uninstall`. Run `osmogrep <command> --help` for their arguments.
+Persistent JSONL integrations use `osmogrep rpc --repo-root /path/to/project`. See [harness foundations](harness-foundations.md) for session resume/fork/recovery, model budgets, sandboxing, OAuth, MCP/LSP configuration, and the RPC contract.
+
+Other CLI entry points include `auth`, `sessions`, `doctor`, `triage`, `index`, `context`, `predict`, `intelligence-mcp`, and `uninstall`. Run `osmogrep <command> --help` for their arguments.
 
 Important environment overrides:
 

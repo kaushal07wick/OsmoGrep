@@ -49,12 +49,25 @@ impl Tool for Read {
             .and_then(Value::as_u64)
             .map(|v| v as usize);
 
-        let content = fs::read_to_string(path).map_err(|e| e.to_string())?;
+        use std::io::Read;
+        let mut content = String::new();
+        fs::File::open(path)
+            .map_err(|e| e.to_string())?
+            .take(20 * 1024 * 1024 + 1)
+            .read_to_string(&mut content)
+            .map_err(|e| e.to_string())?;
+        if content.len() > 20 * 1024 * 1024 {
+            return Err(
+                "File exceeds the 20 MiB read budget; use search or a scoped shell read".into(),
+            );
+        }
+        let sha256 = crate::file_guard::digest(content.as_bytes());
         let lines: Vec<&str> = content.lines().collect();
 
         if offset >= lines.len() {
             return Ok(json!({
                 "text": "",
+                "sha256": sha256,
                 "lines": 0,
                 "total_lines": lines.len(),
                 "truncated": false,
@@ -71,6 +84,7 @@ impl Tool for Read {
 
         Ok(json!({
             "text": text,
+            "sha256": sha256,
             "lines": returned_lines,
             "total_lines": lines.len(),
             "truncated": char_truncated || has_more,

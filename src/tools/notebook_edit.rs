@@ -97,11 +97,13 @@ impl Tool for NotebookEdit {
                 .collect(),
         );
 
-        fs::write(
-            path,
-            serde_json::to_string_pretty(&nb).map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string())?;
+        crate::file_guard::replace(
+            std::path::Path::new(path),
+            Some(src.as_bytes()),
+            serde_json::to_string_pretty(&nb)
+                .map_err(|e| e.to_string())?
+                .as_bytes(),
+        )?;
         let root = std::env::current_dir().map_err(|e| e.to_string())?;
         let verification_stale = crate::verification::mark_workspace_edited(&root, [path]);
 

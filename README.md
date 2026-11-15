@@ -41,7 +41,7 @@ export OPENAI_API_KEY="your-api-key"
 osmogrep
 ```
 
-Requires Rust to install and **Node.js 22.19+** for the full terminal UI. You can enter your key with `/key` instead, or connect another provider below. [Installation options and platform notes →](docs/reference.md#quickstart)
+Requires Rust 1.89+ to install and **Node.js 22.19+** for the full terminal UI. You can enter your key with `/key` instead, or connect another provider below. [Installation options and platform notes →](docs/reference.md#quickstart)
 
 ## From a question to a code change
 
@@ -57,9 +57,9 @@ OsmoGrep can search your code, follow symbols, edit files, apply patches, run co
 | --- | --- |
 | Understand a codebase | File search, definitions, references, and repository context |
 | Build and debug | Real edits, shell commands, focused tests, and diagnostics |
-| Review the change | Inline diffs, expandable output, and session undo |
+| Review the change | Inline diffs, expandable output, and conflict-aware turn checkpoints |
 | Keep the conversation moving | Multiline drafts, image attachments, and queued follow-ups |
-| Set your boundaries | Read-only mode, approval prompts, and explicit cancellation |
+| Set your boundaries | Read-only mode, scoped approvals, optional OS sandbox, and explicit cancellation |
 | Bring your workflow | Project instructions, skills, configurable shortcuts, and Neovim integration |
 
 ## A terminal worth working in
@@ -100,13 +100,15 @@ Weekly usage puts this week, last week, and input/output totals on one readable 
 
 Use **OpenAI, Anthropic, OpenRouter, Groq, Mistral, DeepSeek, or xAI**. Run local models through **Ollama or LM Studio**. Bring a custom gateway when your setup needs one.
 
-Select your provider and model from the footer or `/model`. OsmoGrep supports Responses, Chat Completions, and native Anthropic Messages, with separately stored provider credentials.
+Select your provider and model from the footer or `/model`. OsmoGrep supports Responses, Chat Completions, and native Anthropic Messages, with separately stored provider credentials, reasoning controls, and configurable model limits. New saved keys use your OS credential store; `/key migrate` moves legacy plaintext keys.
 
 [Connect a provider →](docs/reference.md#providers) · [Custom endpoints and API support →](docs/agent-provider-design.md#configuration)
 
 ## Your workspace, your permissions
 
 Start read-only, approve actions as they come, or enable full access through `/permissions`. Review the diff and use `/undo` for the last captured file edit. **Escape interrupts the current run; `/exit` closes the app.**
+
+Resume or fork independent conversations with `/sessions`, `/resume`, and `/fork`. Model-aware compaction archives original context; `/recover` opens an interrupted run without replaying unfinished tools. Interactive commands accept stdin and can keep running while the agent works. Subagents run only when you explicitly request delegation; writable workers use isolated worktrees.
 
 Sessions and preferences stay on your machine. Prompts, attachments, and tool context go to the model provider you select. [Permissions and data handling →](docs/reference.md#permissions-and-data)
 
@@ -117,6 +119,7 @@ Sessions and preferences stay on your machine. Prompts, attachments, and tool co
 | [User reference](docs/reference.md) | Installation, providers, controls, configuration, and headless use |
 | [Terminal guide](terminal-ui/README.md) | Editing, attachments, graphics, and UI development |
 | [Workspace controls](docs/terminal-workspace.md) | Skills, shortcuts, permissions, and status-line settings |
+| [Harness foundations](docs/harness-foundations.md) | Sessions, checkpoints, process sessions, MCP/LSP, credentials, and RPC |
 | [Provider design](docs/agent-provider-design.md) | API support, conversation handling, and integration limits |
 | [Regression intelligence](docs/prre.md) | Optional revision-aware indexing and analysis |
 | [Contributing and development](docs/reference.md#development) | Build, test, renderer bundle, and repository structure |

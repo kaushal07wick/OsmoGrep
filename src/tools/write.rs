@@ -47,8 +47,17 @@ impl Tool for Write {
         let pre_hook = crate::hooks::run_hook("pre_edit", &[("path", path)])
             .ok()
             .flatten();
-        let before = fs::read_to_string(path).unwrap_or_default();
-        fs::write(path, content).map_err(|e| e.to_string())?;
+        let previous = match fs::read_to_string(path) {
+            Ok(text) => Some(text),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(e.to_string()),
+        };
+        let before = previous.as_deref().unwrap_or("");
+        crate::file_guard::replace(
+            std::path::Path::new(path),
+            previous.as_deref().map(str::as_bytes),
+            content.as_bytes(),
+        )?;
         let root = std::env::current_dir().map_err(|e| e.to_string())?;
         let verification_stale = crate::verification::mark_workspace_edited(&root, [path]);
         let post_hook = crate::hooks::run_hook("post_edit", &[("path", path)])

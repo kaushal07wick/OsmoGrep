@@ -1,10 +1,10 @@
 {
   "scope": "Local macOS validation of TypeScript presentation and existing Rust backend",
   "date": "2026-11-15",
-  "rust_tests_passed": 229,
+  "rust_tests_passed": 252,
   "typescript_tests_passed": 44,
   "node": "v26.13.1",
-  "installed_sha256": "f43cb4c834f3ab6086430488251988e06b0367acc18ec4472b3ee6a10896edd6",
+  "installed_sha256": "c36f4ec91e4379fb856bbf1982f074df7873295846f9ee214a25c10a13646a5f",
   "installed_first_on_path": true,
   "mac_pty_acceptance": {
     "typescript_renderer_started": true,
@@ -400,5 +400,6 @@
       "header": "docs/assets/readme-brand.svg",
       "layout": "Exact terminal pixel ring and lowercase wordmark side by side; generated from websiteMark by terminal-ui/scripts/readme-previews.py"
     }
-  }
+  },
+  "harness_foundations_validation": "harness-foundations-validation.json"
 }

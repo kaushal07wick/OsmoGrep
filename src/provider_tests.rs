@@ -1,6 +1,55 @@
 use super::*;
 use std::{io::Write, net::TcpListener, thread, time::Instant};
 
+#[test]
+fn cancellation_closes_the_provider_socket() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let worker = thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut reader = BufReader::new(socket.try_clone().unwrap());
+        let mut line = String::new();
+        let mut length = 0;
+        loop {
+            line.clear();
+            reader.read_line(&mut line).unwrap();
+            if line == "\r\n" {
+                break;
+            }
+            if line.to_ascii_lowercase().starts_with("content-length:") {
+                length = line.split(':').nth(1).unwrap().trim().parse().unwrap();
+            }
+        }
+        let mut body = vec![0; length];
+        reader.read_exact(&mut body).unwrap();
+        ready_tx.send(()).unwrap();
+        let mut byte = [0];
+        assert_eq!(
+            socket.read(&mut byte).unwrap(),
+            0,
+            "provider connection should close after cancellation"
+        );
+    });
+    let token = CancelToken::new();
+    let other = token.clone();
+    let cancel = thread::spawn(move || {
+        ready_rx.recv().unwrap();
+        other.cancel();
+    });
+    let cfg = ModelConfig {
+        base_url: Some(format!("http://{address}")),
+        ..Default::default()
+    };
+    let (tx, _rx) = mpsc::channel();
+    assert!(request(&cfg, "fixture-key", &fixture(), &token, &tx).is_err());
+    cancel.join().unwrap();
+    worker.join().unwrap();
+}
+
 fn config(protocol: Api) -> ModelConfig {
     ModelConfig {
         api: Some(protocol),

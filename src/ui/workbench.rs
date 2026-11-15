@@ -56,6 +56,8 @@ enum Action {
     ChooseModel(String),
     ApplyModel,
     CycleApi,
+    Reasoning,
+    Sandbox,
     KeyBinding(String),
     Skill(String),
     None,
@@ -262,57 +264,357 @@ fn entries(state: &AgentState, panel: &Panel) -> Vec<Row> {
         return choices;
     }
     let mut rows = match panel.section {
-        0 => commands::command_palette_items().iter().map(|c| row(c.cmd, c.desc, "↵", Action::Command(c.cmd.into()))).collect(),
+        0 => commands::command_palette_items()
+            .iter()
+            .map(|c| row(c.cmd, c.desc, "↵", Action::Command(c.cmd.into())))
+            .collect(),
         1 => {
             let mut rows = vec![
-                row("Dark", "Black canvas · Graphite paper composer", if state.theme == UiTheme::Dark {"●"} else {""}, Action::Theme("dark")),
-                row("Light", "Light canvas · Cotton paper composer", if state.theme == UiTheme::Light {"●"} else {""}, Action::Theme("light")),
-                row("Reduce motion", "Settle artwork immediately", check(state.preferences.reduce_motion), Action::Motion),
-                row("Ambient artwork", "Quiet central artwork on an empty conversation", check(state.preferences.ambient_art), Action::Art),
+                row(
+                    "Dark",
+                    "Black canvas · Graphite paper composer",
+                    if state.theme == UiTheme::Dark {
+                        "●"
+                    } else {
+                        ""
+                    },
+                    Action::Theme("dark"),
+                ),
+                row(
+                    "Light",
+                    "Light canvas · Cotton paper composer",
+                    if state.theme == UiTheme::Light {
+                        "●"
+                    } else {
+                        ""
+                    },
+                    Action::Theme("light"),
+                ),
+                row(
+                    "Reduce motion",
+                    "Settle artwork immediately",
+                    check(state.preferences.reduce_motion),
+                    Action::Motion,
+                ),
+                row(
+                    "Ambient artwork",
+                    "Quiet central artwork on an empty conversation",
+                    check(state.preferences.ambient_art),
+                    Action::Art,
+                ),
             ];
-            for name in ["orange", "blue", "green", "violet", "rose"] { rows.push(row(format!("Accent · {name}"), "Workspace highlight color", if state.accent.as_str()==name {"●"}else{""}, Action::Accent(name))); }
-            for name in ["compact", "standard", "spacious"] { rows.push(row(format!("Density · {name}"), "Header and transcript spacing", if state.density.as_str()==name {"●"}else{""}, Action::Density(name))); }
+            for name in ["orange", "blue", "green", "violet", "rose"] {
+                rows.push(row(
+                    format!("Accent · {name}"),
+                    "Workspace highlight color",
+                    if state.accent.as_str() == name {
+                        "●"
+                    } else {
+                        ""
+                    },
+                    Action::Accent(name),
+                ));
+            }
+            for name in ["compact", "standard", "spacious"] {
+                rows.push(row(
+                    format!("Density · {name}"),
+                    "Header and transcript spacing",
+                    if state.density.as_str() == name {
+                        "●"
+                    } else {
+                        ""
+                    },
+                    Action::Density(name),
+                ));
+            }
             rows
-        },
+        }
         2 => vec![
-            row("Provider", "Provider-specific APIs; credentials stay in Rust", &panel.model.provider, Action::EditModel(0)),
-            row("Model", "Enter the model identifier supported by your endpoint", &panel.model.model, Action::EditModel(1)),
-            row("Endpoint", "Optional http(s) URL; empty uses the provider default", panel.model.base_url.as_deref().unwrap_or("default"), Action::EditModel(2)),
-            row("Apply model", "Save through the existing model configuration path", "↵", Action::ApplyModel),
-            row("API key", "Open the masked credential input", "↵", Action::Command("/key".into())),
-            row("API protocol", "Auto follows provider; Enter cycles for custom endpoints", panel.model.api.map(|a|a.name()).unwrap_or("auto"), Action::CycleApi),
+            row(
+                "Provider",
+                "Provider-specific APIs; credentials stay in Rust",
+                &panel.model.provider,
+                Action::EditModel(0),
+            ),
+            row(
+                "Model",
+                "Enter the model identifier supported by your endpoint",
+                &panel.model.model,
+                Action::EditModel(1),
+            ),
+            row(
+                "Endpoint",
+                "Optional http(s) URL; empty uses the provider default",
+                panel.model.base_url.as_deref().unwrap_or("default"),
+                Action::EditModel(2),
+            ),
+            row(
+                "Apply model",
+                "Save through the existing model configuration path",
+                "↵",
+                Action::ApplyModel,
+            ),
+            row(
+                "API key",
+                "Open the masked credential input",
+                "↵",
+                Action::Command("/key".into()),
+            ),
+            row(
+                "Migrate saved keys",
+                "Move legacy plaintext credentials into the OS credential store",
+                "↵",
+                Action::Command("/key migrate".into()),
+            ),
+            row(
+                "API protocol",
+                "Auto follows provider; Enter cycles for custom endpoints",
+                panel.model.api.map(|a| a.name()).unwrap_or("auto"),
+                Action::CycleApi,
+            ),
+            row(
+                "Reasoning effort",
+                "Per-model override; choose an effort your provider supports",
+                crate::model_options::get(&panel.model)["reasoning"]
+                    .as_str()
+                    .unwrap_or("auto"),
+                Action::Reasoning,
+            ),
+            row(
+                "Context window",
+                "Configured estimate; set per-model context_window in config.toml",
+                format!(
+                    "{} tokens",
+                    crate::model_options::limits(&panel.model).window
+                ),
+                Action::None,
+            ),
+            row(
+                "Output reserve",
+                "Reserved before context compaction",
+                format!(
+                    "{} tokens",
+                    crate::model_options::limits(&panel.model).output
+                ),
+                Action::None,
+            ),
         ],
         3 => vec![
-            row("Read only", "Block tools classified as dangerous", selected_profile(state, PermissionProfile::ReadOnly), Action::Profile(PermissionProfile::ReadOnly)),
-            row("Ask for approval", "Prompt before dangerous tools unless auto-approval is enabled", selected_profile(state, PermissionProfile::WorkspaceAuto), Action::Profile(PermissionProfile::WorkspaceAuto)),
-            row("Full access", "Allow dangerous tools without prompting", selected_profile(state, PermissionProfile::FullAccess), Action::Profile(PermissionProfile::FullAccess)),
-            row("Auto-approve dangerous tools", "Session only · explicitly bypass dangerous-tool prompts", check(state.ui.auto_approve), Action::Approval),
-            row("Policy boundary", "Tool classifications govern access; this is not an OS sandbox. Plan mode forces read only.", "", Action::None),
+            row(
+                "Read only",
+                "Block tools classified as dangerous",
+                selected_profile(state, PermissionProfile::ReadOnly),
+                Action::Profile(PermissionProfile::ReadOnly),
+            ),
+            row(
+                "Ask for approval",
+                "Prompt before dangerous tools unless auto-approval is enabled",
+                selected_profile(state, PermissionProfile::WorkspaceAuto),
+                Action::Profile(PermissionProfile::WorkspaceAuto),
+            ),
+            row(
+                "Full access",
+                "Allow dangerous tools without prompting",
+                selected_profile(state, PermissionProfile::FullAccess),
+                Action::Profile(PermissionProfile::FullAccess),
+            ),
+            row(
+                "Auto-approve dangerous tools",
+                "Session only · explicitly bypass dangerous-tool prompts",
+                check(state.ui.auto_approve),
+                Action::Approval,
+            ),
+            row(
+                "OS command sandbox",
+                "Separate from approvals · network denied unless explicitly configured",
+                crate::sandbox::mode(),
+                Action::Sandbox,
+            ),
+            row(
+                "Scoped grants",
+                "User config supports literal command prefixes and workspace write paths",
+                "config.toml · permissions",
+                Action::None,
+            ),
         ],
         4 => {
             let mut ids = state.preferences.status_fields.clone();
-            ids.extend(STATUS_FIELDS.iter().filter(|(id,_,_)| !state.preferences.status_fields.iter().any(|s| s==id)).map(|(id,_,_)|id.to_string()));
-            ids.iter().filter_map(|id| STATUS_FIELDS.iter().find(|(key,_,_)| key==id)).map(|(id,label,desc)| row(*label,*desc, if state.preferences.status_fields.iter().any(|s|s==id) {"[×]"} else {"[ ]"}, Action::Status(id.to_string()))).collect()
-        },
-        5 => super::keymap::BINDINGS.iter().map(|b| row(b.label,format!("{} · default {}{}",b.group,b.default,if b.id=="copy" {" · protected"}else{""}),format!("{}{}",super::keymap::effective(&state.preferences,b),if state.preferences.key_bindings.contains_key(b.id){" *"}else{""}),Action::KeyBinding(b.id.into()))).collect(),
-        6 => panel.skills.iter().map(|skill| row(format!("${}",skill.name),format!("{} · {} · {}",skill.description,skill.source,skill.path.display()),if state.preferences.disabled_skills.contains(&skill.name){"disabled"}else{"enabled"},Action::Skill(skill.name.clone()))).collect(),
+            ids.extend(
+                STATUS_FIELDS
+                    .iter()
+                    .filter(|(id, _, _)| !state.preferences.status_fields.iter().any(|s| s == id))
+                    .map(|(id, _, _)| id.to_string()),
+            );
+            ids.iter()
+                .filter_map(|id| STATUS_FIELDS.iter().find(|(key, _, _)| key == id))
+                .map(|(id, label, desc)| {
+                    row(
+                        *label,
+                        *desc,
+                        if state.preferences.status_fields.iter().any(|s| s == id) {
+                            "[×]"
+                        } else {
+                            "[ ]"
+                        },
+                        Action::Status(id.to_string()),
+                    )
+                })
+                .collect()
+        }
+        5 => super::keymap::BINDINGS
+            .iter()
+            .map(|b| {
+                row(
+                    b.label,
+                    format!(
+                        "{} · default {}{}",
+                        b.group,
+                        b.default,
+                        if b.id == "copy" { " · protected" } else { "" }
+                    ),
+                    format!(
+                        "{}{}",
+                        super::keymap::effective(&state.preferences, b),
+                        if state.preferences.key_bindings.contains_key(b.id) {
+                            " *"
+                        } else {
+                            ""
+                        }
+                    ),
+                    Action::KeyBinding(b.id.into()),
+                )
+            })
+            .collect(),
+        6 => panel
+            .skills
+            .iter()
+            .map(|skill| {
+                row(
+                    format!("${}", skill.name),
+                    format!(
+                        "{} · {} · {}",
+                        skill.description,
+                        skill.source,
+                        skill.path.display()
+                    ),
+                    if state.preferences.disabled_skills.contains(&skill.name) {
+                        "disabled"
+                    } else {
+                        "enabled"
+                    },
+                    Action::Skill(skill.name.clone()),
+                )
+            })
+            .collect(),
         7 => {
-            let sum=|f:fn(&crate::usage::Day)->u64|panel.days.iter().map(f).sum::<u64>();
-            vec![row("Reported input", "Provider counts · last 365 UTC days · this workspace",sum(|d|d.input).to_string(),Action::None),row("Reported output", "Includes reasoning tokens when reported by the provider",sum(|d|d.output).to_string(),Action::None),row("Cached input", "Subset of reported input; never added twice",sum(|d|d.cached).to_string(),Action::None),row("Model calls", "Successful responses that included valid usage metadata",sum(|d|d.calls).to_string(),Action::None),row("Provider wait", "Includes retries; not total agent runtime",format!("{:.1}s",sum(|d|d.duration_ms) as f64/1000.0),Action::None),row("Legacy text estimate", "Separate from provider counts; not billing data",format!("~{} tokens",state.usage.prompt_tokens+state.usage.completion_tokens),Action::None),row("Context estimate", "Current conversation estimate",format!("~{} tokens",state.conversation.token_estimate),Action::None),row("Pricing and quotas", "Not reported by the provider; no invented prices or account limits", "unavailable",Action::None)]
-        },
+            let sum = |f: fn(&crate::usage::Day) -> u64| panel.days.iter().map(f).sum::<u64>();
+            vec![
+                row(
+                    "Reported input",
+                    "Provider counts · last 365 UTC days · this workspace",
+                    sum(|d| d.input).to_string(),
+                    Action::None,
+                ),
+                row(
+                    "Reported output",
+                    "Includes reasoning tokens when reported by the provider",
+                    sum(|d| d.output).to_string(),
+                    Action::None,
+                ),
+                row(
+                    "Cached input",
+                    "Subset of reported input; never added twice",
+                    sum(|d| d.cached).to_string(),
+                    Action::None,
+                ),
+                row(
+                    "Model calls",
+                    "Successful responses that included valid usage metadata",
+                    sum(|d| d.calls).to_string(),
+                    Action::None,
+                ),
+                row(
+                    "Provider wait",
+                    "Includes retries; not total agent runtime",
+                    format!("{:.1}s", sum(|d| d.duration_ms) as f64 / 1000.0),
+                    Action::None,
+                ),
+                row(
+                    "Legacy text estimate",
+                    "Separate from provider counts; not billing data",
+                    format!(
+                        "~{} tokens",
+                        state.usage.prompt_tokens + state.usage.completion_tokens
+                    ),
+                    Action::None,
+                ),
+                row(
+                    "Context estimate",
+                    "Current conversation estimate",
+                    format!("~{} tokens", state.conversation.token_estimate),
+                    Action::None,
+                ),
+                row(
+                    "Pricing and quotas",
+                    "Not reported by the provider; no invented prices or account limits",
+                    "unavailable",
+                    Action::None,
+                ),
+            ]
+        }
         8 => {
-            let mut models=std::collections::BTreeMap::<String,(u64,u64)>::new();
-            for day in &panel.days {let total=models.entry(format!("{} · {}",day.model,day.provider)).or_default();total.0+=day.input+day.output;total.1+=day.calls;}
-            let mut models:Vec<_>=models.into_iter().collect();models.sort_by_key(|(_,v)|std::cmp::Reverse(v.0));
+            let mut models = std::collections::BTreeMap::<String, (u64, u64)>::new();
+            for day in &panel.days {
+                let total = models
+                    .entry(format!("{} · {}", day.model, day.provider))
+                    .or_default();
+                total.0 += day.input + day.output;
+                total.1 += day.calls;
+            }
+            let mut models: Vec<_> = models.into_iter().collect();
+            models.sort_by_key(|(_, v)| std::cmp::Reverse(v.0));
             models.into_iter().map(|(model,(tokens,calls))|row(model,format!("{calls} reported model calls · input + output; cached input is a subset"),format!("{tokens} tokens"),Action::None)).collect()
-        },
+        }
         9 => vec![
-            row("Workspace", state.repo_root.display().to_string(), state.ui.repo_branch.as_deref().unwrap_or("no branch"), Action::None),
-            row("Run", state.ui.current_tool.as_deref().unwrap_or("No active tool"), &state.ui.run_phase, Action::None),
-            row("Session", state.session_name.as_deref().unwrap_or("Unnamed conversation"), format!("{} messages", state.conversation.messages.len()), Action::None),
-            row("Background work", "Existing queued and running jobs", state.jobs.len().to_string(), Action::None),
-            row("Verification", "Inspect the execution evidence ledger", "↵", Action::Command("/verify".into())),
-            row("Connected tools", "Inspect MCP server configuration", "↵", Action::Command("/mcp".into())),
+            row(
+                "Workspace",
+                state.repo_root.display().to_string(),
+                state.ui.repo_branch.as_deref().unwrap_or("no branch"),
+                Action::None,
+            ),
+            row(
+                "Run",
+                state.ui.current_tool.as_deref().unwrap_or("No active tool"),
+                &state.ui.run_phase,
+                Action::None,
+            ),
+            row(
+                "Session",
+                state
+                    .session_name
+                    .as_deref()
+                    .unwrap_or("Unnamed conversation"),
+                format!("{} messages", state.conversation.messages.len()),
+                Action::None,
+            ),
+            row(
+                "Background work",
+                "Existing queued and running jobs",
+                state.jobs.len().to_string(),
+                Action::None,
+            ),
+            row(
+                "Verification",
+                "Inspect the execution evidence ledger",
+                "↵",
+                Action::Command("/verify".into()),
+            ),
+            row(
+                "Connected tools",
+                "Inspect MCP server configuration",
+                "↵",
+                Action::Command("/mcp".into()),
+            ),
         ],
         _ => Vec::new(),
     };
@@ -630,6 +932,40 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
                             Some(Api::AnthropicMessages) => None,
                         };
                         panel.notice = "Protocol draft updated · choose Apply model to save".into();
+                    }
+                    Action::Reasoning => {
+                        let options = crate::model_options::get(&panel.model);
+                        let current = options["reasoning"].as_str().unwrap_or("auto");
+                        let next = match current {
+                            "auto" => "low",
+                            "low" => "medium",
+                            "medium" => "high",
+                            _ => "auto",
+                        };
+                        panel.notice = match crate::model_options::set_reasoning(&panel.model, next)
+                        {
+                            Ok(()) => format!(
+                                "Reasoning override saved for {} · {}",
+                                panel.model.model, next
+                            ),
+                            Err(error) => error,
+                        };
+                    }
+                    Action::Sandbox => {
+                        if state.ui.agent_running {
+                            panel.notice =
+                                "Interrupt the active run before changing OS enforcement".into();
+                        } else {
+                            let next = match crate::sandbox::mode().as_str() {
+                                "off" => "workspace",
+                                "workspace" => "read-only",
+                                _ => "off",
+                            };
+                            panel.notice = match crate::sandbox::set(next) {
+                                Ok(()) => format!("OS command sandbox: {next}"),
+                                Err(error) => error,
+                            };
+                        }
                     }
                     Action::ApplyModel => {
                         state.ui.requested_command = Some(format!(

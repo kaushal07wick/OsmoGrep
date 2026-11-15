@@ -1,5 +1,5 @@
 use std::{
-    fs::{self, OpenOptions},
+    fs::OpenOptions,
     io::Write,
     path::{Path, PathBuf},
 };
@@ -18,6 +18,32 @@ pub struct RunLedger {
 }
 
 impl RunLedger {
+    pub fn checkpoint(&self, input: &Value, phase: &str) -> Result<(), String> {
+        if self.path.is_none() {
+            return Err("Run history is unavailable; fix .context/osmogrep-runs permissions before continuing".into());
+        }
+        if let Some(path) = &self.path {
+            let value = json!({"run_id":self.run_id,"phase":phase,"input":input,"updated":Utc::now().to_rfc3339()});
+            crate::persistence::atomic_write(
+                &path.with_extension("checkpoint.json"),
+                &serde_json::to_vec(&value).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| format!("Cannot save run recovery checkpoint: {e}"))?;
+        }
+        Ok(())
+    }
+
+    pub fn archive_context(&self, input: &Value, iteration: usize) -> Result<(), String> {
+        let path = self
+            .path
+            .as_ref()
+            .ok_or("Cannot compact without a durable run archive")?;
+        crate::persistence::atomic_write(
+            &path.with_extension(format!("context-{iteration}.json")),
+            &serde_json::to_vec(input).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| format!("Cannot archive context before compaction: {e}"))
+    }
     pub fn start(
         repo_root: &Path,
         prompt: &str,
@@ -118,7 +144,14 @@ impl RunLedger {
         let Some(path) = &self.path else {
             return;
         };
-        let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) else {
+        let mut options = OpenOptions::new();
+        options.create(true).append(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        }
+        let Ok(mut file) = options.open(path) else {
             self.path = None;
             return;
         };
@@ -127,8 +160,7 @@ impl RunLedger {
 }
 
 fn prepare_ledger_path(repo_root: &Path, run_id: &str) -> Option<PathBuf> {
-    let dir = repo_root.join(".context").join("osmogrep-runs");
-    fs::create_dir_all(&dir).ok()?;
+    let dir = crate::file_guard::internal_dir(repo_root, ".context/osmogrep-runs").ok()?;
     let stamp = Utc::now().format("%Y%m%dT%H%M%SZ");
     Some(dir.join(format!("{stamp}-{run_id}.jsonl")))
 }

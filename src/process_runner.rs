@@ -68,6 +68,7 @@ fn run_captured(
     timeout: Duration,
     is_cancelled: &dyn Fn() -> bool,
 ) -> Result<ProcessRun, String> {
+    command = crate::sandbox::wrap(command)?;
     let started = Instant::now();
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     if stdin.is_some() {
@@ -174,7 +175,7 @@ fn read_pipe(mut pipe: impl Read + Send + 'static) -> thread::JoinHandle<Result<
 }
 
 #[cfg(unix)]
-fn kill_process_group(id: u32) {
+pub(crate) fn kill_process_group(id: u32) {
     unsafe extern "C" {
         fn kill(pid: i32, sig: i32) -> i32;
     }

@@ -12,7 +12,7 @@ use crate::logger::{log, parse_user_input_log};
 use crate::persistence;
 use crate::state::{
     AgentState, CommandItem, InputMode, JobKind, JobRecord, JobRequest, JobStatus, LogBuffer,
-    LogLevel, PermissionProfile, PlanItem, UiAccent, UiDensity, UiTheme, MAX_CONVERSATION_TOKENS,
+    LogLevel, PermissionProfile, PlanItem, UiAccent, UiDensity, UiTheme,
 };
 use crate::test_harness::run_tests;
 use crate::voice::VoiceCommand;
@@ -33,6 +33,208 @@ pub fn handle_command(
 
     let cmd_raw = raw.trim();
     let cmd = normalize_command_prefix(cmd_raw);
+    if cmd == "/key migrate" {
+        if let Some(agent) = agent {
+            match agent.migrate_credentials(){Ok(count)=>log(state,LogLevel::Success,format!("Moved {count} saved provider credentials to the OS store; removed their plaintext config entries.")),Err(error)=>log(state,LogLevel::Error,error)}
+        }
+        return;
+    }
+    if cmd == "/subagents" {
+        match crate::subagents::overview(&state.repo_root) {
+            Ok(rows) => {
+                if rows.is_empty() {
+                    log(
+                        state,
+                        LogLevel::Info,
+                        "No workers. Subagents start only when you explicitly request delegation.",
+                    );
+                }
+                for row in rows {
+                    log(
+                        state,
+                        LogLevel::Info,
+                        format!(
+                            "{}  {}  {}",
+                            row["id"].as_str().unwrap_or(""),
+                            row["status"].as_str().unwrap_or(""),
+                            row["workspace"].as_str().unwrap_or("")
+                        ),
+                    );
+                }
+            }
+            Err(error) => log(state, LogLevel::Error, error),
+        }
+        return;
+    }
+    if cmd == "/reasoning" || cmd.starts_with("/reasoning ") {
+        if let Some(agent) = agent {
+            if let Some(effort) = cmd.strip_prefix("/reasoning ") {
+                if let Err(error) =
+                    crate::model_options::set_reasoning(agent.model_config(), effort.trim())
+                {
+                    log(state, LogLevel::Error, error);
+                    return;
+                }
+            }
+            log(
+                state,
+                LogLevel::Info,
+                format!(
+                    "Model options: {}",
+                    crate::model_options::get(agent.model_config())
+                ),
+            );
+        }
+        return;
+    }
+    if cmd == "/checkpoints" {
+        match crate::checkpoints::list(&state.repo_root) {
+            Ok(turns) => {
+                for (id, prompt, count) in turns {
+                    log(
+                        state,
+                        LogLevel::Info,
+                        format!("{id}  {count} files  {prompt}"),
+                    );
+                }
+            }
+            Err(error) => log(state, LogLevel::Error, error),
+        }
+        log(state,LogLevel::Info,"/rewind <id> code|conversation|both · file-tool changes only; shell effects are not reversed");
+        return;
+    }
+    if cmd.starts_with("/rewind ") {
+        if state.ui.agent_running {
+            log(
+                state,
+                LogLevel::Warn,
+                "Interrupt the active run before rewinding.",
+            );
+            return;
+        }
+        let parts = cmd.split_whitespace().collect::<Vec<_>>();
+        if parts.len() != 3 || !matches!(parts[2], "code" | "conversation" | "both") {
+            log(
+                state,
+                LogLevel::Warn,
+                "Use /rewind <checkpoint UUID> code|conversation|both",
+            );
+            return;
+        }
+        if parts[2] != "conversation" && state.permission_profile == PermissionProfile::ReadOnly {
+            log(
+                state,
+                LogLevel::Warn,
+                "Read-only mode cannot restore workspace files.",
+            );
+            return;
+        }
+        let result = (|| -> Result<usize, String> {
+            let turn = crate::checkpoints::load(&state.repo_root, parts[1])?;
+            persistence::save(state)?;
+            let count = if parts[2] != "conversation" {
+                crate::checkpoints::restore_files(&state.repo_root, &turn)?
+            } else {
+                0
+            };
+            if parts[2] != "code" {
+                persistence::new_session(state)?;
+                state.conversation.set_messages(turn.conversation);
+                state.ui.queue_paused = true;
+            }
+            persistence::save(state)?;
+            Ok(count)
+        })();
+        match result {
+            Ok(count) => log(
+                state,
+                LogLevel::Success,
+                format!(
+                    "Restored {count} files; {} restored. Send a request when ready.",
+                    if parts[2] == "code" {
+                        "code"
+                    } else {
+                        "conversation"
+                    }
+                ),
+            ),
+            Err(error) => log(state, LogLevel::Error, error),
+        }
+        return;
+    }
+    if cmd == "/sandbox" || cmd.starts_with("/sandbox ") {
+        if state.ui.agent_running {
+            log(
+                state,
+                LogLevel::Warn,
+                "Interrupt the active run before changing OS enforcement.",
+            );
+            return;
+        }
+        if let Some(mode) = cmd.strip_prefix("/sandbox ") {
+            if let Err(error) = crate::sandbox::set(mode.trim()) {
+                log(state, LogLevel::Error, error);
+                return;
+            }
+        }
+        log(state,LogLevel::Info,format!("OS sandbox: {}. /sandbox off|workspace|read-only. Network denied when sandboxed unless [sandbox].network=true.",crate::sandbox::mode()));
+        return;
+    }
+
+    if cmd == "/sessions" || cmd.starts_with("/sessions ") {
+        match persistence::search_sessions(cmd.strip_prefix("/sessions").unwrap().trim()) {
+            Ok(sessions) => {
+                for session in sessions.into_iter().take(30) {
+                    log(
+                        state,
+                        LogLevel::Info,
+                        format!(
+                            "{}  {}",
+                            session.id,
+                            session.name.as_deref().unwrap_or("Untitled")
+                        ),
+                    );
+                }
+            }
+            Err(error) => log(state, LogLevel::Error, error),
+        }
+        return;
+    }
+    if cmd.starts_with("/recover ") {
+        if state.ui.agent_running {
+            log(
+                state,
+                LogLevel::Warn,
+                "Interrupt the active run before recovery.",
+            );
+            return;
+        }
+        if let Err(error) = persistence::recover(state, cmd.split_whitespace().nth(1).unwrap_or(""))
+        {
+            log(state, LogLevel::Error, error);
+        }
+        return;
+    }
+    if cmd.starts_with("/resume ") || cmd.starts_with("/fork ") {
+        if state.ui.agent_running {
+            log(
+                state,
+                LogLevel::Warn,
+                "Interrupt the active run before changing sessions.",
+            );
+            return;
+        }
+        if let Err(error) = persistence::save(state).and_then(|_| {
+            persistence::load_id(
+                state,
+                cmd.split_whitespace().nth(1).unwrap_or(""),
+                cmd.starts_with("/fork "),
+            )
+        }) {
+            log(state, LogLevel::Error, error);
+        }
+        return;
+    }
 
     if let Some(section) = crate::ui::workbench::section_for(&cmd) {
         crate::ui::workbench::open(state, section, agent.as_ref().map(|a| a.model_config()));
@@ -346,9 +548,22 @@ fn quit_agent(state: &mut AgentState) {
 }
 
 fn new_conversation(state: &mut AgentState) {
-    state.conversation.clear();
-    log(state, LogLevel::Info, "Started a new conversation.");
-    let _ = persistence::save(state);
+    if state.ui.agent_running {
+        log(
+            state,
+            LogLevel::Warn,
+            "Interrupt the active run before starting a new session.",
+        );
+        return;
+    }
+    match persistence::new_session(state) {
+        Ok(()) => log(
+            state,
+            LogLevel::Info,
+            "Started a new session. Previous threads remain available in /sessions.",
+        ),
+        Err(error) => log(state, LogLevel::Error, error),
+    }
 }
 
 fn toggle_auto_approve(state: &mut AgentState) {
@@ -494,7 +709,12 @@ fn set_model(state: &mut AgentState, cmd: &str, agent: Option<&mut Agent>) {
             return;
         }
     }
-    agent.set_model_config(provider.clone(), model.clone(), base_url.clone(), api);
+    if let Err(error) =
+        agent.set_model_config(provider.clone(), model.clone(), base_url.clone(), api)
+    {
+        log(state, LogLevel::Error, error);
+        return;
+    }
     log(
         state,
         LogLevel::Success,
@@ -505,7 +725,7 @@ fn set_model(state: &mut AgentState, cmd: &str, agent: Option<&mut Agent>) {
             base_url.unwrap_or_else(|| "(default)".to_string())
         ),
     );
-    let _ = persistence::save(state);
+    persistence::save_or_log(state);
 }
 
 fn run_test(state: &mut AgentState, cmd: &str) {
@@ -597,7 +817,16 @@ fn undo_last_change(state: &mut AgentState) {
         return;
     };
 
-    if let Err(e) = fs::write(&last.target, &last.before) {
+    let restore =
+        crate::file_guard::workspace_path(&state.repo_root, Path::new(&last.target), true)
+            .and_then(|path| {
+                crate::file_guard::replace(
+                    &path,
+                    Some(last.after.as_bytes()),
+                    last.before.as_bytes(),
+                )
+            });
+    if let Err(e) = restore {
         log(
             state,
             LogLevel::Error,
@@ -622,7 +851,7 @@ fn undo_last_change(state: &mut AgentState) {
         LogLevel::Success,
         format!("Undid last change on {}", last.target),
     );
-    let _ = persistence::save(state);
+    persistence::save_or_log(state);
 }
 
 fn show_session_diff(state: &mut AgentState) {
@@ -773,14 +1002,14 @@ fn set_steer(state: &mut AgentState, cmd: &str, steer_tx: Option<&Sender<String>
                 "Steer-now queued for immediate launch.",
             );
         }
-        let _ = persistence::save(state);
+        persistence::save_or_log(state);
         return;
     }
 
     if value.eq_ignore_ascii_case("clear") || value.eq_ignore_ascii_case("off") {
         state.steer = None;
         log(state, LogLevel::Success, "Steer instruction cleared.");
-        let _ = persistence::save(state);
+        persistence::save_or_log(state);
         return;
     }
 
@@ -791,21 +1020,19 @@ fn set_steer(state: &mut AgentState, cmd: &str, steer_tx: Option<&Sender<String>
 
     state.steer = Some(value.to_string());
     log(state, LogLevel::Success, "Steer instruction updated.");
-    let _ = persistence::save(state);
+    persistence::save_or_log(state);
 }
 
 fn compact_context(state: &mut AgentState) {
-    let before = state.conversation.token_estimate;
-    state
-        .conversation
-        .trim_to_budget(MAX_CONVERSATION_TOKENS.saturating_mul(2) / 3);
-    let after = state.conversation.token_estimate;
-    log(
-        state,
-        LogLevel::Info,
-        format!("Context compacted: {} -> {} tokens", before, after),
-    );
-    let _ = persistence::save(state);
+    if state.ui.agent_running {
+        log(
+            state,
+            LogLevel::Warn,
+            "Finish or interrupt the active run before manual compaction.",
+        );
+        return;
+    }
+    state.ui.compact_requested = true;
 }
 
 fn show_usage(state: &mut AgentState) {
@@ -863,7 +1090,7 @@ fn set_theme(state: &mut AgentState, cmd: &str) {
         LogLevel::Success,
         format!("Theme set to {}", theme.as_str()),
     );
-    let _ = persistence::save(state);
+    persistence::save_or_log(state);
 }
 
 fn show_color(state: &mut AgentState) {
@@ -893,7 +1120,7 @@ fn set_color(state: &mut AgentState, cmd: &str) {
         LogLevel::Success,
         format!("Accent color set to {}", accent.as_str()),
     );
-    let _ = persistence::save(state);
+    persistence::save_or_log(state);
 }
 
 fn show_type(state: &mut AgentState) {
@@ -923,7 +1150,7 @@ fn set_type(state: &mut AgentState, cmd: &str) {
         LogLevel::Success,
         format!("UI type set to {}", density.as_str()),
     );
-    let _ = persistence::save(state);
+    persistence::save_or_log(state);
 }
 
 fn show_session(state: &mut AgentState) {
@@ -957,7 +1184,7 @@ fn rename_session(state: &mut AgentState, cmd: &str) {
             state.session_name.as_deref().unwrap_or("untitled session")
         ),
     );
-    let _ = persistence::save(state);
+    persistence::save_or_log(state);
 }
 
 fn show_profile(state: &mut AgentState) {
@@ -985,7 +1212,7 @@ fn set_profile(state: &mut AgentState, cmd: &str) {
         LogLevel::Success,
         format!("Permission profile set to {}", profile.as_str()),
     );
-    let _ = persistence::save(state);
+    persistence::save_or_log(state);
 }
 
 fn run_swarm_now(state: &mut AgentState, cmd: &str, agent: Option<&mut Agent>) {
@@ -1028,7 +1255,7 @@ fn handle_job(state: &mut AgentState, cmd: &str) {
             }
         }
         log(state, LogLevel::Info, "Cancelled queued jobs.");
-        let _ = persistence::save(state);
+        persistence::save_or_log(state);
         return;
     }
 
@@ -1079,7 +1306,7 @@ fn queue_job(state: &mut AgentState, kind: JobKind, input: String) {
     });
     state.job_queue.push(JobRequest { id, kind, input });
     log(state, LogLevel::Info, format!("Queued job #{}", id));
-    let _ = persistence::save(state);
+    persistence::save_or_log(state);
 }
 
 fn show_jobs(state: &mut AgentState) {
@@ -1185,7 +1412,7 @@ fn set_plan_mode(state: &mut AgentState, cmd: &str) {
             }
         ),
     );
-    let _ = persistence::save(state);
+    persistence::save_or_log(state);
 }
 
 fn plan_add(state: &mut AgentState, cmd: &str) {
@@ -1200,7 +1427,7 @@ fn plan_add(state: &mut AgentState, cmd: &str) {
         active: state.plan_items.is_empty(),
     });
     log(state, LogLevel::Success, "Plan item added.");
-    let _ = persistence::save(state);
+    persistence::save_or_log(state);
 }
 
 fn plan_done(state: &mut AgentState, cmd: &str) {
@@ -1229,13 +1456,13 @@ fn plan_done(state: &mut AgentState, cmd: &str) {
         LogLevel::Success,
         format!("Plan item {} marked done.", n),
     );
-    let _ = persistence::save(state);
+    persistence::save_or_log(state);
 }
 
 fn plan_clear(state: &mut AgentState) {
     state.plan_items.clear();
     log(state, LogLevel::Info, "Plan cleared.");
-    let _ = persistence::save(state);
+    persistence::save_or_log(state);
 }
 
 fn compact_line(s: &str, max: usize) -> String {
@@ -1268,7 +1495,7 @@ fn set_autofix(state: &mut AgentState, cmd: &str) {
         }
     }
     show_autofix(state);
-    let _ = persistence::save(state);
+    persistence::save_or_log(state);
 }
 
 fn run_triage_agent(state: &mut AgentState, cmd: &str) {
@@ -2134,12 +2361,12 @@ fn enter_api_key_mode(state: &mut AgentState) {
     state.ui.input.clear();
     state.ui.input_mode = InputMode::ApiKey;
     state.ui.input_masked = true;
-    state.ui.input_placeholder = Some("Enter OpenAI API key".into());
+    state.ui.input_placeholder = Some("Enter provider API key".into());
 
     log(
         state,
         LogLevel::Info,
-        "Enter your OpenAI API key and press Enter.",
+        "Enter your active provider API key and press Enter.",
     );
 }
 
@@ -2316,6 +2543,18 @@ pub(crate) fn command_palette_items() -> &'static [CommandItem] {
         CommandItem {
             cmd: "/new",
             desc: "Start a fresh conversation",
+        },
+        CommandItem {
+            cmd: "/sessions",
+            desc: "Find saved conversation threads",
+        },
+        CommandItem {
+            cmd: "/checkpoints",
+            desc: "Review turn checkpoints and rewind options",
+        },
+        CommandItem {
+            cmd: "/subagents",
+            desc: "Inspect explicitly requested workers",
         },
         CommandItem {
             cmd: "/clear",

@@ -593,6 +593,7 @@ mod tests {
 
     fn agent_state() -> AgentState {
         AgentState {
+            session: Default::default(),
             ui: UiState::default(),
             logs: LogBuffer::new(),
             session_changes: Vec::new(),

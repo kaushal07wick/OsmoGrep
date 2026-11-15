@@ -61,6 +61,12 @@ impl Tool for Edit {
         if !src.contains(old) {
             return Err("old string not found".into());
         }
+        if old.is_empty() || (!all && src.matches(old).count() != 1) {
+            return Err(
+                "Edit must match one unique nonempty string; provide more context or all_occ=true"
+                    .into(),
+            );
+        }
 
         let updated = if all {
             src.replace(old, new)
@@ -68,7 +74,11 @@ impl Tool for Edit {
             src.replacen(old, new, 1)
         };
 
-        fs::write(path, &updated).map_err(|e| e.to_string())?;
+        crate::file_guard::replace(
+            std::path::Path::new(path),
+            Some(src.as_bytes()),
+            updated.as_bytes(),
+        )?;
         let root = std::env::current_dir().map_err(|e| e.to_string())?;
         let verification_stale = crate::verification::mark_workspace_edited(&root, [path]);
         let post_hook = crate::hooks::run_hook("post_edit", &[("path", path)])

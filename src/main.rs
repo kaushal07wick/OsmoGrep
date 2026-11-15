@@ -1,20 +1,33 @@
 mod agent;
+mod approval_rules;
 mod attachments;
+mod auth;
+mod checkpoints;
 mod clipboard;
+mod command_sessions;
 mod commands;
+mod compaction;
 mod context;
+mod credentials;
 mod editor;
+mod file_guard;
 mod harness;
 mod hooks;
 mod intelligence;
+mod language_server;
 mod logger;
 mod mcp;
+mod model_options;
 mod persistence;
 mod preferences;
 mod process_runner;
+mod project_context;
+mod rpc;
+mod sandbox;
 mod shell_guard;
 mod skills;
 mod state;
+mod subagents;
 mod test_harness;
 mod tool_budget;
 mod tool_guard;
@@ -53,10 +66,7 @@ use crate::{
         flush_streaming_log, log, log_agent_output, log_status, log_tool_call, log_tool_result,
         log_user_input, update_streaming_log,
     },
-    state::{
-        AgentState, DiffSnapshot, InputMode, JobKind, JobStatus, LogLevel, PermissionProfile,
-        MAX_CONVERSATION_TOKENS,
-    },
+    state::{AgentState, DiffSnapshot, InputMode, JobKind, JobStatus, LogLevel, PermissionProfile},
     ui::{
         main_ui::handle_event,
         runtime::TuiRuntime,
@@ -88,12 +98,39 @@ struct Cli {
     #[arg(short, long, value_name = "SESSION_NAME")]
     session: Option<String>,
 
+    /// Resume an independent saved thread in this workspace
+    #[arg(long, conflicts_with_all = ["fork", "new_session"])]
+    resume: Option<String>,
+    /// Copy a saved thread into a new independent session
+    #[arg(long, conflicts_with = "new_session")]
+    fork: Option<String>,
+    /// Start a fresh session, keeping previous threads
+    #[arg(long = "new")]
+    new_session: bool,
+
     #[command(subcommand)]
     command: Option<CliCommand>,
 }
 
 #[derive(Subcommand)]
 enum CliCommand {
+    /// Serve the versioned JSONL integration and worker control protocol
+    Rpc {
+        #[arg(long, default_value = ".")]
+        repo_root: PathBuf,
+        #[arg(long)]
+        session_id: Option<String>,
+        #[arg(long, default_value = "workspace-auto")]
+        permission_profile: String,
+        #[arg(long)]
+        auto_approve: bool,
+    },
+    /// OAuth device login for a configured, user-registered provider client
+    Auth {
+        #[arg(value_parser=["login","logout","status"])]
+        action: String,
+        provider: String,
+    },
     /// Print version information
     Version,
     /// Print install, config, and session diagnostics
@@ -303,7 +340,7 @@ fn queue_auto_review_if_needed(state: &mut AgentState) {
         input,
     });
     state.reviewed_change_count = state.session_changes.len();
-    let _ = persistence::save(state);
+    persistence::save_or_log(state);
     log(
         state,
         LogLevel::Info,
@@ -435,7 +472,7 @@ fn start_agent_run(
     reset_streaming_output(&mut state.ui);
     state.ui.active_edit_target = None;
     state.usage.prompt_tokens += (text.len() / 4).max(1);
-    let _ = persistence::save(state);
+    persistence::save_or_log(state);
 }
 
 fn reset_streaming_output(ui: &mut crate::state::UiState) {
@@ -577,9 +614,38 @@ fn deny_update(state: &mut AgentState) {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let _commands = command_sessions::Cleanup;
+    let _mcp = mcp::Cleanup;
+    let _language_servers = language_server::Cleanup;
     let cli = Cli::parse();
     let session_name = selected_session_name(&cli);
     match cli.command {
+        Some(CliCommand::Rpc {
+            repo_root,
+            session_id,
+            permission_profile,
+            auto_approve,
+        }) => rpc::serve(
+            repo_root,
+            session_id,
+            PermissionProfile::parse(&permission_profile).ok_or("Invalid permission profile")?,
+            auto_approve,
+        )?,
+        Some(CliCommand::Auth { action, provider }) => match action.as_str() {
+            "login" => auth::login(&provider)?,
+            "logout" => {
+                auth::logout(&provider)?;
+                println!("Signed out of {provider}");
+            }
+            _ => println!(
+                "{provider}: {}",
+                if auth::has_token(&provider) {
+                    "OAuth credential present"
+                } else {
+                    "not signed in"
+                }
+            ),
+        },
         Some(CliCommand::Version) => {
             println!("osmogrep {}", env!("CARGO_PKG_VERSION"));
         }
@@ -595,6 +661,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some(CliCommand::Run(args)) => {
             let code = run_headless(args)?;
             if code != 0 {
+                drop(_language_servers);
+                drop(_mcp);
+                drop(_commands);
                 std::process::exit(code);
             }
         }
@@ -614,7 +683,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             intelligence::cli::mcp(args).map_err(|e| e as Box<dyn Error>)?
         }
         None => {
-            run_tui(session_name)?;
+            run_tui(session_name, cli.resume, cli.fork, cli.new_session)?;
         }
     }
     Ok(())
@@ -670,19 +739,20 @@ fn print_sessions() -> Result<(), Box<dyn Error>> {
     }
 
     println!(
-        "{:<22} {:<28} {:>10} {:>10}",
-        "updated", "session", "tokens", "items"
+        "{:<36} {:<22} {:<28} {:>10} {:>10}",
+        "id", "updated", "session", "tokens", "items"
     );
     for session in sessions {
         let updated = session
             .modified
             .map(format_system_time)
             .unwrap_or_else(|| "-".to_string());
-        let name = session.name.unwrap_or_else(|| session.id);
+        let name = session.name.unwrap_or_default();
         let tokens = session.prompt_tokens + session.completion_tokens;
         let items = session.plan_items + session.jobs;
         println!(
-            "{:<22} {:<28} {:>10} {:>10}",
+            "{:<36} {:<22} {:<28} {:>10} {:>10}",
+            session.id,
             updated,
             truncate_cli_field(&name, 28),
             tokens,
@@ -1033,7 +1103,7 @@ fn sanitize_event_value_at_key(key: Option<&str>, value: serde_json::Value) -> s
         serde_json::Value::Object(map) => serde_json::Value::Object(
             map.into_iter()
                 .map(|(key, value)| {
-                    let value = if is_secret_key(&key) {
+                    let value = if is_secret_key(&key) && value.is_string() {
                         serde_json::Value::String("[redacted]".to_string())
                     } else {
                         sanitize_event_value_at_key(Some(&key), value)
@@ -1184,17 +1254,27 @@ fn compact_json(value: &serde_json::Value) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string())
 }
 
-fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
+fn run_tui(
+    session_name: Option<String>,
+    resume: Option<String>,
+    fork: Option<String>,
+    fresh: bool,
+) -> Result<(), Box<dyn Error>> {
     let mut terminal_session = setup_terminal()?;
 
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
     let mut state = init_state();
-    persistence::load(&mut state);
+    if let Some(id) = resume.as_deref().or(fork.as_deref()) {
+        persistence::load_id(&mut state, id, fork.is_some())?;
+    } else if !fresh {
+        persistence::load(&mut state);
+    }
+    persistence::save(&state)?;
     if let Some(name) = session_name {
         state.session_name = Some(name);
-        let _ = persistence::save(&state);
+        persistence::save_or_log(&mut state);
     }
     let mut agent = Agent::new();
     if env_truthy("OSMOGREP_NV_TIPS", false) {
@@ -1285,7 +1365,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
         }
 
         if state.ui.should_exit {
-            let _ = persistence::save(&state);
+            persistence::save_or_log(&mut state);
             break;
         }
 
@@ -1642,7 +1722,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                                 &mut state,
                                 format!("plan updated: {completed}/{total} complete"),
                             );
-                            let _ = persistence::save(&state);
+                            persistence::save_or_log(&mut state);
                         }
 
                         AgentEvent::FileFocus {
@@ -1763,7 +1843,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                             state.ui.diff_snapshot = vec![snap];
                             state.ui.active_edit_target =
                                 state.ui.diff_snapshot.first().map(|d| d.target.clone());
-                            let _ = persistence::save(&state);
+                            persistence::save_or_log(&mut state);
                         }
 
                         AgentEvent::PreviewDiff {
@@ -1787,7 +1867,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                             if log_final_output_once(&mut state, &text) {
                                 state.usage.completion_tokens += (text.len() / 4).max(1);
                             }
-                            let _ = persistence::save(&state);
+                            persistence::save_or_log(&mut state);
                         }
 
                         AgentEvent::StreamDelta(delta) => {
@@ -1842,8 +1922,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                         AgentEvent::ConversationUpdate(messages) => {
                             runtime.mark_dirty();
                             state.conversation.set_messages(messages);
-                            state.conversation.trim_to_budget(MAX_CONVERSATION_TOKENS);
-                            let _ = persistence::save(&state);
+                            persistence::save_or_log(&mut state);
                         }
 
                         AgentEvent::Cancelled => {
@@ -1851,7 +1930,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                             runtime.mark_dirty();
                             finish_streaming_output(&mut state);
                             state.conversation.messages.push(serde_json::json!({"role":"assistant","content":"[The previous turn was cancelled before completion. Do not resume it without a new request.]"}));
-                            let _ = persistence::save(&state);
+                            persistence::save_or_log(&mut state);
                             log(&mut state, LogLevel::Warn, "Agent cancelled.");
                             state.ui.spinner_started_at = None;
                             state.ui.agent_running = false;
@@ -1871,7 +1950,7 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                             log(&mut state, LogLevel::Error, e);
                             finish_streaming_output(&mut state);
                             state.conversation.messages.push(serde_json::json!({"role":"assistant","content":"[The previous turn failed; no successful completion was confirmed.]"}));
-                            let _ = persistence::save(&state);
+                            persistence::save_or_log(&mut state);
                             state.ui.spinner_started_at = None;
                             state.ui.agent_running = false;
                             state.ui.run_phase = "error".to_string();
@@ -2038,7 +2117,10 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
 
                 InputMode::ApiKey => {
                     if !text.is_empty() {
-                        agent.set_api_key(text.to_string());
+                        if let Err(error) = agent.set_api_key(text.to_string()) {
+                            log(&mut state, LogLevel::Error, error);
+                            continue;
+                        }
                         log(&mut state, LogLevel::Success, "API key saved.");
 
                         state.ui.input_mode = InputMode::AgentText;
@@ -2047,6 +2129,22 @@ fn run_tui(session_name: Option<String>) -> Result<(), Box<dyn Error>> {
                     }
                 }
             }
+        }
+
+        if state.ui.compact_requested && agent_rx.is_none() {
+            state.ui.compact_requested = false;
+            let (tx, rx) = mpsc::channel();
+            let control = agent.compact(
+                state.repo_root.clone(),
+                state.conversation.messages.clone(),
+                tx,
+            );
+            agent_cancel = Some(control.cancel);
+            agent_steer_tx = Some(control.steer_tx);
+            agent_rx = Some(rx);
+            state.ui.agent_running = true;
+            state.ui.run_started_at = Some(Instant::now());
+            state.ui.run_phase = "compacting".into();
         }
 
         if agent_rx.is_none() && !state.ui.queue_paused {
@@ -2133,6 +2231,7 @@ fn init_state() -> AgentState {
     ui.repo_branch = crate::ui::helper::git_branch(&repo_root);
 
     AgentState {
+        session: Default::default(),
         ui,
 
         logs: crate::state::LogBuffer::new(),

@@ -80,7 +80,8 @@ class Model(http.server.BaseHTTPRequestHandler):
             value['output']=message(beginning+ending)
         elif latest=='READ_PROBE':
             value.pop('usage')
-            if any(m.get('type')=='function_call_output' for m in body['input']):
+            user_index=max(i for i,m in enumerate(body['input']) if m.get('role')=='user')
+            if any(m.get('type')=='function_call_output' for m in body['input'][user_index+1:]):
                 assert 'CONVERSATION_SOURCE' in json.dumps(body['input'])
                 value['output']=message('READ_PROBE_OK')
             else:
@@ -214,7 +215,11 @@ try:
     drain(.3)
     assert len(requests)==1 and requests[0]['tool_choice']=='none'
     assert b'Auto-review queued' not in transcript[at:] and b'Auto-eval queued' not in transcript[at:]
+    legacy_state_path=state_path
+    latest=state_path.with_suffix('.latest').read_text().strip()
+    state_path=state_path.parent/(latest+'.json')
     assert not json.loads(state_path.read_text()).get('auto_eval',True)
+    assert json.loads(legacy_state_path.read_text())['auto_eval'] is True, 'migration must preserve the original session'
     result['greeting_has_no_tools_or_stale_background_jobs']=True
     requests.clear()
     paste('/')
@@ -283,7 +288,7 @@ try:
     paste('Git branch')
     send(b' ')
     send(b'\x1b')
-    saved=test_home/'Library/Application Support/osmogrep/sessions'/(hashlib.sha256(str(repo).encode()).hexdigest()+'.json')
+    saved=state_path
     settings=json.loads(saved.read_text())
     assert settings['theme']=='dark'
     assert settings['preferences']['key_bindings']['commands']=='ctrl+p'

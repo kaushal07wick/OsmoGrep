@@ -23,6 +23,7 @@ mod regex_search;
 mod search;
 mod shell;
 mod test;
+mod tool_search;
 mod web_fetch;
 mod web_search;
 mod worktree_swarm;
@@ -65,6 +66,9 @@ pub trait Tool: Send + Sync {
     fn name(&self) -> &'static str;
     fn schema(&self) -> Value;
     fn safety(&self) -> ToolSafety;
+    fn safety_for(&self, _args: &Value) -> ToolSafety {
+        self.safety()
+    }
     fn call(&self, args: Value) -> ToolResult;
     fn call_cancellable(&self, args: Value, _is_cancelled: &dyn Fn() -> bool) -> ToolResult {
         self.call(args)
@@ -74,6 +78,8 @@ pub trait Tool: Send + Sync {
 pub struct ToolRegistry {
     tools: HashMap<&'static str, Box<dyn Tool>>,
     repo_root: PathBuf,
+    read_receipts: Mutex<HashMap<PathBuf, String>>,
+    enabled: std::sync::Arc<Mutex<std::collections::BTreeSet<String>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -111,7 +117,7 @@ impl ToolScope {
                     "fetch",
                 ],
             ),
-            include_mcp: lower.contains("mcp"),
+            include_mcp: crate::mcp::is_enabled(),
             include_intelligence: contains_any(
                 &lower,
                 &[
@@ -137,21 +143,10 @@ impl ToolScope {
                     " pr ",
                 ],
             ),
-            include_worktree_swarm: ultracode
-                || contains_any(
+            include_worktree_swarm: std::env::var("OSMOGREP_DELEGATED").as_deref() != Ok("1")
+                && contains_any(
                     &lower,
-                    &[
-                        "subagent",
-                        "sub-agent",
-                        "swarm",
-                        "worktree",
-                        "parallel",
-                        "deep audit",
-                        "audit",
-                        "complex",
-                        "large refactor",
-                        "multi-agent",
-                    ],
+                    &["subagent", "sub-agent", "swarm", "delegate", "multi-agent"],
                 ),
             include_dynamic_workflow: ultracode
                 || contains_any(
@@ -193,7 +188,7 @@ impl ToolScope {
             "mcp_call" => self.include_mcp,
             "notebook_edit" => self.include_notebooks,
             "git_commit" => self.include_git_commit,
-            "worktree_swarm" => self.include_worktree_swarm,
+            "worktree_swarm" | "subagent" => self.include_worktree_swarm,
             "dynamic_workflow" => self.include_dynamic_workflow,
             "query_code_graph" => self.include_intelligence,
             _ => true,
@@ -234,6 +229,8 @@ fn is_mutating_tool(name: &str) -> bool {
             | "patch"
             | "mcp_call"
             | "notebook_edit"
+            | "memory"
+            | "subagent"
             | "git_commit"
             | "worktree_swarm"
     )
@@ -278,6 +275,9 @@ impl ToolRegistry {
             Box::new(Diagnostics),
             Box::new(WorktreeSwarm),
             Box::new(DynamicWorkflow),
+            Box::new(crate::project_context::Memory),
+            Box::new(crate::subagents::Subagent),
+            Box::new(crate::language_server::LanguageServer),
             Box::new(code_graph::CodeGraph {
                 root: repo_root.clone(),
             }),
@@ -286,8 +286,23 @@ impl ToolRegistry {
         for tool in list {
             tools.insert(tool.name(), tool);
         }
+        if std::env::var("OSMOGREP_DELEGATED").as_deref() == Ok("1") {
+            tools.remove("subagent");
+            tools.remove("worktree_swarm");
+        }
+        let enabled = std::sync::Arc::new(Mutex::new(std::collections::BTreeSet::new()));
+        let search = tool_search::ToolSearch {
+            catalog: tools.values().map(|t| t.schema()).collect(),
+            enabled: enabled.clone(),
+        };
+        tools.insert("tool_search", Box::new(search));
 
-        Self { tools, repo_root }
+        Self {
+            tools,
+            repo_root,
+            read_receipts: Mutex::new(HashMap::new()),
+            enabled,
+        }
     }
 
     pub fn call_cancellable(
@@ -301,12 +316,15 @@ impl ToolRegistry {
             .get(name)
             .ok_or_else(|| format!("unknown tool: {}", name))?;
 
-        self.call_in_repo_root(tool.as_ref(), args, is_cancelled)
+        let args = self.guard_args(name, args)?;
+        let result = self.call_in_repo_root(tool.as_ref(), args.clone(), is_cancelled)?;
+        self.remember_read(name, &args, &result)?;
+        Ok(result)
     }
 
     pub fn parallel_safe(&self, name: &str) -> bool {
         matches!(self.safety(name), Some(ToolSafety::Safe))
-            && !matches!(name, "update_plan" | "dynamic_workflow")
+            && !matches!(name, "update_plan" | "dynamic_workflow" | "tool_search")
     }
 
     pub fn call_parallel_safe_cancellable(
@@ -323,17 +341,132 @@ impl ToolRegistry {
             .tools
             .get(name)
             .ok_or_else(|| format!("unknown tool: {}", name))?;
-        tool.call_cancellable(self.resolve_parallel_args(name, args), is_cancelled)
+        let args = self.guard_args(name, self.resolve_parallel_args(name, args))?;
+        let result = tool.call_cancellable(args.clone(), is_cancelled)?;
+        self.remember_read(name, &args, &result)?;
+        Ok(result)
+    }
+
+    fn guard_args(&self, name: &str, mut args: Value) -> Result<Value, String> {
+        let editing = matches!(name, "write_file" | "edit_file" | "notebook_edit" | "patch");
+        if crate::sandbox::mode() == "read-only"
+            && (editing
+                || (name == "memory" && args["action"].as_str().unwrap_or("read") != "read"))
+        {
+            return Err("Read-only sandbox denies workspace mutations".into());
+        }
+        if matches!(
+            name,
+            "read_file"
+                | "write_file"
+                | "edit_file"
+                | "notebook_edit"
+                | "list_dir"
+                | "search"
+                | "regex_search"
+                | "glob_files"
+                | "find_definition"
+                | "find_references"
+        ) {
+            if let Some(path) = args["path"].as_str() {
+                let path =
+                    crate::file_guard::workspace_path(&self.repo_root, Path::new(path), editing)?;
+                if editing {
+                    self.check_receipt(&path, name == "write_file")?;
+                }
+                args["path"] = serde_json::json!(path);
+            }
+        }
+        if name == "patch" {
+            if let Some(patch) = args["patch"].as_str() {
+                for line in patch.lines() {
+                    let path = [
+                        "*** Update File: ",
+                        "*** Add File: ",
+                        "*** Delete File: ",
+                        "+++ ",
+                        "--- ",
+                        "rename from ",
+                        "rename to ",
+                    ]
+                    .iter()
+                    .find_map(|prefix| line.strip_prefix(prefix));
+                    if let Some(path) = path {
+                        let path = path.split('\t').next().unwrap_or("");
+                        if path == "/dev/null" {
+                            continue;
+                        }
+                        let path = path
+                            .strip_prefix("a/")
+                            .or_else(|| path.strip_prefix("b/"))
+                            .unwrap_or(path);
+                        let path = crate::file_guard::workspace_path(
+                            &self.repo_root,
+                            Path::new(path),
+                            true,
+                        )?;
+                        self.check_receipt(&path, false)?;
+                    }
+                }
+            }
+        }
+        Ok(args)
+    }
+    fn check_receipt(&self, path: &Path, require: bool) -> Result<(), String> {
+        let receipts = self
+            .read_receipts
+            .lock()
+            .map_err(|_| "Read tracking unavailable")?;
+        if let Some(expected) = receipts.get(path) {
+            let current = std::fs::read(path).map_err(|e| e.to_string())?;
+            if crate::file_guard::digest(&current) != *expected {
+                return Err(format!("{} changed since read_file. Read it again before editing; user changes were preserved.",path.display()));
+            }
+        } else if require && path.exists() {
+            return Err("Read an existing file with read_file before replacing it".into());
+        }
+        Ok(())
+    }
+    fn remember_read(&self, name: &str, args: &Value, result: &Value) -> Result<(), String> {
+        if name == "read_file" {
+            if let (Some(path), Some(hash)) = (args["path"].as_str(), result["sha256"].as_str()) {
+                self.read_receipts
+                    .lock()
+                    .map_err(|_| "Read tracking unavailable")?
+                    .insert(PathBuf::from(path), hash.into());
+            }
+        } else if matches!(name, "write_file" | "edit_file" | "patch" | "notebook_edit") {
+            let mut receipts = self
+                .read_receipts
+                .lock()
+                .map_err(|_| "Read tracking unavailable")?;
+            receipts.retain(|path, hash| {
+                std::fs::read(path)
+                    .map(|bytes| crate::file_guard::digest(&bytes) == *hash)
+                    .unwrap_or(false)
+            });
+        }
+        Ok(())
     }
 
     pub fn safety(&self, name: &str) -> Option<ToolSafety> {
         self.tools.get(name).map(|t| t.safety())
     }
+    pub fn safety_for(&self, name: &str, args: &Value) -> Option<ToolSafety> {
+        self.tools.get(name).map(|t| t.safety_for(args))
+    }
 
     pub fn scoped_schema(&self, scope: &ToolScope) -> Vec<Value> {
+        let enabled = self.enabled.lock().unwrap_or_else(|e| e.into_inner());
         self.tools
             .iter()
-            .filter_map(|(name, tool)| scope.allows(name).then(|| tool.schema()))
+            .filter_map(|(name, tool)| {
+                (scope.allows(name)
+                    || (!scope.chat_only
+                        && !(scope.read_only && is_mutating_tool(name))
+                        && enabled.contains(*name)))
+                .then(|| tool.schema())
+            })
             .collect()
     }
 
@@ -445,6 +578,49 @@ mod tests {
     use serde_json::json;
     use std::fs;
     use uuid::Uuid;
+
+    #[test]
+    fn tool_discovery_preserves_policy_and_does_not_enable_delegation() {
+        let root = std::env::temp_dir();
+        let registry = ToolRegistry::with_root(root);
+        let scope = ToolScope::for_prompt("fix this function");
+        assert!(!schema_names(&registry.scoped_schema(&scope)).contains(&"web_fetch".into()));
+        registry
+            .call_cancellable("tool_search", json!({"query":"web fetch"}), &|| false)
+            .unwrap();
+        assert!(schema_names(&registry.scoped_schema(&scope)).contains(&"web_fetch".into()));
+        assert!(registry
+            .scoped_schema(&ToolScope::for_prompt("hello"))
+            .is_empty());
+        assert!(!schema_names(
+            &registry.scoped_schema(&ToolScope::for_prompt("complex parallel audit"))
+        )
+        .contains(&"subagent".into()));
+        registry
+            .call_cancellable("tool_search", json!({"query":"subagent swarm"}), &|| false)
+            .unwrap();
+        assert!(!schema_names(&registry.scoped_schema(&scope)).contains(&"subagent".into()));
+    }
+    #[test]
+    fn stale_file_receipts_protect_user_edits() {
+        let root = std::env::temp_dir().join(format!("read-receipts-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("a"), "old").unwrap();
+        let registry = ToolRegistry::with_root(root.clone());
+        registry
+            .call_cancellable("read_file", json!({"path":"a"}), &|| false)
+            .unwrap();
+        fs::write(root.join("a"), "user change").unwrap();
+        assert!(registry
+            .call_cancellable(
+                "write_file",
+                json!({"path":"a","content":"overwrite"}),
+                &|| false
+            )
+            .is_err());
+        assert_eq!(fs::read_to_string(root.join("a")).unwrap(), "user change");
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn graph_tool_is_available_when_requested_by_exact_name() {
@@ -772,7 +948,8 @@ mod tests {
         );
 
         assert!(names.contains(&"dynamic_workflow".to_string()));
-        assert!(names.contains(&"worktree_swarm".to_string()));
+        assert!(!names.contains(&"worktree_swarm".to_string()));
+        assert!(!names.contains(&"subagent".to_string()));
         let _ = fs::remove_dir_all(root);
     }
 

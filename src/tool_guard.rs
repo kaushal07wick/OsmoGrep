@@ -102,23 +102,16 @@ fn increment(counts: &mut HashMap<String, usize>, key: &str) -> usize {
     *count
 }
 
-fn tool_failed(tool_name: &str, result: &Value) -> bool {
-    if result.get("error").is_some() {
-        return true;
-    }
-    match tool_name {
-        "run_shell" | "patch" => result
+pub(crate) fn tool_failed(_tool_name: &str, result: &Value) -> bool {
+    result.get("error").is_some()
+        || result
             .get("exit_code")
             .and_then(Value::as_i64)
-            .map(|code| code != 0)
-            .unwrap_or(false),
-        "run_tests" => result
-            .get("success")
-            .and_then(Value::as_bool)
-            .map(|success| !success)
-            .unwrap_or(false),
-        _ => false,
-    }
+            .is_some_and(|code| code != 0)
+        || result.get("success").and_then(Value::as_bool) == Some(false)
+        || ["blocked", "isError", "timed_out", "cancelled"]
+            .iter()
+            .any(|key| result[*key] == true)
 }
 
 fn is_idempotent_tool(tool_name: &str) -> bool {

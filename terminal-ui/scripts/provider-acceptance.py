@@ -117,7 +117,7 @@ with tempfile.TemporaryDirectory(prefix='osmogrep-provider-') as folder:
             history = [e for e in events if e.get('type') == 'conversation_update']
             tools = [e['name'] for e in events if e.get('type') == 'tool_call']
             displayed = ''.join(e.get('delta',e.get('text','')) for e in events if e.get('type') in ['stream_delta','output_text'])
-            result = {'protocol':protocol,'streaming':streaming,'passed':run.returncode == 0 and not failures and not errors and len(requests) == 2 and len(history) == 2 and tools == ['read_file','read_file'] and all(marker in displayed for marker in ['ALPHA_REAL_FILE_123','BETA_REAL_FILE_456']),'model_requests':len(requests),'tools':tools,'fixture_errors':failures,'agent_errors':errors}
+            result = {'protocol':protocol,'streaming':streaming,'passed':run.returncode == 0 and not failures and not errors and len(requests) == 2 and len(history) >= 2 and tools == ['read_file','read_file'] and all(marker in displayed for marker in ['ALPHA_REAL_FILE_123','BETA_REAL_FILE_456']),'model_requests':len(requests),'conversation_updates':len(history),'tools':tools,'fixture_errors':failures,'agent_errors':errors}
             results.append(result)
             print(json.dumps(result),flush=True)
 

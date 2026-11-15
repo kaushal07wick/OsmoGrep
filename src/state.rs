@@ -77,6 +77,7 @@ pub struct CommandItem {
 }
 
 pub struct UiState {
+    pub compact_requested: bool,
     pub run_started_at: Option<Instant>,
     pub permission_selected: usize,
     pub expand_tools: bool,
@@ -146,6 +147,7 @@ pub struct UiState {
 impl Default for UiState {
     fn default() -> Self {
         Self {
+            compact_requested: false,
             run_started_at: None,
             permission_selected: 0,
             expand_tools: false,
@@ -214,6 +216,7 @@ impl Default for UiState {
 }
 
 pub struct AgentState {
+    pub session: crate::persistence::Session,
     pub preferences: crate::preferences::Preferences,
     pub ui: UiState,
     pub logs: LogBuffer,
@@ -932,8 +935,6 @@ pub struct PendingUpdate {
     pub installing: bool,
 }
 
-pub const MAX_CONVERSATION_TOKENS: usize = 90_000;
-
 pub struct ConversationHistory {
     pub messages: Vec<Value>,
     pub token_estimate: usize,
@@ -988,28 +989,6 @@ impl ConversationHistory {
         self.recompute_estimate();
     }
 
-    pub fn trim_to_budget(&mut self, max_tokens: usize) {
-        if self.token_estimate <= max_tokens {
-            return;
-        }
-
-        let mut removed = Vec::new();
-        while self.messages.len() > 2 && self.token_estimate > max_tokens {
-            let msg = self.messages.remove(1);
-            removed.push(msg);
-            self.recompute_estimate();
-        }
-
-        if !removed.is_empty() {
-            self.merge_summary(removed);
-        }
-
-        while self.messages.len() > 2 && self.token_estimate > max_tokens {
-            self.messages.remove(1);
-            self.recompute_estimate();
-        }
-    }
-
     pub fn set_messages(&mut self, messages: Vec<Value>) {
         self.messages = messages;
         self.recompute_estimate();
@@ -1018,55 +997,10 @@ impl ConversationHistory {
     fn recompute_estimate(&mut self) {
         self.token_estimate = self.messages.iter().map(estimate_message_tokens).sum();
     }
-
-    fn merge_summary(&mut self, removed: Vec<Value>) {
-        let mut entries = Vec::new();
-        for msg in removed {
-            if let Some(entry) = summarize_message(&msg) {
-                entries.push(entry);
-            }
-        }
-        if entries.is_empty() {
-            return;
-        }
-
-        let existing = self
-            .messages
-            .get(1)
-            .and_then(|m| m.get("content").and_then(Value::as_str))
-            .filter(|c| c.starts_with("[conversation-summary]"))
-            .map(|s| s.to_string());
-
-        let mut lines = Vec::new();
-        if let Some(prev) = existing {
-            for line in prev.lines().skip(1) {
-                if !line.trim().is_empty() {
-                    lines.push(line.to_string());
-                }
-            }
-            self.messages.remove(1);
-        }
-        lines.extend(entries);
-        if lines.len() > 36 {
-            lines = lines[lines.len() - 36..].to_vec();
-        }
-
-        let summary = format!("[conversation-summary]\n{}", lines.join("\n"));
-
-        self.messages.insert(
-            1,
-            json!({
-                "role": "assistant",
-                "content": summary,
-            }),
-        );
-        self.recompute_estimate();
-    }
 }
 
 fn estimate_message_tokens(msg: &Value) -> usize {
-    let content = msg.get("content").and_then(Value::as_str).unwrap_or("");
-    (content.len() / 4).max(1)
+    crate::compaction::estimate(msg)
 }
 
 fn input_display_positions(text: &str, width: usize) -> Vec<(usize, usize, usize)> {
@@ -1094,30 +1028,6 @@ fn input_display_positions(text: &str, width: usize) -> Vec<(usize, usize, usize
         positions.push((byte + ch.len_utf8(), row, col));
     }
     positions
-}
-
-fn summarize_message(msg: &Value) -> Option<String> {
-    let role = msg.get("role").and_then(Value::as_str)?;
-    if role == "system" {
-        return None;
-    }
-
-    let content = msg.get("content").and_then(Value::as_str)?;
-    let flat = content.split_whitespace().collect::<Vec<_>>().join(" ");
-    if flat.is_empty() {
-        return None;
-    }
-
-    let clipped = if flat.chars().count() > 180 {
-        let mut s: String = flat.chars().take(180).collect();
-        s.push_str("...");
-        s
-    } else {
-        flat
-    };
-
-    let who = if role == "user" { "U" } else { "A" };
-    Some(format!("- {}: {}", who, clipped))
 }
 
 #[cfg(test)]
@@ -1185,6 +1095,7 @@ mod tests {
 
     fn agent_state_with_input(input: &str) -> AgentState {
         AgentState {
+            session: Default::default(),
             ui: UiState {
                 input: input.to_string(),
                 ..UiState::default()

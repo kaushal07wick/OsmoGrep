@@ -1,0 +1,196 @@
+{
+  "date": "2026-11-15",
+  "scope": "Supported harness foundations; local macOS verification, deterministic transports, and separate paid-model toy tasks. Not provider/platform parity or an endurance benchmark.",
+  "source_baseline": "8232923",
+  "installed_binary_sha256": "c36f4ec91e4379fb856bbf1982f074df7873295846f9ee214a25c10a13646a5f",
+  "rust": {
+    "passed": 252,
+    "ignored_in_default_suite": 2,
+    "native_ignored_checks_executed_separately": {
+      "sandbox_write_and_network_enforcement": true,
+      "synthetic_keychain_save_read_delete": true
+    }
+  },
+  "typescript": {
+    "tests_passed": 44,
+    "build_passed": true
+  },
+  "protocol_acceptance": {
+    "scope": "Isolated local HTTP fixtures with actual file tools; no paid provider calls",
+    "cases": [
+      {
+        "protocol": "chat-completions",
+        "streaming": false,
+        "passed": true,
+        "model_requests": 2,
+        "conversation_updates": 3,
+        "tools": [
+          "read_file",
+          "read_file"
+        ],
+        "fixture_errors": [],
+        "agent_errors": []
+      },
+      {
+        "protocol": "chat-completions",
+        "streaming": true,
+        "passed": true,
+        "model_requests": 2,
+        "conversation_updates": 3,
+        "tools": [
+          "read_file",
+          "read_file"
+        ],
+        "fixture_errors": [],
+        "agent_errors": []
+      },
+      {
+        "protocol": "anthropic-messages",
+        "streaming": false,
+        "passed": true,
+        "model_requests": 2,
+        "conversation_updates": 3,
+        "tools": [
+          "read_file",
+          "read_file"
+        ],
+        "fixture_errors": [],
+        "agent_errors": []
+      },
+      {
+        "protocol": "anthropic-messages",
+        "streaming": true,
+        "passed": true,
+        "model_requests": 2,
+        "conversation_updates": 3,
+        "tools": [
+          "read_file",
+          "read_file"
+        ],
+        "fixture_errors": [],
+        "agent_errors": []
+      }
+    ]
+  },
+  "harness_acceptance": {
+    "binary_sha256": "c36f4ec91e4379fb856bbf1982f074df7873295846f9ee214a25c10a13646a5f",
+    "passed": 13,
+    "checks": [
+      "greeting_without_tools",
+      "queued_turns_preserve_conversation",
+      "independent_session_resume_and_full_history",
+      "permission_denial_preserves_files",
+      "turn_checkpoint_restore_and_conflict_protection",
+      "background_command_incremental_output_and_stdin",
+      "cancellation_is_responsive_and_rpc_remains_usable",
+      "provider_context_overflow_compacts_and_retries_once",
+      "in_loop_model_aware_compaction_archives_original_context",
+      "explicit_worker_isolation_includes_uncommitted_parent_changes",
+      "worker_permissions_and_reviewable_changes",
+      "worker_recursion_disabled",
+      "crash_recovery_keeps_completed_tools_without_automatic_reexecution"
+    ],
+    "model_requests": 34,
+    "paid_provider_calls": 0,
+    "scope": "Local process, filesystem, JSONL RPC, and deterministic HTTP fixtures; no model-quality or ultra-long-run claim"
+  },
+  "mac_pty": {
+    "typescript_renderer_started": true,
+    "native_paper_pixels_cached": true,
+    "central_morph_animates_then_settles": true,
+    "central_morph_ignores_hover_and_click_replays": true,
+    "escape_does_not_exit_idle_app": true,
+    "greeting_has_no_tools_or_stale_background_jobs": true,
+    "command_picker_navigation_and_execution": true,
+    "footer_provider_model_selectors": true,
+    "light_cursor_has_explicit_contrast": true,
+    "settings_and_real_key_remapping": true,
+    "statusline_and_skill_picker": true,
+    "large_multiline_draft_editing": true,
+    "real_thumbnail_sequence": true,
+    "original_image_bytes_reached_provider": true,
+    "selected_skill_reached_provider": true,
+    "weekly_chart_entry_animation": true,
+    "reported_usage_and_pixel_history": true,
+    "real_permission_dock_and_numbered_diff": true,
+    "submitted_followups_are_distinct_fifo_turns": true,
+    "assistant_preface_does_not_skip_requested_tools": true,
+    "wheel_scrolling_and_drag_copy_plain_output": true,
+    "transcript_scroll_track_drags_and_returns_to_live": true,
+    "streaming_preserves_user_scroll_position": true,
+    "terminal_resize": true,
+    "existing_shell_command": true,
+    "renderer_crash_recovers_to_native_ui": true,
+    "terminal_state_restored": true,
+    "preferences_survive_real_restart": true
+  },
+  "editor_lifecycle": {
+    "narrow_full_width_windows_no_status_bar": true,
+    "toggle_preserves_unsaved_changes": true,
+    "closing_editor_restores_full_agent": true,
+    "wide_split_keeps_agent_readable": true,
+    "resize_and_renderer_survive_editor_close": true,
+    "clean_exit_restores_terminal": true
+  },
+  "live_coding": [
+    {
+      "case": "documentation",
+      "passed": true,
+      "tools": [
+        "read_file",
+        "write_file"
+      ],
+      "exit_code": 0,
+      "errors": [],
+      "original_tests_preserved": true,
+      "independent_result_passed": true,
+      "binary_sha256": "4c16f063b39055897a42006a3d8dc953512738e8e9777f8ce736bf493f3f7fab"
+    },
+    {
+      "case": "bug_fix",
+      "passed": true,
+      "tools": [
+        "glob_files",
+        "glob_files",
+        "read_file",
+        "read_file",
+        "edit_file",
+        "run_shell"
+      ],
+      "exit_code": 0,
+      "errors": [],
+      "original_tests_preserved": true,
+      "independent_result_passed": true,
+      "binary_sha256": "c36f4ec91e4379fb856bbf1982f074df7873295846f9ee214a25c10a13646a5f"
+    },
+    {
+      "case": "multi_file_change",
+      "passed": true,
+      "tools": [
+        "glob_files",
+        "search",
+        "search",
+        "read_file",
+        "read_file",
+        "read_file",
+        "patch",
+        "patch",
+        "run_tests",
+        "run_shell"
+      ],
+      "exit_code": 0,
+      "errors": [],
+      "original_tests_preserved": true,
+      "independent_result_passed": true,
+      "binary_sha256": "c36f4ec91e4379fb856bbf1982f074df7873295846f9ee214a25c10a13646a5f"
+    }
+  ],
+  "investigation": "An initial live multi-file case exceeded its 10-iteration cap. Live tool traces exposed null/empty unused shell fields being misclassified as active session IDs. Both forms now have direct regression coverage. Focused bug-fix and multi-file reruns passed at the original 10-iteration cap; original fixture tests remained unchanged.",
+  "limits": [
+    "Linux/Windows runtime backends require CI/native host validation",
+    "No consumer subscription OAuth, native Gemini/Bedrock, or WebSocket transport",
+    "Code rewind does not reverse arbitrary shell/MCP/external effects",
+    "No multi-day endurance claim; ultra-long supervision remains next",
+    "Independent VM service rejects this repository location"
+  ]
+}
