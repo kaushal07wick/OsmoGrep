@@ -57,6 +57,12 @@ pub fn serve(
             }
         }
     });
+    crate::team::poll(&mut state, agent.model_config());
+    if team_enabled {
+        if let Some(error) = state.ui.team.error.as_ref() {
+            return Err(error.clone());
+        }
+    }
     let mut emitter = crate::HeadlessEmitter::new(true, auto_approve);
     emitter.emit_json_value(json!({"type":"ready","protocol_version":1,"session_id":state.session.id,"methods":["prompt","steer","cancel","permission","session","compact","recover","checkpoints","rewind","team","shutdown"]}));
     let mut queue = VecDeque::<String>::new();
