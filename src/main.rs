@@ -109,7 +109,7 @@ struct Cli {
     /// Copy a saved thread into a new independent session
     #[arg(long, conflicts_with = "new_session")]
     fork: Option<String>,
-    /// Start a fresh session, keeping previous threads
+    /// Start a fresh session (the default), keeping previous threads
     #[arg(long = "new")]
     new_session: bool,
 
@@ -1321,7 +1321,7 @@ fn run_tui(
     session_name: Option<String>,
     resume: Option<String>,
     fork: Option<String>,
-    fresh: bool,
+    _fresh: bool,
     team_enabled: bool,
     open_center: bool,
 ) -> Result<Option<state::SessionTarget>, Box<dyn Error>> {
@@ -1333,8 +1333,12 @@ fn run_tui(
     let mut state = init_state();
     if let Some(id) = resume.as_deref().or(fork.as_deref()) {
         persistence::load_id(&mut state, id, fork.is_some())?;
-    } else if !fresh {
-        persistence::load(&mut state);
+    } else if let Err(error) = persistence::load_settings(&mut state) {
+        log(
+            &mut state,
+            LogLevel::Warn,
+            format!("Could not load saved UI settings: {error}"),
+        );
     }
     persistence::save(&state)?;
     if let Some(name) = session_name {
@@ -2330,6 +2334,7 @@ fn run_tui(
     }
 
     if let Some(session) = attach_session {
+        drop(state);
         editor::attach(&session);
     }
     Ok(None)

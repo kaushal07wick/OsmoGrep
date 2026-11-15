@@ -252,6 +252,8 @@ export function render(v: View): Rendered {
     put(textY + i, paperRow(content,width,textY+i-composerY,composerHeight,light,paperGraphics));
   }
   if (footerHeight) {
+    const showHints=!v.running&&!v.panel&&!v.masked&&!v.permission&&!v.update&&v.elapsed>=120000&&v.logs.some(log=>log.text.startsWith('USER|'));
+    const statusY=showHints?h-2:h-1;
     const permission = v.planMode ? 'plan mode' : v.autoApprove ? 'auto-approve on' : 'ask approvals';
     const sessionsKey=(v.shortcuts?.agents??'shift+left').replace('shift+left','shift+←');
     const right = dim+((v.queuedMessages??0)>0?`${v.queuedMessages} queued${v.queuePaused?' · enter resume':''}`:!v.followTail&&maxScroll>0?`${maxScroll-start} ↑ · end live`:v.running?`${v.shortcuts?.queue??'tab'} queue`:maxScroll>0?'scroll · pgup/pgdn':`${sessionsKey} sessions`)+reset;
@@ -259,10 +261,11 @@ export function render(v: View): Rendered {
     const entries=v.statusEntries??(v.statusLine?v.statusLine.map((value,i)=>({id:value.startsWith('~')||value.startsWith('/')?'directory':i===0?'model':'optional',value})):[{id:'permissions',value:`${v.profile} · ${permission}`}]);
     const fields=entries.flatMap(e=>e.id==='model'?[{id:'model',value:clean(v.model)+' ▾'},{id:'provider',value:clean(v.provider)+' ▾'}]:[e]);
     const layout=statusLayout(fields,Math.max(1,width-pad*2-reserve)),left=dim+layout.text+reset;
-    if(!v.panel&&!v.permission&&!v.update&&!v.masked)for(const item of layout.items)if(item.id==='model'||item.id==='provider')controls.push({id:item.id,x:gutter+pad+item.x,y:h-1,width:item.width,height:1});
-    put(h-1,' '.repeat(pad)+left,width>=40?gutter:gutter,Math.max(1,width-pad));
-    if(reserve)rows[h-1]+=' '.repeat(Math.max(1,width-pad*2-visibleWidth(left)-visibleWidth(right)))+right;
+    if(!v.panel&&!v.permission&&!v.update&&!v.masked)for(const item of layout.items)if(item.id==='model'||item.id==='provider')controls.push({id:item.id,x:gutter+pad+item.x,y:statusY,width:item.width,height:1});
+    put(statusY,' '.repeat(pad)+left,width>=40?gutter:gutter,Math.max(1,width-pad));
+    if(reserve)rows[statusY]+=' '.repeat(Math.max(1,width-pad*2-visibleWidth(left)-visibleWidth(right)))+right;
 
+    if(showHints){const keys=(v.shortcuts?.keymap??'f8').toUpperCase();put(h-1,' '.repeat(pad)+dim+`${sessionsKey} sessions · ${keys} shortcuts`+reset);}
   }
   if (v.commands.length) {
     const bottom = composerY;

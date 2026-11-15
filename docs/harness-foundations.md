@@ -8,10 +8,10 @@ Each conversation has an independent UUID, complete canonical tool history, and 
 
 - `/sessions` opens the session center; `/sessions <search>` prints matching saved conversations. See [sessions and teams](team-runtime.md).
 - `/resume <UUID>` opens one; `/fork <UUID>` creates an independent copy.
-- `osmogrep --resume <UUID>`, `--fork <UUID>`, and `--new` select startup behavior.
+- A normal `osmogrep` launch starts a fresh session, retaining workspace appearance and shortcuts. Older conversations open only when selected in the session center or explicitly through `--resume <UUID>` / `--fork <UUID>`. `--new` remains an alias for the default.
 - `/recover <run-UUID>` opens an interrupted run in a new conversation. Completed tool results survive. An uncertain in-flight tool is marked for inspection, **never automatically replayed**.
 - `/compact` requests a model-written handoff. Original messages are archived locally before compaction; the latest user request and completed tool-call pairs are preserved.
-- Queued prompts restored after restart remain paused until explicitly resumed.
+- Queued prompts restored through explicit resume remain paused until explicitly resumed.
 
 Local state contains source/tool output and can contain sensitive project data. Keep `.context/` out of Git. Session/config replacements are atomic; Unix files are private. Recovery checkpoints live in `.context/osmogrep-runs/`, code snapshots in `.context/osmogrep-checkpoints/`, and large tool output in local artifacts.
 

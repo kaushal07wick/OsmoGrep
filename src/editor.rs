@@ -16,13 +16,13 @@ pub enum Layout {
     Split(u16),
 }
 pub fn layout(columns: u16) -> Layout {
-    if columns < 144 {
+    if columns < 96 {
         Layout::Window
     } else {
         Layout::Split(
             ((u32::from(columns) * 52 / 100) as u16)
-                .max(76)
-                .min(columns - 64),
+                .max(44)
+                .min(columns - 44),
         )
     }
 }
@@ -37,13 +37,16 @@ fn run(socket: Option<&str>, args: &[&str]) -> Result<String, String> {
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
-fn editor_command(root: &Path, entry: &str) -> String {
+fn editor_command(root: &Path, entry: &str, owner: &str) -> String {
     format!(
-        "cd {} && exec nvim -- {}",
+        "cd {} && OSMOGREP_AGENT_PANE={} exec nvim --clean -i NONE --cmd {} -- {}",
         shell_escape(&root.display().to_string()),
+        shell_escape(owner),
+        shell_escape(&format!("lua {}", include_str!("editor.lua"))),
         shell_escape(entry)
     )
 }
+
 fn owned_editor(owner: &str) -> Option<String> {
     let session = run(
         None,
@@ -89,7 +92,7 @@ fn open_pane(
     columns: u16,
 ) -> Result<String, String> {
     let cwd = root.display().to_string();
-    let command = editor_command(root, entry);
+    let command = editor_command(root, entry, owner);
     let pane = match layout(columns) {
         Layout::Window => {
             let window = run(
@@ -148,7 +151,7 @@ pub fn open(state: &mut AgentState, raw: &str) {
 }
 fn open_inner(state: &mut AgentState, raw: &str) -> Result<(), String> {
     if raw.trim() == "/nv help" {
-        log(state,LogLevel::Info,"Neovim: :q closes; unsaved files prompt. Ctrl+b o switches split panes; Ctrl+b p switches windows. Narrow terminals use a full-width editor. /nv toggle requests a safe close.");
+        log(state,LogLevel::Info,"Neovim: :q closes; unsaved files prompt. Space a returns to chat; Space e browses files. Alt+Left/Right switches managed panes. Below 96 columns, Ctrl+b p switches editor/chat windows. /nv toggle requests a safe close.");
         return Ok(());
     }
     for executable in ["tmux", "nvim"] {
@@ -191,6 +194,7 @@ fn open_inner(state: &mut AgentState, raw: &str) -> Result<(), String> {
     if state.ui.agent_running {
         return Err("Finish or cancel the current run before switching a standalone session into the editor workspace".into());
     }
+    crate::persistence::save(state)?;
     let token = uuid::Uuid::new_v4().simple().to_string();
     let session = Session {
         socket: format!("osmogrep-{}", &token[..12]),
@@ -198,9 +202,11 @@ fn open_inner(state: &mut AgentState, raw: &str) -> Result<(), String> {
     };
     let executable = env::current_exe().map_err(|e| e.to_string())?;
     let command = format!(
-        "OSMOGREP_MANAGED_TMUX=1 OSMOGREP_NV_SESSION={} {}",
+        "tmux -L {} wait-for agent-ready && OSMOGREP_MANAGED_TMUX=1 OSMOGREP_NV_SESSION={} {} --resume {}",
+        shell_escape(&session.socket),
         shell_escape(&session.name),
-        shell_escape(&executable.display().to_string())
+        shell_escape(&executable.display().to_string()),
+        shell_escape(&state.session.id)
     );
     let socket = Some(session.socket.as_str());
     let owner = run(
@@ -230,6 +236,26 @@ fn open_inner(state: &mut AgentState, raw: &str) -> Result<(), String> {
             &["set-option", "-t", &session.name, "status", "off"],
         )?;
         run(socket, &["set-option", "-t", &session.name, "mouse", "on"])?;
+        run(
+            socket,
+            &[
+                "set-window-option",
+                "-g",
+                "pane-border-style",
+                "fg=#292724,bg=#000000",
+            ],
+        )?;
+        run(
+            socket,
+            &[
+                "set-window-option",
+                "-g",
+                "pane-active-border-style",
+                "fg=#805638,bg=#000000",
+            ],
+        )?;
+        run(socket, &["bind-key", "-n", "M-Left", "select-pane", "-L"])?;
+        run(socket, &["bind-key", "-n", "M-Right", "select-pane", "-R"])?;
         let _ = run(
             socket,
             &["set-option", "-w", "-t", &owner, "allow-passthrough", "on"],
@@ -241,11 +267,24 @@ fn open_inner(state: &mut AgentState, raw: &str) -> Result<(), String> {
         let _ = run(socket, &["kill-session", "-t", &session.name]);
         return Err(error);
     }
+    log(
+        state,
+        LogLevel::Info,
+        if matches!(layout(columns), Layout::Split(_)) {
+            "Editor workspace · Alt+Left/Right switches panes · Space a returns to chat"
+        } else {
+            "Editor workspace · Space a returns to chat · Ctrl+b p returns to the editor"
+        },
+    );
     state.ui.editor_session = Some(session);
     state.ui.should_exit = true;
     Ok(())
 }
 pub fn attach(session: &Session) {
+    if let Err(error) = run(Some(&session.socket), &["wait-for", "-S", "agent-ready"]) {
+        eprintln!("Editor workspace: {error}");
+        return;
+    }
     let _ = Command::new("tmux")
         .args(["-L", &session.socket, "attach-session", "-t", &session.name])
         .status();
@@ -255,21 +294,23 @@ mod tests {
     use super::*;
     #[test]
     fn small_terminals_use_windows_and_splits_keep_the_agent_readable() {
-        for width in [40, 80, 120, 143] {
+        for width in [40, 80, 95] {
             assert_eq!(layout(width), Layout::Window)
         }
-        for width in [144, 160, 240] {
+        for width in [96, 100, 120, 144, 160, 240] {
             let Layout::Split(left) = layout(width) else {
                 panic!()
             };
-            assert!(left >= 76);
-            assert!(width - left >= 64)
+            assert!(left >= 44);
+            assert!(width - left >= 44)
         }
     }
     #[test]
     fn launch_preserves_user_config_quotes_paths_and_never_syncs_plugins() {
-        let command = editor_command(Path::new("/tmp/my repo"), "file ' name.rs");
-        assert!(command.contains("exec nvim --"));
+        let command = editor_command(Path::new("/tmp/my repo"), "file ' name.rs", "%2");
+        assert!(command.contains("exec nvim --clean -i NONE"));
+        assert!(command.contains("OSMOGREP_AGENT_PANE="));
+        assert!(command.contains("space a: chat"));
         assert!(!command.contains("Lazy"));
         assert!(!command.contains("NvimTree"));
         assert!(!command.contains("headless"));

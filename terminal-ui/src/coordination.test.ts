@@ -82,3 +82,12 @@ test('release card keeps output and draft visible with three update decisions',(
   assert.ok(f.execution.height>=3);assert.ok(f.rows.every(row=>visibleWidth(row)<=f.input.width+2));
  }
 });
+
+
+test('established conversations show session and shortcut hints below the selectors',()=>{
+ const v={...fixture(),elapsed:180000,logs:[{level:'Info',text:'USER|Explain this function'}],statusEntries:[{id:'model',value:'test-model · local'}]};
+ const f=render(v),text=f.rows.map(stripTerminalSequences);
+ assert.match(text.at(-1)!,/shift\+← sessions · F8 shortcuts/);
+ assert.equal(f.controls?.find(c=>c.id==='model')?.y,v.height-2);
+ assert.ok(!render({...v,running:true}).rows.map(stripTerminalSequences).at(-1)!.includes('F8 shortcuts'));
+});

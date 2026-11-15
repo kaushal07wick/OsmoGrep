@@ -489,10 +489,25 @@ try:
     master,slave=pty.openpty()
     fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',44,160,0,0))
     restart_flags=termios.tcgetattr(slave)
+    latest_marker=legacy_state_path.with_suffix('.latest')
+    previous_id=latest_marker.read_text().strip()
+    previous_path=state_path.parent/(previous_id+'.json')
+    previous_bytes=previous_path.read_bytes()
+    request_count=len(requests)
     at=len(transcript)
     process = subprocess.Popen(['sh','-c',wrapper,'osmogrep-ui-check',str(binary)],cwd=repo,env=env,
                                stdin=slave,stdout=slave,stderr=slave,preexec_fn=controlling_terminal)
     wait_for(lambda:b'osmogrep' in transcript[at:] and b'local-ui-test-model' in transcript[at:])
+    wait_for(lambda:latest_marker.read_text().strip()!=previous_id)
+    fresh_id=latest_marker.read_text().strip()
+    fresh=json.loads((state_path.parent/(fresh_id+'.json')).read_text())
+    assert len(fresh['conversation'])==1 and fresh['logs']==[]
+    assert previous_path.read_bytes()==previous_bytes
+    send(b'\x1b[1;2D');paste(previous_id);send(b'\r')
+    wait_for(lambda:latest_marker.read_text().strip()==previous_id)
+    assert len(requests)==request_count,'opening and selecting saved sessions must not call the model'
+    assert len(json.loads(previous_path.read_text())['conversation'])>1
+    result['startup_is_fresh_until_saved_session_selected']=True
     send(b'\x10')
     wait_for(lambda:b'WORKSPACE' in transcript[at:])
     send(b'\x1b')

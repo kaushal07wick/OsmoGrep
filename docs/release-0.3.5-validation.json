@@ -1,0 +1,68 @@
+{
+  "date": "2026-11-15",
+  "version": "0.3.5",
+  "source_parent": "fec5bf9",
+  "release_binary_sha256": "2b13436dd5e3e9e21b43ffbf429b81760625f646c50f4102994876604f9c55a2",
+  "installed_version_left_for_manual_update": "0.3.4",
+  "rust": {
+    "passed": 271,
+    "default_ignored": 2
+  },
+  "typescript": {
+    "passed": 57,
+    "bundle_build": "passed"
+  },
+  "terminal": {
+    "passed": 33,
+    "checks": [
+      "typescript_renderer_started",
+      "native_paper_pixels_cached",
+      "central_morph_animates_then_settles",
+      "central_morph_ignores_hover_and_click_replays",
+      "escape_does_not_exit_idle_app",
+      "greeting_has_no_tools_or_stale_background_jobs",
+      "inactive_voice_has_no_composer_badge",
+      "session_center_live_preview_preserves_draft_and_ownership",
+      "settings_categories_without_hidden_tab_navigation",
+      "command_picker_navigation_and_execution",
+      "footer_provider_model_selectors",
+      "light_cursor_has_explicit_contrast",
+      "settings_and_real_key_remapping",
+      "statusline_and_skill_picker",
+      "large_multiline_draft_editing",
+      "real_thumbnail_sequence",
+      "original_image_bytes_reached_provider",
+      "selected_skill_reached_provider",
+      "weekly_chart_entry_animation",
+      "reported_usage_and_pixel_history",
+      "real_permission_dock_and_numbered_diff",
+      "highlighted_command_card_click_copies_only_code",
+      "submitted_followups_are_distinct_fifo_turns",
+      "assistant_preface_does_not_skip_requested_tools",
+      "wheel_scrolling_and_drag_copy_plain_output",
+      "transcript_scroll_track_drags_and_returns_to_live",
+      "streaming_preserves_user_scroll_position",
+      "terminal_resize",
+      "existing_shell_command",
+      "renderer_crash_recovers_to_native_ui",
+      "terminal_state_restored",
+      "startup_is_fresh_until_saved_session_selected",
+      "preferences_survive_real_restart"
+    ]
+  },
+  "editor": {
+    "passed": 9,
+    "checks": [
+      "workspace_handoff_resumes_the_current_session",
+      "narrow_full_width_windows_no_status_bar",
+      "toggle_preserves_unsaved_changes",
+      "closing_editor_restores_full_agent",
+      "normal_width_split_keeps_agent_readable",
+      "black_editor_without_user_dashboard_preserves_personal_config",
+      "editor_shortcut_returns_focus_to_chat",
+      "resize_and_renderer_survive_editor_close",
+      "clean_exit_restores_terminal"
+    ]
+  },
+  "scope": "Local macOS process and PTY checks. Release version and footer hints have focused unit coverage. No paid model calls or live microphone recording. GitHub release builds perform tests and package checksum smoke checks on each target."
+}

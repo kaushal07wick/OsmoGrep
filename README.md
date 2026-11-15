@@ -110,7 +110,7 @@ Select your provider and model from the footer or `/model`. OsmoGrep supports Re
 
 Start read-only, approve actions as they come, or enable full access through `/permissions`. Review the diff and use `/undo` for the last captured file edit. **Escape interrupts the current run; `/exit` closes the app.**
 
-Resume or fork independent conversations with `/sessions`, `/resume`, and `/fork`. Model-aware compaction archives original context; `/recover` opens an interrupted run without replaying unfinished tools. Interactive commands accept stdin and can keep running while the agent works. Subagents run only when you explicitly request delegation; writable workers use isolated worktrees.
+Every normal launch starts a new conversation and keeps your workspace appearance and shortcuts. Open an older session from **Shift+Left**, or resume/fork explicitly with `/sessions`, `/resume`, and `/fork`. Model-aware compaction archives original context; `/recover` opens an interrupted run without replaying unfinished tools. Interactive commands accept stdin and can keep running while the agent works. Subagents run only when you explicitly request delegation; writable workers use isolated worktrees.
 
 Press **Shift+Left** to manage sessions across projects: search, filter, pin, preview, resume, and fork. Ask naturally to talk to another agent in the same repository. Instances discover one another by session ID and task metadata, exchange durable messages and progress, and use file claims to reduce conflicting edits. [Sessions and teams →](docs/team-runtime.md)
 

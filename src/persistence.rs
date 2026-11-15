@@ -127,26 +127,32 @@ struct PersistedState {
     plan_mode: bool,
 }
 
-pub fn load(state: &mut AgentState) {
-    let latest = latest_file(&state.repo_root);
-    if let Ok(id) = fs::read_to_string(latest) {
-        match load_id(state, id.trim(), false) {
-            Ok(()) => return,
-            Err(error) => {
-                state.logs.push(crate::state::LogLevel::Warn, error);
-                return;
-            }
-        }
+pub fn load_settings(state: &mut AgentState) -> Result<(), String> {
+    let path = match fs::read_to_string(latest_file(&state.repo_root)) {
+        Ok(id) => session_path(id.trim())?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => legacy_file(&state.repo_root),
+        Err(error) => return Err(error.to_string()),
+    };
+    load_settings_from(state, &path)
+}
+fn load_settings_from(state: &mut AgentState, path: &Path) -> Result<(), String> {
+    let raw = match fs::read(path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.to_string()),
+    };
+    let saved: PersistedState = serde_json::from_slice(&raw).map_err(|e| e.to_string())?;
+    if !saved.repo_root.is_empty() && Path::new(&saved.repo_root) != state.repo_root {
+        return Err("Saved settings belong to a different workspace".into());
     }
-    // Import the old single-per-repository file without overwriting it.
-    let path = legacy_file(&state.repo_root);
-    let Ok(raw) = fs::read_to_string(path) else {
-        return;
-    };
-    let Ok(saved) = serde_json::from_str::<PersistedState>(&raw) else {
-        return;
-    };
-    apply_saved(state, saved);
+    state.preferences = saved.preferences;
+    state.preferences.team_messages = false;
+    state.preferences.normalize();
+    state.permission_profile = saved.permission_profile;
+    state.theme = saved.theme;
+    state.accent = saved.accent;
+    state.density = saved.density;
+    Ok(())
 }
 
 fn apply_saved(state: &mut AgentState, saved: PersistedState) {
@@ -546,6 +552,45 @@ mod tests {
     use std::fs;
     use uuid::Uuid;
 
+    #[test]
+    fn fresh_start_carries_ui_settings_without_resuming_the_previous_task() {
+        let root = std::env::temp_dir().join(format!("osmogrep-fresh-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("old.json");
+        let saved = serde_json::json!({"repo_root":root,"theme":"Light","preferences":{"reduce_motion":true,"team_messages":true},"auto_eval":true,"automation_opt_in":true,"session_name":"Old task","conversation":[{"role":"user","content":"OLD_REQUEST"}],"logs":[["info","OLD_OUTPUT"]],"queued_prompts":["OLD_QUEUED"],"plan_mode":true});
+        // Use the serializer's enum spelling instead of coupling the fixture to it.
+        let mut saved = saved;
+        saved["theme"] = serde_json::to_value(crate::state::UiTheme::Light).unwrap();
+        saved["permission_profile"] =
+            serde_json::to_value(crate::state::PermissionProfile::ReadOnly).unwrap();
+        fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+        let original = fs::read(&path).unwrap();
+        for _ in 0..2 {
+            let mut state = crate::init_state();
+            state.repo_root = root.clone();
+            let id = state.session.id.clone();
+            let messages = state.conversation.messages.clone();
+            super::load_settings_from(&mut state, &path).unwrap();
+            assert_eq!(state.session.id, id);
+            assert_eq!(state.conversation.messages, messages);
+            assert!(state.ui.queued_agent_prompts.is_empty());
+            assert!(state.session_name.is_none());
+            assert!(state
+                .logs
+                .iter()
+                .all(|line| !line.text.contains("OLD_OUTPUT")));
+            assert!(!state.auto_eval && !state.plan_mode && !state.preferences.team_messages);
+            assert_eq!(
+                state.permission_profile,
+                crate::state::PermissionProfile::ReadOnly
+            );
+            assert!(!state.ui.auto_approve);
+            assert!(state.preferences.reduce_motion);
+            assert_eq!(state.theme, crate::state::UiTheme::Light);
+        }
+        assert_eq!(fs::read(&path).unwrap(), original);
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn atomic_preferences_round_trip_and_failed_replace_preserve_existing_data() {
         let dir = std::env::temp_dir().join(format!("osmogrep-preferences-{}", Uuid::new_v4()));

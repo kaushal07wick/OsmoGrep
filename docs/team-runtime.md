@@ -69,9 +69,16 @@ The implementation uses the existing Rust runtime and pi-tui renderer. Reference
 
 OsmoGrep checks GitHub releases at launch and every six hours. A release card appears when the agent is idle and the composer is empty, with short release highlights and three choices: **Update now**, **Later** (next launch), and **Skip this version** (remembered across launches; a newer version can still appear). Later is selected by default. Downloads use the existing checksum verification and binary replacement; the current session continues until you restart. `OSMOGREP_DISABLE_UPDATE_CHECK=1` disables the finder.
 
-Ordinary edits retain numbered red/green diffs without a blanket stale-verification warning. Explicit verification and recorded command results remain available. The working orb keeps its original look and motion, with a slightly smaller silhouette.
+Ordinary edits retain numbered red/green diffs without a blanket stale-verification warning. Explicit verification and recorded command results remain available. The working orb retains its previous appearance and motion.
 
 
 Usage opens a compact provider-reported token summary with an input/output bar, cached-input reuse, call count and provider wait. Context remains an explicitly labeled estimate, without invented account limits or pricing. Weekly history is available in Stats.
 
 Fenced code uses a separate highlighted surface with a **Copy** button. Clicking it copies the block contents without Markdown fences or display colors; **Copied** confirms success. Copy targets scroll with the block and remain separate from the composer. Completed turns leave one blank row before the input surface.
+
+
+### Fresh sessions and the editor workspace
+
+A normal launch starts a fresh conversation. Workspace theme, density, appearance preferences and key bindings carry over; the selected permission profile also stays in effect. Previous prompts, output, queued work, one-off approvals and jobs do not carry over. Saved conversations remain available in Shift+Left. `--resume` and `--fork` still select an explicit saved thread.
+
+`/nv [file]` opens a black Neovim editor beside the agent at 96 columns and wider. The editor has an OsmoGrep status line and file browser, without loading your personal Neovim plugins or welcome screen. Your normal Neovim configuration is not changed. In a managed workspace, Alt+Left/Right or a mouse click switches panes; in Neovim, Escape then Space a returns to chat and Space e browses files. `:q` closes the editor and expands the agent. Smaller terminals retain separate full-width windows. Moving a standalone agent into this workspace explicitly resumes its current session after releasing the previous writer lock.

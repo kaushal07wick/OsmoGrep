@@ -9,10 +9,11 @@ function highlight(line:string,language:string,light:boolean){
  const colors=light?['100;110;105','45;110;60','125;65;155','170;85;25']:['120;130;125','145;195;150','190;160;215','225;158;100'];
  const shell=/^(bash|sh|zsh|shell|console)$/.test(language);
  const tokens=/(?:#[^\n]*|\/\/[^\n]*)|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b(?:def|class|return|import|from|for|while|if|else|elif|in|const|let|var|function|async|await|export|fn|pub|use|true|false|null|None|True|False)\b|\b\d+(?:\.\d+)?\b|--?[a-zA-Z][\w-]*/g;
- return ink+line.replace(tokens,token=>{
+ const highlighted=line.replace(tokens,token=>{
   const kind=token.startsWith('#')||token.startsWith('//')?0:/^["'`]/.test(token)?1:/^\d/.test(token)?2:3;
   return `\x1b[38;2;${colors[kind]}m${token}${ink}`;
- }).replace(shell?/^([\w./-]+)/:/^$/,'\x1b[38;2;95;170;190m$1'+ink)+reset;
+ });
+ return ink+(shell?highlighted.replace(/^([\w./-]+)/,'\x1b[38;2;95;170;190m$1'+ink):highlighted)+reset;
 }
 
 export function codeBlocks(text:string,width:number,light:boolean,markdown:(text:string)=>string[],copied=''){

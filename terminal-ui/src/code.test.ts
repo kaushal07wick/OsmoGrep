@@ -14,6 +14,7 @@ test('fenced commands have a highlighted surface and copy the exact source witho
  }
  const unsafe=codeBlocks('```bash\necho hi\x1b[2J\x07\n```',40,false,s=>[s]);assert.equal(unsafe.copies[0]!.text,'echo hi');assert.ok(!unsafe.rows.join('').includes('\x1b[2J'));
  assert.equal(codeBlocks('An inline `command`.',40,false,s=>[s]).copies.length,0);
+ const blank=codeBlocks('```python\nx = 1\n\nprint(x)\n```',40,false,s=>[s]);assert.ok(!blank.rows.map(stripTerminalSequences).join('\n').includes('$1'));
  const tilde=codeBlocks('~~~~py\nx = "```"\n~~~~',40,false,s=>[s]);assert.equal(tilde.copies[0]!.text,'x = "```"');
 });
 test('copy targets track code headers through transcript scrolling and copy feedback',()=>{
