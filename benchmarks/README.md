@@ -51,6 +51,8 @@ The [recorded results](results/2026-11-16-local-qwen35-4b.json) retain all five 
 
 Investigation found that context summarization discarded explicit `reasoning = "none"`. The repair preserves that setting without enabling expensive reasoning options. Its regression checks are separate from the original pilot; the five tasks have not been rerun with the repair. A separate tiny documentation replay exposed a weak grader: it had accepted a duplicated heading. Grader version 2 correctly rejects that replay. Earlier successful smoke checks are not upgraded into stronger scores retroactively.
 
+A post-repair real Ollama handoff check confirmed `reasoning_effort: none` on the wire, but still failed completion: the model reread the file after its first summary and its second summary hit the output limit. A separate 256-token summary was also rejected as truncated. These failures remain in the results; preserving a setting does not establish useful context retention or improved coding success.
+
 ## Pilot command — only after approving model spending
 
 A running Docker engine with x86_64 Linux support is required. On Apple Silicon this first adapter requires amd64 emulation; use an x86_64 Linux host for comparable performance. From 0.3.9, Linux release builds target glibc 2.35+ (Ubuntu 22.04 and Debian 12 are compatible). Older releases require glibc 2.39+. The installer checks the requirement before downloading. Other task images need a binary built for that image and `--ak skip_install=true`; do not silently change benchmark task images to make the agent fit.

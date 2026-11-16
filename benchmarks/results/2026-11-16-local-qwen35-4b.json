@@ -233,7 +233,8 @@
     "One local 4B model and five tasks; not a matched harness comparison or a leaderboard score.",
     "All five attempts ended with exceptions. Four verifier rewards were zero; the Kafka setup failure had no reward.",
     "Timeout cancellation and cleanup exceeded the requested 300 seconds on the emulated host; observed phase durations are retained.",
-    "Summarization dropped explicit reasoning=none in the baseline. Its repair was tested separately; the five-task pilot has not been rerun."
+    "Summarization dropped explicit reasoning=none in the baseline. Its repair was tested separately; the five-task pilot has not been rerun.",
+    "A post-repair real local handoff check preserved thinking-off on the wire but did not finish successfully. No post-repair coding-success improvement is claimed."
   ],
   "failure_analysis": {
     "payments-pipeline-fix": "Kafka startup reproduced independently: ld-linux-x86-64.so.2 reports /opt/kafka/kafka.Kafka is not a valid dynamic program. Exact cause is not established.",
@@ -275,6 +276,44 @@
       "reasoning_effort_on_wire": "none",
       "elapsed_seconds": 45.292,
       "error": "Model stopped with length; truncated summary rejected"
+    },
+    {
+      "type": "forced real local context handoff",
+      "context_window": 10000,
+      "max_output_tokens": 1024,
+      "binary_sha256": "f5d8c491aebb9d02ea493eed66c308a1d9a3a70593719f8a87e1cb0c33ec76f7",
+      "exit_code": 1,
+      "elapsed_seconds": 190.658,
+      "compaction_requests": 2,
+      "reasoning_effort_on_wire": "none",
+      "first_summary_finish_reason": "stop",
+      "second_summary_finish_reason": "length",
+      "read_calls": 2,
+      "requested_read_calls": 1,
+      "completed": false,
+      "error": "Model repeated the read after the first handoff; its second summary was correctly rejected as truncated."
+    }
+  ],
+  "repair_diagnostic_artifacts": [
+    {
+      "filename": "osmogrep-local-context-check.json",
+      "sha256": "7efd4f29ff8dbaf5dc4382f0e7e5a6c86cee06cd1b17cbf903a9b1d8e14acc20"
+    },
+    {
+      "filename": "osmogrep-local-context-256-token-limit.json",
+      "sha256": "6146853a2de13f4b748a346492d0b9d3d52ab58a8466ffcb9b75fa92413bcb59"
+    },
+    {
+      "filename": "osmogrep-local-read-smoke.json",
+      "sha256": "0229f05c51917e0d79efcecad293b09a371b10abbb945987185d116d5299d51a"
+    },
+    {
+      "filename": "osmogrep-ollama-wire.jsonl",
+      "sha256": "9c9c347bc663921d7b112941f08c0f1fd96fadbcb1c3537bf1502af242022702"
+    },
+    {
+      "filename": "osmogrep-documentation-regrade.json",
+      "sha256": "0fca131fa10de6e5c2d8e7bcbbd678552827ef1b8aedb4c8a4c2cc602d0c8905"
     }
   ]
 }
