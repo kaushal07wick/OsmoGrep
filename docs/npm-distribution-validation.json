@@ -1,7 +1,7 @@
 {
-  "version": "0.3.15",
-  "package_bytes": 4234,
-  "unpacked_bytes": 9525,
+  "version": "0.3.16",
+  "package_bytes": 4195,
+  "unpacked_bytes": 9295,
   "files": [
     "LICENSE",
     "README.md",
@@ -15,9 +15,16 @@
     "native_version_through_both_launchers",
     "native_exit_code_and_stderr_preserved",
     "five_launcher_unit_contracts",
-    "real_v0.3.14_release_download_checksum_and_version"
+    "real_v0.3.16_release_download_checksum_and_version",
+    "exact_released_npm_tarball_checksum_before_publication",
+    "public_registry_version_and_tarball_shasum_match",
+    "npx_from_public_registry_reports_0.3.16",
+    "pnpm_dlx_from_public_registry_reports_0.3.16"
   ],
-  "scope": "Isolated temporary prefixes, stores and cache; native binary preseeded from this build; real remote download verified separately. No installed application or global package manager configuration changed.",
-  "registry_published": false,
-  "registry_blocker": "npm whoami reports ENEEDAUTH; no registry credentials are configured."
+  "scope": "Initial launcher contracts used an isolated preseeded debug binary. Release smoke checks installed the exact checksummed GitHub npm tarball, downloaded its real macOS arm64 executable into a temporary cache, and ran both public-registry launchers. The installed OsmoGrep application was not replaced.",
+  "registry_published": true,
+  "registry_package": "https://www.npmjs.com/package/osmogrep",
+  "registry_tarball_shasum": "6d30b3d160e0f368939bf338a5028f930ea842bb",
+  "github_release_run": 43907158777,
+  "github_release_conclusion": "success"
 }

@@ -7,15 +7,16 @@ Installation, configuration, controls, and advanced usage. For the product overv
 For a prebuilt release, use either package manager:
 
 ```sh
-npm install -g https://github.com/kaushal07wick/OsmoGrep/releases/latest/download/osmogrep-npm.tgz
-pnpm add -g https://github.com/kaushal07wick/OsmoGrep/releases/latest/download/osmogrep-npm.tgz
+npm install -g osmogrep
+pnpm add -g osmogrep
 ```
 
 Pick one command. The small npm package downloads and verifies the matching native
 binary on first launch, then reuses its user-cache copy. Install scripts are not
 required, including under pnpm. It supports macOS arm64/x64, Linux x64 with glibc,
-and Windows x64. The npm registry short name has not been published yet; use the
-GitHub tarball URL above until registry publication. See [npm packaging](../npm/README.md).
+and Windows x64. You can also run `npx osmogrep` or `pnpm dlx osmogrep`.
+GitHub releases retain `osmogrep-npm.tgz` for direct tarball installation.
+See [npm packaging](../npm/README.md).
 
 For the current source and terminal UI:
 

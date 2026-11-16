@@ -9,6 +9,7 @@
 
 <p align="center">
   <a href="https://github.com/kaushal07wick/OsmoGrep/releases/latest"><img src="https://img.shields.io/github/v/release/kaushal07wick/OsmoGrep?style=flat-square&amp;logo=github&amp;label=release&amp;labelColor=161b22&amp;color=ea580c" alt="Latest release" /></a>
+  <a href="https://www.npmjs.com/package/osmogrep"><img src="https://img.shields.io/npm/v/osmogrep?style=flat-square&amp;logo=npm&amp;labelColor=161b22&amp;color=ea580c" alt="npm version" /></a>
   <a href="https://github.com/kaushal07wick/OsmoGrep/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/kaushal07wick/OsmoGrep/ci.yml?branch=master&amp;style=flat-square&amp;logo=github&amp;label=CI&amp;labelColor=161b22" alt="CI status on master" /></a>
   <a href="https://github.com/kaushal07wick/OsmoGrep/releases"><img src="https://img.shields.io/github/downloads/kaushal07wick/OsmoGrep/total?style=flat-square&amp;labelColor=161b22&amp;color=ea580c" alt="Release downloads" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/kaushal07wick/OsmoGrep?style=flat-square&amp;labelColor=161b22&amp;color=ea580c" alt="MIT license" /></a>
@@ -30,9 +31,9 @@
 Install a prebuilt release with npm or pnpm (no Rust toolchain):
 
 ```sh
-npm install -g https://github.com/kaushal07wick/OsmoGrep/releases/latest/download/osmogrep-npm.tgz
+npm install -g osmogrep
 # or
-pnpm add -g https://github.com/kaushal07wick/OsmoGrep/releases/latest/download/osmogrep-npm.tgz
+pnpm add -g osmogrep
 ```
 
 Or install the current source with Cargo:
