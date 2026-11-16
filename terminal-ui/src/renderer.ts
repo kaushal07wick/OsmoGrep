@@ -1,5 +1,5 @@
 import {plain} from './chrome.ts';
-import {cachedCodeBlocks,type CodeCopy} from './code.ts';
+import {cachedCodeBlocks,copyTabIcon,type CodeCopy} from './code.ts';
 import { Image, Markdown, getCapabilities, renderImage, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import { introDuration, websiteMark } from './brand.ts';
 import { introFrame, introPng } from './intro.ts';
@@ -99,6 +99,7 @@ export function render(v: View): Rendered {
   const bg = light ? '\x1b[48;2;240;240;240m' : '\x1b[48;2;30;30;30m';
   const paper=paperColors(light);
   const controls:NonNullable<Rendered['controls']>=[];
+  const images: Rendered['images'] = [];
   const paperGraphics=getCapabilities().images==='kitty';
   const tint = (color: string) => (s: string) => color + s + reset;
   const markdown = (text: string, n: number) => new Markdown(clean(text), 0, 0, {
@@ -160,7 +161,7 @@ export function render(v: View): Rendered {
   const transcript: string[] = [];
   const insertedDiffs=new Set<FileDiff>();
   const codeCopies:CodeCopy[]=[];
-  const appendMarkdown=(text:string)=>{const block=cachedCodeBlocks(text,Math.max(1,width-pad*2),light,text=>markdown(text,width-pad*2),v.copiedCode,accent);codeCopies.push(...block.copies.map(copy=>({...copy,row:copy.row+transcript.length})));transcript.push(...block.rows);};
+  const appendMarkdown=(text:string)=>{const block=cachedCodeBlocks(text,Math.max(1,width-pad*2),light,text=>markdown(text,width-pad*2),v.copiedCode,accent,paperGraphics);codeCopies.push(...block.copies.map(copy=>({...copy,row:copy.row+transcript.length})));transcript.push(...block.rows);};
   let paragraph: string[] = [];
   const flush = () => { if (paragraph.length) { appendMarkdown(paragraph.join('\n')); paragraph = []; } };
   for (let i = 0; i < v.logs.length; i++) {
@@ -194,11 +195,23 @@ export function render(v: View): Rendered {
   const maxScroll = Math.max(0, transcript.length - execution.height);
   const start = v.followTail ? maxScroll : Math.max(0,Math.min(maxScroll,v.scrollTop??maxScroll-v.scroll));
   transcript.slice(start, start + execution.height).forEach((line, i) => put(execution.y + i, highlightTranscript(line,start+i,v.transcriptSelection,light), gutter + pad, width - pad * 2));
-  if(!v.masked&&!v.approval&&!v.update)for(const copy of codeCopies){const y=execution.y+copy.row-start;if(copy.text&&Buffer.byteLength(copy.text)<=100000&&y>=execution.y&&y<execution.y+execution.height)controls.push({id:'copy',label:copy.text,x:gutter+pad+copy.x,y,width:copy.width,height:1});}
+  let copyIconIndex=0;
+  if(!v.masked&&!v.approval&&!v.update&&!v.commands.length)for(const copy of codeCopies){
+    const y=execution.y+copy.row-start,top=Math.max(execution.y,y),bottom=Math.min(execution.y+execution.height,y+copy.height);
+    if(!copy.text||Buffer.byteLength(copy.text)>100000||bottom<=top)continue;
+    const x=gutter+pad+copy.x;
+    controls.push({id:'copy',label:copy.text,x,y:top,width:copy.width,height:bottom-top});
+    const iconY=y+(copy.iconRow??0);
+    if(copy.iconRow!=null&&iconY>=execution.y&&iconY<execution.y+execution.height){
+      // Keep code icons in a separate ID range from attachment and workspace graphics.
+      const id=(0x40000000+process.pid*256+copyIconIndex++)>>>0;
+      const graphic=renderImage(copyTabIcon(light,v.copiedCode===copy.text),{widthPx:20,heightPx:20},{imageId:id,maxWidthCells:2,maxHeightCells:1,moveCursor:false});
+      if(graphic)images.push({id,x:x+1,y:iconY,sequence:graphic.sequence.replace('a=T','a=t'),placement:`\x1b_Ga=p,i=${id},p=1,c=2,r=1,C=1,q=2;\x1b\\`});
+    }
+  }
   const scrollbar=null;
 
   let artwork: Rect | null = null;
-  const images: Rendered['images'] = [];
   const introElapsed = v.preferences?.reduce_motion ? introDuration : v.introElapsed ?? v.elapsed;
   if (!conversationStarted && v.preferences?.ambient_art!==false && !v.panel && !value && !v.masked && !transcript.length && !v.running && !v.permission && !v.update && !v.workspaceStatus && !v.voice && !v.commands.length
     && width >= 36 && execution.height >= 16) {
