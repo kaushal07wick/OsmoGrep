@@ -31,9 +31,18 @@ class OsmoGrepAgent(BaseInstalledAgent):
     def name():
         return "osmogrep"
 
-    def __init__(self, *args, version="0.3.8", max_iterations=90, reasoning_effort=None, **kwargs):
+    def get_version_command(self):
+        return "osmogrep --version"
+
+    def parse_version(self, stdout):
+        match = re.fullmatch(r"osmogrep (\d+\.\d+\.\d+)\s*", stdout)
+        if not match:
+            raise ValueError("unrecognized OsmoGrep version output")
+        return match[1]
+
+    def __init__(self, *args, version="0.3.9", max_iterations=90, reasoning_effort=None, **kwargs):
         if not re.fullmatch(r"\d+\.\d+\.\d+", version):
-            raise ValueError("version must be a pinned release such as 0.3.8")
+            raise ValueError("version must be a pinned release such as 0.3.9")
         self.max_iterations = int(max_iterations)
         if not 1 <= self.max_iterations <= 10000:
             raise ValueError("max_iterations must be between 1 and 10000")
@@ -44,11 +53,12 @@ class OsmoGrepAgent(BaseInstalledAgent):
 
     async def install(self, environment):
         # Release binaries currently support x86_64 Linux task containers.
-        await self.exec_as_root(environment, """set -eu
+        minimum = "2.35" if tuple(map(int, self._version.split("."))) >= (0, 3, 9) else "2.39"
+        await self.exec_as_root(environment, f"minimum_glibc={minimum}\n" + """set -eu
 test "$(uname -m)" = x86_64
 command -v apt-get >/dev/null
-if [ "$(printf '%s\n' 2.39 "$(getconf GNU_LIBC_VERSION | cut -d ' ' -f 2)" | sort -V | head -n 1)" != 2.39 ]; then
-    echo 'OsmoGrep release requires glibc 2.39+; use a compatible prebuilt image/binary and skip_install=true.' >&2
+if [ "$(printf '%s\n' "$minimum_glibc" "$(getconf GNU_LIBC_VERSION | cut -d ' ' -f 2)" | sort -V | head -n 1)" != "$minimum_glibc" ]; then
+    echo "OsmoGrep release requires glibc $minimum_glibc+; use a compatible prebuilt image/binary and skip_install=true." >&2
     exit 1
 fi
 apt-get update -qq
@@ -66,7 +76,7 @@ curl --fail --location --retry 3 --output "$archive.sha256" "$base/$archive.sha2
 sha256sum --check "$archive.sha256"
 tar -xzf "$archive" --no-same-owner osmogrep
 install -m 755 osmogrep /usr/local/bin/osmogrep
-osmogrep --version
+test "$(osmogrep --version)" = "osmogrep $version"
 """)
 
     @with_prompt_template

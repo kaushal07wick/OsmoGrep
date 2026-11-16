@@ -64,7 +64,9 @@ that fallback explicitly. Noninteractive commands don't start Node.
   pauses the queue. An empty Enter resumes a paused queue.
 - Drag or paste a PNG/JPEG/GIF/WebP path to attach it. Ctrl+V reads a copied
   clipboard image on macOS. Each image inserts `[Image #N]` at the cursor.
-  Removing that label excludes the image from the message.
+  Backspace/Delete removes the whole image label, including from inside it.
+  Partial selections expand to the whole attachment, and removing its label
+  excludes the image from the message.
 - Graphics-capable terminals (including Ghostty and iTerm2) show a real
   thumbnail above the text. Other terminals show the attachment label. Image
   entry uses at most eight images, 20 MiB each, with bounded decoding. Native

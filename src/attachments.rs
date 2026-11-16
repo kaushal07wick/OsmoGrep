@@ -259,6 +259,67 @@ mod tests {
         assert!(message_for(&state, "plain text").is_none());
     }
     #[test]
+    fn deleting_any_part_of_an_attachment_removes_the_whole_item() {
+        let mut png = Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(2, 2)
+            .write_to(&mut png, ImageOutputFormat::Png)
+            .unwrap();
+        let image = Attachment::from_bytes(png.into_inner(), 2).unwrap();
+        for forward in [false, true] {
+            for offset in if forward {
+                0..image.label.len()
+            } else {
+                1..image.label.len() + 1
+            } {
+                let mut state = crate::init_state();
+                state.ui.input = format!("界 before {} after", image.label);
+                state.ui.input_cursor = "界 before ".len() + offset;
+                state.ui.attachments.push(image.clone());
+                if forward {
+                    state.delete_forward();
+                } else {
+                    state.backspace();
+                }
+                assert_eq!(state.ui.input, "界 before  after");
+                assert_eq!(state.ui.input_cursor, "界 before ".len());
+                assert!(message_for(&state, &state.ui.input).is_none());
+            }
+        }
+        let mut state = crate::init_state();
+        state.ui.input = "before [Image #2] after".into();
+        state.ui.input_selection_anchor = Some("before [Im".len());
+        state.ui.input_cursor = "before [Image #2".len();
+        state.ui.attachments.push(image.clone());
+        state
+            .ui
+            .queued_agent_prompts
+            .push_back("Explain [Image #2]".into());
+        assert!(state.cut_input());
+        assert_eq!(state.ui.input_clipboard, "[Image #2]");
+        assert_eq!(state.ui.input, "before  after");
+        assert_eq!(
+            state.ui.attachments.len(),
+            1,
+            "a queued message still owns its image"
+        );
+        assert!(state.paste_input());
+        assert_eq!(state.ui.input, "before [Image #2] after");
+        assert!(message_for(&state, &state.ui.input).is_some());
+        state.ui.input_cursor = "before [Image #2]".len();
+        assert!(state.delete_previous_word());
+        assert_eq!(state.ui.input, "before  after");
+        assert_eq!(state.ui.input_clipboard, "[Image #2]");
+        state.ui.input = "[Image #2]".into();
+        state.ui.input_cursor = "[Image #2]".len();
+        state.ui.attachments.clear();
+        state.backspace();
+        assert_eq!(
+            state.ui.input, "[Image #2",
+            "ordinary typed text stays editable"
+        );
+    }
+
+    #[test]
     fn corrupt_images_are_rejected() {
         assert!(Attachment::from_bytes(b"not an image".to_vec(), 1).is_err());
     }

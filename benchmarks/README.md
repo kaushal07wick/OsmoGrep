@@ -33,21 +33,56 @@ The offline checks cover provider routing for Responses, Chat Completions and An
 
 ## Pilot command — only after approving model spending
 
-A running Docker engine with x86_64 Linux support is required. On Apple Silicon this first adapter requires amd64 emulation; use an x86_64 Linux host for comparable performance. The current Linux release requires glibc 2.39+, so the installer supports compatible Debian/Ubuntu images (for example Ubuntu 24.04). It rejects older libc versions before installing. Other task images need a binary built for that image and `--ak skip_install=true`; do not silently change benchmark task images to make the agent fit.
+A running Docker engine with x86_64 Linux support is required. On Apple Silicon this first adapter requires amd64 emulation; use an x86_64 Linux host for comparable performance. From 0.3.9, Linux release builds target glibc 2.35+ (Ubuntu 22.04 and Debian 12 are compatible). Older releases require glibc 2.39+. The installer checks the requirement before downloading. Other task images need a binary built for that image and `--ak skip_install=true`; do not silently change benchmark task images to make the agent fit.
 
 Load a provider key through your normal secret manager or shell environment; never put it in the command or a committed job file. The adapter reuses Harbor's provider/key routing. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or explicit `--api-key-name` work. Endpoint overrides use `--base-url` and protocol overrides use `--api-format`.
 
-The example below is **not an offline command**. Replace the model with an exact available model ID before running. It selects the first five tasks in the pinned dataset: record their names before comparing another harness.
+The fixed pilot uses five CPU coding tasks from Terminal-Bench 4.0.0, each pinned to its content digest in [pilot.json](harbor/pilot.json):
+
+| Task | What it exercises |
+| --- | --- |
+| payments-pipeline-fix | Distributed worker startup and correct notifications |
+| html-js-filter | Implementing a constrained feature with adversarial cases |
+| session-window-debug | Understanding unfamiliar architecture while preserving read-only files |
+| wal-recovery-ordering | Stateful recovery, ordering and strict API constraints |
+| vf2-speedup-networkx | A compatible multi-function implementation with performance requirements |
+
+The source dataset resolves to `sha256:39d9f44b40420cde8fdcc087579c0d72a7e14fa3656d603c3f0d22fb35e27732`. Selection was based on coding coverage, CPU resources, and available task metadata, before any OsmoGrep outcomes. A GUI billing task was excluded after inspecting its category. The pilot is not a representative leaderboard sample or a private held-out suite. Benchmark task instructions, tests and solutions are not copied into this repository.
+
+The committed config selects **nop**, so it makes no model calls by default. It runs the independent task verifiers to establish an unchanged-workspace baseline; the containers and verifiers may still take time and download dependencies.
+
+For an actual coding run, the command below is **not offline** and must wait for explicit model-spending authorization. Replace the model with an exact available ID. Other harnesses use the same pinned config with their own `-a`, version and supported reasoning controls. Keep those settings and all results.
 
 ```sh
 PYTHONPATH=. /tmp/osmogrep-benchmark-venv/bin/harbor run \
-  -d terminal-bench/terminal-bench@4.0.0 \
+  -c benchmarks/harbor/pilot.json \
   -a benchmarks.harbor.osmogrep:OsmoGrepAgent \
   -m openai/EXACT_MODEL_ID \
-  --ak version=0.3.8 --ak max_iterations=90 \
-  --n-tasks 5 --n-concurrent 1 --n-attempts 1 --max-retries 0 \
-  --jobs-dir /tmp/osmogrep-benchmark-results --job-name osmogrep-pilot
+  --ak version=0.3.9 --ak max_iterations=90 \
+  --job-name osmogrep-pilot
 ```
+
+Summarize a completed job without contacting a provider:
+
+```sh
+python3 benchmarks/harbor/report.py /tmp/osmogrep-benchmark-results/osmogrep-pilot --output /tmp/osmogrep-pilot-report.json
+```
+
+The report retains failures/errors/ungraded trials and records task checksums, model/version/settings, measured agent time, reported input/output/cache, tool calls and read targets. Missing cost or usage stays unknown. Native response counts include reported successful responses, not every retry or failed request. Repeated reads alone do not prove wasted work. Only direct trial results are read; agent-created result files cannot add passing trials. Multi-step reward interpretation is not supported yet; this pilot uses single-step tasks.
+
+## Free container validation
+
+[contract.json](harbor/contract.json) runs a tiny, locally authored task three ways in separate Debian 12 containers: no-op must fail, the fixture solution must pass, and the real native agent using a deterministic localhost model must pass. The grader checks actual code behavior and preservation of user content. This calibrates infrastructure, not model intelligence.
+
+The `Benchmark infrastructure (no paid models)` CI job builds a compatible binary on Ubuntu 22.04, validates the pinned configs, runs these controls through Harbor, checks native tool/usage delivery, and uploads the full evidence. It uses no provider secret. Locally, with a compatible Linux binary and Docker:
+
+```sh
+cp /path/to/linux/osmogrep benchmarks/harbor/tasks/adapter-contract/environment/osmogrep
+PYTHONPATH=. LITELLM_LOCAL_MODEL_COST_MAP=True OSMOGREP_FIXTURE_KEY=fixture-key /tmp/osmogrep-benchmark-venv/bin/harbor run -c benchmarks/harbor/contract.json
+python3 benchmarks/harbor/report.py /tmp/osmogrep-harbor-contract/osmogrep-adapter-contract --check-contract --output /tmp/osmogrep-contract-report.json
+```
+
+The existing `harness-acceptance.py` and `long-run-acceptance.py` CI checks cover repeated compaction, preserved instructions, cancellation, ownership, crash recovery and 100+ model rounds using local deterministic fixtures. Those remain separate from graded real-model performance and actual multi-hour endurance.
 
 The installer downloads the pinned Linux release and verifies its SHA-256 sidecar before extracting. Full tool permissions apply inside the task container only; the adapter does not change interactive permissions, enable teams or load your personal sessions. Each trial uses its own configuration directory. The task instruction is uploaded as a file, not interpolated into a shell command. Headless mode never opens the interactive updater.
 

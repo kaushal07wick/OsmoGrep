@@ -479,9 +479,7 @@ impl AgentState {
         }
 
         let previous = previous_char_boundary(&self.ui.input, cursor);
-        self.ui.input.drain(previous..cursor);
-        self.ui.input_cursor = previous;
-        self.ui.history_index = None;
+        self.delete_input_range(previous..cursor);
     }
 
     pub fn delete_forward(&mut self) {
@@ -495,9 +493,7 @@ impl AgentState {
         }
 
         let next = next_char_boundary(&self.ui.input, cursor);
-        self.ui.input.drain(cursor..next);
-        self.ui.input_cursor = cursor;
-        self.ui.history_index = None;
+        self.delete_input_range(cursor..next);
     }
 
     pub fn move_cursor_left(&mut self) {
@@ -589,7 +585,31 @@ impl AgentState {
         }
         let anchor = clamp_char_boundary(&self.ui.input, self.ui.input_selection_anchor?);
         let cursor = clamp_char_boundary(&self.ui.input, self.ui.input_cursor);
-        (anchor != cursor).then_some(anchor.min(cursor)..anchor.max(cursor))
+        (anchor != cursor)
+            .then(|| self.attachment_edit_range(anchor.min(cursor)..anchor.max(cursor)))
+    }
+
+    fn attachment_edit_range(&self, mut range: std::ops::Range<usize>) -> std::ops::Range<usize> {
+        for image in &self.ui.attachments {
+            for (start, label) in self.ui.input.match_indices(&image.label) {
+                let end = start + label.len();
+                if start < range.end && range.start < end {
+                    range.start = range.start.min(start);
+                    range.end = range.end.max(end);
+                }
+            }
+        }
+        range
+    }
+
+    fn delete_input_range(&mut self, range: std::ops::Range<usize>) -> String {
+        let range = self.attachment_edit_range(range);
+        let removed: String = self.ui.input.drain(range.clone()).collect();
+        self.ui.input_cursor = range.start;
+        self.ui.input_selection_anchor = None;
+        self.ui.input_all_selected = false;
+        self.ui.history_index = None;
+        removed
     }
 
     fn delete_input_selection(&mut self) -> bool {
@@ -597,11 +617,7 @@ impl AgentState {
             self.ui.input_selection_anchor = None;
             return false;
         };
-        self.ui.input_cursor = range.start;
-        self.ui.input.replace_range(range, "");
-        self.ui.input_selection_anchor = None;
-        self.ui.input_all_selected = false;
-        self.ui.history_index = None;
+        self.delete_input_range(range);
         true
     }
 
@@ -677,10 +693,7 @@ impl AgentState {
             return false;
         }
 
-        self.ui.input_clipboard = self.ui.input[cursor..kill_end].to_string();
-        self.ui.input.drain(cursor..kill_end);
-        self.ui.input_cursor = cursor;
-        self.ui.history_index = None;
+        self.ui.input_clipboard = self.delete_input_range(cursor..kill_end);
         true
     }
 
@@ -716,10 +729,7 @@ impl AgentState {
             return false;
         }
 
-        self.ui.input_clipboard = self.ui.input[start..cursor].to_string();
-        self.ui.input.drain(start..cursor);
-        self.ui.input_cursor = start;
-        self.ui.history_index = None;
+        self.ui.input_clipboard = self.delete_input_range(start..cursor);
         true
     }
 

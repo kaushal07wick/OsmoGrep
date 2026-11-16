@@ -373,6 +373,24 @@ try:
     assert 'UI_SKILL_INSTRUCTION' in json.dumps(requests[0]['input']), 'selected skill must reach the existing model path'
     result['original_image_bytes_reached_provider'] = True
     result['selected_skill_reached_provider'] = True
+    paste('keep before ')
+    paste(str(image).replace(' ','\\ '))
+    paste('after')
+    send(b'\x1b[D'*6)  # End of label, before its separating space.
+    at=len(transcript);send(b'\x7f')
+    wait_for(lambda:b'keep before  after' in plain(transcript[at:]))
+    assert b'[Image #2' not in plain(transcript[at:])
+    send(b'\x15')
+    paste('keep before ')
+    paste(str(image).replace(' ','\\ '))
+    paste('after')
+    send(b'\x1b[1;5H');send(b'\x1b[C'*len('keep before '))
+    at=len(transcript);send(b'\x1b[3~')
+    wait_for(lambda:b'keep before  after' in plain(transcript[at:]))
+    assert b'[Image #3' not in plain(transcript[at:])
+    assert len(requests)==1, 'editing attachments must not call the model'
+    send(b'\x15')
+    result['image_backspace_and_delete_remove_whole_attachment'] = True
     paste('/usage')
     send(b'\r')
     wait_for(lambda:b'REPORTED TOKENS' in transcript and b'1,234' in transcript and b'CACHE REUSE' in transcript)

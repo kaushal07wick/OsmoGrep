@@ -1,0 +1,21 @@
+{
+  "job_name": "osmogrep-adapter-contract",
+  "jobs_dir": "/tmp/osmogrep-harbor-contract",
+  "n_attempts": 1,
+  "n_concurrent_trials": 1,
+  "retry": {"max_retries": 0},
+  "environment": {"type": "docker"},
+  "agents": [
+    {"name": "nop"},
+    {"name": "oracle"},
+    {
+      "import_path": "benchmarks.harbor.osmogrep:OsmoGrepAgent",
+      "model_name": "openai/fixture",
+      "model_api_key_name": "OSMOGREP_FIXTURE_KEY",
+      "base_url": "http://127.0.0.1:8765/v1",
+      "env": {"OSMOGREP_FIXTURE_KEY": "fixture-key"},
+      "kwargs": {"skip_install": true, "max_iterations": 5}
+    }
+  ],
+  "tasks": [{"path": "benchmarks/harbor/tasks/adapter-contract"}]
+}

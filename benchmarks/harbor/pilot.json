@@ -1,0 +1,44 @@
+{
+  "job_name": "osmogrep-coding-pilot",
+  "jobs_dir": "/tmp/osmogrep-benchmark-results",
+  "n_attempts": 1,
+  "n_concurrent_trials": 1,
+  "retry": {
+    "max_retries": 0
+  },
+  "environment": {
+    "type": "docker"
+  },
+  "agents": [
+    {
+      "name": "nop"
+    }
+  ],
+  "tasks": [
+    {
+      "name": "terminal-bench/payments-pipeline-fix",
+      "ref": "sha256:ed92bf0b59203522407a2f628f186ccd11ee300a7a1ee04641f9510e46db1f14",
+      "source": "terminal-bench/terminal-bench@sha256:39d9f44b40420cde8fdcc087579c0d72a7e14fa3656d603c3f0d22fb35e27732"
+    },
+    {
+      "name": "terminal-bench/html-js-filter",
+      "ref": "sha256:f211960f1f7c66ace91c3d079db073ed0f841d458db4cad1f2f943cba6cc79f3",
+      "source": "terminal-bench/terminal-bench@sha256:39d9f44b40420cde8fdcc087579c0d72a7e14fa3656d603c3f0d22fb35e27732"
+    },
+    {
+      "name": "terminal-bench/session-window-debug",
+      "ref": "sha256:f7e05e0d4c0e90d7050445fd158db514158272c50aafa1b2446ef3f68bd01182",
+      "source": "terminal-bench/terminal-bench@sha256:39d9f44b40420cde8fdcc087579c0d72a7e14fa3656d603c3f0d22fb35e27732"
+    },
+    {
+      "name": "terminal-bench/wal-recovery-ordering",
+      "ref": "sha256:8eb700419711e0d5eba317b8f6dec41aa3411e03e320e82b8da8070974ff3aae",
+      "source": "terminal-bench/terminal-bench@sha256:39d9f44b40420cde8fdcc087579c0d72a7e14fa3656d603c3f0d22fb35e27732"
+    },
+    {
+      "name": "terminal-bench/vf2-speedup-networkx",
+      "ref": "sha256:cdbad1f303f57856199aae757bdbc6363111e8ad60d31db49c61d01706da63ab",
+      "source": "terminal-bench/terminal-bench@sha256:39d9f44b40420cde8fdcc087579c0d72a7e14fa3656d603c3f0d22fb35e27732"
+    }
+  ]
+}

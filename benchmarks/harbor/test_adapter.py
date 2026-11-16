@@ -68,8 +68,15 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             env = Environment()
             await agent.install(env)
             command = env.commands[0]["command"]
-            self.assertIn("version=0.3.8", command)
+            self.assertIn("version=0.3.9", command)
+            self.assertIn("minimum_glibc=2.35", command)
             self.assertLess(command.index("sha256sum --check"), command.index("tar -xzf"))
+            self.assertEqual(agent.parse_version("osmogrep 0.3.9\n"), "0.3.9")
+            with self.assertRaises(ValueError):
+                agent.parse_version("unexpected program")
+            old_agent = OsmoGrepAgent(logs_dir=Path(folder), version="0.3.8")
+            await old_agent.install(env)
+            self.assertIn("minimum_glibc=2.39", env.commands[-1]["command"])
 
     def test_absent_usage_is_unknown_and_unsafe_release_is_rejected(self):
         with tempfile.TemporaryDirectory() as folder:
