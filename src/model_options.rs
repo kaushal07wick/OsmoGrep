@@ -40,6 +40,9 @@ fn apply_options(canonical: &Value, options: &Value) -> Result<Value, String> {
         == Some(true)
     {
         payload.as_object_mut().unwrap().remove("reasoning");
+        if options["reasoning"] == "none" {
+            payload["reasoning"] = json!({"effort":"none"});
+        }
         return Ok(payload);
     }
     if options["tools"] == false {
@@ -82,6 +85,21 @@ pub fn set_reasoning(cfg: &ModelConfig, effort: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn compaction_preserves_explicit_thinking_off_without_enabling_expensive_options() {
+        let original = json!({"_osmogrep_compaction":true,"max_output_tokens":512,"input":[]});
+        let payload = apply_options(&original, &json!({"reasoning":"none"})).unwrap();
+        assert_eq!(payload["reasoning"]["effort"], "none");
+        assert!(payload.get("_osmogrep_compaction").is_none());
+        assert_eq!(payload["max_output_tokens"], 512);
+        let payload = apply_options(
+            &original,
+            &json!({"reasoning":"high","thinking_budget":8192}),
+        )
+        .unwrap();
+        assert!(payload.get("reasoning").is_none());
+        assert!(payload.get("thinking_budget").is_none());
+    }
     #[test]
     fn honors_declared_capabilities_and_rejects_unsupported_images() {
         let original =

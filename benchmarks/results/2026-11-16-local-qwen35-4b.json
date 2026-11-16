@@ -1,0 +1,280 @@
+{
+  "scope": "Final trial results, including failed and ungraded trials. Pilot retries are disabled; this is not a matched-comparison ranking.",
+  "attempts": 5,
+  "outcomes": {
+    "error": 5
+  },
+  "trials": [
+    {
+      "task": "terminal-bench/html-js-filter",
+      "task_checksum": "f9e9f9f97cc4ed197e51c0f79218cba93a9dac01e736e1c1076d7ac91f41f1c7",
+      "agent": "osmogrep",
+      "agent_version": "0.3.9",
+      "model": {
+        "name": "osmogrep-eval-qwen35-4b:latest",
+        "provider": "ollama"
+      },
+      "settings": {
+        "name": null,
+        "import_path": "benchmarks.harbor.osmogrep:OsmoGrepAgent",
+        "model_name": "ollama/osmogrep-eval-qwen35-4b:latest",
+        "model_api_format": null,
+        "override_timeout_sec": 300.0,
+        "max_timeout_sec": null,
+        "kwargs": {
+          "version": "0.3.9",
+          "max_iterations": 12,
+          "context_window": 16384,
+          "max_output_tokens": 2048,
+          "reasoning_effort": "none"
+        }
+      },
+      "outcome": "error",
+      "reward": 0.0,
+      "exception_type": "NonZeroAgentExitCodeError",
+      "input_tokens": 12557,
+      "output_tokens": 1359,
+      "cached_input_tokens": 0,
+      "cost_usd": null,
+      "agent_seconds": 295.541671,
+      "native_events_available": true,
+      "tool_calls": 3,
+      "read_calls": 0,
+      "unique_read_targets": 0,
+      "reported_model_responses": 3,
+      "completed_run_with_failed_grade": false,
+      "invalid_event_lines": 0
+    },
+    {
+      "task": "terminal-bench/payments-pipeline-fix",
+      "task_checksum": "80b19b18f9138fdcefdc2c69d66c1b69c698679de75b7dc3e80fb771b3ec5b9d",
+      "agent": "osmogrep",
+      "agent_version": "0.3.9",
+      "model": {
+        "name": "osmogrep-eval-qwen35-4b:latest",
+        "provider": "ollama"
+      },
+      "settings": {
+        "name": null,
+        "import_path": "benchmarks.harbor.osmogrep:OsmoGrepAgent",
+        "model_name": "ollama/osmogrep-eval-qwen35-4b:latest",
+        "model_api_format": null,
+        "override_timeout_sec": 300.0,
+        "max_timeout_sec": null,
+        "kwargs": {
+          "version": "0.3.9",
+          "max_iterations": 12,
+          "context_window": 16384,
+          "max_output_tokens": 2048,
+          "reasoning_effort": "none"
+        }
+      },
+      "outcome": "error",
+      "reward": null,
+      "exception_type": "RuntimeError",
+      "input_tokens": null,
+      "output_tokens": null,
+      "cached_input_tokens": null,
+      "cost_usd": null,
+      "agent_seconds": null,
+      "native_events_available": false,
+      "tool_calls": null,
+      "read_calls": null,
+      "unique_read_targets": null,
+      "reported_model_responses": null,
+      "completed_run_with_failed_grade": false,
+      "invalid_event_lines": 0
+    },
+    {
+      "task": "terminal-bench/session-window-debug",
+      "task_checksum": "c1ca98766d4b95244cb48acfeeeef8bb30a2acee129bd25e3b6c38683b0b0016",
+      "agent": "osmogrep",
+      "agent_version": "0.3.9",
+      "model": {
+        "name": "osmogrep-eval-qwen35-4b:latest",
+        "provider": "ollama"
+      },
+      "settings": {
+        "name": null,
+        "import_path": "benchmarks.harbor.osmogrep:OsmoGrepAgent",
+        "model_name": "ollama/osmogrep-eval-qwen35-4b:latest",
+        "model_api_format": null,
+        "override_timeout_sec": 300.0,
+        "max_timeout_sec": null,
+        "kwargs": {
+          "version": "0.3.9",
+          "max_iterations": 12,
+          "context_window": 16384,
+          "max_output_tokens": 2048,
+          "reasoning_effort": "none"
+        }
+      },
+      "outcome": "error",
+      "reward": 0.0,
+      "exception_type": "NonZeroAgentExitCodeError",
+      "input_tokens": 11310,
+      "output_tokens": 248,
+      "cached_input_tokens": 0,
+      "cost_usd": null,
+      "agent_seconds": 212.039507,
+      "native_events_available": true,
+      "tool_calls": 7,
+      "read_calls": 6,
+      "unique_read_targets": 6,
+      "reported_model_responses": 3,
+      "completed_run_with_failed_grade": false,
+      "invalid_event_lines": 0
+    },
+    {
+      "task": "terminal-bench/vf2-speedup-networkx",
+      "task_checksum": "3580574008689c45fc680fa52502e26105c73e819484f2ae608773c519bb525c",
+      "agent": "osmogrep",
+      "agent_version": "0.3.9",
+      "model": {
+        "name": "osmogrep-eval-qwen35-4b:latest",
+        "provider": "ollama"
+      },
+      "settings": {
+        "name": null,
+        "import_path": "benchmarks.harbor.osmogrep:OsmoGrepAgent",
+        "model_name": "ollama/osmogrep-eval-qwen35-4b:latest",
+        "model_api_format": null,
+        "override_timeout_sec": 300.0,
+        "max_timeout_sec": null,
+        "kwargs": {
+          "version": "0.3.9",
+          "max_iterations": 12,
+          "context_window": 16384,
+          "max_output_tokens": 2048,
+          "reasoning_effort": "none"
+        }
+      },
+      "outcome": "error",
+      "reward": 0.0,
+      "exception_type": "AgentTimeoutError",
+      "input_tokens": 11237,
+      "output_tokens": 113,
+      "cached_input_tokens": 0,
+      "cost_usd": null,
+      "agent_seconds": 1746.668717,
+      "native_events_available": true,
+      "tool_calls": 3,
+      "read_calls": 0,
+      "unique_read_targets": 0,
+      "reported_model_responses": 3,
+      "completed_run_with_failed_grade": false,
+      "invalid_event_lines": 0
+    },
+    {
+      "task": "terminal-bench/wal-recovery-ordering",
+      "task_checksum": "fec3a548e8e582d0e5699f8a5dd15e3a5ad950a3452d926293a039912abc8c48",
+      "agent": "osmogrep",
+      "agent_version": "0.3.9",
+      "model": {
+        "name": "osmogrep-eval-qwen35-4b:latest",
+        "provider": "ollama"
+      },
+      "settings": {
+        "name": null,
+        "import_path": "benchmarks.harbor.osmogrep:OsmoGrepAgent",
+        "model_name": "ollama/osmogrep-eval-qwen35-4b:latest",
+        "model_api_format": null,
+        "override_timeout_sec": 300.0,
+        "max_timeout_sec": null,
+        "kwargs": {
+          "version": "0.3.9",
+          "max_iterations": 12,
+          "context_window": 16384,
+          "max_output_tokens": 2048,
+          "reasoning_effort": "none"
+        }
+      },
+      "outcome": "error",
+      "reward": 0.0,
+      "exception_type": "NonZeroAgentExitCodeError",
+      "input_tokens": 15129,
+      "output_tokens": 264,
+      "cached_input_tokens": 0,
+      "cost_usd": null,
+      "agent_seconds": 202.877919,
+      "native_events_available": true,
+      "tool_calls": 9,
+      "read_calls": 8,
+      "unique_read_targets": 8,
+      "reported_model_responses": 3,
+      "completed_run_with_failed_grade": false,
+      "invalid_event_lines": 0
+    }
+  ],
+  "date": "2026-11-16",
+  "dataset": "terminal-bench/4.0.0",
+  "dataset_digest": "sha256:39d9f44b40420cde8fdcc087579c0d72a7e14fa3656d603c3f0d22fb35e27732",
+  "paid_provider_calls": 0,
+  "host": "Apple Silicon, 16 GB RAM; Colima 4 CPU / 8 GB; linux/amd64 through QEMU",
+  "model": {
+    "name": "osmogrep-eval-qwen35-4b:latest",
+    "base": "qwen3.5:4b",
+    "base_digest": "d8b0f5e9760cd1682034f292d7ef72ec46f432149be0df7574bf2d6e92e38c04",
+    "quantization": "Q4_K_M",
+    "context_window": 16384,
+    "max_output_tokens": 2048,
+    "reasoning": "none",
+    "temperature": 0.2,
+    "seed": 42
+  },
+  "limits": {
+    "requested_agent_timeout_seconds": 300,
+    "max_iterations": 12,
+    "attempts_per_task": 1,
+    "retries": 0,
+    "concurrency": 1
+  },
+  "limitations": [
+    "One local 4B model and five tasks; not a matched harness comparison or a leaderboard score.",
+    "All five attempts ended with exceptions. Four verifier rewards were zero; the Kafka setup failure had no reward.",
+    "Timeout cancellation and cleanup exceeded the requested 300 seconds on the emulated host; observed phase durations are retained.",
+    "Summarization dropped explicit reasoning=none in the baseline. Its repair was tested separately; the five-task pilot has not been rerun."
+  ],
+  "failure_analysis": {
+    "payments-pipeline-fix": "Kafka startup reproduced independently: ld-linux-x86-64.so.2 reports /opt/kafka/kafka.Kafka is not a valid dynamic program. Exact cause is not established.",
+    "html-js-filter": "Context summary provider connection failure.",
+    "session-window-debug": "Context summary provider connection failure.",
+    "wal-recovery-ordering": "Context summary provider connection failure.",
+    "vf2-speedup-networkx": "AgentTimeoutError; no successful completion."
+  },
+  "local_raw_evidence": {
+    "filename": "osmogrep-ollama-pilot-evidence.tar.gz",
+    "sha256": "221737697b241d723c22cd665fc8f157ad518d3ab0737d71bcb3a37b9ed53864"
+  },
+  "verification": {
+    "source_ci": "https://github.com/kaushal07wick/OsmoGrep/actions/runs/43832495557",
+    "published_0_3_9_installer_controls": "https://github.com/kaushal07wick/OsmoGrep/actions/runs/43826873987",
+    "repair_unit_test": "compaction_preserves_explicit_thinking_off_without_enabling_expensive_options: failed before repair, passed after",
+    "repair_native_fixture_checks": 13,
+    "repair_rust_tests": {
+      "passed": 277,
+      "ignored": 2
+    },
+    "five_task_repair_rerun": false
+  },
+  "repair_diagnostics": [
+    {
+      "type": "read-only local model smoke",
+      "context_window": 16384,
+      "max_output_tokens": 256,
+      "exit_code": 0,
+      "compaction_triggered": false,
+      "elapsed_seconds": 40.942
+    },
+    {
+      "type": "forced local context handoff",
+      "context_window": 10000,
+      "max_output_tokens": 256,
+      "exit_code": 1,
+      "compaction_triggered": true,
+      "reasoning_effort_on_wire": "none",
+      "elapsed_seconds": 45.292,
+      "error": "Model stopped with length; truncated summary rejected"
+    }
+  ]
+}

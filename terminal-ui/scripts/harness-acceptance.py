@@ -296,10 +296,13 @@ with tempfile.TemporaryDirectory(prefix='osmogrep-harness-') as folder:
         assert phases['overflow'] == 3
         results.append('provider_context_overflow_compacts_and_retries_once')
         editor.close()
-        (config / 'config.toml').write_text('[model_options."openai/fixture-model"]\ncontext_window = 16000\nmax_output_tokens = 2048\n')
+        (config / 'config.toml').write_text('[model_options."openai/fixture-model"]\ncontext_window = 16000\nmax_output_tokens = 2048\nreasoning = "none"\n')
         compacted = Client(project, env)
         clients.append(compacted)
+        first_request = len(requests)
         compacted.prompt('CASE_CONTEXT preserve REQUIREMENT_947')
+        summaries = [body for body in requests[first_request:] if 'Produce a factual handoff summary' in str(body['input'])]
+        assert summaries and all(body.get('reasoning') == {'effort': 'none'} for body in summaries)
         assert list((project / '.context/osmogrep-runs').glob('*.context-*.json'))
         assert any('conversation-summary' in str(m.get('content', '')) for m in compacted.request('session')['messages'])
         results.append('in_loop_model_aware_compaction_archives_original_context')

@@ -2,7 +2,7 @@
 
 This setup evaluates the released OsmoGrep coding agent through [Harbor's installed-agent interface](https://docs.harborframework.com/agents/custom-agents). It preserves the native system prompt, tools, provider transport and agent loop. Harbor supplies isolated task containers and an independent verifier; an agent saying “done” is not a passing score.
 
-**Status: the free Debian-container controls have passed; a bounded local-Ollama pilot is in progress. Paid-provider runs remain disabled.** The adapter runs against Harbor 0.26.0. Existing Rust/UI/provider fixtures are regression checks, not a public coding-performance score.
+**Status: the free Debian-container controls passed; the first local-Ollama pilot finished without a successful task completion. Paid-provider runs remain disabled.** The adapter runs against Harbor 0.26.0. Existing Rust/UI/provider fixtures are regression checks, not a public coding-performance score.
 
 ## Install the optional runner
 
@@ -44,6 +44,12 @@ OSMOGREP_PROVIDER=ollama OSMOGREP_MODEL=osmogrep-eval-qwen35-4b OSMOGREP_BASE_UR
 These three small coding checks are smoke tests, not the five-task repository pilot. Grader version 2 rejects duplicated README headings, hard-coded answers and incomplete renames; reports preserve candidate files, actual usage, latency and failed outcomes. A failed first attempt and a later successful replay remain separate evidence.
 
 The same pinned Harbor pilot can use `ollama/<model>` with a local server endpoint reachable from its task containers. The adapter accepts explicit `context_window`, `max_output_tokens` and `reasoning_effort` settings and writes them into isolated per-trial model configuration. The local run uses one agent at a time, 16K context, 2K maximum output, thinking disabled, 12 coding rounds and a five-minute agent timeout. These reduced limits and x86 emulation on Apple Silicon make it a diagnostic run, not a comparable Terminal-Bench leaderboard submission. Record setup failures separately from coding failures. Ollama must continue using local weights; a localhost address alone does not rule out a cloud-routed model.
+
+### First local pilot: November 16, 2026
+
+The [recorded results](results/2026-11-16-local-qwen35-4b.json) retain all five attempts with released OsmoGrep 0.3.9 and local Qwen3.5 4B. Four tasks received zero verifier reward; one could not start Kafka. All attempts ended with exceptions: three context-summary connection failures, one agent timeout, and one environment startup failure. The requested 300-second agent timeout did not bound observed phase time on this emulated host; those durations remain in the report. These results establish neither harness parity nor a useful comparative score.
+
+Investigation found that context summarization discarded explicit `reasoning = "none"`. The repair preserves that setting without enabling expensive reasoning options. Its regression checks are separate from the original pilot; the five tasks have not been rerun with the repair. A separate tiny documentation replay exposed a weak grader: it had accepted a duplicated heading. Grader version 2 correctly rejects that replay. Earlier successful smoke checks are not upgraded into stronger scores retroactively.
 
 ## Pilot command — only after approving model spending
 
