@@ -1,6 +1,6 @@
 {
   "name": "osmogrep",
-  "version": "0.3.17",
+  "version": "0.3.18",
   "description": "A terminal coding agent for building features, understanding code, and fixing bugs",
   "type": "module",
   "bin": { "osmogrep": "bin/osmogrep.mjs" },

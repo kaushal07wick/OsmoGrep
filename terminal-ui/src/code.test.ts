@@ -51,10 +51,10 @@ test('copy targets track code headers through transcript scrolling and copy feed
  setCapabilities({images:null,trueColor:true,hyperlinks:false});
  const code='python hey_bro_triangle.py',logs=[{level:'Info',text:'```bash\n'+code+'\n```'},...Array.from({length:60},(_,i)=>({level:'Success',text:'Line '+i}))];
  const v={...fixture(),logs};assert.ok(!render(v).controls?.some(c=>c.id==='copy'));
- const f=render({...v,followTail:false,scrollTop:0}),target=f.controls!.find(c=>c.id==='copy')!;
+ const f=render({...v,followTail:false,scrollTop:0}),target=f.controls!.find(c=>c.id==='copy'&&stripTerminalSequences(f.rows[c.y]!).includes(' Copy'))!;
  assert.equal(target.label,code);assert.ok(f.rows.slice(target.y,target.y+target.height).some(row=>stripTerminalSequences(row).includes(' Copy')));assert.ok(target.y<f.input.y-1);
  const copied=render({...v,followTail:false,scrollTop:0,copiedCode:code});assert.match(copied.rows.map(stripTerminalSequences).join('\n'),/ Copied/);
- assert.deepEqual(copied.controls!.find(c=>c.id==='copy'),target);
+ assert.deepEqual(copied.controls!.find(c=>c.id==='copy'&&c.y===target.y),target);
  assert.ok(!render({...v,masked:true,followTail:false,scrollTop:0}).controls?.some(c=>c.id==='copy'));
 });
 test('single commands stay inline without colliding with a stable copy tab in either theme',()=>{
@@ -83,6 +83,7 @@ test('copy pixels use the tab background and native graphics follow visible cont
   for(const scrollTop of [0,1,2,3,8,20]){
    const frame=render({...v,followTail:false,scrollTop}),copies=frame.controls!.filter(c=>c.id==='copy'),icons=frame.images.filter(i=>i.id>=0x40000000);
    assert.ok(icons.length>0);
+   assert.ok(copies.every(c=>c.height===1&&c.width>0&&c.x+c.width<=v.width&&c.y>=frame.execution.y&&c.y<frame.execution.y+frame.execution.height));
    assert.equal(new Set(frame.images.map(i=>i.id)).size,frame.images.length);
    for(const icon of icons){assert.ok(icon.y>=frame.execution.y&&icon.y<frame.execution.y+frame.execution.height);assert.ok(copies.some(c=>icon.x===c.x+1&&icon.y>=c.y&&icon.y<c.y+c.height));assert.match(icon.placement!,/c=2,r=1/);}
   }

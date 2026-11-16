@@ -200,7 +200,8 @@ export function render(v: View): Rendered {
     const y=execution.y+copy.row-start,top=Math.max(execution.y,y),bottom=Math.min(execution.y+execution.height,y+copy.height);
     if(!copy.text||Buffer.byteLength(copy.text)>100000||bottom<=top)continue;
     const x=gutter+pad+copy.x;
-    controls.push({id:'copy',label:copy.text,x,y:top,width:copy.width,height:bottom-top});
+    // The native frame protocol accepts one terminal row per hit area.
+    for(let row=top;row<bottom;row++)controls.push({id:'copy',label:copy.text,x,y:row,width:copy.width,height:1});
     const iconY=y+(copy.iconRow??0);
     if(copy.iconRow!=null&&iconY>=execution.y&&iconY<execution.y+execution.height){
       // Keep code icons in a separate ID range from attachment and workspace graphics.
