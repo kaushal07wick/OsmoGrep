@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 mod code_graph;
+mod device_workspace;
 mod diagnostics;
 mod dynamic_workflow;
 mod edit;
@@ -92,6 +93,7 @@ pub struct ToolScope {
     include_dynamic_workflow: bool,
     include_intelligence: bool,
     include_team: bool,
+    include_devices: bool,
     read_only: bool,
     chat_only: bool,
 }
@@ -100,7 +102,25 @@ impl ToolScope {
     pub fn for_prompt(prompt: &str) -> Self {
         let lower = prompt.to_ascii_lowercase();
         let ultracode = has_ultracode_suffix(&lower);
+        let include_devices = lower
+            .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .any(|word| {
+                matches!(
+                    word,
+                    "mac"
+                        | "macos"
+                        | "iphone"
+                        | "iphones"
+                        | "ios"
+                        | "swiftui"
+                        | "xcode"
+                        | "simulator"
+                        | "simulators"
+                        | "device_workspace"
+                )
+            });
         Self {
+            include_devices,
             include_team: crate::team::enabled() || crate::team::mentions_peer(prompt),
             chat_only: is_small_talk(prompt),
             include_web: contains_any(
@@ -119,7 +139,7 @@ impl ToolScope {
                     "fetch",
                 ],
             ),
-            include_mcp: crate::mcp::is_enabled(),
+            include_mcp: crate::mcp::is_enabled() || include_devices,
             include_intelligence: contains_any(
                 &lower,
                 &[
@@ -194,6 +214,7 @@ impl ToolScope {
         match name {
             "web_fetch" | "web_search" => self.include_web,
             "mcp_call" => self.include_mcp,
+            "device_workspace" => self.include_devices,
             "notebook_edit" => self.include_notebooks,
             "git_commit" => self.include_git_commit,
             "worktree_swarm" | "subagent" => self.include_worktree_swarm,
@@ -241,6 +262,7 @@ fn is_mutating_tool(name: &str) -> bool {
             | "subagent"
             | "git_commit"
             | "worktree_swarm"
+            | "device_workspace"
     )
 }
 
@@ -273,6 +295,7 @@ impl ToolRegistry {
             Box::new(RegexSearch),
             Box::new(WebFetch),
             Box::new(McpCall),
+            Box::new(device_workspace::DeviceWorkspace),
             Box::new(FindDefinition),
             Box::new(FindReferences),
             Box::new(GitCommit),
@@ -549,9 +572,16 @@ impl ToolRegistry {
         args: Value,
         is_cancelled: &dyn Fn() -> bool,
     ) -> ToolResult {
-        in_root(&self.repo_root, || {
+        let result = in_root(&self.repo_root, || {
             tool.call_cancellable(args, is_cancelled)
-        })
+        });
+        if tool.name() == "device_workspace" && result.is_ok() {
+            self.enabled
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert("mcp_call".into());
+        }
+        result
     }
 
     fn resolve_parallel_args(&self, name: &str, args: Value) -> Value {
@@ -1028,6 +1058,25 @@ mod tests {
     }
 
     #[test]
+    fn apple_app_work_exposes_preparation_and_mcp_but_read_only_never_prepares_devices() {
+        let registry = ToolRegistry::with_root(std::env::temp_dir());
+        for prompt in [
+            "Build and run an iPhone app",
+            "Build and run a Mac based app",
+            "Inspect this macOS app",
+            "Test this SwiftUI screen in the simulator",
+        ] {
+            let scope = ToolScope::for_prompt(prompt);
+            let names = schema_names(&registry.scoped_schema(&scope));
+            assert!(names.iter().any(|n| n == "device_workspace"), "{prompt}");
+            assert!(names.iter().any(|n| n == "mcp_call"), "{prompt}");
+            assert!(!schema_names(&registry.scoped_schema(&scope.read_only()))
+                .iter()
+                .any(|n| n == "device_workspace"));
+        }
+    }
+
+    #[test]
     fn default_tool_scope_hides_specialized_tools() {
         let root = std::env::temp_dir().join(format!("osmogrep-scope-root-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
@@ -1041,6 +1090,7 @@ mod tests {
         assert!(!names.contains(&"web_search".to_string()));
         assert!(!names.contains(&"web_fetch".to_string()));
         assert!(!names.contains(&"mcp_call".to_string()));
+        assert!(!names.contains(&"device_workspace".to_string()));
         assert!(!names.contains(&"notebook_edit".to_string()));
         assert!(!names.contains(&"git_commit".to_string()));
         assert!(!names.contains(&"worktree_swarm".to_string()));

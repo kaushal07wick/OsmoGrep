@@ -83,3 +83,7 @@ jobs:
           python3 terminal-ui/scripts/harness-acceptance.py --binary target/debug/osmogrep --output /tmp/osmogrep-harness-acceptance.json
           python3 terminal-ui/scripts/team-acceptance.py --binary target/debug/osmogrep --output /tmp/osmogrep-team-acceptance.json
           python3 terminal-ui/scripts/long-run-acceptance.py --binary target/debug/osmogrep --output /tmp/osmogrep-long-run-acceptance.json
+
+      - name: Device workspace contracts without OS downloads
+        if: runner.os == 'macOS'
+        run: python3 terminal-ui/scripts/device-workspace-acceptance.py

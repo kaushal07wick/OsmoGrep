@@ -10,12 +10,13 @@ are available through `/workspace`. These use the existing
 | Code editor, following saved agent edits | `/nv [file]` |
 | Download the optional Mac companion | `/workspace install mac` |
 | Download the optional iPhone companion | `/workspace install phone` |
-| View an existing virtual Mac | `/workspace mac [name]` |
-| View an existing phone | `/workspace phone [name]` |
-| Set up a virtual Mac | `/workspace setup mac [name]` |
-| Set up a simulator | `/workspace setup phone [name]` |
+| Prepare or reuse a virtual Mac and open it | `/workspace mac [name]` |
+| Prepare or reuse an iPhone simulator and open it | `/workspace phone [name]` |
 
-Names default to `default`. Use the same name when setting up and viewing a device.
+Names default to `default`. Opening a missing device automatically installs its
+companion if needed, downloads the required runtime, creates the device and boots
+it. Existing devices are reused. The old `/workspace setup mac|phone [name]`
+commands remain aliases for the same flow.
 Opening a viewer leaves your chat running. Opening Neovim also keeps chat visible;
 **Space a** returns focus to chat. Closing a companion viewer leaves the device
 running, following the companion's lifecycle rules.
@@ -60,7 +61,8 @@ Supported download versions are terminal-mac **v0.2.0-6** (about 0.8 MB) and
 terminal-phone **v0.4.0** (about 1.2 MB), from their official GitHub releases.
 Mac companions require Apple silicon and macOS 14+; phone companions need macOS
 15+ and Xcode for simulator setup. Downloading the companion does **not** download
-macOS, iOS, Xcode, create a device, or boot it. Choose **Setup** separately.
+macOS, iOS, Xcode, create a device, or boot it. **Open** starts device preparation
+when needed. Preinstalling the small companion is optional.
 
 OsmoGrep checks, in order:
 
@@ -84,8 +86,11 @@ entitlement and bundled guest helper.
 
 ## First setup
 
-Opening **View** never creates a missing device. Its pane shows the setup error
-and stays open so you can read it. Choose **Setup** explicitly when ready.
+Choose **Open** for Mac or iPhone in Settings → Workspace. The companion's `up`
+flow handles missing runtimes, creation, reuse and boot automatically. Its pane
+shows progress and any one-time setup step that needs your input. Device setup
+starts only when you open a device or the agent invokes the device tool for a
+task that needs it; it never runs on app startup.
 
 - **Mac:** Apple silicon, macOS 14+, a macOS restore-image download and storage
   for the VM. Complete guest account setup and grant Screen Recording and
@@ -101,8 +106,12 @@ does not stop its VM/simulator. Initial downloads can be several gigabytes.
 
 ## Ask the agent naturally
 
-After opening a viewer, ask for the task: “Open the app on this phone and check
-the sign-in screen,” for example. The companion becomes an ephemeral MCP
+Ask for the task: “Build this iPhone app and check its sign-in screen,” for
+example. The agent can call `device_workspace` with a platform (`mac` or `iphone`)
+and optional name to prepare and open it. Its MCP controls become available to
+that same running agent, including when the tool was discovered during the task.
+Headless callers receive a background `session_id` to poll with `run_shell`, so
+long setup does not block independent coding. The companion becomes an ephemeral MCP
 connection for this process and repository. It does not edit global MCP settings
 or enable unrelated disabled servers.
 
@@ -117,6 +126,12 @@ process's phone target. Normal MCP permissions and configured OS sandbox rules
 still apply. Screenshot pixels may contain sensitive information and are sent to
 the selected provider when used by the model.
 
+The device tool is hidden during greetings and unrelated tasks, can be found by
+capability search, and is unavailable in read-only mode. It uses the normal
+dangerous-tool approval policy. Host setup is blocked when OsmoGrep's OS sandbox
+is enabled. A tool response saying `starting` is not evidence of a ready device
+or a successful app test.
+
 ## Verified boundary
 
 On the development Mac, both packaged companions built successfully. Real MCP
@@ -124,6 +139,12 @@ discovery returned eight Mac tools and seven phone tools. A dedicated Ghostty
 test window kept its owner pane visible beside both companion panes, and
 missing-device errors remained readable. No OS image was downloaded, no device
 was booted, and no physical phone was controlled during these checks.
+
+The automatic agent flow also passed isolated create/reuse checks for both
+platforms, including setup-session polling and MCP discovery in the same task.
+Official companion archives passed checksum, signature, resource and configuration
+checks; the released Mac binary's setup plan includes installation and boot.
+See [automatic setup validation](device-workspace-automatic-validation.json).
 
 There was no configured Mac VM or installed iOS runtime, so **live device
 observation/input is not yet verified on this machine**. See

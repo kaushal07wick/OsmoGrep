@@ -52,6 +52,9 @@ osmogrep
 The npm launcher needs **Node.js 22.19+** and downloads the matching Rust binary on first launch. Cargo installation requires Rust 1.89+. You can enter your key with `/key` instead, or connect another provider below. [Installation options and platform notes →](docs/reference.md#quickstart)
 
 Mac and iPhone companions are optional downloads in **Settings → Workspace**. They stay outside the main binary; installing them does not download a device OS or start a VM.
+Opening a device prepares or reuses it automatically. The agent can do the same
+when your Mac or iPhone app task needs a running device, then inspect and control
+it through its connected tools.
 
 New GitHub releases appear in the terminal with a short changelog and **Update now**, **Later**, or **Skip this version**. Nothing installs without your choice.
 

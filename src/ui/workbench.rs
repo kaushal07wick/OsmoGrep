@@ -480,13 +480,13 @@ fn entries(state: &AgentState, panel: &Panel) -> Vec<Row> {
             ),
             row(
                 "Virtual Mac",
-                "Open terminal-mac beside the coding workspace",
+                "Create or reuse a Mac automatically; downloads macOS if needed",
                 "Open",
                 Action::Command("/workspace mac".into()),
             ),
             row(
                 "iPhone",
-                "Open terminal-phone beside the coding workspace",
+                "Create or reuse a simulator automatically; downloads iOS if needed",
                 "Open",
                 Action::Command("/workspace phone".into()),
             ),
@@ -501,18 +501,6 @@ fn entries(state: &AgentState, panel: &Panel) -> Vec<Row> {
                 "Optional small download; does not install Xcode or an iOS runtime",
                 "Download",
                 Action::Command("/workspace install phone".into()),
-            ),
-            row(
-                "Set up virtual Mac",
-                "First run may download macOS; guest account and permissions need your input",
-                "Setup",
-                Action::Command("/workspace setup mac".into()),
-            ),
-            row(
-                "Set up iPhone",
-                "First run may download an iOS runtime and prepare its simulator",
-                "Setup",
-                Action::Command("/workspace setup phone".into()),
             ),
         ],
         10 => session_rows(state, panel, true),
@@ -1700,7 +1688,7 @@ mod tests {
         assert!(choose_at(&mut state, 8, "Workspace"));
         let panel = view(&state).unwrap();
         assert_eq!(panel.section, 13);
-        assert_eq!(panel.rows.len(), 7);
+        assert_eq!(panel.rows.len(), 5);
         assert!(panel
             .rows
             .iter()

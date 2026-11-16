@@ -3,16 +3,15 @@
 A terminal coding agent for building features, understanding code, and fixing bugs.
 
 ```sh
-npm install -g https://github.com/kaushal07wick/OsmoGrep/releases/latest/download/osmogrep-npm.tgz
+npm install -g osmogrep
 # or
-pnpm add -g https://github.com/kaushal07wick/OsmoGrep/releases/latest/download/osmogrep-npm.tgz
+pnpm add -g osmogrep
 
 osmogrep
 ```
 
-The package is attached to GitHub releases. The shorter registry commands
-`npm install -g osmogrep`, `npx osmogrep`, and `pnpm dlx osmogrep` become available
-after the package is published to npm; do not use those until publication.
+You can also use `npx osmogrep` or `pnpm dlx osmogrep`. GitHub releases include
+the same launcher as `osmogrep-npm.tgz` for direct tarball installation.
 
 Requires Node.js 22.19+. This small package downloads the matching, checksummed
 Rust executable on its first launch and reuses it afterward. It does not depend

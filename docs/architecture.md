@@ -40,8 +40,9 @@ src/
   editor/native.rs         Native Ghostty editor and private Neovim RPC
   editor/workspace.lua     File tree, tabs, live ticker and inspection windows
   editor/follow.rs         Background bridge for active files and saved changes
-  workspace/               Native device panes and companion resolution
-  workspace/install.rs    Explicit optional companion downloads and verification
+  workspace/               Shared device preparation, native panes and resolution
+  workspace/install.rs     Optional companion downloads and verification
+  tools/device_workspace.rs Agent adapter for automatic Mac/iPhone preparation
   mcp.rs, mcp/local.rs     MCP transport and repository-scoped device connections
   ui/                      Rust event/render bridge and native fallback interface
   usage.rs, updater.rs     Usage ledger and release installation
@@ -105,6 +106,10 @@ replace the original user request in persisted history.
   current configuration.
 - Editor following has one bounded wake queue and a background worker. Device
   launch and its transient state live in `workspace/`.
+- Workspace Open and the agent's `device_workspace` tool share companion
+  installation and create-or-reuse startup. Native panes show setup progress;
+  headless setup uses the existing command-session supervisor. The agent tool
+  requires normal dangerous-tool approval and host access outside OS sandboxes.
 - Ephemeral device MCP entries live in `mcp/local.rs`, keyed by canonical project
   root. Phone target binding happens before transport dispatch.
 - The TypeScript formatting cache is bounded by 128 entries and approximately

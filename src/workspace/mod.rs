@@ -83,7 +83,7 @@ pub fn resolve(device: Device, root: &Path) -> Result<PathBuf, String> {
         };
     }
     find_executable(device, root, &std::env::var_os("PATH").unwrap_or_default())
-        .ok_or_else(|| format!("{} is optional and is not installed. Choose Download in Settings → Workspace, or run /workspace install {}. No device runtime is downloaded until you choose Setup.", device.program(), if device == Device::Mac {"mac"} else {"phone"}))?
+        .ok_or_else(|| format!("{} is optional and is not installed. Open the device in Settings → Workspace to prepare it automatically, or run /workspace install {} to download only the companion. Nothing downloads at app startup.", device.program(), if device == Device::Mac {"mac"} else {"phone"}))?
         .canonicalize().map_err(|e| e.to_string())
 }
 
@@ -114,13 +114,11 @@ fn validate_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn pane_command(program: &Path, name: &str, setup: bool) -> String {
-    let verb = if setup { "up" } else { "view" };
+fn pane_command(program: &Path, name: &str) -> String {
     format!(
-        "env -u TMUX -u TMUX_PANE {} {verb} {}{} || {{ osmogrep_view_status=$?; printf '\\nViewer exited. Press Return to close this pane. '; read -r osmogrep_view_reply; exit \"$osmogrep_view_status\"; }}",
+        "env -u TMUX -u TMUX_PANE {} up {} --protocol kitty || {{ osmogrep_view_status=$?; printf '\\nWorkspace stopped. Press Return to close this pane. '; read -r osmogrep_view_reply; exit \"$osmogrep_view_status\"; }}",
         shell_escape(&program.display().to_string()),
         shell_escape(name),
-        if setup { "" } else { " --protocol kitty" }
     )
 }
 
@@ -128,22 +126,42 @@ fn launch(
     device: Device,
     root: &Path,
     target: &str,
-    setup: bool,
     tty: &str,
+    sender: Option<&std::sync::mpsc::Sender<Event>>,
 ) -> Result<String, String> {
     if !cfg!(target_os = "macos") {
         return Err("Mac and iPhone companions require macOS on Apple silicon.".into());
     }
     validate_name(target)?;
-    let program = resolve(device, root)?;
+    let program = install::ensure(device, root, sender)?;
+    launch_program(device, root, target, tty, &program)
+}
+
+fn launch_program(
+    device: Device,
+    root: &Path,
+    target: &str,
+    tty: &str,
+    program: &Path,
+) -> Result<String, String> {
     if !ghostty::available() {
-        return Err(format!("Automatic companion panes currently use Ghostty 1.3+. Open a native terminal split and run: {}", pane_command(&program, target, setup)));
+        return Err(format!("Automatic companion panes currently use Ghostty 1.3+. Open a native terminal split and run: {}", pane_command(program, target)));
     }
     let viewer = format!(
         "/bin/sh -c {}",
-        shell_escape(&pane_command(&program, target, setup))
+        shell_escape(&pane_command(program, target))
     );
     ghostty::action(root, tty, "GSrt", &viewer, 0)?;
+    register_controls(device, root, target, program)?;
+    Ok(format!("Preparing {} · {target} beside chat. Missing runtime and device setup run automatically; existing devices are reused. Follow progress in that pane; first-time guest login or permissions may need you. Device control tools are registered; verify readiness before use.",device.program()))
+}
+
+fn register_controls(
+    device: Device,
+    root: &Path,
+    target: &str,
+    program: &Path,
+) -> Result<(), String> {
     let arguments = if device == Device::Mac {
         vec!["mcp".into(), target.into()]
     } else {
@@ -152,23 +170,57 @@ fn launch(
     crate::mcp::register_local(
         root,
         device.program(),
-        program,
+        program.to_path_buf(),
         arguments,
         if device == Device::Phone {
             Some(target.into())
         } else {
             None
         },
-    )?;
-    Ok(format!(
-        "{} · {target}: native viewer pane opened; agent controls available through MCP.{}",
-        device.program(),
-        if setup {
-            " Complete first-run setup in that pane; it may download the required OS runtime."
-        } else {
-            " The viewer reports if this target still needs setup."
-        }
-    ))
+    )
+}
+
+pub fn open_for_agent(
+    root: &Path,
+    device: Device,
+    target: &str,
+    cancel: &dyn Fn() -> bool,
+) -> Result<serde_json::Value, String> {
+    validate_name(target)?;
+    if cancel() {
+        return Err("Device setup cancelled before launch".into());
+    }
+    if crate::sandbox::mode() != "off" {
+        return Err("Device setup needs host access outside the project; it cannot run inside the configured OS sandbox.".into());
+    }
+    let program = install::ensure(device, root, None)?;
+    if cancel() {
+        return Err("Device setup cancelled before launch".into());
+    }
+    let tty = ghostty::available()
+        .then(ghostty::caller_tty)
+        .and_then(Result::ok);
+    let mut result = serde_json::json!({"status":"starting","platform":if device==Device::Mac {"mac"} else {"iphone"},"name":target,"server":device.program(),"viewer":tty.is_some(),"next":"Discover the server with mcp_call tools/list and check device readiness. Runtime downloads and first-time guest account or permission steps may still be in progress; do not claim the app was tested until it actually ran."});
+    if let Some(tty) = tty {
+        result["message"] =
+            serde_json::json!(launch_program(device, root, target, &tty, &program)?);
+    } else {
+        let command = format!(
+            "{} up {} --no-view",
+            shell_escape(&program.display().to_string()),
+            shell_escape(target)
+        );
+        let id = crate::command_sessions::start(
+            root,
+            &command,
+            false,
+            std::time::Duration::from_secs(86400),
+        )?;
+        register_controls(device, root, target, &program)?;
+        result["session_id"] = serde_json::json!(id);
+        result["next"]=serde_json::json!("Poll this session_id with run_shell for setup progress; it runs independently while you code. Then discover this server with mcp_call tools/list and verify readiness before interacting. A first-time guest login or permission step may need the user.");
+    }
+    Ok(result)
 }
 
 pub fn handle(state: &mut AgentState, command: &str) {
@@ -186,43 +238,11 @@ pub fn handle(state: &mut AgentState, command: &str) {
             return;
         }
     }
-    let (device, target, setup) = match parts.as_slice() {
-        [_, kind] | [_, kind, "default"] if matches!(*kind, "mac" | "phone") => (
-            if *kind == "mac" {
-                Device::Mac
-            } else {
-                Device::Phone
-            },
-            "default",
-            false,
-        ),
-        [_, kind, name] if matches!(*kind, "mac" | "phone") => (
-            if *kind == "mac" {
-                Device::Mac
-            } else {
-                Device::Phone
-            },
-            *name,
-            false,
-        ),
-        [_, "setup", kind] | [_, "setup", kind, "default"] if matches!(*kind, "mac" | "phone") => (
-            if *kind == "mac" {
-                Device::Mac
-            } else {
-                Device::Phone
-            },
-            "default",
-            true,
-        ),
-        [_, "setup", kind, name] if matches!(*kind, "mac" | "phone") => (
-            if *kind == "mac" {
-                Device::Mac
-            } else {
-                Device::Phone
-            },
-            *name,
-            true,
-        ),
+    let (kind, target) = match parts.as_slice() {
+        [_, kind] | [_, "setup", kind] if matches!(*kind, "mac" | "phone") => (*kind, "default"),
+        [_, kind, name] | [_, "setup", kind, name] if matches!(*kind, "mac" | "phone") => {
+            (*kind, *name)
+        }
         _ => {
             log(
                 state,
@@ -231,6 +251,11 @@ pub fn handle(state: &mut AgentState, command: &str) {
             );
             return;
         }
+    };
+    let device = if kind == "mac" {
+        Device::Mac
+    } else {
+        Device::Phone
     };
     if state.ui.workspace_task.is_some() {
         log(
@@ -255,7 +280,13 @@ pub fn handle(state: &mut AgentState, command: &str) {
     let target = target.to_string();
     let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let _ = sender.send(Event::Done(launch(device, &root, &target, setup, &tty)));
+        let _ = sender.send(Event::Done(launch(
+            device,
+            &root,
+            &target,
+            &tty,
+            Some(&sender),
+        )));
     });
     state.ui.workspace_task = Some(receiver);
     log(
@@ -340,10 +371,10 @@ mod tests {
             assert!(validate_name(name).is_err());
         }
         assert!(validate_name("osmogrep-iphone_1").is_ok());
-        let command = pane_command(Path::new("/tmp/my clone/phone's binary"), "work", false);
+        let command = pane_command(Path::new("/tmp/my clone/phone's binary"), "work");
         assert!(command.contains("'\"'\"'"));
-        assert!(command.contains(" view work --protocol kitty"));
-        assert!(!pane_command(Path::new("/tmp/phone"), "work", true).contains("--protocol"));
+        assert!(command.contains(" up work --protocol kitty"));
+        assert!(!command.contains(" view "));
     }
 
     #[test]

@@ -356,7 +356,9 @@ while True:
             timeout_ms: None,
         };
         crate::mcp::runtime().block_on(async {
-            let client=tokio::time::timeout(Duration::from_secs(3),Client::start(&root,&cfg)).await.unwrap().unwrap();
+            // Cold Windows runners can spend several seconds starting the Python fixture.
+            let startup=Duration::from_secs(if cfg!(windows) {15} else {3});
+            let client=tokio::time::timeout(startup,Client::start(&root,&cfg)).await.unwrap().unwrap();
             client.notify("textDocument/didOpen",json!({"textDocument":{"uri":"file:///fixture.py","languageId":"python","version":1,"text":"x = 1"}})).await.unwrap();
             let hover=tokio::time::timeout(Duration::from_secs(3),client.request("textDocument/hover",json!({"textDocument":{"uri":"file:///fixture.py"},"position":{"line":0,"character":0}}))).await.unwrap().unwrap();
             assert!(hover["contents"].as_str().unwrap().contains("unsafe edit rejected"));

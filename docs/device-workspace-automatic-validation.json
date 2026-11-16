@@ -1,0 +1,24 @@
+{
+  "version": "0.3.16",
+  "platform": "macOS arm64",
+  "rust": { "passed": 300, "failed": 0, "ignored": 5 },
+  "checks": [
+    "fake_mac_and_iphone_create_then_reuse_through_real_tool_registry",
+    "background_setup_sessions_pollable_through_run_shell",
+    "new_device_mcp_controls_exposed_in_same_agent_task",
+    "greetings_still_have_no_tools_and_read_only_scope_excludes_device_setup",
+    "invalid_targets_and_prelaunch_cancellation_rejected",
+    "official_archives_checksums_signatures_helpers_licenses_and_config_preservation",
+    "official_mac_binary_up_plan_includes_installation_boot_and_readiness",
+    "five_npm_launcher_contracts",
+    "isolated_npm_and_pnpm_tarball_installs_without_lifecycle_scripts"
+  ],
+  "npm_package_bytes": 4189,
+  "scope": "Device lifecycle automation used isolated fake companions. Official binaries were verified and MCP discovery tested; Mac setup was inspected with --plan only. npm launcher smoke checks used the current debug binary in an isolated cache.",
+  "not_checked": [
+    "real_macOS_or_iOS_runtime_download",
+    "real_VM_or_simulator_boot",
+    "live_device_screenshot_and_input",
+    "physical_iPhone_control"
+  ]
+}

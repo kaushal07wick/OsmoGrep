@@ -93,7 +93,11 @@ fn unpack(package: &Package, archive: &Path, directory: &Path) -> Result<PathBuf
     Ok(binary)
 }
 
-fn download(device: Device, directory: &Path, sender: &Sender<Event>) -> Result<PathBuf, String> {
+fn download(
+    device: Device,
+    directory: &Path,
+    sender: Option<&Sender<Event>>,
+) -> Result<PathBuf, String> {
     let package = package(device);
     let archive = directory.join(package.asset);
     let checksum = directory.join(format!("{}.sha256", package.asset));
@@ -102,6 +106,7 @@ fn download(device: Device, directory: &Path, sender: &Sender<Event>) -> Result<
         package.repo, package.tag
     );
     let mut progress = |p: InstallProgress| {
+        let Some(sender) = sender else { return };
         let label = match p.stage {
             "downloading" => "Downloading",
             "verifying" => "Verifying",
@@ -219,6 +224,57 @@ fn has_virtualization_entitlement(text: &str) -> bool {
         || compact.contains("[Key]com.apple.security.virtualization[Value][Bool]true")
 }
 
+pub(super) fn ensure(
+    device: Device,
+    root: &Path,
+    sender: Option<&Sender<Event>>,
+) -> Result<PathBuf, String> {
+    if !cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        return Err("Mac and iPhone companions require macOS on Apple silicon.".into());
+    }
+    if let Some(path) = std::env::var_os(device.environment()) {
+        if !super::executable(Path::new(&path)) {
+            return Err(format!(
+                "{} points to a missing executable. Correct or unset it before installing.",
+                device.environment()
+            ));
+        }
+    }
+    if let Ok(path) = super::resolve(device, root) {
+        return Ok(path);
+    }
+    let version = run(Command::new("/usr/bin/sw_vers").arg("-productVersion"))?;
+    let major = version
+        .split('.')
+        .next()
+        .and_then(|s| s.parse::<u32>().ok())
+        .ok_or("Cannot determine macOS version")?;
+    let required = if device == Device::Mac { 14 } else { 15 };
+    if major < required {
+        return Err(format!(
+            "{} requires macOS {required} or newer.",
+            device.program()
+        ));
+    }
+    let directory = crate::persistence::config_dir()
+        .join("companions")
+        .join(format!("{}-{}", device.program(), uuid::Uuid::new_v4()));
+    let result = (|| {
+        std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))
+                .map_err(|e| e.to_string())?;
+        }
+        download(device, &directory, sender)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_dir_all(directory);
+    }
+    result
+}
+
 pub fn start(state: &mut AgentState, device: Device) {
     if !cfg!(all(target_os = "macos", target_arch = "aarch64")) {
         log(
@@ -254,7 +310,7 @@ pub fn start(state: &mut AgentState, device: Device) {
             state,
             LogLevel::Info,
             format!(
-                "{} is ready at {}. Choose Open or Setup in Settings → Workspace.",
+                "{} is ready at {}. Choose Open in Settings → Workspace to prepare or resume the device.",
                 device.program(),
                 path.display()
             ),
@@ -264,37 +320,9 @@ pub fn start(state: &mut AgentState, device: Device) {
     let (sender, receiver) = std::sync::mpsc::channel();
     state.ui.workspace_task = Some(receiver);
     state.ui.workspace_status = Some(format!("Preparing optional {} download…", device.program()));
+    let root = state.repo_root.clone();
     std::thread::spawn(move || {
-        let directory = crate::persistence::config_dir()
-            .join("companions")
-            .join(format!("{}-{}", device.program(), uuid::Uuid::new_v4()));
-        let result = (|| {
-            let version = run(Command::new("/usr/bin/sw_vers").arg("-productVersion"))?;
-            let major = version
-                .split('.')
-                .next()
-                .and_then(|s| s.parse::<u32>().ok())
-                .ok_or("Cannot determine macOS version")?;
-            let required = if device == Device::Mac { 14 } else { 15 };
-            if major < required {
-                return Err(format!(
-                    "{} requires macOS {required} or newer.",
-                    device.program()
-                ));
-            }
-            std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))
-                    .map_err(|e| e.to_string())?;
-            }
-            download(device, &directory, &sender)?;
-            Ok(format!("✓ {} installed. Open it from Settings → Workspace. Device setup is separate; no macOS or iOS runtime was downloaded.",device.program()))
-        })();
-        if result.is_err() {
-            let _ = std::fs::remove_dir_all(directory);
-        }
+        let result=ensure(device,&root,Some(&sender)).map(|_|format!("✓ {} installed. Open it from Settings → Workspace. No macOS or iOS runtime was downloaded.",device.program()));
         let _ = sender.send(Event::Done(result));
     });
 }
