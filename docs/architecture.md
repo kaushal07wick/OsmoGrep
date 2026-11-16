@@ -41,6 +41,7 @@ src/
   editor/workspace.lua     File tree, tabs, live ticker and inspection windows
   editor/follow.rs         Background bridge for active files and saved changes
   workspace/               Native device panes and companion resolution
+  workspace/install.rs    Explicit optional companion downloads and verification
   mcp.rs, mcp/local.rs     MCP transport and repository-scoped device connections
   ui/                      Rust event/render bridge and native fallback interface
   usage.rs, updater.rs     Usage ledger and release installation

@@ -173,7 +173,7 @@ pub fn open(
                     .into(),
             )
         })();
-        let _ = sender.send(result);
+        let _ = sender.send(crate::workspace::Event::Done(result));
     });
     state.ui.workspace_task = Some(receiver);
     crate::logger::log(state, LogLevel::Info, "Opening editor workspace…");

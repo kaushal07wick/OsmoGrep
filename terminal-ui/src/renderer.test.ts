@@ -11,6 +11,18 @@ import { crc32, inflateSync } from 'node:zlib';
 
 setCapabilities({images:null,trueColor:true,hyperlinks:false});
 
+test('optional companion download shows progress without blocking drafts or changing the working orb',()=>{
+ const v={...fixture(),input:'keep typing',cursor:11,workspaceStatus:'↓ Downloading terminal-mac · 42% · 0.3/0.8 MB'};
+ const frame=render(v);
+ assert.equal(frame.artwork,null);
+ assert.match(stripTerminalSequences(frame.rows[frame.input.y-2]!),/Downloading terminal-mac.*42%/);
+ assert.equal(stripTerminalSequences(frame.rows[frame.input.y-1]!).trim(),'');
+ assert.notEqual(frame.cursorVisible,false);
+ assert.ok(frame.rows.map(stripTerminalSequences).join('').includes('keep typing'));
+ const active=render({...v,running:true,phase:'thinking'});
+ assert.match(active.rows.slice(active.input.y-4,active.input.y-1).map(stripTerminalSequences).join(''),/Thinking/);
+});
+
 test('the approved graphical orb has no coarse fallback drawn underneath it', () => {
   try {
     setCapabilities({images:'kitty',trueColor:true,hyperlinks:false});

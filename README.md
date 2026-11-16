@@ -27,7 +27,15 @@
 
 ## Get started
 
-Install the current source:
+Install a prebuilt release with npm or pnpm (no Rust toolchain):
+
+```sh
+npm install -g https://github.com/kaushal07wick/OsmoGrep/releases/latest/download/osmogrep-npm.tgz
+# or
+pnpm add -g https://github.com/kaushal07wick/OsmoGrep/releases/latest/download/osmogrep-npm.tgz
+```
+
+Or install the current source with Cargo:
 
 ```sh
 cargo install --git https://github.com/kaushal07wick/OsmoGrep --locked
@@ -41,7 +49,9 @@ export OPENAI_API_KEY="your-api-key"
 osmogrep
 ```
 
-Requires Rust 1.89+ to install and **Node.js 22.19+** for the full terminal UI. You can enter your key with `/key` instead, or connect another provider below. [Installation options and platform notes →](docs/reference.md#quickstart)
+The npm launcher needs **Node.js 22.19+** and downloads the matching Rust binary on first launch. Cargo installation requires Rust 1.89+. You can enter your key with `/key` instead, or connect another provider below. [Installation options and platform notes →](docs/reference.md#quickstart)
+
+Mac and iPhone companions are optional downloads in **Settings → Workspace**. They stay outside the main binary; installing them does not download a device OS or start a VM.
 
 New GitHub releases appear in the terminal with a short changelog and **Update now**, **Later**, or **Skip this version**. Nothing installs without your choice.
 

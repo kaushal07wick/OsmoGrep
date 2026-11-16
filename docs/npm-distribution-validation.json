@@ -1,0 +1,23 @@
+{
+  "version": "0.3.15",
+  "package_bytes": 4234,
+  "unpacked_bytes": 9525,
+  "files": [
+    "LICENSE",
+    "README.md",
+    "bin/osmogrep.mjs",
+    "native.mjs",
+    "package.json"
+  ],
+  "checks": [
+    "npm_global_tarball_install_without_scripts",
+    "pnpm_local_tarball_install_without_scripts",
+    "native_version_through_both_launchers",
+    "native_exit_code_and_stderr_preserved",
+    "five_launcher_unit_contracts",
+    "real_v0.3.14_release_download_checksum_and_version"
+  ],
+  "scope": "Isolated temporary prefixes, stores and cache; native binary preseeded from this build; real remote download verified separately. No installed application or global package manager configuration changed.",
+  "registry_published": false,
+  "registry_blocker": "npm whoami reports ENEEDAUTH; no registry credentials are configured."
+}

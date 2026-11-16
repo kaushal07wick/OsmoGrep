@@ -30,6 +30,7 @@ export interface View {
   introBright?: boolean;
   conversationStarted?:boolean;
   userTurns?:number;
+  workspaceStatus?:string|null;
   panel?: PanelView | null;
   approval?: {tool:string;args:string;selected?:number} | null;
   statusLine?: string[];
@@ -151,7 +152,7 @@ export function render(v: View): Rendered {
   const footerHeight = h > composerHeight + headerHeight + headerY + 1 ? 2 : 0;
   const composerY = Math.max(0, h - footerHeight - composerHeight);
   const inputRect = { x: gutter, y: composerY, width, height: composerHeight };
-  const activityHeight=v.running&&!v.update&&h>=24&&width>=36?4:1;
+  const activityHeight=v.running&&!v.update&&h>=24&&width>=36?4:v.workspaceStatus?2:1;
   const execution = { x: gutter, y: headerY + headerHeight, width, height: Math.max(0, composerY - headerY - headerHeight - activityHeight) };
   const approvalRows=v.approval?permissionLines(v.approval.tool,v.approval.args,v.approval.selected??0,width,accent,light,h<32):v.release?updateLines(v.release,width,accent,light,h<40):[];
   const approvalHeight=Math.min(approvalRows.length,Math.max(0,Math.max(0,execution.height-3)));
@@ -199,7 +200,7 @@ export function render(v: View): Rendered {
   let artwork: Rect | null = null;
   const images: Rendered['images'] = [];
   const introElapsed = v.preferences?.reduce_motion ? introDuration : v.introElapsed ?? v.elapsed;
-  if (!conversationStarted && v.preferences?.ambient_art!==false && !v.panel && !value && !v.masked && !transcript.length && !v.running && !v.permission && !v.update && !v.voice && !v.commands.length
+  if (!conversationStarted && v.preferences?.ambient_art!==false && !v.panel && !value && !v.masked && !transcript.length && !v.running && !v.permission && !v.update && !v.workspaceStatus && !v.voice && !v.commands.length
     && width >= 36 && execution.height >= 16) {
     const clearance=Math.max(3,Math.min(6,Math.floor(execution.height*.15)));
     const height = Math.min(26, execution.height-clearance-1), columns = Math.min(56, height*2, width-6);
@@ -214,7 +215,7 @@ export function render(v: View): Rendered {
     }
   }
 
-  const status = v.release?'':v.update ?? (v.permission&&!v.approval?v.permission:null) ?? (v.running ? activity(v.runElapsed??v.elapsed,v.approval?'Waiting for permission':v.phase,v.approval||v.phase==='thinking'?null:v.tool,!!v.preferences?.reduce_motion) : '');
+  const status = v.release?'':v.update ?? (v.permission&&!v.approval?v.permission:null) ?? (v.running ? activity(v.runElapsed??v.elapsed,v.approval?'Waiting for permission':v.phase,v.approval||v.phase==='thinking'?null:v.tool,!!v.preferences?.reduce_motion) : v.workspaceStatus??'');
   if(status){
     if(v.running&&activityHeight===4&&!v.update){
       const y=composerY-4,frame=orb(v.runElapsed??v.elapsed,light,!!v.preferences?.reduce_motion),info=activityInfo(v.runElapsed??v.elapsed,v.approval?'Waiting for approval':v.phase,v.approval?null:v.tool,!!v.preferences?.reduce_motion);
@@ -225,7 +226,7 @@ export function render(v: View): Rendered {
         put(y+i,(graphic?' '.repeat(6):dim+line+reset)+'  '+label+reset,gutter+pad,Math.max(1,width-pad*2));
       });
       if(graphic)images.push({id,x:gutter+pad,y,sequence:graphic.sequence});
-    }else{const action=v.running?'esc interrupt':'';const left=clip(status,Math.max(1,width-action.length-4));put(composerY-1,accent+left+reset+(width>action.length+visibleWidth(left)+3?' '.repeat(width-visibleWidth(left)-action.length)+dim+action+reset:''));}
+    }else{const action=v.running?'esc interrupt':'';const left=clip(status,Math.max(1,width-action.length-4));put(composerY-(v.workspaceStatus&&!v.running?2:1),accent+left+reset+(width>action.length+visibleWidth(left)+3?' '.repeat(width-visibleWidth(left)-action.length)+dim+action+reset:''));}
   }
   if(approvalHeight){
     const y=composerY-approvalHeight-activityHeight-1;

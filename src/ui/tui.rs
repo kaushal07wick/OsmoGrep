@@ -169,7 +169,7 @@ pub fn draw_ui<B: Backend>(
             height: 0,
             ..execution
         };
-        if state.ui.agent_running && execution.height > 1 {
+        if (state.ui.agent_running || state.ui.workspace_status.is_some()) && execution.height > 1 {
             execution.height -= 1;
             running.y = execution.bottom();
             running.height = 1;
@@ -857,6 +857,15 @@ fn flush_wrapped_span(spans: &mut Vec<Span<'static>>, text: &mut String, style: 
 }
 
 fn render_running_badge(f: &mut Frame, area: Rect, state: &AgentState) {
+    if !state.ui.agent_running {
+        if let Some(status) = &state.ui.workspace_status {
+            f.render_widget(
+                Paragraph::new(status.as_str()).style(Style::default().fg(palette(state).accent)),
+                area,
+            );
+            return;
+        }
+    }
     if !state.ui.agent_running || area.height == 0 || area.width < 10 {
         return;
     }

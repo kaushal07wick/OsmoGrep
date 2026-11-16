@@ -1,0 +1,17 @@
+{
+  "name": "osmogrep",
+  "version": "0.3.15",
+  "description": "A terminal coding agent for building features, understanding code, and fixing bugs",
+  "type": "module",
+  "bin": { "osmogrep": "bin/osmogrep.mjs" },
+  "files": ["bin/", "native.mjs", "README.md", "LICENSE"],
+  "engines": { "node": ">=22.19.0" },
+  "scripts": { "test": "node --test native.test.mjs" },
+  "repository": { "type": "git", "url": "git+https://github.com/kaushal07wick/OsmoGrep.git", "directory": "npm" },
+  "homepage": "https://osmogrep.com",
+  "bugs": "https://github.com/kaushal07wick/OsmoGrep/issues",
+  "author": "Kaushal Choudhary <kaushalc64@gmail.com>",
+  "license": "MIT",
+  "keywords": ["ai", "agent", "coding", "terminal", "rust"],
+  "publishConfig": { "access": "public" }
+}

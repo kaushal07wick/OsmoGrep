@@ -825,6 +825,7 @@ fn view(state: &AgentState, model: &ModelConfig, id: u64, width: u16, height: u1
         "selectedCommand":ui.command_selected, "tokens":state.usage.prompt_tokens+state.usage.completion_tokens,
     });
     snapshot["queuedMessages"] = json!(ui.queued_agent_prompts.len());
+    snapshot["workspaceStatus"] = json!(ui.workspace_status);
     snapshot["userTurns"] = json!(ui.user_turns);
     snapshot["conversationStarted"] = json!(state
         .conversation

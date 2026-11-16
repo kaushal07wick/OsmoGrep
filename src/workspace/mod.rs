@@ -7,6 +7,12 @@ use crate::{
 use std::path::{Path, PathBuf};
 
 pub mod ghostty;
+mod install;
+
+pub enum Event {
+    Progress(String),
+    Done(Result<String, String>),
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Device {
@@ -76,22 +82,23 @@ pub fn resolve(device: Device, root: &Path) -> Result<PathBuf, String> {
             ))
         };
     }
-    let paths = std::env::var_os("PATH").unwrap_or_default();
-    let mut candidates: Vec<_> = std::env::split_paths(&paths)
+    find_executable(device, root, &std::env::var_os("PATH").unwrap_or_default())
+        .ok_or_else(|| format!("{} is optional and is not installed. Choose Download in Settings → Workspace, or run /workspace install {}. No device runtime is downloaded until you choose Setup.", device.program(), if device == Device::Mac {"mac"} else {"phone"}))?
+        .canonicalize().map_err(|e| e.to_string())
+}
+
+fn find_executable(device: Device, root: &Path, paths: &std::ffi::OsStr) -> Option<PathBuf> {
+    let mut candidates: Vec<_> = std::env::split_paths(paths)
         .map(|dir| dir.join(device.program()))
         .collect();
-    // Developer checkouts may keep the companion clones beside their projects.
-    if let Some(parent) = root.parent() {
-        candidates.push(
-            parent
-                .join(device.program())
-                .join("dist")
-                .join(device.program()),
-        );
-    }
+    // A workspace can be the clones' parent directory or a project nested below it.
+    candidates.extend(root.ancestors().map(|parent| {
+        parent
+            .join(device.program())
+            .join("dist")
+            .join(device.program())
+    }));
     candidates.into_iter().find(|path| executable(path))
-        .ok_or_else(|| format!("{} is not built or on PATH. Build its clone, or set [workspace].{} to its executable.", device.program(), device.setting()))?
-        .canonicalize().map_err(|e| e.to_string())
 }
 
 fn validate_name(name: &str) -> Result<(), String> {
@@ -166,6 +173,19 @@ fn launch(
 
 pub fn handle(state: &mut AgentState, command: &str) {
     let parts: Vec<_> = command.split_whitespace().collect();
+    if let [_, "install", kind] = parts.as_slice() {
+        if matches!(*kind, "mac" | "phone") {
+            install::start(
+                state,
+                if *kind == "mac" {
+                    Device::Mac
+                } else {
+                    Device::Phone
+                },
+            );
+            return;
+        }
+    }
     let (device, target, setup) = match parts.as_slice() {
         [_, kind] | [_, kind, "default"] if matches!(*kind, "mac" | "phone") => (
             if *kind == "mac" {
@@ -207,7 +227,7 @@ pub fn handle(state: &mut AgentState, command: &str) {
             log(
                 state,
                 LogLevel::Error,
-                "Use /workspace mac|phone [name], or /workspace setup mac|phone [name].",
+                "Use /workspace mac|phone [name], /workspace install mac|phone, or /workspace setup mac|phone [name].",
             );
             return;
         }
@@ -235,7 +255,7 @@ pub fn handle(state: &mut AgentState, command: &str) {
     let target = target.to_string();
     let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let _ = sender.send(launch(device, &root, &target, setup, &tty));
+        let _ = sender.send(Event::Done(launch(device, &root, &target, setup, &tty)));
     });
     state.ui.workspace_task = Some(receiver);
     log(
@@ -250,8 +270,13 @@ pub fn poll(state: &mut AgentState) -> bool {
         return false;
     };
     match task.try_recv() {
-        Ok(result) => {
+        Ok(Event::Progress(message)) => {
+            state.ui.workspace_status = Some(message);
+            true
+        }
+        Ok(Event::Done(result)) => {
             state.ui.workspace_task = None;
+            state.ui.workspace_status = None;
             match result {
                 Ok(message) => log(state, LogLevel::Info, message),
                 Err(error) => log(state, LogLevel::Error, error),
@@ -260,6 +285,7 @@ pub fn poll(state: &mut AgentState) -> bool {
         }
         Err(std::sync::mpsc::TryRecvError::Disconnected) => {
             state.ui.workspace_task = None;
+            state.ui.workspace_status = None;
             log(
                 state,
                 LogLevel::Error,
@@ -274,6 +300,40 @@ pub fn poll(state: &mut AgentState) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn companions_are_found_from_their_parent_projects_and_nested_directories() {
+        let root =
+            std::env::temp_dir().join(format!("companion-discovery-{}", uuid::Uuid::new_v4()));
+        for device in [Device::Mac, Device::Phone] {
+            let binary = root
+                .join(device.program())
+                .join("dist")
+                .join(device.program());
+            std::fs::create_dir_all(binary.parent().unwrap()).unwrap();
+            std::fs::write(&binary, b"fixture").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            for cwd in [
+                root.clone(),
+                root.join("project"),
+                root.join("project/packages/app"),
+            ] {
+                assert_eq!(
+                    find_executable(device, &cwd, std::ffi::OsStr::new("")),
+                    Some(binary.clone())
+                );
+            }
+            let paths = std::env::join_paths([binary.parent().unwrap()]).unwrap();
+            assert_eq!(
+                find_executable(device, Path::new("/unrelated"), &paths),
+                Some(binary)
+            );
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn names_and_shell_arguments_cannot_turn_into_commands() {
         for name in ["", "-evil", "a;b", "$(touch x)", "a/b", "with space"] {

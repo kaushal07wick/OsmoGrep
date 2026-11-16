@@ -491,6 +491,18 @@ fn entries(state: &AgentState, panel: &Panel) -> Vec<Row> {
                 Action::Command("/workspace phone".into()),
             ),
             row(
+                "Download Mac companion",
+                "Optional small download; does not install a macOS image",
+                "Download",
+                Action::Command("/workspace install mac".into()),
+            ),
+            row(
+                "Download iPhone companion",
+                "Optional small download; does not install Xcode or an iOS runtime",
+                "Download",
+                Action::Command("/workspace install phone".into()),
+            ),
+            row(
                 "Set up virtual Mac",
                 "First run may download macOS; guest account and permissions need your input",
                 "Setup",
@@ -1688,7 +1700,15 @@ mod tests {
         assert!(choose_at(&mut state, 8, "Workspace"));
         let panel = view(&state).unwrap();
         assert_eq!(panel.section, 13);
-        assert_eq!(panel.rows.len(), 5);
+        assert_eq!(panel.rows.len(), 7);
+        assert!(panel
+            .rows
+            .iter()
+            .any(|row| row.label == "Download Mac companion"));
+        assert!(panel
+            .rows
+            .iter()
+            .any(|row| row.label == "Download iPhone companion"));
         assert!(panel.rows.iter().any(|row| row.label.contains("Mac")));
         assert!(panel.rows.iter().any(|row| row.label.contains("iPhone")));
         handle_key(&mut state, key(KeyCode::Esc));

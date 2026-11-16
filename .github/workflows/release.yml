@@ -115,8 +115,33 @@ jobs:
             osmogrep-${{ matrix.target }}.zip.sha256
           if-no-files-found: error
 
-  release:
+  npm-package:
     needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+      - name: Test launcher and package version
+        run: |
+          npm test --prefix npm
+          node --input-type=module -e 'import fs from "node:fs"; const version=JSON.parse(fs.readFileSync("npm/package.json")).version; if (!fs.readFileSync("Cargo.toml","utf8").includes(`version = "${version}"`)) throw Error("npm and Rust versions differ");'
+      - name: Package npm launcher
+        run: |
+          npm pack ./npm --pack-destination .
+          mv osmogrep-*.tgz osmogrep-npm.tgz
+          shasum -a 256 osmogrep-npm.tgz > osmogrep-npm.tgz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: osmogrep-npm
+          path: |
+            osmogrep-npm.tgz
+            osmogrep-npm.tgz.sha256
+          if-no-files-found: error
+
+  release:
+    needs: [build, npm-package]
     runs-on: ubuntu-latest
 
     steps:
@@ -127,6 +152,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
+            osmogrep-npm/osmogrep-npm.tgz
+            osmogrep-npm/osmogrep-npm.tgz.sha256
             osmogrep-x86_64-unknown-linux-gnu/osmogrep-x86_64-unknown-linux-gnu.tar.gz
             osmogrep-x86_64-unknown-linux-gnu/osmogrep-x86_64-unknown-linux-gnu.tar.gz.sha256
             osmogrep-x86_64-apple-darwin/osmogrep-x86_64-apple-darwin.tar.gz

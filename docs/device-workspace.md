@@ -8,6 +8,8 @@ are available through `/workspace`. These use the existing
 | Action | Command |
 | --- | --- |
 | Code editor, following saved agent edits | `/nv [file]` |
+| Download the optional Mac companion | `/workspace install mac` |
+| Download the optional iPhone companion | `/workspace install phone` |
 | View an existing virtual Mac | `/workspace mac [name]` |
 | View an existing phone | `/workspace phone [name]` |
 | Set up a virtual Mac | `/workspace setup mac [name]` |
@@ -46,13 +48,27 @@ change terminal settings or personal Neovim configuration.
 
 ## Find the companions
 
+Choose **Download Mac companion** or **Download iPhone companion** in
+Settings → Workspace. These install small upstream packages into OsmoGrep's
+private configuration directory and save their paths automatically. Nothing is
+downloaded at startup, and the main Rust binary does not contain these packages.
+The download shows progress, verifies SHA-256 and macOS code signatures, and
+retains bundled helpers, resources and licenses. A failed install preserves
+existing configuration. No shell profile or system PATH changes are needed.
+
+Supported download versions are terminal-mac **v0.2.0-6** (about 0.8 MB) and
+terminal-phone **v0.4.0** (about 1.2 MB), from their official GitHub releases.
+Mac companions require Apple silicon and macOS 14+; phone companions need macOS
+15+ and Xcode for simulator setup. Downloading the companion does **not** download
+macOS, iOS, Xcode, create a device, or boot it. Choose **Setup** separately.
+
 OsmoGrep checks, in order:
 
 1. `OSMOGREP_TERMINAL_MAC` or `OSMOGREP_TERMINAL_PHONE`.
 2. The paths in `[workspace]` below.
 3. Executables on `PATH`.
-4. Sibling checkouts: `../terminal-mac/dist/terminal-mac` and
-   `../terminal-phone/dist/terminal-phone`, relative to the project root.
+4. Checkouts in the current workspace and its parents, including
+   `terminal-mac/dist/terminal-mac` and `terminal-phone/dist/terminal-phone`.
 
 ```toml
 [workspace]
@@ -60,7 +76,7 @@ terminal_mac = "/absolute/path/terminal-mac/dist/terminal-mac"
 terminal_phone = "/absolute/path/terminal-phone/dist/terminal-phone"
 ```
 
-The companions remain separate installations. OsmoGrep releases do not bundle
+The companions remain optional installations. OsmoGrep releases do not bundle
 their Swift applications, VM images, Xcode, or simulator runtimes. Build the cloned
 companions using their documented packaging scripts, rather than copying an
 unsigned raw Swift executable: the Mac package needs its virtualization

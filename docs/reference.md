@@ -4,6 +4,19 @@ Installation, configuration, controls, and advanced usage. For the product overv
 
 ## Quickstart
 
+For a prebuilt release, use either package manager:
+
+```sh
+npm install -g https://github.com/kaushal07wick/OsmoGrep/releases/latest/download/osmogrep-npm.tgz
+pnpm add -g https://github.com/kaushal07wick/OsmoGrep/releases/latest/download/osmogrep-npm.tgz
+```
+
+Pick one command. The small npm package downloads and verifies the matching native
+binary on first launch, then reuses its user-cache copy. Install scripts are not
+required, including under pnpm. It supports macOS arm64/x64, Linux x64 with glibc,
+and Windows x64. The npm registry short name has not been published yet; use the
+GitHub tarball URL above until registry publication. See [npm packaging](../npm/README.md).
+
 For the current source and terminal UI:
 
 ```sh
@@ -158,6 +171,7 @@ Automatic review/test scheduling is **off by default**. A greeting or unrelated 
 - **Skills:** browse `/skills` and invoke a selected skill with `$skill-name`. Discovery includes repository `skills/`, `.agents/skills/`, `.osmogrep/skills/`, and corresponding supported user skill directories.
 - **Neovim:** `/nv [file]` keeps chat on the left and opens the editor on the right in a native Ghostty pane. A compact project tree, clickable live-edit ticker and file tabs keep the agent's active file visible without taking over files you inspect. **Space a** returns to chat, **Space e** toggles the tree, **Space g** jumps to the live edit, **Space f** toggles following, and **Space s** opens/closes a second inspection window. Unsaved buffers are preserved. Requires Neovim and Ghostty 1.3+ on macOS; other terminals use the tmux fallback. `OSMOGREP_EDITOR_BACKEND=tmux` explicitly selects that fallback. Personal Neovim/terminal configuration stays untouched.
 - **Mac and iPhone:** Settings → Workspace, or `/workspace mac|phone [name]`, opens a separately installed terminal-mac/terminal-phone viewer in a native Ghostty pane and exposes its MCP controls to the agent. `/workspace setup mac|phone [name]` explicitly starts companion setup. See [requirements and data flow](device-workspace.md).
+- **Optional downloads:** Settings → Workspace offers Mac/iPhone companion downloads, also available as `/workspace install mac|phone`. They verify checksums and signatures, keep their resources and licenses, and save their paths automatically. OS images and device setup are separate choices; nothing downloads at app startup.
 - **MCP and hooks:** `/mcp` inspects configured native stdio/Streamable HTTP servers and legacy command bridges. Optional `pre_shell`, `pre_edit`, and `post_edit` hooks are configured in `config.toml`.
 - **Advanced workflows:** GitHub triage, voice input, explicit worktree swarms, and bounded `ultracode` workflows remain available. They are optional and may need external services or tools.
 - **Regression intelligence:** optional revision-aware indexing, context queries, and prediction are documented in [the intelligence guide](prre.md). Normal coding does not depend on that integration.

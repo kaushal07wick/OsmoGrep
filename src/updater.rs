@@ -219,7 +219,7 @@ fn install_update(
     result
 }
 
-fn download(
+pub(crate) fn download(
     url: &str,
     path: &Path,
     stage: &'static str,
@@ -320,7 +320,11 @@ fn transfer(
     Ok(())
 }
 
-fn verify_checksum(archive: &Path, checksum_file: &Path, asset_name: &str) -> Result<(), String> {
+pub(crate) fn verify_checksum(
+    archive: &Path,
+    checksum_file: &Path,
+    asset_name: &str,
+) -> Result<(), String> {
     let expected = expected_checksum(checksum_file, asset_name)?;
     let actual = sha256_file(archive)?;
     if actual == expected {
