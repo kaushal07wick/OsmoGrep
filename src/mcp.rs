@@ -12,6 +12,8 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
+mod local;
+pub use local::register_local;
 
 type Connections = HashMap<String, RunningService<RoleClient, ()>>;
 static CONNECTIONS: OnceLock<Mutex<Connections>> = OnceLock::new();
@@ -36,7 +38,7 @@ pub fn call_cancellable(
     args: &Value,
     cancel: &dyn Fn() -> bool,
 ) -> Result<Value, String> {
-    let cfg = load_config().ok_or("MCP config not found")?;
+    let cfg = effective_config().ok_or("MCP config not found")?;
     if !cfg.enabled.unwrap_or(false) {
         return Err("MCP is disabled".into());
     }
@@ -49,12 +51,13 @@ pub fn call_cancellable(
         .and_then(|s| s.get(server))
         .ok_or("Unknown MCP server")?;
     let timeout = Duration::from_millis(scfg.timeout_ms.unwrap_or(30_000).clamp(1000, 120_000));
+    let args = local::scoped_arguments(server, method, args)?;
     if scfg.transport.as_deref() == Some("bridge")
         || (scfg.transport.is_none() && scfg.command.is_none() && scfg.url.is_none())
     {
-        return bridge_call(server, scfg, method, args, timeout);
+        return bridge_call(server, scfg, method, &args, timeout);
     }
-    native_call(server, scfg, method, args, timeout, cancel)
+    native_call(server, scfg, method, &args, timeout, cancel)
 }
 
 fn native_call(
@@ -190,11 +193,14 @@ fn load_config() -> Option<McpConfig> {
 }
 
 pub fn is_enabled() -> bool {
-    load_config().and_then(|c| c.enabled).unwrap_or(false)
+    effective_config().and_then(|c| c.enabled).unwrap_or(false)
+}
+fn effective_config() -> Option<McpConfig> {
+    local::merge(load_config())
 }
 
 pub fn list_servers() -> Vec<String> {
-    load_config()
+    effective_config()
         .and_then(|c| c.servers)
         .map(|m| m.keys().cloned().collect())
         .unwrap_or_default()
@@ -206,7 +212,7 @@ pub fn call_with_timeout(
     args: &Value,
     limit: Duration,
 ) -> Result<Value, String> {
-    let cfg = load_config().ok_or("MCP config not found")?;
+    let cfg = effective_config().ok_or("MCP config not found")?;
     if !cfg.enabled.unwrap_or(false) {
         return Err("MCP is disabled. Set [mcp].enabled = true".to_string());
     }
@@ -223,6 +229,7 @@ pub fn call_with_timeout(
         .get(&target)
         .ok_or_else(|| format!("Unknown MCP server: {}", target))?
         .clone();
+    let args = local::scoped_arguments(&target, method, args)?;
 
     let timeout =
         Duration::from_millis(scfg.timeout_ms.unwrap_or(30_000).clamp(1_000, 120_000)).min(limit);
@@ -238,9 +245,9 @@ pub fn call_with_timeout(
         "bridge"
     });
     if transport != "bridge" {
-        return native_call(&target, &scfg, method, args, timeout, &|| false);
+        return native_call(&target, &scfg, method, &args, timeout, &|| false);
     }
-    bridge_call(&target, &scfg, method, args, timeout)
+    bridge_call(&target, &scfg, method, &args, timeout)
 }
 
 fn bridge_call(
@@ -371,7 +378,7 @@ for line in sys.stdin:
  method=r['method']; p=r.get('params',{})
  if method=='initialize': result={'protocolVersion':p['protocolVersion'],'capabilities':{'tools':{},'resources':{}},'serverInfo':{'name':'fixture','version':'1'}}
  elif method=='tools/list': result={'tools':[{'name':'echo','description':'Echo','inputSchema':{'type':'object','properties':{}}}]}
- elif method=='tools/call': result={'content':[{'type':'text','text':p['arguments']['text']}]}
+ elif method=='tools/call': result={'content':p['arguments'].get('content',[{'type':'text','text':p['arguments']['text']}])}
  elif method=='resources/read': result={'contents':[{'uri':p['uri'],'text':'resource contents'}]}
  else: result={}
  print(json.dumps({'jsonrpc':'2.0','id':r['id'],'result':result}),flush=True)
@@ -405,6 +412,28 @@ for line in sys.stdin:
         )
         .unwrap();
         assert_eq!(result["content"][0]["text"], "round trip");
+        use base64::Engine;
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(2, 2)
+            .write_to(&mut png, image::ImageOutputFormat::Png)
+            .unwrap();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(png.into_inner());
+        let screenshot = native_call(
+            "fixture", &cfg, "tools/call",
+            &serde_json::json!({"name":"echo","arguments":{"text":"screen","content":[{"type":"image","mimeType":"image/png","data":encoded}]}}),
+            Duration::from_secs(3), &||false,
+        ).unwrap();
+        let observation = crate::tool_budget::model_output(
+            &crate::tools::repo_root().unwrap(),
+            "mcp_call",
+            &screenshot,
+        )
+        .unwrap();
+        assert_eq!(
+            observation[1]["image_url"],
+            format!("data:image/png;base64,{encoded}")
+        );
+        assert!(!observation[0]["text"].as_str().unwrap().contains(&encoded));
         let resource = native_call(
             "fixture",
             &cfg,

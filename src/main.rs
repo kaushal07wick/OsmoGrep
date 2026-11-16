@@ -28,6 +28,7 @@ mod sandbox;
 mod shell_guard;
 mod skills;
 mod state;
+mod storage;
 mod subagents;
 mod team;
 mod test_harness;
@@ -42,6 +43,7 @@ mod verification;
 #[cfg(test)]
 mod verify_stop;
 mod voice;
+mod workspace;
 mod worktree;
 
 use std::{
@@ -1443,6 +1445,9 @@ fn run_tui(
             runtime.mark_dirty();
         }
         if ui::workbench::poll(&mut state, &agent) {
+            runtime.mark_dirty();
+        }
+        if workspace::poll(&mut state) {
             runtime.mark_dirty();
         }
         runtime.draw_if_due(&mut terminal, &mut state, agent.model_config())?;

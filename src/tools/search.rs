@@ -80,6 +80,7 @@ impl Tool for Search {
             if let Ok(out) = Command::new("rg")
                 .arg("--line-number")
                 .arg("--no-heading")
+                .arg("--")
                 .arg(pat)
                 .arg(root)
                 .output()
@@ -141,5 +142,36 @@ impl Tool for Search {
         }
 
         Err("path must be a file or directory".into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn patterns_cannot_enable_ripgrep_preprocessors() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("search-flags-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let script = root.join("pre.sh");
+        let marker = root.join("executed");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf executed > {}\ncat \"$1\"\n",
+                crate::commands::shell_escape(&marker.display().to_string())
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let pattern = format!("--pre={}", script.display());
+        std::fs::write(root.join("sample.txt"), format!("{pattern}\n")).unwrap();
+        let result = Search.call(json!({"pat":pattern,"path":root})).unwrap();
+        assert!(
+            !marker.exists(),
+            "a read-only search must never execute a preprocessor"
+        );
+        assert!(result["count"].as_u64().unwrap() > 0);
     }
 }

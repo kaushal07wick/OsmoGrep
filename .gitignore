@@ -8,6 +8,7 @@ __pycache__/
 
 tests/
 .agents.pid
+.nvimlog
 
 .osmogrep_context.txt
 .osmogrep_prompt.txt

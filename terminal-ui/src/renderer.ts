@@ -1,5 +1,5 @@
 import {plain} from './chrome.ts';
-import {codeBlocks,type CodeCopy} from './code.ts';
+import {cachedCodeBlocks,type CodeCopy} from './code.ts';
 import { Image, Markdown, getCapabilities, renderImage, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import { introDuration, websiteMark } from './brand.ts';
 import { introFrame, introPng } from './intro.ts';
@@ -157,7 +157,7 @@ export function render(v: View): Rendered {
   const transcript: string[] = [];
   const insertedDiffs=new Set<FileDiff>();
   const codeCopies:CodeCopy[]=[];
-  const appendMarkdown=(text:string)=>{const block=codeBlocks(text,Math.max(1,width-pad*2),light,text=>markdown(text,width-pad*2),v.copiedCode);codeCopies.push(...block.copies.map(copy=>({...copy,row:copy.row+transcript.length})));transcript.push(...block.rows);};
+  const appendMarkdown=(text:string)=>{const block=cachedCodeBlocks(text,Math.max(1,width-pad*2),light,text=>markdown(text,width-pad*2),v.copiedCode,accent);codeCopies.push(...block.copies.map(copy=>({...copy,row:copy.row+transcript.length})));transcript.push(...block.rows);};
   let paragraph: string[] = [];
   const flush = () => { if (paragraph.length) { appendMarkdown(paragraph.join('\n')); paragraph = []; } };
   for (let i = 0; i < v.logs.length; i++) {

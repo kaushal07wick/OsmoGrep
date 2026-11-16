@@ -1,0 +1,53 @@
+{
+  "scope": "Dedicated Ghostty window; actual companion missing-target errors; no OS download or device control",
+  "mac_viewer_opens_beside_owner": true,
+  "mac_missing_target_report": "terminal-mac: VM 'osmogrep-absent-v_h24ti9' does not exist. Run terminal-mac create osmogrep-absent-v_h24ti9 --ipsw /path/to/restore.ipsw\n",
+  "phone_viewer_opens_beside_owner": true,
+  "phone_missing_target_report": "{\"error\":\"Phone 'osmogrep-absent-v_h24ti9' does not exist. Run terminal-phone up osmogrep-absent-v_h24ti9.\",\"ok\":false}\n",
+  "owner_and_two_companions_visible": true,
+  "date": "2026-11-16",
+  "mac_revision": "74c548f27910ba2d228637780740e5fd3f9e0450",
+  "phone_revision": "63525fe83e68e156a7d1a4755c98398de27c434a",
+  "mac_packaged_build": "passed; guest helper bundled; virtualization supported",
+  "phone_packaged_build": "passed",
+  "mcp_discovery": {
+    "mac": [
+      "screenshot",
+      "click",
+      "move",
+      "drag",
+      "scroll",
+      "type",
+      "key",
+      "status"
+    ],
+    "phone": [
+      "phone_devices",
+      "phone_boot",
+      "phone_session",
+      "phone_capabilities",
+      "phone_observe",
+      "phone_act",
+      "phone_wait"
+    ]
+  },
+  "live_device_input": "not run; no configured Mac VM or installed iOS runtime",
+  "paid_api_calls": 0,
+  "ghostty_settings_changed": false,
+  "personal_neovim_config_changed": false,
+  "installed_osmogrep_binary_replaced": false,
+  "regressions": {
+    "rust_tests": {
+      "passed": 290,
+      "ignored": 3
+    },
+    "typescript_tests": 65,
+    "editor_pty_checks": 12,
+    "harness_fixture_checks": 13,
+    "provider_protocol_cases": 4,
+    "team_process_checks": 9,
+    "supervised_run_checks": 7,
+    "supervised_run_fixture_requests": 154,
+    "real_companion_mcp_test": "passed; explicit ignored test run separately"
+  }
+}

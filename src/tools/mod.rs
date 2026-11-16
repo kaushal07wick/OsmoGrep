@@ -626,7 +626,7 @@ pub fn repo_root() -> Result<PathBuf, String> {
         .unwrap_or_else(std::env::current_dir)
         .map_err(|e| e.to_string())
 }
-fn in_root<T>(root: &Path, call: impl FnOnce() -> T) -> T {
+pub(crate) fn in_root<T>(root: &Path, call: impl FnOnce() -> T) -> T {
     struct Restore(Option<PathBuf>);
     impl Drop for Restore {
         fn drop(&mut self) {

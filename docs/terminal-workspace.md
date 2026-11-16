@@ -26,14 +26,15 @@ the model settings for keyboard access, endpoint editing and custom identifiers.
 Model discovery runs in Rust against the chosen endpoint's `/models` metadata
 route, with a five-second timeout, no redirects and a 2 MiB response bound. No
 agent turn or completion request runs for discovery. Endpoints without a catalog
-retain custom entry. Listed models still need the Responses capability used by
-the existing agent. Saved credentials are scoped by provider, with legacy keys
+retain custom entry. Select the Responses, Chat Completions or Anthropic API
+supported by the endpoint. Saved credentials are scoped by provider, with legacy keys
 preserved; they never enter the renderer. Drag over transcript text to select it; release copies plain text to the clipboard.
 Ctrl+C copies that selection again, and Ctrl+O copies the latest response. Hold
 Shift for terminal-native selection instead. `OSMOGREP_MOUSE=off` leaves keyboard
 selectors and transcript copy commands available.
 
-Tab/Shift+Tab switches panel sections. Type to filter, Up/Down to navigate and
+Settings shows visible categories, including Workspace for editor and device
+panes. Tab/Shift+Tab also switches panel sections. Type to filter, Up/Down to navigate and
 Escape to close without losing a draft. Escape never exits an idle app; `/exit`
 is the explicit exit command. Model-field editing supports paste,
 Backspace and Ctrl+U to replace a value. In shortcut capture, Backspace restores

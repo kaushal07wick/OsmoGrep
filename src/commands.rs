@@ -348,6 +348,10 @@ pub fn handle_command(
         open_nv(state, &cmd);
         return;
     }
+    if cmd.starts_with("/workspace ") {
+        crate::workspace::handle(state, &cmd);
+        return;
+    }
 
     match cmd.as_str() {
         "/help" => help(state),
@@ -2627,6 +2631,10 @@ pub(crate) fn command_palette_items() -> &'static [CommandItem] {
         CommandItem {
             cmd: "/nv",
             desc: "Open the workspace in Neovim",
+        },
+        CommandItem {
+            cmd: "/workspace",
+            desc: "Open code, Mac and iPhone workspace panes",
         },
         CommandItem {
             cmd: "/exit",

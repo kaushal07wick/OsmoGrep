@@ -1,4 +1,5 @@
 use serde_json::{json, Value};
+use std::io::Read;
 
 use super::{Tool, ToolResult, ToolSafety};
 
@@ -50,14 +51,7 @@ impl Tool for WebFetch {
         let resp = client.get(url).send().map_err(|e| e.to_string())?;
         let status = resp.status().as_u16();
         let headers = resp.headers().clone();
-        let body = resp.text().map_err(|e| e.to_string())?;
-
-        let text = if body.chars().count() > max_chars {
-            let clipped: String = body.chars().take(max_chars).collect();
-            format!("{}\n...truncated...", clipped)
-        } else {
-            body
-        };
+        let text = bounded_text(resp, max_chars)?;
 
         Ok(json!({
             "url": url,
@@ -68,5 +62,35 @@ impl Tool for WebFetch {
                 .unwrap_or(""),
             "text": text,
         }))
+    }
+}
+
+fn bounded_text(reader: impl Read, max_chars: usize) -> Result<String, String> {
+    let mut bytes = Vec::new();
+    // Four bytes cover one Unicode scalar. Never buffer an unbounded response just to clip it.
+    reader
+        .take((max_chars * 4 + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    let body = String::from_utf8_lossy(&bytes);
+    let mut characters = body.chars();
+    let mut text: String = characters.by_ref().take(max_chars).collect();
+    if characters.next().is_some() {
+        text.push_str("\n...truncated...");
+    }
+    Ok(text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn fetch_caps_downloaded_bytes_without_splitting_visible_unicode() {
+        let source = "🐙".repeat(1000);
+        let mut reader = std::io::Cursor::new(source.as_bytes());
+        let text = bounded_text(&mut reader, 5).unwrap();
+        assert_eq!(text, "🐙".repeat(5) + "\n...truncated...");
+        assert_eq!(reader.position(), 21);
+        assert_eq!(bounded_text("small".as_bytes(), 10).unwrap(), "small");
     }
 }

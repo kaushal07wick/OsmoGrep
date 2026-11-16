@@ -1,6 +1,5 @@
 use std::cell::RefCell;
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -49,27 +48,7 @@ impl Drop for Session {
     }
 }
 
-pub(crate) fn atomic_write(path: &Path, contents: &[u8]) -> std::io::Result<()> {
-    let temp = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
-    let result = (|| {
-        let mut options = fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&temp)?;
-        file.write_all(contents)?;
-        file.sync_all()?;
-        fs::rename(&temp, path)?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(temp);
-    }
-    result
-}
+pub(crate) use crate::storage::atomic_write;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -499,23 +478,7 @@ pub fn config_dir() -> PathBuf {
 pub fn update_config(
     update: impl FnOnce(&mut toml::Value) -> Result<(), String>,
 ) -> Result<(), String> {
-    let path = config_dir().join("config.toml");
-    let mut config = match fs::read_to_string(&path) {
-        Ok(text) => text.parse::<toml::Value>().map_err(|e| e.to_string())?,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            toml::Value::Table(Default::default())
-        }
-        Err(e) => return Err(e.to_string()),
-    };
-    update(&mut config)?;
-    fs::create_dir_all(config_dir()).map_err(|e| e.to_string())?;
-    atomic_write(
-        &path,
-        toml::to_string(&config)
-            .map_err(|e| e.to_string())?
-            .as_bytes(),
-    )
-    .map_err(|e| e.to_string())
+    crate::storage::update_toml(&config_dir().join("config.toml"), update)
 }
 
 pub fn session_dir() -> PathBuf {

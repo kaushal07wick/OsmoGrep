@@ -1,0 +1,18 @@
+{
+  "date": "2026-11-16",
+  "command": "node terminal-ui/scripts/render-benchmark.mjs",
+  "fixture": "1000 fixed transcript lines, changing activity elapsed time; 10 warmups + 30 measured frames",
+  "before": {
+    "scope": "Synthetic 1,000-line transcript; TypeScript renderer only; warm animation frames; no model calls",
+    "samples": 30,
+    "p50_ms": 30.18195800000001,
+    "p95_ms": 33.46233300000006
+  },
+  "after": {
+    "scope": "Synthetic 1,000-line transcript; TypeScript renderer only; warm animation frames; no model calls",
+    "samples": 30,
+    "p50_ms": 2.512457999999981,
+    "p95_ms": 2.755375000000015
+  },
+  "limits": "TypeScript rendering only on the development Mac. Excludes Rust snapshot/IPC, terminal painting, model latency and device rendering. Not an end-to-end typing latency measurement."
+}

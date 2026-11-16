@@ -116,6 +116,13 @@ Press **⌘←** (or **Ctrl+S**) to manage sessions across projects: search, fil
 
 For sustained work, `osmogrep task start` adds a durable objective, acceptance criteria, progress checkpoints, and explicit time/request/token budgets. Interrupted tasks can resume without replaying uncertain tools. [Supervised long runs →](docs/long-runs.md)
 
+Open **Settings → Workspace** to work beside a black Neovim editor, a virtual Mac,
+or an iPhone viewer. OsmoGrep uses separately installed **terminal-mac** and
+**terminal-phone** companions in native Ghostty panes and connects their MCP
+controls to the agent. The editor follows saved changes; vision-capable models
+receive device screenshots as images. First use needs the companion's VM or
+simulator setup. [Device workspace →](docs/device-workspace.md)
+
 Sessions and preferences stay on your machine. Prompts, attachments, and tool context go to the model provider you select. [Permissions and data handling →](docs/reference.md#permissions-and-data)
 
 ## Documentation
@@ -125,6 +132,8 @@ Sessions and preferences stay on your machine. Prompts, attachments, and tool co
 | [User reference](docs/reference.md) | Installation, providers, controls, configuration, and headless use |
 | [Terminal guide](terminal-ui/README.md) | Editing, attachments, graphics, and UI development |
 | [Workspace controls](docs/terminal-workspace.md) | Skills, shortcuts, permissions, and status-line settings |
+| [Mac and iPhone workspace](docs/device-workspace.md) | Companion setup, native panes, screen observations and agent control |
+| [Architecture and audit](docs/architecture.md) | Source map, module boundaries, measured performance and remaining findings |
 | [Supervised long runs](docs/long-runs.md) | Durable objectives, completion evidence, budgets, stop, and recovery |
 | [Sessions and teams](docs/team-runtime.md) | Session center, cross-process messaging, activity, and coordinated edits |
 | [Harness foundations](docs/harness-foundations.md) | Sessions, checkpoints, process sessions, MCP/LSP, credentials, and RPC |

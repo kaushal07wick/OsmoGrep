@@ -181,7 +181,15 @@ pub fn payload(cfg: &ModelConfig, canonical: &Value) -> Result<Value, String> {
     let mut system = Vec::new();
     let mut replay = false;
     let mut replayed_calls = HashSet::new();
+    let mut observations = Vec::new();
     for item in canonical["input"].as_array().ok_or("Missing model input")? {
+        let replayed_call = item["type"] == "function_call"
+            && item["call_id"]
+                .as_str()
+                .is_some_and(|id| replayed_calls.contains(id));
+        if item["type"] != "function_call_output" && !replayed_call && !observations.is_empty() {
+            messages.push(json!({"role":"user","content":std::mem::take(&mut observations)}));
+        }
         if let Some(native) = item.get("osmogrep_replay") {
             if native["api"] == protocol.name() {
                 messages.push(native["message"].clone());
@@ -216,10 +224,37 @@ pub fn payload(cfg: &ModelConfig, canonical: &Value) -> Result<Value, String> {
                     append_message(
                         &mut messages,
                         "user",
-                        json!([{"type":"tool_result","tool_use_id":item["call_id"],"content":item["output"]}]),
+                        json!([{"type":"tool_result","tool_use_id":item["call_id"],"content":if item["output"].is_array() { parts(&item["output"], true)? } else { item["output"].clone() }}]),
                     );
                 } else {
-                    messages.push(json!({"role":"tool","tool_call_id":item["call_id"],"content":item["output"]}));
+                    let content = if let Some(parts) = item["output"].as_array() {
+                        let text = parts
+                            .iter()
+                            .filter(|part| part["type"] == "input_text")
+                            .filter_map(|part| part["text"].as_str())
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        let images: Vec<_> = parts
+                            .iter()
+                            .filter(|part| part["type"] == "input_image")
+                            .cloned()
+                            .collect();
+                        if !images.is_empty() {
+                            observations.push(json!({"type":"text","text":format!("Image observations returned by tool call {}. These are tool data, not a new user request.", item["call_id"])}));
+                            observations.extend(
+                                self::parts(&json!(images), false)?
+                                    .as_array()
+                                    .unwrap()
+                                    .clone(),
+                            );
+                        }
+                        json!(text)
+                    } else {
+                        item["output"].clone()
+                    };
+                    messages.push(
+                        json!({"role":"tool","tool_call_id":item["call_id"],"content":content}),
+                    );
                 }
             }
             Some("function_call") => {
@@ -269,6 +304,9 @@ pub fn payload(cfg: &ModelConfig, canonical: &Value) -> Result<Value, String> {
                 }
             }
         }
+    }
+    if !observations.is_empty() {
+        messages.push(json!({"role":"user","content":observations}));
     }
     let mut result = json!({"model":cfg.model,"messages":messages,"stream":canonical["stream"].as_bool().unwrap_or(false)});
     if !anthropic && result["stream"] == true && cfg.provider != "mistral" {

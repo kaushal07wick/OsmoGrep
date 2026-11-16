@@ -64,6 +64,38 @@ fn fixture() -> Value {
 }
 
 #[test]
+fn image_tool_results_reach_each_provider_without_breaking_parallel_tool_pairs() {
+    let image = json!({"type":"input_image","image_url":"data:image/png;base64,AQID"});
+    let output = json!([{"type":"input_text","text":"Observation"},image]);
+    let input = json!([
+        {"role":"user","content":"Inspect the phone"},
+        {"osmogrep_replay":{"api":"chat-completions","message":{"role":"assistant","content":null,"tool_calls":[{"id":"a","type":"function","function":{"name":"mcp_call","arguments":"{}"}},{"id":"b","type":"function","function":{"name":"mcp_call","arguments":"{}"}}]}}},
+        {"type":"function_call","call_id":"a","name":"mcp_call","arguments":"{}"},
+        {"type":"function_call_output","call_id":"a","output":output},
+        {"type":"function_call","call_id":"b","name":"mcp_call","arguments":"{}"},
+        {"type":"function_call_output","call_id":"b","output":"second result"}
+    ]);
+    let canonical = json!({"input":input});
+    let response = payload(&config(Api::Responses), &canonical).unwrap();
+    assert_eq!(response["input"][3]["output"][1], image);
+    let chat = payload(&config(Api::ChatCompletions), &canonical).unwrap();
+    let roles: Vec<_> = chat["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["role"].as_str().unwrap())
+        .collect();
+    assert_eq!(roles, ["user", "assistant", "tool", "tool", "user"]);
+    assert_eq!(chat["messages"][2]["content"], "Observation");
+    assert_eq!(chat["messages"][4]["content"][1]["type"], "image_url");
+    let anthropic = payload(&config(Api::AnthropicMessages), &canonical).unwrap();
+    let observed = &anthropic["messages"][2]["content"][0]["content"][1];
+    assert_eq!(observed["type"], "image");
+    assert_eq!(observed["source"]["data"], "AQID");
+    assert_eq!(canonical["input"][0]["content"], "Inspect the phone");
+}
+
+#[test]
 fn protocol_defaults_and_custom_override_preserve_legacy_config() {
     let old: ModelConfig = toml::from_str("provider='groq'\nmodel='llama'\n").unwrap();
     assert_eq!(api(&old), Api::ChatCompletions);

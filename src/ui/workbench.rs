@@ -22,6 +22,7 @@ const SECTIONS: &[&str] = &[
     "Sessions",
     "Team",
     "Settings",
+    "Workspace",
 ];
 
 pub struct Panel {
@@ -147,6 +148,7 @@ pub fn section_for(command: &str) -> Option<usize> {
         "/status" | "/metrics" => 9,
         "/sessions" => 10,
         "/team" => 11,
+        "/workspace" => 13,
         _ => return None,
     })
 }
@@ -464,10 +466,43 @@ fn entries(state: &AgentState, panel: &Panel) -> Vec<Row> {
             (6, "Skills", "Browse available agent skills"),
             (7, "Usage", "Tokens and context for this session"),
             (8, "Activity", "Weekly usage and recorded history"),
+            (13, "Workspace", "Editor, virtual Mac and iPhone panes"),
         ]
         .into_iter()
         .map(|(section, label, description)| row(label, description, "→", Action::Section(section)))
         .collect(),
+        13 => vec![
+            row(
+                "Code editor",
+                "Follow the agent’s active file and saved edits",
+                "Open",
+                Action::Command("/nv".into()),
+            ),
+            row(
+                "Virtual Mac",
+                "Open terminal-mac beside the coding workspace",
+                "Open",
+                Action::Command("/workspace mac".into()),
+            ),
+            row(
+                "iPhone",
+                "Open terminal-phone beside the coding workspace",
+                "Open",
+                Action::Command("/workspace phone".into()),
+            ),
+            row(
+                "Set up virtual Mac",
+                "First run may download macOS; guest account and permissions need your input",
+                "Setup",
+                Action::Command("/workspace setup mac".into()),
+            ),
+            row(
+                "Set up iPhone",
+                "First run may download an iOS runtime and prepare its simulator",
+                "Setup",
+                Action::Command("/workspace setup phone".into()),
+            ),
+        ],
         10 => session_rows(state, panel, true),
         11 => vec![
             row(
@@ -1631,7 +1666,7 @@ mod tests {
         state.insert_text("keep my draft");
         assert_eq!(section_for("/settings"), Some(12));
         open(&mut state, 12, None);
-        assert_eq!(view(&state).unwrap().rows.len(), 8);
+        assert_eq!(view(&state).unwrap().rows.len(), 9);
         handle_key(&mut state, key(KeyCode::Tab));
         assert_eq!(view(&state).unwrap().section, 12);
         assert!(choose_at(&mut state, 2, "Permissions"));
@@ -1644,6 +1679,20 @@ mod tests {
         handle_key(&mut state, key(KeyCode::Esc));
         assert!(state.ui.panel.is_none());
         assert_eq!(state.ui.input, "keep my draft");
+    }
+
+    #[test]
+    fn workspace_category_exposes_editor_and_companion_controls() {
+        let mut state = crate::init_state();
+        open(&mut state, 12, None);
+        assert!(choose_at(&mut state, 8, "Workspace"));
+        let panel = view(&state).unwrap();
+        assert_eq!(panel.section, 13);
+        assert_eq!(panel.rows.len(), 5);
+        assert!(panel.rows.iter().any(|row| row.label.contains("Mac")));
+        assert!(panel.rows.iter().any(|row| row.label.contains("iPhone")));
+        handle_key(&mut state, key(KeyCode::Esc));
+        assert_eq!(view(&state).unwrap().section, 12);
     }
     #[test]
     fn session_center_sorts_recent_activity_across_projects_and_keeps_selection_identity() {

@@ -20,8 +20,11 @@ pub fn spawn_indexer(root: PathBuf, tx: Sender<ContextEvent>) {
         let result = std::panic::catch_unwind(|| load_or_build(&root));
 
         match result {
-            Ok(_) => {
+            Ok(Ok(_)) => {
                 let _ = tx.send(ContextEvent::Finished);
+            }
+            Ok(Err(error)) => {
+                let _ = tx.send(ContextEvent::Error(error));
             }
             Err(_) => {
                 let _ = tx.send(ContextEvent::Error("context indexing panicked".into()));

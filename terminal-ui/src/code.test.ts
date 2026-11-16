@@ -1,9 +1,22 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {stripTerminalSequences,visibleWidth,setCapabilities} from '@earendil-works/pi-tui';
-import {codeBlocks} from './code.ts';
+import {codeBlocks,cachedCodeBlocks} from './code.ts';
 import {render} from './renderer.ts';
 import {fixture} from './test-fixture.ts';
+test('settled transcript cache invalidates on source, width, theme, copy feedback and style', () => {
+ let calls=0;
+ const markdown=(text:string)=>{calls++;return [text];};
+ const first=cachedCodeBlocks('cache fixture',80,false,markdown);
+ assert.strictEqual(cachedCodeBlocks('cache fixture',80,false,markdown),first);
+ assert.equal(calls,1);
+ for(const [text,width,light,copied,style] of [['new source',80,false,'',''],['cache fixture',79,false,'',''],['cache fixture',80,true,'',''],['cache fixture',80,false,'copied',''],['cache fixture',80,false,'','blue']] as const){
+  assert.notStrictEqual(cachedCodeBlocks(text,width,light,markdown,copied,style),first);
+ }
+ assert.equal(calls,6);
+ for(let i=0;i<9;i++)cachedCodeBlocks('eviction '+i,80,false,markdown);
+ assert.notStrictEqual(cachedCodeBlocks('cache fixture',80,false,markdown),first);
+});
 test('fenced commands have a highlighted surface and copy the exact source without fences',()=>{
  const code='python hey_bro_triangle.py\nprintf "hey 界"\n\techo --help';
  for(const light of [false,true])for(const width of [1,14,40,100]){

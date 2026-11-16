@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::Read;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -8,8 +9,6 @@ use walkdir::WalkDir;
 use tree_sitter::{Node, Parser};
 use tree_sitter_python as python;
 use tree_sitter_rust as rust;
-
-use blake3::Hasher;
 
 /* ======================= CONFIG ======================= */
 
@@ -64,6 +63,10 @@ pub struct Context {
 
 #[derive(Serialize, Deserialize)]
 struct Meta {
+    #[serde(default)]
+    index_version: u32,
+    #[serde(default)]
+    context_digest: String,
     stats: RepoStats,
     file_hashes: HashMap<String, String>,
 }
@@ -82,58 +85,52 @@ pub fn extract_symbols(source: &str, path: &str) -> Vec<Symbol> {
     symbols
 }
 
-pub fn load_or_build(root: impl AsRef<Path>) -> Context {
+pub fn load_or_build(root: impl AsRef<Path>) -> Result<Context, String> {
+    const INDEX_VERSION: u32 = 2;
     let root = root.as_ref();
-    let ctx_dir = root.join(CONTEXT_DIR);
+    let ctx_dir = crate::file_guard::internal_dir(root, CONTEXT_DIR)?;
+    let _lock = crate::storage::lock_file(&ctx_dir.join("index.lock"))?;
     let ctx_path = ctx_dir.join(CONTEXT_FILE);
     let meta_path = ctx_dir.join(META_FILE);
-
-    let current_stats = compute_repo_stats(root);
-    let current_hashes = compute_file_hashes(root);
-
-    if let (Ok(ctx_raw), Ok(meta_raw)) = (
-        fs::read_to_string(&ctx_path),
-        fs::read_to_string(&meta_path),
-    ) {
-        if let (Ok(mut ctx), Ok(meta)) = (
-            serde_json::from_str::<Context>(&ctx_raw),
-            serde_json::from_str::<Meta>(&meta_raw),
-        ) {
-            if meta.stats == current_stats {
-                incremental_update(root, &mut ctx, &meta.file_hashes, &current_hashes);
-
-                fs::write(&ctx_path, serde_json::to_string_pretty(&ctx).unwrap()).unwrap();
-
-                fs::write(
-                    &meta_path,
-                    serde_json::to_string_pretty(&Meta {
-                        stats: current_stats,
-                        file_hashes: current_hashes,
-                    })
-                    .unwrap(),
-                )
-                .unwrap();
-
-                return ctx;
-            }
-        }
-    }
-
-    let ctx = build_context(root, current_stats.clone(), &current_hashes);
-
-    fs::create_dir_all(&ctx_dir).ok();
-    fs::write(&ctx_path, serde_json::to_string_pretty(&ctx).unwrap()).unwrap();
-    fs::write(
-        &meta_path,
-        serde_json::to_string_pretty(&Meta {
-            stats: current_stats,
-            file_hashes: current_hashes,
+    let (current_stats, current_hashes) = scan_sources(root)?;
+    let saved = fs::read(&ctx_path)
+        .ok()
+        .and_then(|bytes| {
+            serde_json::from_slice::<Context>(&bytes)
+                .ok()
+                .map(|context| (context, blake3::hash(&bytes).to_hex().to_string()))
         })
-        .unwrap(),
+        .zip(
+            fs::read(&meta_path)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Meta>(&bytes).ok()),
+        );
+    let ctx = if let Some(((mut ctx, _), meta)) = saved.filter(|((_, digest), meta)| {
+        meta.index_version == INDEX_VERSION && *digest == meta.context_digest
+    }) {
+        if meta.file_hashes == current_hashes && meta.stats == current_stats {
+            return Ok(ctx);
+        }
+        incremental_update(root, &mut ctx, &meta.file_hashes, &current_hashes);
+        ctx.stats = current_stats.clone();
+        ctx
+    } else {
+        build_context(root, current_stats.clone(), &current_hashes)
+    };
+    let context_bytes = serde_json::to_vec(&ctx).map_err(|e| e.to_string())?;
+    let meta = Meta {
+        index_version: INDEX_VERSION,
+        context_digest: blake3::hash(&context_bytes).to_hex().to_string(),
+        stats: current_stats,
+        file_hashes: current_hashes,
+    };
+    crate::storage::atomic_write(&ctx_path, &context_bytes).map_err(|e| e.to_string())?;
+    crate::storage::atomic_write(
+        &meta_path,
+        &serde_json::to_vec(&meta).map_err(|e| e.to_string())?,
     )
-    .unwrap();
-
-    ctx
+    .map_err(|e| e.to_string())?;
+    Ok(ctx)
 }
 
 /* ======================= IGNORE RULES ======================= */
@@ -168,60 +165,52 @@ fn detect_language(path: &Path) -> Option<&'static str> {
     }
 }
 
-/* ======================= HASHING ======================= */
+/* ======================= SOURCE SCAN ======================= */
 
-fn hash_file(path: &Path) -> Option<String> {
-    let data = fs::read(path).ok()?;
-    let mut h = Hasher::new();
-    h.update(&data);
-    Some(h.finalize().to_hex().to_string())
-}
-
-fn compute_file_hashes(root: &Path) -> HashMap<String, String> {
-    let mut out = HashMap::new();
-
-    for e in WalkDir::new(root).into_iter().filter_map(Result::ok) {
-        let p = e.path();
-        if !e.file_type().is_file() || should_ignore(p) {
-            continue;
-        }
-        if detect_language(p).is_none() {
-            continue;
-        }
-        if let Some(h) = hash_file(p) {
-            out.insert(p.display().to_string(), h);
-        }
+fn read_source(path: &Path) -> std::io::Result<Vec<u8>> {
+    const SOURCE_LIMIT: u64 = 20 * 1024 * 1024;
+    let mut bytes = Vec::new();
+    fs::File::open(path)?
+        .take(SOURCE_LIMIT + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > SOURCE_LIMIT {
+        return Err(std::io::Error::other(format!(
+            "{} exceeds the 20 MiB index budget",
+            path.display()
+        )));
     }
-
-    out
+    Ok(bytes)
 }
 
-/* ======================= STATS ======================= */
-
-fn compute_repo_stats(root: &Path) -> RepoStats {
+fn scan_sources(root: &Path) -> Result<(RepoStats, HashMap<String, String>), String> {
+    let mut hashes = HashMap::new();
     let mut stats = RepoStats {
         file_count: 0,
         total_bytes: 0,
         total_lines: 0,
     };
-
-    for e in WalkDir::new(root).into_iter().filter_map(Result::ok) {
-        if !e.file_type().is_file() || should_ignore(e.path()) {
+    let entries = WalkDir::new(root).into_iter().filter_entry(|entry| {
+        entry.depth() == 0
+            || !should_ignore(entry.path().strip_prefix(root).unwrap_or(entry.path()))
+    });
+    for entry in entries {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if !entry.file_type().is_file() || detect_language(path).is_none() {
             continue;
         }
-
-        if detect_language(e.path()).is_some() {
-            if let Ok(meta) = e.metadata() {
-                stats.file_count += 1;
-                stats.total_bytes += meta.len();
-                if let Ok(src) = fs::read_to_string(e.path()) {
-                    stats.total_lines += src.lines().count();
-                }
-            }
-        }
+        let bytes = read_source(path).map_err(|e| e.to_string())?;
+        stats.file_count += 1;
+        stats.total_bytes += bytes.len() as u64;
+        stats.total_lines += std::str::from_utf8(&bytes)
+            .map(|text| text.lines().count())
+            .unwrap_or(0);
+        hashes.insert(
+            path.display().to_string(),
+            blake3::hash(&bytes).to_hex().to_string(),
+        );
     }
-
-    stats
+    Ok((stats, hashes))
 }
 
 /* ======================= INCREMENTAL ======================= */
@@ -255,7 +244,9 @@ fn incremental_update(
         let Some(lang) = detect_language(p) else {
             continue;
         };
-        let Ok(src) = fs::read_to_string(p) else {
+        let Ok(src) = read_source(p)
+            .and_then(|bytes| String::from_utf8(bytes).map_err(std::io::Error::other))
+        else {
             continue;
         };
 
@@ -346,7 +337,9 @@ fn build_context(_root: &Path, stats: RepoStats, hashes: &HashMap<String, String
         let Some(lang) = detect_language(p) else {
             continue;
         };
-        let Ok(src) = fs::read_to_string(p) else {
+        let Ok(src) = read_source(p)
+            .and_then(|bytes| String::from_utf8(bytes).map_err(std::io::Error::other))
+        else {
             continue;
         };
 
@@ -551,6 +544,9 @@ fn finalize_calls(symbols: &mut Vec<Symbol>) {
     let mut reverse: HashMap<String, Vec<String>> = HashMap::new();
 
     for s in symbols.iter_mut() {
+        s.custom_calls.clear();
+        s.lang_calls.clear();
+        s.called_by.clear();
         for c in &s.calls {
             if names.contains(c) {
                 s.custom_calls.push(c.clone());
@@ -570,5 +566,63 @@ fn finalize_calls(symbols: &mut Vec<Symbol>) {
             callers.dedup();
             s.called_by = callers;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn index_prunes_generated_trees_and_updates_changed_and_removed_sources() {
+        let temporary = std::env::temp_dir().join(format!("indexer-{}", uuid::Uuid::new_v4()));
+        let root = temporary.join("target/project");
+        fs::create_dir_all(root.join("node_modules/dependency")).unwrap();
+        fs::write(
+            root.join("node_modules/dependency/ignored.py"),
+            "def hidden(): pass\n",
+        )
+        .unwrap();
+        let source = root.join("app.py");
+        fs::write(&source, "def old(): pass\n").unwrap();
+        let context = load_or_build(&root).unwrap();
+        assert_eq!(context.stats.file_count, 1);
+        assert!(context.symbols.iter().any(|symbol| symbol.name == "old"));
+        fs::write(&source, "def changed_name():\n    return 123\n").unwrap();
+        let updated = load_or_build(&root).unwrap();
+        assert_eq!(updated.stats.total_lines, 2);
+        assert!(updated
+            .symbols
+            .iter()
+            .any(|symbol| symbol.name == "changed_name"));
+        assert!(!updated.symbols.iter().any(|symbol| symbol.name == "old"));
+        // A crash between cache writes must not make the next run trust a mismatched pair.
+        let cache = root.join(".context/context.json");
+        let mut broken: serde_json::Value =
+            serde_json::from_slice(&fs::read(&cache).unwrap()).unwrap();
+        broken["symbols"] = serde_json::json!([]);
+        fs::write(&cache, serde_json::to_vec(&broken).unwrap()).unwrap();
+        assert!(load_or_build(&root)
+            .unwrap()
+            .symbols
+            .iter()
+            .any(|symbol| symbol.name == "changed_name"));
+        fs::remove_file(&source).unwrap();
+        let removed = load_or_build(&root).unwrap();
+        assert!(removed.files.is_empty() && removed.symbols.is_empty());
+        assert_eq!(removed.stats.file_count, 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_cache_directory_cannot_redirect_index_writes() {
+        let temporary = std::env::temp_dir().join(format!("indexer-link-{}", uuid::Uuid::new_v4()));
+        let root = temporary.join("project");
+        let outside = temporary.join("outside");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join(".context")).unwrap();
+        assert!(load_or_build(&root).is_err());
+        assert_eq!(fs::read_dir(outside).unwrap().count(), 0);
     }
 }

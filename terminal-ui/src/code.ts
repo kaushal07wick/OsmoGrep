@@ -3,6 +3,40 @@ import {plain,fit} from './chrome.ts';
 const reset='\x1b[0m';
 export interface CodeCopy {row:number;x:number;width:number;text:string}
 
+const historyBlocks = new Map<string, {block:ReturnType<typeof codeBlocks>; size:number}>();
+const historyCacheLimit = 2 * 1024 * 1024;
+let historyCacheSize = 0;
+
+/** Animation frames reuse settled text; copy targets still receive current layout coordinates. */
+export function cachedCodeBlocks(
+ text: string,
+ width: number,
+ light: boolean,
+ markdown: (text: string) => string[],
+ copied = '',
+ style = '',
+) {
+ const key = JSON.stringify([text, width, light, copied, style]);
+ const cached = historyBlocks.get(key);
+ if (cached) {
+  historyBlocks.delete(key);
+  historyBlocks.set(key, cached);
+  return cached.block;
+ }
+ const block = codeBlocks(text, width, light, markdown, copied);
+ const size = 2 * (key.length + block.rows.reduce((total, row) => total + row.length, 0));
+ if (size <= historyCacheLimit) {
+  while (historyBlocks.size >= 8 || historyCacheSize + size > historyCacheLimit) {
+   const first = historyBlocks.keys().next().value!;
+   historyCacheSize -= historyBlocks.get(first)!.size;
+   historyBlocks.delete(first);
+  }
+  historyBlocks.set(key, {block, size});
+  historyCacheSize += size;
+ }
+ return block;
+}
+
 // shortcut: basic tokens cover common snippets; use a grammar highlighter when language-specific parsing is needed.
 function highlight(line:string,language:string,light:boolean){
  const ink=light?'\x1b[38;2;40;45;50m':'\x1b[38;2;220;220;210m';
