@@ -87,7 +87,7 @@ test('header preserves the static deployed logo', () => {
   assert.ok(websiteMark().every(row=>visibleWidth(row)===7));
   assert.ok(websiteMark().join('').includes('234;88;12'));
 });
-test('central intro settles at ten seconds and yields to drafts and conversation', () => {
+test('central intro settles into a quiet orbit and yields to drafts and conversation', () => {
   const v=fixture();
   const first=render(v);
   assert.equal(first.animate,true);
@@ -98,7 +98,8 @@ test('central intro settles at ten seconds and yields to drafts and conversation
   assert.ok(next.artwork);
   assert.ok(next.artwork.y >= next.execution.y && next.artwork.y+next.artwork.height < next.input.y);
   v.elapsed=introDuration;
-  assert.equal(render(v).animate,false);
+  assert.equal(render(v).animate,true);
+  assert.equal(render(v).animationIntervalMs,125);
   assert.ok(render(v).artwork);
   v.elapsed=0;v.input='typing';
   assert.equal(render(v).animate,false);
@@ -114,7 +115,7 @@ test('approved scenes morph from the same ring and return to the same quiet pose
   const signatures=new Set<string>();
   for(const scene of ['horizon','interference','life','lorenz'] as const){
     const start=introFrame(0,60,28,false,scene),concept=introFrame(5000,60,28,false,scene),end=introFrame(introDuration,60,28,false,scene);
-    assert.deepEqual(start,end);assert.deepEqual(end,introFrame(introDuration+500,60,28,false,scene));
+    assert.deepEqual(start,end);assert.notDeepEqual(end,introFrame(introDuration+3000,60,28,false,scene));
     assert.notDeepEqual(start,concept);assert.notDeepEqual(concept,introFrame(5500,60,28,false,scene));
     signatures.add(concept.join(''));
     for(const frame of [start,concept,end]){assert.equal(frame.length,28);assert.ok(frame.every(row=>visibleWidth(row)===60));assert.ok(frame.some(row=>/[\u2801-\u28ff]/.test(row)));}
@@ -123,12 +124,12 @@ test('approved scenes morph from the same ring and return to the same quiet pose
   assert.equal(signatures.size,4);
 });
 
-test('approved geometry is finite, Life follows real generations, and bright playback fades back to a dim smaller mark',()=>{
+test('approved geometry is finite, Life follows real generations, and bright playback returns to a readable smaller mark',()=>{
   assert.equal(lifeStates()[0]!.length,36);assert.ok(lifeStates()[120]!.length>36);
   for(const scene of scenes){assert.ok(Array.from(scenePoints(scene,5,6144)).every(Number.isFinite));}
   const pixels=(png:Buffer)=>{const data:Buffer[]=[];for(let at=8;at<png.length;){const n=png.readUInt32BE(at);if(png.toString('ascii',at+4,at+8)==='IDAT')data.push(png.subarray(at+8,at+8+n));at+=n+12;}return inflateSync(Buffer.concat(data));};
   const quiet=pixels(introPng(5000,60,28)),bright=pixels(introPng(5000,60,28,false,'horizon',true));
-  assert.ok(quiet.reduce((a,b)=>Math.max(a,b),0)<45);assert.ok(bright.reduce((a,b)=>Math.max(a,b),0)>100);
+  assert.ok(quiet.reduce((a,b)=>Math.max(a,b),0)>140&&quiet.reduce((a,b)=>Math.max(a,b),0)<240);assert.ok(bright.reduce((a,b)=>Math.max(a,b),0)>100);
   assert.deepEqual(introPng(introDuration,60,28,false,'life',true),introPng(0,60,28));
   const v=fixture();v.preferences={status_fields:[],ambient_art:true,reduce_motion:true};assert.equal(render(v).animate,false);
   v.preferences.ambient_art=false;assert.equal(render(v).artwork,null);
@@ -136,7 +137,7 @@ test('approved geometry is finite, Life follows real generations, and bright pla
 
 test('pointer replay uses its own clock and dialogs, images and small terminals hide the artwork', () => {
   const v=fixture();v.elapsed=20_000;
-  const settled=render(v);assert.equal(settled.animate,false);
+  const settled=render(v);assert.equal(settled.animate,true);
   v.introElapsed=2500;
   assert.equal(render(v).animate,true);
   assert.notDeepEqual(settled.rows,render(v).rows);
@@ -146,7 +147,7 @@ test('pointer replay uses its own clock and dialogs, images and small terminals 
   }
 });
 
-test('fine intro PNG uses three times the linear dot resolution and valid PNG checksums', () => {
+test('fine intro PNG uses six times the linear dot resolution and valid PNG checksums', () => {
   const png=introPng(5000,60,28), data:Buffer[]=[];
   assert.equal(png.subarray(0,8).toString('hex'),'89504e470d0a1a0a');
   let width=0,height=0;
@@ -158,7 +159,7 @@ test('fine intro PNG uses three times the linear dot resolution and valid PNG ch
     if(type==='IDAT') data.push(payload);
     at+=12+length;
   }
-  assert.equal(width,60*2*3);assert.equal(height,28*4*3);
+  assert.equal(width,60*2*6);assert.equal(height,28*4*6);
   const raw=inflateSync(Buffer.concat(data));
   assert.equal(raw.length,(width*3+1)*height);
   assert.ok(raw.some(value=>value>0));
@@ -167,6 +168,23 @@ test('fine intro PNG uses three times the linear dot resolution and valid PNG ch
     assert.equal(raw[at]!+raw[at+1]!+raw[at+2]!,0,'fine dots retain a black gap rather than merging into a solid surface');
   }
   assert.deepEqual(introPng(0,60,28),introPng(introDuration,60,28));
+});
+test('orange highlight completes a clockwise orbit without moving ring pixels and reuses cached frames',()=>{
+  const centers:number[][]=[],masks:Buffer[]=[];
+  for(let quarter=0;quarter<4;quarter++){
+    const png=introPng(introDuration+quarter*3000,52,26),chunks:Buffer[]=[];
+    assert.equal(introPng(introDuration+quarter*3000+12000,52,26),png,'one bounded cache holds a complete orbit');
+    for(let at=8;at<png.length;){const n=png.readUInt32BE(at);if(png.toString('ascii',at+4,at+8)==='IDAT')chunks.push(png.subarray(at+8,at+8+n));at+=n+12;}
+    const width=png.readUInt32BE(16),height=png.readUInt32BE(20),raw=inflateSync(Buffer.concat(chunks)),mask=Buffer.alloc(width*height);
+    let xSum=0,ySum=0,count=0;
+    for(let y=0;y<height;y++)for(let x=0;x<width;x++){
+      const at=y*(width*3+1)+1+x*3;mask[y*width+x]=raw[at]!>0?1:0;
+      if(raw[at]!>raw[at+1]!*1.5){xSum+=x;ySum+=y;count++;}
+    }
+    assert.ok(count>0);centers.push([xSum/count-width/2,ySum/count-height/2]);masks.push(mask);
+  }
+  assert.ok(centers[0]![0]!>50&&centers[1]![1]!>50&&centers[2]![0]!< -50&&centers[3]![1]!< -50);
+  for(const mask of masks)assert.deepEqual(mask,masks[0]);
 });
 test('artwork keeps breathing room above the composer at different terminal sizes',()=>{
  for(const [width,height]of [[80,30],[160,44],[240,80]]){

@@ -66,12 +66,19 @@ impl TuiRuntime {
         if (!self.dirty && !self.animating) || !self.frame.draw_due(now) {
             return Ok(());
         }
-        let animation_interval =
-            if !state.ui.agent_running || state.ui.panel.as_ref().is_some_and(|p| p.section == 8) {
-                32
-            } else {
-                70
-            };
+        let animation_interval = self
+            .typescript
+            .as_ref()
+            .and_then(|ui| ui.animation_interval_ms)
+            .unwrap_or(
+                if !state.ui.agent_running
+                    || state.ui.panel.as_ref().is_some_and(|p| p.section == 8)
+                {
+                    32
+                } else {
+                    70
+                },
+            );
         if !self.dirty
             && self.animating
             && self.last_visual.is_some_and(|last| {

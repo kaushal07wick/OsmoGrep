@@ -14,7 +14,9 @@ real editable text.
 The header mark stays still. An empty conversation automatically plays one of
 four central dot-dithered morphs: horizon, interference, Game of Life, or Lorenz.
 The smaller artwork has explicit clearance above the composer, uses smoother
-easing, and settles back into a dim logo after ten seconds. A click brightens and
+easing, and settles into a brighter fine-dot ring after ten seconds. Its orange
+highlight revolves clockwise every twelve seconds at a cached eight frames per
+second, without moving the ring geometry. A click brightens and
 replays it; hover has no effect. Reduce Motion keeps a static pose. Drafts,
 conversation and dialogs hide the artwork; short terminals omit it.
 

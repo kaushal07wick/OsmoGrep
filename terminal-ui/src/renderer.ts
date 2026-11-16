@@ -48,6 +48,7 @@ export interface Rendered {
   id: number; rows: string[]; input: Rect; execution: Rect; cursor: { x: number; y: number }; cursorVisible?:boolean;
   editorWidth: number;
   animate: boolean;
+  animationIntervalMs?:number;
   artwork: Rect | null;
   controls?:{id:'model'|'provider'|'choice'|'voice'|'team'|'copy'|'update';index?:number;label?:string;x:number;y:number;width:number;height:number}[];
   transcript?:{x:number;y:number;width:number;height:number;start:number;maxScroll:number;lineWidths:number[];scrollbar?:Rect|null};
@@ -212,7 +213,7 @@ export function render(v: View): Rendered {
     if (getCapabilities().images === 'kitty') {
       const graphicId = (process.pid*128+127)>>>0;
       const png=introPng(introElapsed,columns,height,light,v.introScene,v.introBright).toString('base64');
-      const image=renderImage(png,{widthPx:columns*6,heightPx:height*12},{imageId:graphicId,maxWidthCells:columns,maxHeightCells:height,moveCursor:false});
+      const image=renderImage(png,{widthPx:columns*12,heightPx:height*24},{imageId:graphicId,maxWidthCells:columns,maxHeightCells:height,moveCursor:false});
       if(image) images.push({id:graphicId,x:artwork.x,y:artwork.y,sequence:image.sequence});
     } else {
       introFrame(introElapsed,columns,height,light,v.introScene,v.introBright).forEach((line,i)=>put(artwork!.y+i,line,artwork!.x,columns));
@@ -333,7 +334,7 @@ export function render(v: View): Rendered {
       const clipped = clip(row, w);
       return rootBackground + fg + clipped.replaceAll(reset, reset + rootBackground + fg)
         + ' '.repeat(Math.max(0, w - visibleWidth(clipped))) + reset;
-    }), input: inputRect, execution, editorWidth: textWidth, animate: v.running || !!artwork && introElapsed < introDuration, artwork,
+    }), input: inputRect, execution, editorWidth: textWidth, animate: v.running || !!artwork && !v.preferences?.reduce_motion, animationIntervalMs:artwork&&introElapsed>=introDuration?125:undefined,artwork,
     cursor: { x: Math.min(w - 1, gutter + pad + 2 + input.position.x), y: Math.min(h - 1, textY + input.position.y - topLine) },
     images, controls,
     transcript:{x:gutter+pad,y:execution.y,width:Math.max(1,width-pad*2),height:execution.height,start,maxScroll,scrollbar,lineWidths:transcript.slice(start,start+execution.height).map(line=>Math.min(Math.max(1,width-pad*2),visibleWidth(line)))},

@@ -117,6 +117,8 @@ struct Frame {
     #[serde(rename = "editorWidth")]
     editor_width: u16,
     animate: bool,
+    #[serde(default, rename = "animationIntervalMs")]
+    animation_interval_ms: Option<u64>,
     artwork: Option<Region>,
     cursor: Point,
     #[serde(default, rename = "cursorVisible")]
@@ -174,6 +176,7 @@ impl IntroInteraction {
 }
 
 pub struct TypeScriptUi {
+    pub(super) animation_interval_ms: Option<u64>,
     child: Child,
     input: SyncSender<Value>,
     frames: Receiver<Result<String, String>>,
@@ -300,6 +303,7 @@ impl TypeScriptUi {
             scrolling: false,
             copy_pending: false,
             copied_code: None,
+            animation_interval_ms: None,
         })
     }
 
@@ -555,6 +559,9 @@ impl TypeScriptUi {
                     || c.area.height != 1
                     || !c.area.inside(width, height)
             })
+            || frame
+                .animation_interval_ms
+                .is_some_and(|ms| !(16..=1000).contains(&ms))
             || frame.cursor.x >= width
             || frame.cursor.y >= height
             || frame.editor_width == 0
@@ -574,7 +581,13 @@ impl TypeScriptUi {
             .write_all(b"\x1b[?2026h\x1b[?25l")
             .map_err(|e| e.to_string())?;
         self.intro.area = frame.artwork.as_ref().map(Region::rect);
-        self.intro.playing = self.intro.area.is_some() && frame.animate;
+        self.intro.playing = self.intro.area.is_some()
+            && frame.animate
+            && self
+                .intro
+                .started
+                .is_some_and(|started| started.elapsed() < Duration::from_secs(10));
+        self.animation_interval_ms = frame.animation_interval_ms;
         let capture =
             (frame.execution.height > 0 || self.intro.area.is_some() || !frame.controls.is_empty())
                 && super::terminal::artwork_mouse_enabled()

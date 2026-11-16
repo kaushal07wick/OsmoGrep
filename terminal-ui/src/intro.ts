@@ -24,7 +24,7 @@ function mesh(detail:1|3):Float32Array {
   }return meshes[detail]=points;
 }
 
-function raster(elapsed:number,columns:number,rows:number,detail:1|3,scene:Scene,bright:boolean){
+function raster(elapsed:number,columns:number,rows:number,detail:1|6,scene:Scene,bright:boolean){
   const width=columns*2*detail,height=rows*4*detail,length=width*height;
   const depth=new Float32Array(length).fill(-Infinity),shade=new Float32Array(length),orange=new Uint8Array(length);
   const t=Math.max(0,Math.min(1,elapsed/introDuration));
@@ -32,7 +32,7 @@ function raster(elapsed:number,columns:number,rows:number,detail:1|3,scene:Scene
   const turns=smooth(.07,.38,t)+smooth(.64,.95,t),yaw=turns===2?0:tau*turns;
   const pitch=.15*Math.sin(yaw)+morph*({horizon:0,interference:1.02,life:.24,lorenz:-.1}[scene]);
   const cy=Math.cos(yaw),sy=Math.sin(yaw),cx=Math.cos(pitch),sx=Math.sin(pitch);
-  const scale=.6*(1+.025*Math.sin(tau*t)*morph)*Math.min(width/2.7,height/2.5),points=mesh(detail);
+  const scale=.6*(1+.025*Math.sin(tau*t)*morph)*Math.min(width/2.7,height/2.5),points=mesh(detail===1?1:3);
   const target=morph>0?scenePoints(scene,elapsed/1000,points.length/6):points;
   for(let i=0;i<points.length;i+=6){
     const curl=.18*Math.sin(Math.PI*morph)*Math.sin(Math.PI*t),angle=curl*Math.sin(i/6*2.399963);
@@ -48,23 +48,41 @@ function raster(elapsed:number,columns:number,rows:number,detail:1|3,scene:Scene
       if(rotatedZ>depth[at]!){depth[at]=rotatedZ;shade[at]=illumination;orange[at]=points[i+4]!*(1-morph)+target[i+4]!*morph>.45?1:0;}
     }
   }
-  const gain=.24+(bright?.62*(1-smooth(.82,1,t)):0);
-  return {width,height,shade,orange,gain};
+  const gain=.66+(bright?.30*(1-smooth(.82,1,t)):0);
+  return {width,height,shade,orange,gain,morph};
+}
+
+const settled=new Map<number,{columns:number;rows:number;value:ReturnType<typeof raster>}>();
+function pixels(elapsed:number,columns:number,rows:number,detail:1|6,scene:Scene,bright:boolean){
+  if(elapsed<introDuration)return raster(elapsed,columns,rows,detail,scene,bright);
+  let cached=settled.get(detail);
+  if(!cached||cached.columns!==columns||cached.rows!==rows){cached={columns,rows,value:raster(introDuration,columns,rows,detail,scene,false)};settled.set(detail,cached);}
+  return cached.value;
+}
+function warmth(x:number,y:number,frame:ReturnType<typeof raster>,elapsed:number){
+  if(frame.morph>0)return frame.orange[y*frame.width+x]!;
+  const phase=(Math.floor(Math.max(0,elapsed-introDuration)/125)%96)/96*tau;
+  const angle=Math.atan2(y-frame.height/2,x-frame.width/2);
+  const delta=Math.abs(Math.atan2(Math.sin(angle-phase),Math.cos(angle-phase)));
+  return Math.pow(Math.max(0,1-delta/.32),.4);
+}
+function ink(warm:number,light:boolean,gain:number){
+  const neutral=light?[65,63,59]:[205,198,185],orange=light?[190,65,10]:[255,110,24],level=Math.min(1,gain+warm*.24);
+  return neutral.map((value,c)=>{const color=value*(1-warm)+orange[c]!*warm;return Math.round(light?250-(250-color)*level:color*level);});
 }
 
 /** Eight dithered subpixels per cell on terminals without inline graphics. */
 export function introFrame(elapsed: number, columns: number, rows: number, light = false,scene:Scene='horizon',bright=false): string[] {
-  const {width,shade,orange,gain}=raster(elapsed,columns,rows,1,scene,bright);
+  const frame=pixels(elapsed,columns,rows,1,scene,bright),{width,shade,gain}=frame;
   return Array.from({length:rows},(_,y)=>{
     let line='', last='';
     for(let x=0;x<columns;x++) {
       let mask=0, warm=0, total=0;
       for(let dy=0;dy<4;dy++) for(let dx=0;dx<2;dx++) {
         const px=x*2+dx, py=y*4+dy, at=py*width+px;
-        if(shade[at]!>(bayer[(py%4)*4+px%4]!+.5)/16) {mask|=dots[dy]![dx]!;warm+=orange[at]!;total++;}
+        if(shade[at]!>(bayer[(py%4)*4+px%4]!+.5)/16) {mask|=dots[dy]![dx]!;warm+=warmth(px,py,frame,elapsed);total++;}
       }
-      const rgb=warm>total/2 ? (light?[190,65,10]:[164,80,26]) : (light?[65,63,59]:[144,140,133]);
-      const color=rgb.map(n=>Math.round(light?250-(250-n)*gain:n*gain)).join(';');
+      const color=ink(total?warm/total:0,light,gain).join(';');
       if(mask&&color!==last) {line+=`\x1b[38;2;${color}m`;last=color;}
       line+=mask?String.fromCharCode(0x2800+mask):' ';
     }
@@ -72,9 +90,12 @@ export function introFrame(elapsed: number, columns: number, rows: number, light
   });
 }
 
-/** Three times the linear dot resolution, displayed through the existing image path. */
+/** Fine dots at six times the text fallback resolution, inside the same terminal cells. */
+let ringKey='',ringFrames=new Map<number,Buffer>();
 export function introPng(elapsed: number, columns: number, rows: number, light = false,scene:Scene='horizon',bright=false): Buffer {
-  const {width,height,shade,orange,gain}=raster(elapsed,columns,rows,3,scene,bright);
+  const frameIndex=Math.floor(Math.max(0,elapsed-introDuration)/125)%96;
+  if(elapsed>=introDuration){const key=`${columns}:${rows}:${light}`;if(ringKey!==key){ringKey=key;ringFrames.clear();}const cached=ringFrames.get(frameIndex);if(cached)return cached;}
+  const frame=pixels(elapsed,columns,rows,6,scene,bright),{width,height,shade,gain}=frame;
   const raw=Buffer.alloc((width*3+1)*height,light?250:0);
   for(let y=0;y<height;y++) {
     raw[y*(width*3+1)]=0;
@@ -82,10 +103,12 @@ export function introPng(elapsed: number, columns: number, rows: number, light =
       const at=y*width+x;
       // Leave a pixel of black between fine dots instead of filling the surface with crosshatching.
       if(x%2||y%2||shade[at]!<=(bayer[((y/2)%4)*4+(x/2)%4]!+.5)/16) continue;
-      const rgb=orange[at] ? (light?[190,65,10]:[164,80,26]) : (light?[65,63,59]:[144,140,133]);
+      const rgb=ink(warmth(x,y,frame,elapsed),light,gain);
       const offset=y*(width*3+1)+1+x*3;
-      for(let c=0;c<3;c++)raw[offset+c]=Math.round(light?250-(250-rgb[c]!)*gain:rgb[c]!*gain);
+      for(let c=0;c<3;c++)raw[offset+c]=rgb[c]!;
     }
   }
-  return rgbPng(width,height,raw);
+  const png=rgbPng(width,height,raw);
+  if(elapsed>=introDuration)ringFrames.set(frameIndex,png);
+  return png;
 }

@@ -177,6 +177,15 @@ def startup_graphics(data):
             pending=b''
     return frames
 
+def artwork_mask(png):
+    width,height=struct.unpack('>II',png[16:24]);data=[];at=8
+    while at<len(png):
+        size=struct.unpack('>I',png[at:at+4])[0]
+        if png[at+4:at+8]==b'IDAT': data.append(png[at+8:at+8+size])
+        at+=size+12
+    raw=zlib.decompress(b''.join(data))
+    return bytes(any(raw[y*(width*3+1)+1+x*3:y*(width*3+1)+4+x*3]) for y in range(height) for x in range(width))
+
 def plain(data):
     return re.sub(rb'\x1b\[[0-?]*[ -/]*[@-~]',b'',data)
 
@@ -192,24 +201,25 @@ try:
     drain(10)
     assert len(set(startup_graphics(transcript)))>3, 'startup must advance through distinct morph poses automatically'
     settled = len(transcript)
-    drain(.4)
-    assert not startup_graphics(transcript[settled:]), 'central animation must settle after ten seconds'
+    drain(.8)
+    orbit=startup_graphics(transcript[settled:])
+    assert len(set(orbit))>1, 'orange highlight must keep revolving after the morph settles'
+    ring_mask=artwork_mask(orbit[-1])
+    assert all(artwork_mask(frame)==ring_mask for frame in orbit), 'ambient orbit must keep the ring geometry still'
     assert b'a=t,' in transcript and b'z=-1073741825' in transcript, 'native paper must be uploaded behind text'
     assert b'a=t,' not in transcript[settled:], 'stationary paper pixels must be retained rather than re-uploaded'
     result['native_paper_pixels_cached'] = True
     settled_image=startup_graphics(transcript)[-1]
-    assert struct.unpack('>II',settled_image[16:24])==(52*6,26*12), 'smaller artwork must retain three times the linear dot resolution'
-    result['central_morph_animates_then_settles'] = True
+    assert struct.unpack('>II',settled_image[16:24])==(52*12,26*24), 'smaller artwork must retain six times the linear dot resolution'
+    result['central_morph_settles_into_fine_orbit'] = True
     before_hover=len(transcript)
     send(b'\x1b[<35;85;21M')
-    assert all(frame==settled_image for frame in startup_graphics(transcript[before_hover:])), 'hover must not change the pose'
-    after_hover=len(transcript)
     drain(.4)
-    assert not startup_graphics(transcript[after_hover:]), 'hover must not start playback'
+    assert all(artwork_mask(frame)==ring_mask for frame in startup_graphics(transcript[before_hover:])), 'hover must not replay the morph'
     before_click=len(transcript)
     send(b'\x1b[<0;80;21M')
-    drain(.7)
-    assert startup_graphics(transcript[before_click:]), 'click must replay the morph'
+    drain(2)
+    assert any(artwork_mask(frame)!=ring_mask for frame in startup_graphics(transcript[before_click:])), 'click must replay the morph'
     result['central_morph_ignores_hover_and_click_replays'] = True
     send(b'\x1b\x1b')
     assert process.poll() is None and b'OSMOGREP_UI_EXIT' not in transcript
