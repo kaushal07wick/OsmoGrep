@@ -69,7 +69,6 @@ Typing `/` opens an attached, searchable command tray. The model and provider in
 | Shift+arrows | Select text |
 | Ctrl+A / Ctrl+C / Ctrl+X / Ctrl+V | Select all / copy / cut / paste |
 | Mouse wheel / PageUp / PageDown | Scroll the transcript |
-| Right-side scroll rail | Click or drag through transcript history |
 | End with an empty draft | Return to live output |
 | Ctrl+T | Expand or fold tool output and diffs |
 | Ctrl+O | Copy the latest assistant response |

@@ -457,10 +457,16 @@ mod tests {
             &root,
             "printf ready; read answer; printf ':%s' \"$answer\"",
             false,
-            Duration::from_secs(5),
+            Duration::from_secs(10),
         )
         .unwrap();
-        let first = interact(&root, &json!({"session_id":id,"yield_ms":100}), &|| false).unwrap();
+        // Loaded runners can need more than one poll to start the shell.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut first =
+            interact(&root, &json!({"session_id":id,"yield_ms":100}), &|| false).unwrap();
+        while first["stdout"] == "" && first["running"] == true && Instant::now() < deadline {
+            first = interact(&root, &json!({"session_id":id,"yield_ms":100}), &|| false).unwrap();
+        }
         assert_eq!(first["stdout"], "ready");
         assert_eq!(first["running"], true);
         assert!(interact(
