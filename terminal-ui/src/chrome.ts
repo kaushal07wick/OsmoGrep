@@ -1,4 +1,4 @@
-import {orb,activityInfo} from './activity.ts';
+import {activityInfo} from './activity.ts';
 import {truncateToWidth,visibleWidth,stripTerminalSequences} from '@earendil-works/pi-tui';
 export const plain=(s:string)=>stripTerminalSequences(s).replace(/[\x00-\x1f\x7f-\x9f]/g,' ');
 export const fit=(s:string,n:number)=>n>0?truncateToWidth(s,n,'…'):'';
@@ -28,5 +28,5 @@ export const statusText=(entries:StatusEntry[],width:number)=>statusLayout(entri
 
 export function activity(elapsed:number,phase:string,tool:string|null,reduceMotion=false):string {
   const info=activityInfo(elapsed,phase,tool,reduceMotion);
-  return `${orb(elapsed,false,reduceMotion).rows[1]}  ${info.label}  ·  ${info.time}`;
+  return `· ${info.label}  ·  ${info.time}`;
 }

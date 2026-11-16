@@ -36,7 +36,9 @@ src/
   long_runs.rs             Budgeted task supervision and recovery
   verification.rs          Evidence accounting
   verify_stop.rs           Optional verification completion policy
-  editor.rs, editor.lua    Private tmux editor workspace and black Neovim UI
+  editor.rs, editor.lua    Editor launch and black Neovim UI
+  editor/native.rs         Native Ghostty editor and private Neovim RPC
+  editor/workspace.lua     File tree, tabs, live ticker and inspection windows
   editor/follow.rs         Background bridge for active files and saved changes
   workspace/               Native device panes and companion resolution
   mcp.rs, mcp/local.rs     MCP transport and repository-scoped device connections
@@ -104,7 +106,7 @@ replace the original user request in persisted history.
   launch and its transient state live in `workspace/`.
 - Ephemeral device MCP entries live in `mcp/local.rs`, keyed by canonical project
   root. Phone target binding happens before transport dispatch.
-- The TypeScript formatting cache is bounded by eight entries and approximately
+- The TypeScript formatting cache is bounded by 128 entries and approximately
   2 MiB of string storage. Width, theme, accent, source text and copy feedback
   invalidate it.
 

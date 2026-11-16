@@ -50,9 +50,13 @@ export function drawPanel(panel:PanelView,width:number,height:number,light:boole
 export function permissionLines(tool:string,args:string,selected:number,width:number,accent:string,light:boolean,compact=false):string[]{
   const fg=light?'\x1b[38;2;32;32;32m':'\x1b[38;2;225;220;210m',dim='\x1b[38;2;140;134;124m';
   const wrap=(s:string)=>wrapTextWithAnsi(s,Math.max(1,width-4));
-  if(compact)return [accent+'  Permission / '+fg+plain(tool),...wrap(dim+'  '+plain(args)).slice(0,1),...['Y  Allow once','N  Deny','A  Auto-approve this session'].map((s,i)=>(selected===i?accent+'  ▸ '+bold:dim+'    ')+s+reset),dim+'  ↑↓ select · enter confirm · esc cancel'];
-  return ['',accent+'  PERMISSION  /  '+fg+plain(tool),...wrap(dim+'  '+plain(args)).slice(0,2),'',
-    ...['Y  Allow once','N  Deny','A  Auto-approve this session'].map((s,i)=>(selected===i?accent+'  ▸ '+bold:dim+'    ')+s+reset),'',dim+'  ↑↓ select · enter confirm · esc cancel',''];
+  const labels = ['Y  Allow once','N  Deny','A  Auto-approve this session'];
+  const choices = labels.map((label,index) => (selected === index ? accent+'› '+bold : dim+'  ') + label + reset);
+  const horizontal = width >= 76;
+  return [accent+'  Allow '+fg+plain(tool).replaceAll('_',' '),
+    ...wrap(dim+'  '+plain(args)).slice(0, compact ? 1 : 2),
+    ...(horizontal ? ['  '+choices.join('   ')] : choices.map(choice=>'  '+choice)),
+    dim+'  ↑↓ choose · enter confirm · esc cancel'];
 }
 
 

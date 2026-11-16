@@ -177,6 +177,7 @@ impl IntroInteraction {
 
 pub struct TypeScriptUi {
     tmux_graphics: bool,
+    pane_origin: (u16, u16),
     pub(super) animation_interval_ms: Option<u64>,
     child: Child,
     input: SyncSender<Value>,
@@ -294,6 +295,7 @@ impl TypeScriptUi {
         });
         Ok(Self {
             tmux_graphics,
+            pane_origin: (0, 0),
             child,
             input: requests,
             frames,
@@ -314,6 +316,35 @@ impl TypeScriptUi {
     }
 
     pub fn handle_visual_event(&mut self, event: &Event, state: &mut AgentState) -> bool {
+        if state.ui.pending_permission.is_some() {
+            if let Event::Mouse(mouse) = event {
+                if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                    if let Some(index) = self
+                        .controls
+                        .iter()
+                        .find(|c| {
+                            c.id == "permission"
+                                && c.area.rect().contains((mouse.column, mouse.row).into())
+                        })
+                        .and_then(|c| c.index)
+                        .filter(|i| *i < 3)
+                    {
+                        state.ui.permission_selected = index;
+                        super::main_ui::handle_event(
+                            state,
+                            Event::Key(crossterm::event::KeyEvent::new(
+                                KeyCode::Enter,
+                                KeyModifiers::NONE,
+                            )),
+                            Rect::default(),
+                            Rect::default(),
+                            Rect::default(),
+                        );
+                        return true;
+                    }
+                }
+            }
+        }
         if let Some(update) = state.ui.pending_update.as_mut() {
             if let Event::Mouse(mouse) = event {
                 if mouse.kind == MouseEventKind::Down(MouseButton::Left) && !update.installing {
@@ -336,9 +367,6 @@ impl TypeScriptUi {
                 }
                 return true;
             }
-        }
-        if state.ui.update_check_pending && matches!(event, Event::Mouse(_)) {
-            return true;
         }
         if matches!(event,Event::Mouse(m) if m.kind==MouseEventKind::Down(MouseButton::Left)) {
             self.selecting = false;
@@ -552,11 +580,19 @@ impl TypeScriptUi {
             || frame.controls.iter().any(|c| {
                 !matches!(
                     c.id.as_str(),
-                    "model" | "provider" | "choice" | "voice" | "team" | "copy" | "update"
+                    "model"
+                        | "provider"
+                        | "choice"
+                        | "voice"
+                        | "team"
+                        | "copy"
+                        | "update"
+                        | "permission"
                 ) || c.id == "choice"
                     && (!c.index.is_some_and(|i| i <= 1000)
                         || c.label.as_ref().is_none_or(|s| s.len() > 160))
                     || c.id == "update" && !c.index.is_some_and(|i| i <= 2)
+                    || c.id == "permission" && c.index.is_none_or(|i| i > 2)
                     || c.id == "copy"
                         && c.label.as_ref().is_none_or(|s| {
                             s.is_empty() || s.len() > 100_000 || s.contains('\u{1b}')
@@ -622,6 +658,9 @@ impl TypeScriptUi {
             .map_err(|e| e.to_string())?;
         }
         let resized = self.size != (width, height);
+        if resized && self.tmux_graphics {
+            self.pane_origin = super::terminal::pane_origin()?;
+        }
         if resized {
             queue!(output, Clear(ClearType::All)).map_err(|e| e.to_string())?;
         }
@@ -645,9 +684,12 @@ impl TypeScriptUi {
                 if !retained {
                     queue!(
                         output,
-                        Print(super::terminal::graphic_sequence(
+                        Print(super::terminal::graphic_at(
                             &image.sequence,
-                            self.tmux_graphics
+                            self.tmux_graphics,
+                            self.pane_origin,
+                            image.x,
+                            image.y
                         ))
                     )
                     .map_err(|e| e.to_string())?;
@@ -655,9 +697,12 @@ impl TypeScriptUi {
                 if let Some(placement) = &image.placement {
                     queue!(
                         output,
-                        Print(super::terminal::graphic_sequence(
+                        Print(super::terminal::graphic_at(
                             placement,
-                            self.tmux_graphics
+                            self.tmux_graphics,
+                            self.pane_origin,
+                            image.x,
+                            image.y
                         ))
                     )
                     .map_err(|e| e.to_string())?;
@@ -780,12 +825,12 @@ fn view(state: &AgentState, model: &ModelConfig, id: u64, width: u16, height: u1
         "selectedCommand":ui.command_selected, "tokens":state.usage.prompt_tokens+state.usage.completion_tokens,
     });
     snapshot["queuedMessages"] = json!(ui.queued_agent_prompts.len());
+    snapshot["userTurns"] = json!(ui.user_turns);
     snapshot["conversationStarted"] = json!(state
         .conversation
         .messages
         .iter()
         .any(|message| message.get("role").and_then(Value::as_str) == Some("user")));
-    snapshot["checkingUpdate"] = json!(ui.update_check_pending);
     snapshot["queuePaused"] = json!(ui.queue_paused);
     snapshot["transcriptSelection"] = json!(ui.transcript_selection);
     if !ui.follow_tail && ui.exec_scroll_max != usize::MAX {

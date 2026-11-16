@@ -1,4 +1,6 @@
 vim.g.mapleader = ' '
+vim.g.loaded_netrw = 1
+vim.g.loaded_netrwPlugin = 1
 vim.g.netrw_banner = 0
 vim.g.netrw_liststyle = 3
 vim.g.netrw_browse_split = 0
@@ -8,6 +10,8 @@ vim.opt.number = true
 vim.opt.autoread = true
 vim.opt.hidden = true
 vim.opt.cursorline = true
+vim.opt.wrap = false
+vim.opt.sidescrolloff = 4
 vim.opt.showmode = false
 vim.opt.laststatus = 2
 vim.opt.shortmess:append('I')
@@ -37,18 +41,22 @@ local colors = {
 for group, color in pairs(colors) do vim.api.nvim_set_hl(0, group, color) end
 vim.opt.statusline = '%#OsmoBrand# OsmoGrep %#StatusLine# %<%f %m%= space a: chat  %l:%c '
 vim.keymap.set('n', '<leader>e', '<cmd>Explore<CR>', { desc = 'Browse project files' })
-vim.keymap.set('n', '<leader>a', function()
-  local pane = vim.env.OSMOGREP_AGENT_PANE
-  if not pane then return end
-  local window = vim.fn.system({ 'tmux', 'display-message', '-p', '-t', pane, '#{window_id}' }):gsub('%s+$', '')
-  if vim.v.shell_error ~= 0 then return end
-  vim.fn.system({ 'tmux', 'select-window', '-t', window })
-  vim.fn.system({ 'tmux', 'select-pane', '-t', pane })
-end, { desc = 'Return to OsmoGrep chat' })
+function _G.osmogrep_focus_chat()
+  if vim.env.OSMOGREP_AGENT_TTY and vim.env.OSMOGREP_GHOSTTY_SCRIPT then
+    vim.fn.system({ '/usr/bin/osascript', '-l', 'JavaScript', vim.env.OSMOGREP_GHOSTTY_SCRIPT,
+      vim.env.OSMOGREP_AGENT_TTY, vim.fn.getcwd(), 'focus', '' })
+  else
+    local pane = vim.env.OSMOGREP_AGENT_PANE
+    if not pane or pane == '' then return end
+    vim.fn.system({ 'tmux', 'select-pane', '-t', pane })
+  end
+  if vim.v.shell_error ~= 0 then vim.notify('Could not focus chat; use your terminal pane shortcut.', vim.log.levels.WARN) end
+end
+vim.keymap.set('n', '<leader>a', osmogrep_focus_chat, { desc = 'Return to OsmoGrep chat' })
 
 local bridge = vim.env.OSMOGREP_EDITOR_BRIDGE
 local namespace = vim.api.nvim_create_namespace('osmogrep-agent')
-local following, last_sequence, agent_status = true, nil, 'Follow on'
+local last_sequence, agent_status = nil, 'Ready'
 local previous_path, previous_text
 local watched = {}
 
@@ -56,11 +64,6 @@ function _G.osmogrep_editor_status()
   return agent_status
 end
 vim.opt.statusline = '%#OsmoBrand# OsmoGrep %#StatusLine# %<%f %m%= %{v:lua.osmogrep_editor_status()}  space a: chat  %l:%c '
-vim.keymap.set('n', '<leader>f', function()
-  following = not following
-  agent_status = following and 'Follow on' or 'Follow paused'
-  last_sequence = nil
-end, { desc = 'Toggle following agent edits' })
 
 local function show_changes(buffer, before)
   local after = table.concat(vim.api.nvim_buf_get_lines(buffer, 0, -1, false), '\n') .. '\n'
@@ -87,16 +90,12 @@ local function show_changes(buffer, before)
 end
 
 local function follow_agent()
-  if not following or not bridge or vim.fn.mode() ~= 'n' then return end
-  if vim.bo.modified then
-    agent_status = 'Follow paused · unsaved edits'
-    return
-  end
+  if not bridge then return end
   local buffer = vim.api.nvim_get_current_buf()
   local name = vim.api.nvim_buf_get_name(buffer)
   local stat = vim.uv.fs_stat(name)
   local stamp = stat and (tostring(stat.mtime.sec) .. ':' .. tostring(stat.mtime.nsec) .. ':' .. stat.size)
-  if vim.bo.buftype == '' and stamp ~= watched[name] then
+  if vim.bo.buftype == '' and not vim.bo.modified and vim.fn.mode() == 'n' and stamp ~= watched[name] then
     watched[name] = stamp
     local before = table.concat(vim.api.nvim_buf_get_lines(buffer, 0, -1, false), '\n') .. '\n'
     vim.cmd('silent! checktime ' .. buffer)
@@ -109,24 +108,21 @@ local function follow_agent()
   local ok, event = pcall(vim.json.decode, raw)
   if not ok or type(event) ~= 'table' or event.sequence == last_sequence or type(event.path) ~= 'string' then return end
   last_sequence = event.sequence
+  local window = osmogrep_workspace.agent_focus(event)
+  if not window then return end
   local target = vim.fn.bufadd(event.path)
-  if vim.bo[target].modified then
-    agent_status = 'Follow paused · unsaved target'
-    last_sequence = nil
-    return
-  end
-  vim.fn.bufload(target)
   local before = (previous_path == event.path and previous_text) or (table.concat(vim.api.nvim_buf_get_lines(target, 0, -1, false), '\n') .. '\n')
   vim.cmd('silent! checktime ' .. target)
-  vim.api.nvim_set_current_buf(target)
+  vim.api.nvim_win_set_buf(window, target)
   vim.api.nvim_buf_clear_namespace(target, namespace, 0, -1)
   local row = math.min(math.max(tonumber(event.line) or 1, 1), vim.api.nvim_buf_line_count(target))
-  vim.api.nvim_win_set_cursor(0, { row, 0 })
+  vim.api.nvim_win_set_cursor(window, { row, 0 })
   vim.api.nvim_buf_set_extmark(target, namespace, row - 1, 0, { line_hl_group = 'OsmoAgentLine' })
   show_changes(target, before)
   previous_path = event.path
   previous_text = table.concat(vim.api.nvim_buf_get_lines(target, 0, -1, false), '\n') .. '\n'
-  agent_status = 'Agent ' .. (event.phase or 'working') .. ' · space f: pause'
+  agent_status = ({ edited = 'Saved', editing = 'Editing', reading = 'Reading' })[event.phase] or 'Working'
+
 end
 
 if bridge then

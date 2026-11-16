@@ -10,6 +10,8 @@ test('permission dock preserves recent output, input and the selected decision',
  const v=fixture();v.logs=[{level:'Info',text:'I am examining README.md before changing it.'}];v.running=true;v.runElapsed=12300;v.permission='Allow edit_file?';v.approval={tool:'edit_file',args:'README.md',selected:1};
  const f=render(v),text=f.rows.map(stripTerminalSequences).join('\n');assert.match(text,/examining README/);assert.match(text,/N  Deny/);assert.match(text,/12s/);assert.ok(!text.includes('Search'));assert.ok(f.rows.every(r=>visibleWidth(r)===v.width));assert.ok(f.execution.height>3);
  assert.match(activity(100,'thinking',null),/Thinking/);assert.match(activity(75000,'thinking',null),/1m 15s/);
+ assert.ok(f.controls?.filter(control=>control.id==='permission').length===3);
+ assert.ok(!/[\u2800-\u28ff]/u.test(activity(100,'waiting for permission',null)));
 });
 test('long tool output folds without dropping access to details and diffs retain line numbers',()=>{
  const v=fixture();v.logs=[{level:'Success',text:'● (Read) README.md'},...Array.from({length:20},(_,i)=>({level:'Info',text:`  └ line ${i}`}))];

@@ -32,16 +32,19 @@ test('matches the reference geometry at idle and during conversation', () => {
   assert.match(stripTerminalSequences(idle.rows[1]!), /osmogrep.*test/);
   v.logs = [{ text: 'USER|Explain the code', level: 'Info' }, { text: 'A paragraph.\n\nAnother paragraph.', level: 'Info' }];
   const active = render(v);
-  assert.equal(active.execution.y,0);
-  assert.ok(!active.rows.map(stripTerminalSequences).join('').includes('osmogrep vtest'));
+  assert.equal(active.execution.y,idle.execution.y);
+  assert.ok(active.rows.map(stripTerminalSequences).join('').includes('osmogrep vtest'));
   assert.deepEqual(idle.input, active.input);
   assert.match(active.rows.map(row => stripTerminalSequences(row).trimEnd()).join('\n'), /A paragraph\.\n\s*\n.*Another paragraph\./);
 });
 
-test('the welcome header stays hidden while running, after completion and after clearing visible output',()=>{
+test('the welcome header stays through the first exchange and hides from the second, including after clearing output',()=>{
  const v=fixture();assert.ok(render(v).execution.y>0);
+ for(const change of [{running:true},{stream:'Hello'},{logs:[{text:'USER|Hello',level:'Info'}]}]){
+  const first=render({...v,...change,userTurns:1});assert.ok(first.execution.y>0);assert.equal(first.artwork,null);
+ }
  for(const change of [{running:true},{conversationStarted:true},{stream:'Hello'},{logs:[{text:'USER|Hello',level:'Info'}]}]){
-  const frame=render({...v,...change});assert.equal(frame.execution.y,0);assert.equal(frame.artwork,null);
+  const frame=render({...v,...change,userTurns:2});assert.equal(frame.execution.y,0);assert.equal(frame.artwork,null);
  }
 });
 
@@ -52,7 +55,16 @@ test('update gate hides conversation and input, reports real bytes and keeps ret
   assert.equal(frame.input.height,0);assert.equal(frame.execution.height,0);assert.equal(frame.cursorVisible,false);assert.ok(!text.includes('PRIVATE TRANSCRIPT'));assert.ok(frame.rows.every(row=>visibleWidth(row)<=width!));
   if(width!>=80){if(stage==='downloading')assert.match(text,/50%/);if(stage==='ready')assert.ok(frame.controls?.some(c=>c.id==='update'&&c.index===0));if(stage==='failed')assert.match(text,/Retry update/);}
  }
- const checking=render({...fixture(),checkingUpdate:true});assert.match(checking.rows.join(''),/Checking for updates/);assert.equal(checking.input.height,0);
+
+});
+
+test('startup shows an editable composer immediately when no update is available', () => {
+ const frame = render({...fixture(), input:'ready to type', cursor:13});
+ assert.ok(frame.input.height > 0);
+ assert.ok(frame.cursorVisible !== false);
+ const text = frame.rows.map(stripTerminalSequences).join('\n');
+ assert.match(text, /ready to type/);
+ assert.doesNotMatch(text, /Checking for updates/);
 });
 
 test('graphical provider selector uses a bundled small logo and preserves the exact model ID',()=>{

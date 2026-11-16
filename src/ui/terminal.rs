@@ -46,6 +46,48 @@ pub(super) fn graphic_sequence(sequence: &str, tmux: bool) -> std::borrow::Cow<'
     }
 }
 
+pub(super) fn pane_origin() -> Result<(u16, u16), String> {
+    let pane = std::env::var("TMUX_PANE").map_err(|_| "Missing tmux pane identity")?;
+    let output = std::process::Command::new("tmux")
+        .args([
+            "display-message",
+            "-p",
+            "-t",
+            &pane,
+            "#{pane_left},#{pane_top}",
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let (x, y) = text
+        .trim()
+        .split_once(',')
+        .ok_or("Cannot locate graphics inside tmux")?;
+    Ok((
+        x.parse().map_err(|_| "Invalid pane column")?,
+        y.parse().map_err(|_| "Invalid pane row")?,
+    ))
+}
+
+pub(super) fn graphic_at(
+    sequence: &str,
+    tmux: bool,
+    origin: (u16, u16),
+    x: u16,
+    y: u16,
+) -> std::borrow::Cow<'_, str> {
+    if !tmux {
+        return sequence.into();
+    }
+    // tmux forwards APC graphics before flushing its virtual cursor. Position in the outer terminal.
+    let positioned = format!(
+        "\x1b7\x1b[{};{}H{sequence}\x1b8",
+        origin.1.saturating_add(y).saturating_add(1),
+        origin.0.saturating_add(x).saturating_add(1)
+    );
+    graphic_sequence(&positioned, true).into_owned().into()
+}
+
 pub struct TerminalSession {
     active: bool,
 }
@@ -156,6 +198,14 @@ fn parse_mouse_capture_setting(raw: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn passthrough_graphics_position_in_their_outer_pane_and_restore_the_cursor() {
+        let image = "\x1b_Ga=p,i=1;\x1b\\";
+        assert_eq!(super::graphic_at(image, false, (40, 0), 3, 20), image);
+        let wrapped = super::graphic_at(image, true, (40, 2), 3, 20);
+        assert!(wrapped.contains("\x1b\x1b7\x1b\x1b[23;44H"));
+        assert!(wrapped.contains("\x1b\x1b8"));
+    }
     use super::parse_mouse_capture_setting;
 
     #[test]

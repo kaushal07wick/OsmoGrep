@@ -61,6 +61,8 @@ use crate::state::{
 #[derive(Serialize, Deserialize)]
 struct PersistedState {
     #[serde(default)]
+    user_turns: u64,
+    #[serde(default)]
     queued_prompts: Vec<String>,
     #[serde(default)]
     repo_root: String,
@@ -135,6 +137,13 @@ fn load_settings_from(state: &mut AgentState, path: &Path) -> Result<(), String>
 }
 
 fn apply_saved(state: &mut AgentState, saved: PersistedState) {
+    state.ui.user_turns = saved.user_turns.max(
+        saved
+            .conversation
+            .iter()
+            .filter(|message| message["role"] == "user")
+            .count() as u64,
+    );
     state.ui.queued_agent_prompts = saved.queued_prompts.into();
     state.ui.queue_paused = !state.ui.queued_agent_prompts.is_empty();
     state.logs.clear();
@@ -179,6 +188,7 @@ pub fn save(state: &AgentState) -> Result<(), String> {
     state.session.acquire(&path)?;
 
     let payload = PersistedState {
+        user_turns: state.ui.user_turns,
         queued_prompts: state.ui.queued_agent_prompts.iter().cloned().collect(),
         repo_root: state.repo_root.to_string_lossy().to_string(),
         logs: state
@@ -317,6 +327,7 @@ pub fn new_session(state: &mut AgentState) -> Result<(), String> {
     state.session = Session::default();
     state.session.update_latest = update_latest;
     state.session_name = None;
+    state.ui.user_turns = 0;
     state.conversation.clear();
     state.logs.clear();
     state.undo_stack.clear();
@@ -487,6 +498,16 @@ pub fn session_dir() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn welcome_turn_count_survives_cleared_logs_and_compacted_history() {
+        let saved: super::PersistedState = serde_json::from_value(serde_json::json!({
+            "user_turns": 2, "conversation": [{"role":"user","content":"latest"}], "logs": []
+        }))
+        .unwrap();
+        let mut state = crate::init_state();
+        super::apply_saved(&mut state, saved);
+        assert_eq!(state.ui.user_turns, 2);
+    }
     #[test]
     fn sessions_hold_exclusive_locks_and_release_on_drop() {
         let dir = std::env::temp_dir().join(format!("session-lock-{}", uuid::Uuid::new_v4()));

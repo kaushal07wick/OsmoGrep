@@ -431,6 +431,7 @@ fn start_agent_run(
     state.ui.follow_tail = true;
     state.ui.exec_scroll = usize::MAX;
     state.ui.spinner_started_at = Some(Instant::now());
+    state.ui.user_turns = state.ui.user_turns.saturating_add(1);
     state.ui.agent_running = true;
     state.ui.run_started_at = Some(Instant::now());
     state.ui.cancelling = false;
@@ -503,7 +504,6 @@ fn plan_mode_prompt(text: &str) -> String {
 }
 
 fn handle_update_event(state: &mut AgentState, evt: updater::UpdateEvent) {
-    state.ui.update_check_pending = false;
     match evt {
         updater::UpdateEvent::Available(info) => {
             if updater::skipped(&info.latest_version) {
@@ -1403,7 +1403,7 @@ fn run_tui(
     let mut agent_steer_tx: Option<mpsc::Sender<String>> = None;
     let (job_tx, job_rx) = mpsc::channel::<JobEvent>();
     let (update_tx, update_rx) = mpsc::channel::<updater::UpdateEvent>();
-    state.ui.update_check_pending = updater::spawn_update_check(update_tx.clone());
+    updater::spawn_update_check(update_tx.clone());
     let mut deferred_update = None;
     let mut restart_after_update = false;
     let mut running_jobs = 0usize;
@@ -1562,9 +1562,7 @@ fn run_tui(
 
         loop {
             match update_rx.try_recv() {
-                Ok(updater::UpdateEvent::Available(info)) if !state.ui.update_check_pending => {
-                    deferred_update = Some(info)
-                }
+                Ok(updater::UpdateEvent::Available(info)) => deferred_update = Some(info),
                 Ok(evt) => {
                     handle_update_event(&mut state, evt);
                     runtime.mark_dirty();
@@ -1589,7 +1587,7 @@ fn run_tui(
             }
         }
 
-        if state.ui.update_check_pending || state.ui.pending_update.is_some() {
+        if state.ui.pending_update.is_some() {
             continue;
         }
 
@@ -2423,7 +2421,6 @@ fn tui_live_activity(state: &AgentState, agent_active: bool, running_jobs: usize
         || state.ui.agent_running
         || state.ui.indexing
         || state.ui.streaming_active
-        || state.ui.update_check_pending
         || state.voice.connected
         || state
             .ui
@@ -2517,6 +2514,29 @@ fn current_tmux_session_name() -> Option<String> {
 mod tests {
     use super::*;
     use clap::Parser;
+
+    #[test]
+    fn background_update_results_leave_chat_and_input_available() {
+        let mut state = init_state();
+        state.insert_text("draft");
+        for event in [
+            updater::UpdateEvent::UpToDate("0.3.13".into()),
+            updater::UpdateEvent::CheckFailed("offline".into()),
+        ] {
+            handle_update_event(&mut state, event);
+            let area = ratatui::layout::Rect::default();
+            ui::main_ui::handle_event(
+                &mut state,
+                crossterm::event::Event::Paste("!".into()),
+                area,
+                area,
+                area,
+            );
+            assert!(state.ui.pending_update.is_none());
+            assert!(!state.ui.should_exit);
+        }
+        assert_eq!(state.ui.input, "draft!!");
+    }
 
     #[test]
     fn intelligence_commands_preserve_existing_cli_forms() {

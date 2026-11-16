@@ -3,7 +3,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, Mouse
 use ratatui::layout::Rect;
 const SCROLL_LINE_STEP: usize = 3;
 const SCROLL_PAGE_STEP: usize = 12;
-const SCROLL_WHEEL_STEP: usize = 6;
+const SCROLL_WHEEL_STEP: usize = 1;
 
 fn parse_input(raw: &str) -> InputMode {
     let first = raw
@@ -41,7 +41,7 @@ pub fn handle_event(
 }
 
 fn handle_paste(state: &mut AgentState, text: &str) {
-    if state.ui.update_check_pending || state.ui.pending_update.is_some() {
+    if state.ui.pending_update.is_some() {
         return;
     }
     if state.ui.panel.is_some() {
@@ -65,15 +65,6 @@ fn normalize_paste_text(text: &str) -> String {
 }
 
 fn handle_key(state: &mut AgentState, k: KeyEvent) {
-    if state.ui.update_check_pending {
-        if k.code == KeyCode::Esc {
-            state.ui.update_check_pending = false;
-        }
-        if k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL) {
-            state.ui.should_exit = true;
-        }
-        return;
-    }
     if matches!(k.code, KeyCode::Esc) && state.ui.agent_running {
         request_agent_cancel(state);
         return;
@@ -962,7 +953,7 @@ mod tests {
 }
 
 fn handle_mouse(state: &mut AgentState, m: MouseEvent) {
-    if state.ui.update_check_pending || state.ui.pending_update.is_some() {
+    if state.ui.pending_update.is_some() {
         return;
     }
     if state.ui.panel.is_some()

@@ -91,17 +91,7 @@ fn centered_content(area: Rect) -> Rect {
 }
 
 fn header_height(state: &AgentState, available_height: u16) -> u16 {
-    if state.ui.agent_running
-        || state
-            .conversation
-            .messages
-            .iter()
-            .any(|m| m["role"] == "user")
-        || state
-            .logs
-            .iter()
-            .any(|l| parse_user_input_log(&l.text).is_some())
-    {
+    if state.ui.user_turns >= 2 {
         return 0;
     }
     match state.density {
@@ -124,7 +114,7 @@ pub fn draw_ui<B: Backend>(
 
     terminal.draw(|f| {
         let area = f.size();
-        if state.ui.update_check_pending || state.ui.pending_update.is_some() {
+        if state.ui.pending_update.is_some() {
             render_update_screen(f, state);
             return;
         }
@@ -781,13 +771,6 @@ fn render_update_screen(f: &mut Frame, state: &AgentState) {
                 Style::default().fg(p.fg_muted),
             ));
         }
-    } else {
-        lines.push(Line::from("Checking for updates…"));
-        lines.push(Line::default());
-        lines.push(Line::styled(
-            "esc continue to chat",
-            Style::default().fg(p.fg_muted),
-        ));
     }
     let height = (lines.len() as u16).min(area.height);
     let rect = Rect::new(
@@ -1539,6 +1522,7 @@ mod tests {
         assert!(full.y > 40);
         assert!(full.bottom() <= 50);
         state.density = UiDensity::Compact;
+        state.ui.user_turns = 2;
         assert_eq!(header_height(&state, 50), 0);
     }
 

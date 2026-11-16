@@ -438,7 +438,15 @@ fn help(state: &mut AgentState) {
 
 fn clear_logs(state: &mut AgentState) {
     state.logs.clear();
+    state.ui.diff_active = false;
+    state.ui.diff_snapshot.clear();
+    state.ui.transcript_selection = None;
     state.ui.exec_scroll = usize::MAX;
+    state.ui.exec_scroll_max = usize::MAX;
+    state.ui.follow_tail = true;
+    // Keep the complete response for stream deduplication, but hide its rendered prefix.
+    state.ui.streaming_buffer.clear();
+    state.ui.streaming_lines_logged = 0;
 
     log(state, LogLevel::Info, "Logs cleared.");
 }
@@ -2656,10 +2664,58 @@ fn normalize_command_prefix(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        assistant_response_blocks, command_hints_for, latest_assistant_response, parse_copy_target,
-        transcript_text, CopyTarget,
+        assistant_response_blocks, clear_logs, command_hints_for, latest_assistant_response,
+        parse_copy_target, transcript_text, CopyTarget,
     };
     use crate::state::{LogBuffer, LogLevel};
+
+    #[test]
+    fn clearing_transcript_hides_diffs_without_losing_context_or_undo() {
+        let mut state = crate::init_state();
+        let change = crate::state::DiffSnapshot {
+            tool: "write_file".into(),
+            target: "example.py".into(),
+            before: String::new(),
+            after: "print('hello')\n".into(),
+        };
+        state.ui.diff_active = true;
+        state.ui.diff_snapshot.push(change.clone());
+        state.session_changes.push(change.clone());
+        state.undo_stack.push(change);
+        state
+            .conversation
+            .messages
+            .push(serde_json::json!({"role":"user", "content":"Keep this context"}));
+        let history = state.conversation.messages.clone();
+        state.ui.user_turns = 2;
+        state.ui.transcript_selection = Some([[0, 0], [10, 3]]);
+        state.ui.exec_scroll = 3;
+        state.ui.follow_tail = false;
+        state.ui.streaming_buffer = "previous output\nold tail".into();
+        state.ui.streaming_transcript = state.ui.streaming_buffer.clone();
+        state.ui.streaming_lines_logged = 1;
+        state.logs.push(LogLevel::Info, "old output");
+
+        clear_logs(&mut state);
+
+        assert!(!state.ui.diff_active);
+        assert!(state.ui.diff_snapshot.is_empty());
+        assert!(state.ui.transcript_selection.is_none());
+        assert!(state.ui.follow_tail);
+        assert_eq!(state.ui.exec_scroll, usize::MAX);
+        assert!(state.ui.streaming_buffer.is_empty());
+        assert_eq!(state.ui.streaming_lines_logged, 0);
+        assert_eq!(state.ui.streaming_transcript, "previous output\nold tail");
+        assert_eq!(transcript_text(&state.logs), "Logs cleared.");
+        assert_eq!(state.session_changes.len(), 1);
+        assert_eq!(state.undo_stack[0].after, "print('hello')\n");
+        assert_eq!(state.conversation.messages, history);
+        assert_eq!(state.ui.user_turns, 2);
+
+        super::show_session_diff(&mut state);
+        assert!(state.ui.diff_active);
+        assert_eq!(state.ui.diff_snapshot[0].after, "print('hello')\n");
+    }
 
     #[test]
     fn command_hints_offer_planning_mode_without_manual_plan_management() {

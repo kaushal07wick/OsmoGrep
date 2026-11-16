@@ -29,7 +29,7 @@ export interface View {
   introScene?: Scene;
   introBright?: boolean;
   conversationStarted?:boolean;
-  checkingUpdate?:boolean;
+  userTurns?:number;
   panel?: PanelView | null;
   approval?: {tool:string;args:string;selected?:number} | null;
   statusLine?: string[];
@@ -50,7 +50,7 @@ export interface Rendered {
   animate: boolean;
   animationIntervalMs?:number;
   artwork: Rect | null;
-  controls?:{id:'model'|'provider'|'choice'|'voice'|'team'|'copy'|'update';index?:number;label?:string;x:number;y:number;width:number;height:number}[];
+  controls?:{id:'model'|'provider'|'choice'|'voice'|'team'|'copy'|'update'|'permission';index?:number;label?:string;x:number;y:number;width:number;height:number}[];
   transcript?:{x:number;y:number;width:number;height:number;start:number;maxScroll:number;lineWidths:number[];scrollbar?:Rect|null};
   selectionText?:string;
   images: { id: number; x: number; y: number; sequence: string; placement?:string }[];
@@ -110,9 +110,9 @@ export function render(v: View): Rendered {
   const put = (y: number, text: string, x = gutter, n = width) => {
     if (y >= 0 && y < h) rows[y] = ' '.repeat(Math.min(x, w - 1)) + clip(text, Math.min(n, w - x));
   };
-  if(v.release||v.checkingUpdate){
+  if(v.release){
     const boxWidth=Math.max(1,Math.min(88,w-8)),inset=boxWidth>=30?2:0,inner=Math.max(1,boxWidth-inset*2);
-    const lines=v.release?updateLines(v.release,inner,accent,light,h<25,v.preferences?.reduce_motion?0:v.elapsed):[fg+bold('osmogrep')+reset,'',accent+'Checking for updates…','',dim+'esc continue to chat'];
+    const lines=updateLines(v.release,inner,accent,light,h<25,v.preferences?.reduce_motion?0:v.elapsed);
     const shown=lines.slice(0,Math.max(1,h-2)),x=Math.max(0,Math.floor((w-boxWidth)/2))+inset,y=Math.max(0,Math.floor((h-shown.length)/2));
     shown.forEach((line,i)=>put(y+i,line,x,inner));
     if(v.release&&!v.release.installing){
@@ -124,8 +124,10 @@ export function render(v: View): Rendered {
     return {id:v.id,rows:rows.map(row=>root+fg+clip(row,w)+' '.repeat(Math.max(0,w-visibleWidth(clip(row,w))))+reset),input:empty,execution:empty,editorWidth:inner,animate:!!v.release?.installing&&!v.preferences?.reduce_motion,artwork:null,cursor:{x:0,y:0},cursorVisible:false,images:[],controls};
   }
   const conversationStarted=v.conversationStarted||v.running||!!v.stream||v.logs.some(log=>log.text.startsWith('USER|'));
-  const headerY = conversationStarted || (v.approval&&h<32) || h < 15 || v.density === 'compact' ? 0 : v.density === 'spacious' ? 2 : 1;
-  const headerHeight = conversationStarted || v.approval&&h<32?0:h >= 15 && v.density !== 'compact' ? (v.density === 'spacious' ? 5 : 4) : h >= 8 ? 2 : 0;
+  const userTurns=v.userTurns??(v.conversationStarted?2:v.logs.filter(log=>log.text.startsWith('USER|')&&!log.text.startsWith('USER|/')).length);
+  const hideHeader=userTurns>=2;
+  const headerY = hideHeader || (v.approval&&h<32) || h < 15 || v.density === 'compact' ? 0 : v.density === 'spacious' ? 2 : 1;
+  const headerHeight = hideHeader || v.approval&&h<32?0:h >= 15 && v.density !== 'compact' ? (v.density === 'spacious' ? 5 : 4) : h >= 8 ? 2 : 0;
   const header = [
     fg + bold('osmogrep') + reset + dim + ` v${clean(v.version)}` + (v.session ? ` · ${clean(v.session)}` : '') + reset,
     dim + clean(`${v.model} · ${v.provider}`) + reset,
@@ -149,7 +151,7 @@ export function render(v: View): Rendered {
   const footerHeight = h > composerHeight + headerHeight + headerY + 1 ? 2 : 0;
   const composerY = Math.max(0, h - footerHeight - composerHeight);
   const inputRect = { x: gutter, y: composerY, width, height: composerHeight };
-  const activityHeight=v.running&&!v.update&&h>=24&&width>=36&&!v.approval?4:1;
+  const activityHeight=v.running&&!v.update&&h>=24&&width>=36?4:1;
   const execution = { x: gutter, y: headerY + headerHeight, width, height: Math.max(0, composerY - headerY - headerHeight - activityHeight) };
   const approvalRows=v.approval?permissionLines(v.approval.tool,v.approval.args,v.approval.selected??0,width,accent,light,h<32):v.release?updateLines(v.release,width,accent,light,h<40):[];
   const approvalHeight=Math.min(approvalRows.length,Math.max(0,Math.max(0,execution.height-3)));
@@ -192,15 +194,7 @@ export function render(v: View): Rendered {
   const start = v.followTail ? maxScroll : Math.max(0,Math.min(maxScroll,v.scrollTop??maxScroll-v.scroll));
   transcript.slice(start, start + execution.height).forEach((line, i) => put(execution.y + i, highlightTranscript(line,start+i,v.transcriptSelection,light), gutter + pad, width - pad * 2));
   if(!v.masked&&!v.approval&&!v.update)for(const copy of codeCopies){const y=execution.y+copy.row-start;if(copy.text&&Buffer.byteLength(copy.text)<=100000&&y>=execution.y&&y<execution.y+execution.height)controls.push({id:'copy',label:copy.text,x:gutter+pad+copy.x,y,width:copy.width,height:1});}
-  const scrollbar=maxScroll>0&&width>=20&&execution.height>=3?{x:gutter+width-1,y:execution.y,width:1,height:execution.height}:null;
-  if(scrollbar){
-    const thumb=Math.max(1,Math.floor(scrollbar.height*scrollbar.height/transcript.length));
-    const first=Math.round((scrollbar.height-thumb)*start/maxScroll);
-    for(let row=0;row<scrollbar.height;row++){
-      const active=row>=first&&row<first+thumb,line=rows[scrollbar.y+row]??'';
-      rows[scrollbar.y+row]=line+' '.repeat(Math.max(0,scrollbar.x-visibleWidth(line)))+(active?dim:(light?rgb(215,215,210):rgb(45,44,40)))+(active?'▎':'│')+reset;
-    }
-  }
+  const scrollbar=null;
 
   let artwork: Rect | null = null;
   const images: Rendered['images'] = [];
@@ -233,7 +227,18 @@ export function render(v: View): Rendered {
       if(graphic)images.push({id,x:gutter+pad,y,sequence:graphic.sequence});
     }else{const action=v.running?'esc interrupt':'';const left=clip(status,Math.max(1,width-action.length-4));put(composerY-1,accent+left+reset+(width>action.length+visibleWidth(left)+3?' '.repeat(width-visibleWidth(left)-action.length)+dim+action+reset:''));}
   }
-  if(approvalHeight){const y=composerY-approvalHeight-activityHeight-1;approvalRows.slice(0,approvalHeight).forEach((line,i)=>{const content=clip(line,width-2);put(y+i,bg+content.replaceAll(reset,reset+bg+fg)+' '.repeat(Math.max(0,width-visibleWidth(content)))+reset);});}
+  if(approvalHeight){
+    const y=composerY-approvalHeight-activityHeight-1;
+    approvalRows.slice(0,approvalHeight).forEach((line,i)=>{
+      const content=clip(line,width-2);
+      put(y+i,bg+content.replaceAll(reset,reset+bg+fg)+' '.repeat(Math.max(0,width-visibleWidth(content)))+reset);
+      const text=stripTerminalSequences(content);
+      ['Y  Allow once','N  Deny','A  Auto-approve this session'].forEach((label,index)=>{
+        const start=text.indexOf(label);
+        if(start>=0)controls.push({id:'permission',index,x:gutter+visibleWidth(text.slice(0,start)),y:y+i,width:visibleWidth(label),height:1});
+      });
+    });
+  }
   for (let y = composerY; y < composerY + composerHeight; y++) put(y, paperRow('',width,y-composerY,composerHeight,light,paperGraphics));
   if(verticalPad&&!v.masked&&!v.permission&&!v.update){
     let right=gutter+width-pad;const capsules:{x:number;content:string}[]=[];
@@ -277,7 +282,7 @@ export function render(v: View): Rendered {
     const permission = v.planMode ? 'plan mode' : v.autoApprove ? 'auto-approve on' : 'ask approvals';
     const sessionsKey=(v.shortcuts?.agents??'super+left').replace('super+left','⌘←').replace('shift+left','shift+←');
     const sessionsHint=sessionsKey==='⌘←'?(width>=90?`⌘← / ${(v.shortcuts?.['sessions-fallback']??'ctrl+s')}`:(v.shortcuts?.['sessions-fallback']??'ctrl+s')):sessionsKey;
-    const right = dim+((v.queuedMessages??0)>0?`${v.queuedMessages} queued${v.queuePaused?' · enter resume':''}`:!v.followTail&&maxScroll>0?`${maxScroll-start} ↑ · end live`:v.running?`${v.shortcuts?.queue??'tab'} queue`:maxScroll>0?'scroll · pgup/pgdn':`${sessionsHint} sessions`)+reset;
+    const right = dim+((v.queuedMessages??0)>0?`${v.queuedMessages} queued${v.queuePaused?' · enter resume':''}`:v.running?`${v.shortcuts?.queue??'tab'} queue`:`${sessionsHint} sessions`)+reset;
     const reserve=width>=60?visibleWidth(right)+3:0;
     const entries=v.statusEntries??(v.statusLine?v.statusLine.map((value,i)=>({id:value.startsWith('~')||value.startsWith('/')?'directory':i===0?'model':'optional',value})):[{id:'permissions',value:`${v.profile} · ${permission}`}]);
     const providerMark=paperGraphics?providerMarks[v.provider.toLowerCase()]?.[light?'light':'dark']:undefined;

@@ -33,10 +33,12 @@ Ghostty window
 └─────────────────────────────────────────────┴─────────────────┘
 ```
 
-The editor uses a private tmux workspace. Device viewers use **native Ghostty
-panes**, outside tmux: terminal-mac does not support drawing through tmux. This
-also keeps device graphics out of the agent's transcript. Allow enough window
-width for three panes; narrow editor/agent workspaces stack vertically.
+On Ghostty, the editor and device viewers use **native panes**, each with its own
+terminal surface. Chat keeps the same running process, conversation and MCP
+connections when the editor opens or closes. The editor includes a compact tree,
+file tabs, a live edit ticker, and an optional second code window for inspection.
+Other terminals can use the private tmux editor fallback, which stacks panes in
+narrow windows. terminal-mac's viewer requires a native pane outside tmux.
 
 Automatic companion splits currently require **Ghostty 1.3+ on Apple silicon
 macOS**. Other terminals receive a manual viewer command. OsmoGrep does not

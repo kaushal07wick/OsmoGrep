@@ -1,0 +1,93 @@
+{
+  "version": "0.3.14",
+  "scope": "Real Rust/TypeScript terminal UI and Neovim in isolated macOS fixtures. Local fake model only; no API credits or user configuration changes.",
+  "rust_tests": {
+    "passed": 295,
+    "ignored": 3
+  },
+  "typescript_tests": {
+    "passed": 67
+  },
+  "checks": {
+    "native_editor": [
+      "native_editor_and_agent_share_a_window_without_tmux_or_restarting_chat",
+      "first_chat_turn_is_recorded_without_counting_the_editor_command",
+      "actual_file_tool_focus_reaches_the_live_editor_and_second_turn_counter",
+      "native_editor_retains_live_and_inspected_file_tabs",
+      "native_split_view_keeps_a_separate_inspection_window",
+      "native_close_preserves_unsaved_buffers_until_the_user_decides",
+      "closing_editor_expands_the_same_live_chat_process"
+    ],
+    "editor_model": [
+      "compact_project_tree_is_a_separate_neovim_window",
+      "live_file_opens_and_ticker_records_its_line",
+      "manual_tabs_stay_open_and_following_does_not_steal_focus",
+      "ticker_jump_returns_to_the_latest_saved_live_file",
+      "live_updates_continue_beside_unsaved_inspection_without_stealing_focus",
+      "agent_follow_never_overwrites_an_unsaved_live_buffer"
+    ],
+    "tmux_fallback": [
+      "workspace_handoff_resumes_the_current_session",
+      "editor_and_chat_share_one_window_at_80_columns",
+      "approved_graphics_forwarded_through_managed_tmux",
+      "toggle_preserves_unsaved_changes",
+      "closing_editor_restores_full_agent",
+      "normal_width_split_keeps_agent_readable",
+      "black_editor_without_user_dashboard_preserves_personal_config",
+      "editor_shortcut_returns_focus_to_chat",
+      "agent_focus_reloads_saved_changes_and_highlights_lines",
+      "following_never_overwrites_unsaved_editor_content",
+      "resize_and_renderer_survive_editor_close",
+      "clean_exit_restores_terminal"
+    ],
+    "terminal_interactions": [
+      "typescript_renderer_started",
+      "native_paper_pixels_cached",
+      "central_morph_settles_into_fine_orbit",
+      "central_morph_ignores_hover_and_click_replays",
+      "escape_does_not_exit_idle_app",
+      "greeting_has_no_tools_or_stale_background_jobs",
+      "inactive_voice_has_no_composer_badge",
+      "session_center_live_preview_preserves_draft_and_ownership",
+      "settings_categories_without_hidden_tab_navigation",
+      "command_picker_navigation_and_execution",
+      "footer_provider_model_selectors",
+      "light_cursor_has_explicit_contrast",
+      "settings_and_real_key_remapping",
+      "statusline_and_skill_picker",
+      "large_multiline_draft_editing",
+      "real_thumbnail_sequence",
+      "original_image_bytes_reached_provider",
+      "selected_skill_reached_provider",
+      "image_backspace_and_delete_remove_whole_attachment",
+      "weekly_chart_entry_animation",
+      "reported_usage_and_pixel_history",
+      "real_permission_dock_and_numbered_diff",
+      "clear_hides_diff_without_losing_session_changes",
+      "highlighted_command_card_click_copies_only_code",
+      "submitted_followups_are_distinct_fifo_turns",
+      "assistant_preface_does_not_skip_requested_tools",
+      "wheel_scrolling_and_drag_copy_plain_output",
+      "page_navigation_returns_to_live_without_scrollbar_coaching",
+      "streaming_preserves_user_scroll_position",
+      "terminal_resize",
+      "existing_shell_command",
+      "renderer_crash_recovers_to_native_ui",
+      "terminal_state_restored",
+      "startup_is_fresh_until_saved_session_selected",
+      "forwarded_command_left_opens_sessions",
+      "control_n_creates_fresh_session_from_center",
+      "preferences_survive_real_restart"
+    ],
+    "native_companion_panes": [
+      "mac_viewer_opens_beside_owner",
+      "phone_viewer_opens_beside_owner",
+      "owner_and_two_companions_visible"
+    ]
+  },
+  "not_checked": [
+    "Physical iPhone or running Mac VM control",
+    "Native split UI outside Ghostty on macOS; tmux fallback tested separately",
+    "Multi-hour model runs, benchmark parity or performance claims"
+  ]
+}

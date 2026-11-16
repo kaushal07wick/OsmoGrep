@@ -93,13 +93,23 @@ visible: use Up/Down then Enter, or Y/N/A. Escape cancels once. A timed activity
 indicator shows thinking/tool progress.
 
 `/nv` opens Neovim without synchronizing plugins or rewriting your configuration.
-On standalone terminals it creates an isolated tmux workspace with no status bar.
-Below 144 columns the editor gets a full-width window; use Ctrl+B, P to switch
-windows. Wider terminals use a balanced split; Ctrl+B, O switches panes. Close
-Neovim normally to restore the full agent view. `/nv toggle` requests a save-aware
-close and preserves unsaved buffers until you decide. A standalone agent must
-finish/cancel its current run before the initial tmux handoff. When already in
-your own tmux session, OsmoGrep leaves that session's status bar/options alone.
+In Ghostty on macOS it opens a native pane on the right while the same live chat
+process stays on the left. The editor has a compact project tree, persistent
+file tabs and a clickable agent-file ticker. Space a returns to chat, Space e
+toggles files, Space g jumps to the live file, Space f toggles following, and
+Space s splits the live file from a separate inspection window. Manual inspection
+does not steal the live view or overwrite unsaved buffers. Close Neovim normally
+to expand chat; `/nv toggle` requests a save-aware close.
+
+Other terminals use an isolated tmux workspace with no status bar: side by side
+at 100 columns or more, stacked below that. Ctrl+B, O switches panes. A standalone
+agent must finish/cancel its current run before the initial tmux handoff. Existing
+tmux settings stay unchanged. `OSMOGREP_EDITOR_BACKEND=tmux` forces this fallback.
+
+The welcome header stays through the first chat exchange and hides starting with
+the second message. Update checks run silently without blocking input. `/clear`
+clears the visible transcript and diffs; `/diff` can reopen session changes, and
+conversation context and undo history remain available.
 
 The normal workflow is coding assistance, not a mandatory test/review pipeline.
 Greetings have no tool access; coding requests use relevant tools and checks.

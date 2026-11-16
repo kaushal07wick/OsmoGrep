@@ -5,7 +5,7 @@ p=argparse.ArgumentParser();p.add_argument('--binary',type=Path,required=True);p
 repo=Path(tempfile.mkdtemp(prefix='osmogrep-editor-test-')).resolve();(repo/'README.md').write_text('Controlled editor fixture.\n')
 config=repo/'config/nvim';config.mkdir(parents=True);(config/'init.lua').write_text('vim.opt.number=true\nvim.opt.swapfile=false\nvim.g.user_config_loaded=true\n')
 test_home=repo/'test-home';test_home.mkdir()
-env=os.environ.copy();env['HOME']=str(test_home);env['NVIM_LOG_FILE']=str(repo/'editor.log');env.pop('TMUX',None);env.pop('TMUX_PANE',None);env.update(OSMOGREP_UI='typescript',OSMOGREP_DISABLE_UPDATE_CHECK='1',VLLM_REALTIME_AUTOCONNECT='0',TERM='xterm-256color',TERM_PROGRAM='ghostty',OSMOGREP_MODEL='editor-test',XDG_CONFIG_HOME=str(repo/'config'),XDG_DATA_HOME=str(repo/'data'),XDG_STATE_HOME=str(repo/'state'))
+env=os.environ.copy();env['HOME']=str(test_home);env['NVIM_LOG_FILE']=str(repo/'editor.log');env.pop('TMUX',None);env.pop('TMUX_PANE',None);env.update(OSMOGREP_EDITOR_BACKEND='tmux',OSMOGREP_UI='typescript',OSMOGREP_DISABLE_UPDATE_CHECK='1',VLLM_REALTIME_AUTOCONNECT='0',TERM='xterm-256color',TERM_PROGRAM='ghostty',OSMOGREP_MODEL='editor-test',XDG_CONFIG_HOME=str(repo/'config'),XDG_DATA_HOME=str(repo/'data'),XDG_STATE_HOME=str(repo/'state'))
 folder=Path('/private/tmp')/f'tmux-{os.getuid()}';before=set(folder.glob('osmogrep-*'));socket=None
 master,slave=pty.openpty();fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',32,80,0,0));flags=termios.tcgetattr(slave)
 def controlling():os.setsid();fcntl.ioctl(0,termios.TIOCSCTTY,0)

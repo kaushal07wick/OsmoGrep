@@ -77,6 +77,7 @@ pub struct CommandItem {
 }
 
 pub struct UiState {
+    pub user_turns: u64,
     pub open_session: Option<SessionTarget>,
     pub team: crate::team::Snapshot,
     pub compact_requested: bool,
@@ -131,7 +132,6 @@ pub struct UiState {
     pub auto_approve: bool,
     pub pending_permission: Option<PendingPermission>,
     pub pending_update: Option<PendingUpdate>,
-    pub update_check_pending: bool,
     pub update_check_status: Option<String>,
     pub update_install_requested: bool,
     pub update_skip_requested: bool,
@@ -153,6 +153,7 @@ pub struct UiState {
 impl Default for UiState {
     fn default() -> Self {
         Self {
+            user_turns: 0,
             open_session: None,
             team: crate::team::Snapshot::default(),
             compact_requested: false,
@@ -206,7 +207,6 @@ impl Default for UiState {
             auto_approve: false,
             pending_permission: None,
             pending_update: None,
-            update_check_pending: false,
             update_check_status: None,
             update_install_requested: false,
             update_skip_requested: false,

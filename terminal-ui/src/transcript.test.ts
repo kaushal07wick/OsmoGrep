@@ -30,13 +30,13 @@ test('an edit diff stays next to its tool result with the final summary after it
  assert.ok(text.indexOf('new sentence')<text.indexOf('Updated README.md'));
  assert.ok(text.indexOf('edited README.md')<text.indexOf('new sentence'));
 });
-test('overflowing edit output exposes a bounded scroll track and a return-to-live hint',()=>{
+test('overflowing output stays scrollable without a visible scrollbar without footer scrolling hints',()=>{
  const v=fixture();v.logs=Array.from({length:50},(_,i)=>({level:'Info',text:`Line ${i}\n`}));
- const bottom=render(v);assert.ok(bottom.transcript!.scrollbar);
- const top=render({...v,followTail:false,scrollTop:0});const track=top.transcript!.scrollbar!;
- assert.equal(top.transcript!.start,0);assert.ok(track.x>=top.transcript!.x+top.transcript!.width);
- assert.ok(track.y+track.height<=top.input.y);
- assert.match(top.rows.map(stripTerminalSequences).join('\n'),/end live/);
+ const bottom=render(v);assert.equal(bottom.transcript!.scrollbar,null);
+ const top=render({...v,followTail:false,scrollTop:0});const track=top.transcript!.scrollbar;
+ assert.equal(top.transcript!.start,0);assert.equal(track,null);
+
+ assert.doesNotMatch(top.rows.map(stripTerminalSequences).join('\n'),/end live|pgup\/pgdn/);
  assert.ok(top.rows.every(row=>stripTerminalSequences(row).length<=v.width));
 });
 

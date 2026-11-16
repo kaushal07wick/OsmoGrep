@@ -26,7 +26,7 @@ export function cachedCodeBlocks(
  const block = codeBlocks(text, width, light, markdown, copied);
  const size = 2 * (key.length + block.rows.reduce((total, row) => total + row.length, 0));
  if (size <= historyCacheLimit) {
-  while (historyBlocks.size >= 8 || historyCacheSize + size > historyCacheLimit) {
+  while (historyBlocks.size >= 128 || historyCacheSize + size > historyCacheLimit) {
    const first = historyBlocks.keys().next().value!;
    historyCacheSize -= historyBlocks.get(first)!.size;
    historyBlocks.delete(first);
@@ -56,7 +56,7 @@ export function codeBlocks(text:string,width:number,light:boolean,markdown:(text
  const flush=()=>{if(prose.length){rows.push(...markdown(prose.join('\n')));prose=[];}};
  const lines=text.split('\n'),bg=light?'\x1b[48;2;242;240;234m':'\x1b[48;2;16;17;17m';
  const dim=light?'\x1b[38;2;100;100;95m':'\x1b[38;2;140;145;145m';
- const inset=width>=40?1:0,card=Math.max(1,width-inset*2),pad=width>=28?2:1;
+ const inset=0,card=Math.max(1,width),pad=1;
  const surface=(line:string)=>' '.repeat(inset)+bg+line.replaceAll(reset,reset+bg)+' '.repeat(Math.max(0,card-visibleWidth(line)))+reset+' '.repeat(inset);
  for(let i=0;i<lines.length;i++){
   const open=/^ {0,3}(`{3,}|~{3,})([^`]*)$/.exec(lines[i]!);
@@ -69,13 +69,21 @@ export function codeBlocks(text:string,width:number,light:boolean,markdown:(text
   }
   const code=source.join('\n');
   if(width<14){rows.push(...source.flatMap(line=>wrapTextWithAnsi(highlight(line.replaceAll('\t','    '),language,light),Math.max(1,width))));continue;}
-  const button=copied===code?'✓ Copied':'⧉ Copy',x=width-inset-pad-visibleWidth(button),languageLabel=fit((/^(sh|bash|shell|console)$/.test(language)?'shell':language||'code').toUpperCase(),Math.max(1,x-inset-pad-2));
-  const action=copied===code?(light?'\x1b[38;2;40;120;65m':'\x1b[38;2;135;185;145m'):(light?'\x1b[38;2;70;75;70m':'\x1b[38;2;185;185;175m');
+  const button = copied === code ? ' ✓ Copied ' : ' ⧉ Copy ';
+  const x = width - inset - pad - visibleWidth(button);
+  const action = copied === code
+    ? (light ? '\x1b[38;2;40;120;65m' : '\x1b[38;2;135;185;145m')
+    : (light ? '\x1b[38;2;165;80;25m\x1b[48;2;235;220;197m' : '\x1b[38;2;235;155;105m\x1b[48;2;50;34;23m');
   rows.push(surface(''));
   copies.push({row:rows.length,x,width:visibleWidth(button),text:code});
-  rows.push(surface(' '.repeat(pad)+dim+languageLabel+' '.repeat(Math.max(1,x-inset-pad-visibleWidth(languageLabel)))+action+button),surface(''));
-  for(const line of source){
-   for(const wrapped of wrapTextWithAnsi(highlight(line.replaceAll('\t','    '),language,light),Math.max(1,card-pad*2)))rows.push(surface(' '.repeat(pad)+wrapped));
+  const first = source[0] ?? '';
+  const inline = visibleWidth(first.replaceAll('\t', '    ')) <= x - inset - pad - 2;
+  const lead = inline ? highlight(first.replaceAll('\t', '    '), language, light) : '';
+  rows.push(surface(' '.repeat(pad) + lead + ' '.repeat(Math.max(0, x-inset-pad-visibleWidth(lead))) + action + button + reset));
+  for (const line of source.slice(inline ? 1 : 0)) {
+   for (const wrapped of wrapTextWithAnsi(highlight(line.replaceAll('\t','    '),language,light),Math.max(1,card-pad*2))) {
+    rows.push(surface(' '.repeat(pad)+wrapped));
+   }
   }
   rows.push(surface(''));prose.push('');
  }

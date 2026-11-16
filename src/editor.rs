@@ -8,6 +8,7 @@ use std::{env, path::Path, process::Command};
 #[path = "editor/follow.rs"]
 mod follow;
 pub use follow::Follower;
+mod native;
 #[derive(Clone)]
 pub struct Session {
     pub socket: String,
@@ -19,11 +20,11 @@ pub enum Layout {
     Split(u16),
 }
 pub fn layout(columns: u16) -> Layout {
-    if columns < 60 {
+    if columns < 100 {
         Layout::Stacked
     } else {
         Layout::Split(
-            ((u32::from(columns) * 52 / 100) as u16)
+            ((u32::from(columns) * 42 / 100) as u16)
                 .max(28)
                 .min(columns - 28),
         )
@@ -40,15 +41,34 @@ fn run(socket: Option<&str>, args: &[&str]) -> Result<String, String> {
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
-fn editor_command(root: &Path, entry: &str, owner: &str, bridge: &Path) -> String {
-    format!(
-        "cd {} && OSMOGREP_AGENT_PANE={} OSMOGREP_EDITOR_BRIDGE={} exec nvim --clean -i NONE --cmd {} -- {}",
+fn editor_command(
+    root: &Path,
+    entry: &str,
+    owner: &str,
+    bridge: &Path,
+    socket: Option<&Path>,
+) -> Result<String, String> {
+    let entry = if root.join(entry).is_dir() { "" } else { entry };
+    let configuration = bridge.with_extension("lua");
+    crate::storage::atomic_write(
+        &configuration,
+        format!(
+            "{}\n{}",
+            include_str!("editor.lua"),
+            include_str!("editor/workspace.lua")
+        )
+        .as_bytes(),
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(format!(
+        "cd {} && OSMOGREP_AGENT_PANE={} OSMOGREP_EDITOR_BRIDGE={} exec nvim --clean -i NONE {} -u {} -- {}",
         shell_escape(&root.display().to_string()),
         shell_escape(owner),
         shell_escape(&bridge.display().to_string()),
-        shell_escape(&format!("lua {}", include_str!("editor.lua"))),
-        shell_escape(entry)
-    )
+        socket.map(|path|format!("--listen {}",shell_escape(&path.display().to_string()))).unwrap_or_default(),
+        shell_escape(&configuration.display().to_string()),
+        if entry.is_empty() { String::new() } else { shell_escape(entry) }
+    ))
 }
 
 fn owned_editor(owner: &str) -> Option<String> {
@@ -97,7 +117,7 @@ fn open_pane(
     bridge: &Path,
 ) -> Result<String, String> {
     let cwd = root.display().to_string();
-    let command = editor_command(root, entry, owner, bridge);
+    let command = editor_command(root, entry, owner, bridge, None)?;
     let pane = match layout(columns) {
         Layout::Stacked => run(
             socket,
@@ -122,7 +142,6 @@ fn open_pane(
             &[
                 "split-window",
                 "-h",
-                "-b",
                 "-l",
                 &size.to_string(),
                 "-P",
@@ -153,7 +172,13 @@ fn open_inner(state: &mut AgentState, raw: &str) -> Result<(), String> {
         log(state,LogLevel::Info,"Neovim: :q closes; unsaved files prompt. Space a returns to chat; Space e browses files; Space f pauses agent follow. Editor and chat stay visible together; narrow terminals stack them. /nv toggle requests a safe close.");
         return Ok(());
     }
-    for executable in ["tmux", "nvim"] {
+    let native = crate::workspace::ghostty::available()
+        && std::env::var("OSMOGREP_EDITOR_BACKEND").as_deref() != Ok("tmux");
+    for executable in if native {
+        &["nvim"][..]
+    } else {
+        &["tmux", "nvim"][..]
+    } {
         if !Command::new("sh")
             .args(["-c", &format!("command -v {executable} >/dev/null 2>&1")])
             .status()
@@ -182,6 +207,9 @@ fn open_inner(state: &mut AgentState, raw: &str) -> Result<(), String> {
         .join(format!("{}.json", state.session.id));
     if state.ui.editor_follow.is_none() {
         state.ui.editor_follow = Some(Follower::start(bridge.clone(), state.repo_root.clone())?);
+    }
+    if native {
+        return native::open(state, entry, bridge, raw.trim() == "/nv toggle");
     }
     if env::var_os("TMUX").is_some() {
         let owner = env::var("TMUX_PANE").map_err(|_| "Cannot identify this tmux pane")?;
@@ -314,10 +342,10 @@ mod tests {
     use super::*;
     #[test]
     fn both_views_stay_visible_and_splits_keep_the_agent_readable() {
-        for width in [20, 40, 59] {
+        for width in [20, 40, 59, 80, 96] {
             assert_eq!(layout(width), Layout::Stacked)
         }
-        for width in [60, 80, 96, 100, 120, 144, 160, 240] {
+        for width in [100, 120, 144, 160, 240] {
             let Layout::Split(left) = layout(width) else {
                 panic!()
             };
@@ -327,18 +355,31 @@ mod tests {
     }
     #[test]
     fn launch_preserves_user_config_quotes_paths_and_never_syncs_plugins() {
+        let directory =
+            std::env::temp_dir().join(format!("editor-launch-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let bridge = directory.join("bridge.json");
         let command = editor_command(
             Path::new("/tmp/my repo"),
             "file ' name.rs",
             "%2",
-            Path::new("/tmp/bridge.json"),
-        );
+            &bridge,
+            None,
+        )
+        .unwrap();
         assert!(command.contains("exec nvim --clean -i NONE"));
         assert!(command.contains("OSMOGREP_AGENT_PANE="));
-        assert!(command.contains("space a: chat"));
+        assert!(std::fs::read_to_string(bridge.with_extension("lua"))
+            .unwrap()
+            .contains("space a: chat"));
+        assert!(
+            command.len() < 4096,
+            "tmux commands must not embed the full editor configuration"
+        );
         assert!(!command.contains("Lazy"));
         assert!(!command.contains("NvimTree"));
         assert!(!command.contains("headless"));
         assert!(command.contains("'\"'\"'"));
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }

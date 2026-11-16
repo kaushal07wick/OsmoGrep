@@ -4,11 +4,9 @@ use crate::{
     logger::log,
     state::{AgentState, LogLevel},
 };
-use std::{
-    path::{Path, PathBuf},
-    process::Command,
-    time::Duration,
-};
+use std::path::{Path, PathBuf};
+
+pub mod ghostty;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Device {
@@ -119,28 +117,6 @@ fn pane_command(program: &Path, name: &str, setup: bool) -> String {
     )
 }
 
-fn caller_tty() -> Result<String, String> {
-    if std::env::var_os("TMUX").is_some() {
-        let pane = std::env::var("TMUX_PANE").map_err(|_| "Cannot identify the agent pane")?;
-        let output = Command::new("tmux")
-            .args(["display-message", "-p", "-t", &pane, "#{client_tty}"])
-            .output()
-            .map_err(|e| e.to_string())?;
-        if output.status.success() {
-            return Ok(String::from_utf8_lossy(&output.stdout).trim().into());
-        }
-    }
-    #[cfg(unix)]
-    {
-        let mut buffer = [0u8; 1024];
-        if unsafe { libc::ttyname_r(0, buffer.as_mut_ptr().cast(), buffer.len()) } == 0 {
-            let end = buffer.iter().position(|c| *c == 0).unwrap_or(buffer.len());
-            return Ok(String::from_utf8_lossy(&buffer[..end]).into());
-        }
-    }
-    Err("Open a viewer from the interactive OsmoGrep terminal.".into())
-}
-
 fn launch(
     device: Device,
     root: &Path,
@@ -153,37 +129,14 @@ fn launch(
     }
     validate_name(target)?;
     let program = resolve(device, root)?;
-    if !crate::ui::terminal::kitty_terminal()
-        || std::env::var_os("GHOSTTY_RESOURCES_DIR").is_none()
-            && std::env::var("TERM_PROGRAM").as_deref() != Ok("ghostty")
-    {
+    if !ghostty::available() {
         return Err(format!("Automatic companion panes currently use Ghostty 1.3+. Open a native terminal split and run: {}", pane_command(&program, target, setup)));
     }
-    let mut command = Command::new("/usr/bin/osascript");
     let viewer = format!(
         "/bin/sh -c {}",
         shell_escape(&pane_command(&program, target, setup))
     );
-    command.current_dir(root).args([
-        "-l",
-        "JavaScript",
-        "-e",
-        include_str!("ghostty-split.js"),
-        tty,
-        &root.display().to_string(),
-        "GSrt",
-        &viewer,
-    ]);
-    let result = crate::process_runner::run_command(command, Duration::from_secs(20))?;
-    if result.exit_code != 0 {
-        return Err(format!(
-            "Could not open the viewer pane: {}",
-            String::from_utf8_lossy(&result.stderr)
-                .chars()
-                .take(1000)
-                .collect::<String>()
-        ));
-    }
+    ghostty::action(root, tty, "GSrt", &viewer, 0)?;
     let arguments = if device == Device::Mac {
         vec!["mcp".into(), target.into()]
     } else {
@@ -271,7 +224,7 @@ pub fn handle(state: &mut AgentState, command: &str) {
         log(state, LogLevel::Error, error);
         return;
     }
-    let tty = match caller_tty() {
+    let tty = match ghostty::caller_tty() {
         Ok(tty) => tty,
         Err(error) => {
             log(state, LogLevel::Error, error);

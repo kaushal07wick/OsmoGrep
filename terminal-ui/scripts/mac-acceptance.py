@@ -419,6 +419,13 @@ try:
     assert b'48;2;9;30;20m' in transcript[at:], 'applied diff must use the shaded addition surface'
     result['real_permission_dock_and_numbered_diff'] = True
     assert b'Fresh passing evidence is required' not in plain(transcript[at:])
+    at=len(transcript);paste('/clear');send(b'\r')
+    wait_for(lambda:b'Logs cleared.' in plain(transcript[at:]))
+    assert b'permission.txt' not in plain(transcript[at:]), 'clear must remove the separate diff preview'
+    assert (repo/'permission.txt').read_text()=='after\n'
+    at=len(transcript);paste('/diff');send(b'\r')
+    wait_for(lambda:b'permission.txt' in plain(transcript[at:]))
+    result['clear_hides_diff_without_losing_session_changes']=True
     at=len(transcript);paste('CODE_COPY_PROBE');send(b'\r')
     wait_for(lambda:b'CODE_BLOCK_READY' in plain(transcript[at:]) and '⧉ Copy'.encode() in plain(transcript[at:]))
     # Follow ANSI cursor positions to click the actual header, not hard-coded output rows.
@@ -457,14 +464,11 @@ try:
     copied=base64.b64decode(copies[-1]).decode()
     assert 'SCROLL_LINE_' in copied and '\x1b' not in copied
     result['wheel_scrolling_and_drag_copy_plain_output']=True
-    # The track sits in the unused right gutter and scrolls without selecting text.
-    moved=len(transcript)
-    send(b'\x1b[<0;159;23M');send(b'\x1b[<32;159;6M');send(b'\x1b[<0;159;6m')
-    wait_for(lambda:b'end live' in plain(transcript[moved:]))
-    assert b'\x1b]52;c;' not in transcript[moved:], 'dragging the scroll track must not copy output'
-    send(b'\x1b[<0;159;38M');send(b'\x1b[<0;159;38m')  # Bottom of transcript, above the new blank margin
+    # Keyboard navigation remains available after removing the visible scrollbar and footer coaching.
+    moved=len(transcript);send(b'\x1b[6~'*12)
     wait_for(lambda:b'SCROLL_LINE_199' in plain(transcript[moved:]))
-    result['transcript_scroll_track_drags_and_returns_to_live']=True
+    assert b'end live' not in plain(transcript[moved:]) and b'scroll \xc2\xb7 pgup/pgdn' not in plain(transcript[moved:])
+    result['page_navigation_returns_to_live_without_scrollbar_coaching']=True
     send(b'\x1b');paste('STREAM_SCROLL_PROBE');send(b'\r')
     wait_for(lambda:b'STREAM_LINE_079' in plain(transcript))
     send(b'\x1b[<64;40;12M'*4)

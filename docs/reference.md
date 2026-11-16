@@ -22,6 +22,10 @@ Use `/key` inside the app to set credentials instead of an environment variable.
 
 The optional [installer](../install.sh) also attempts to install tmux/Neovim and initialize a managed editor configuration. The Cargo commands above install OsmoGrep itself.
 
+Chat opens immediately while release checks run silently in the background. A
+newer release is offered when the agent is idle and the composer is empty;
+up-to-date and offline checks do not show a startup screen or block input.
+
 Try requests such as:
 
 ```text
@@ -36,6 +40,8 @@ Review the changes in src/parser.rs.
 ### A composer you can keep working in
 
 The composer has a fine paper texture: **Graphite** in dark mode and **Cotton** in light mode. Drafts grow to eight visible lines and scroll to the cursor after that. Text remains editable terminal text, including when native graphics draw the material behind it.
+
+The welcome header stays through the first chat exchange and hides when you send the second message. Commands do not count as chat turns.
 
 Typing `/` opens an attached, searchable command tray. The model and provider in the status line are selectors. `/settings`, `/permissions`, `/skills`, `/keymap`, and `/statusline` open workspace controls.
 
@@ -150,7 +156,7 @@ Automatic review/test scheduling is **off by default**. A greeting or unrelated 
 
 - **Repository instructions:** root `.osmogrep.md`, `AGENTS.md`, `CLAUDE.md`, and `.cursorrules` are loaded within a shared size budget. They guide requested work rather than create tasks of their own.
 - **Skills:** browse `/skills` and invoke a selected skill with `$skill-name`. Discovery includes repository `skills/`, `.agents/skills/`, `.osmogrep/skills/`, and corresponding supported user skill directories.
-- **Neovim:** `/nv [file]` keeps the code editor and agent visible in the same workspace. They sit side by side from 60 columns and stack below that width. The editor follows the agent's active file and saved edits, with added and removed lines highlighted. Unsaved editor buffers pause following. **Space a** returns to chat, **Space e** browses files, and **Space f** pauses/resumes following. Requires tmux and Neovim; your personal Neovim configuration stays untouched.
+- **Neovim:** `/nv [file]` keeps chat on the left and opens the editor on the right in a native Ghostty pane. A compact project tree, clickable live-edit ticker and file tabs keep the agent's active file visible without taking over files you inspect. **Space a** returns to chat, **Space e** toggles the tree, **Space g** jumps to the live edit, **Space f** toggles following, and **Space s** opens/closes a second inspection window. Unsaved buffers are preserved. Requires Neovim and Ghostty 1.3+ on macOS; other terminals use the tmux fallback. `OSMOGREP_EDITOR_BACKEND=tmux` explicitly selects that fallback. Personal Neovim/terminal configuration stays untouched.
 - **Mac and iPhone:** Settings → Workspace, or `/workspace mac|phone [name]`, opens a separately installed terminal-mac/terminal-phone viewer in a native Ghostty pane and exposes its MCP controls to the agent. `/workspace setup mac|phone [name]` explicitly starts companion setup. See [requirements and data flow](device-workspace.md).
 - **MCP and hooks:** `/mcp` inspects configured native stdio/Streamable HTTP servers and legacy command bridges. Optional `pre_shell`, `pre_edit`, and `post_edit` hooks are configured in `config.toml`.
 - **Advanced workflows:** GitHub triage, voice input, explicit worktree swarms, and bounded `ultracode` workflows remain available. They are optional and may need external services or tools.
@@ -199,7 +205,7 @@ Important environment overrides:
 | `OSMOGREP_NO_STREAM` | Request non-streaming responses |
 | `OSMOGREP_MOUSE` | Mouse reporting; `off` leaves keyboard navigation available |
 | `OSMOGREP_UI=native` | Select the native Rust interface |
-| `OSMOGREP_DISABLE_UPDATE_CHECK` | Disable the startup update check |
+| `OSMOGREP_DISABLE_UPDATE_CHECK` | Disable silent background update checks |
 
 ## Development
 
