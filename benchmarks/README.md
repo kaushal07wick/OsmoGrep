@@ -2,7 +2,7 @@
 
 This setup evaluates the released OsmoGrep coding agent through [Harbor's installed-agent interface](https://docs.harborframework.com/agents/custom-agents). It preserves the native system prompt, tools, provider transport and agent loop. Harbor supplies isolated task containers and an independent verifier; an agent saying “done” is not a passing score.
 
-**Status: setup prepared; no scored model run or API spending authorized.** The adapter contracts run against Harbor 0.26.0 with fake execution environments. Docker-based installation and task grading still need an actual benchmark run. Existing Rust/UI/provider fixture tests are regression checks, not a public benchmark score.
+**Status: the free Debian-container controls have passed; a bounded local-Ollama pilot is in progress. Paid-provider runs remain disabled.** The adapter runs against Harbor 0.26.0. Existing Rust/UI/provider fixtures are regression checks, not a public coding-performance score.
 
 ## Install the optional runner
 
@@ -11,7 +11,7 @@ Run from the repository root with Python 3.12 or newer. The runner is separate f
 ```sh
 python3 -m venv /tmp/osmogrep-benchmark-venv
 /tmp/osmogrep-benchmark-venv/bin/python -m pip install -r benchmarks/harbor/requirements.txt
-LITELLM_LOCAL_MODEL_COST_MAP=True /tmp/osmogrep-benchmark-venv/bin/python -m unittest benchmarks.harbor.test_adapter -v
+LITELLM_LOCAL_MODEL_COST_MAP=True /tmp/osmogrep-benchmark-venv/bin/python -m unittest benchmarks.harbor.test_adapter benchmarks.harbor.test_evaluation -v
 ```
 
 You can also check CLI discovery without starting a trial:
@@ -30,6 +30,20 @@ PYTHONPATH=. LITELLM_LOCAL_MODEL_COST_MAP=True /tmp/osmogrep-benchmark-venv/bin/
 This smoke check creates a temporary repository and fake localhost model endpoint. It reads one fixture file through the real agent tool loop and checks the collected usage. It does not run the container installer or contact a model provider.
 
 The offline checks cover provider routing for Responses, Chat Completions and Anthropic Messages, custom endpoint delivery, exact prompt delivery without shell interpolation, failed-run propagation, log collection and token accounting. They execute neither installation commands nor model requests.
+
+## Local Ollama checks
+
+A local model can exercise the real agent without paid API calls. Use an installed, tool-capable GGUF model. The local-only runner rejects cloud model metadata and non-loopback endpoints, isolates application configuration, and drops inherited provider credentials. Create a separate alias so the server context agrees with the agent budget:
+
+```sh
+printf 'FROM qwen3.5:4b\nPARAMETER num_ctx 16384\nPARAMETER num_predict 2048\nPARAMETER temperature 0.2\nPARAMETER seed 42\n' > /tmp/osmogrep-eval.Modelfile
+ollama create osmogrep-eval-qwen35-4b -f /tmp/osmogrep-eval.Modelfile
+OSMOGREP_PROVIDER=ollama OSMOGREP_MODEL=osmogrep-eval-qwen35-4b OSMOGREP_BASE_URL=http://127.0.0.1:11434/v1 python3 terminal-ui/scripts/coding-live-acceptance.py --binary target/debug/osmogrep --output /tmp/osmogrep-local-coding.json --local-only
+```
+
+These three small coding checks are smoke tests, not the five-task repository pilot. Grader version 2 rejects duplicated README headings, hard-coded answers and incomplete renames; reports preserve candidate files, actual usage, latency and failed outcomes. A failed first attempt and a later successful replay remain separate evidence.
+
+The same pinned Harbor pilot can use `ollama/<model>` with a local server endpoint reachable from its task containers. The adapter accepts explicit `context_window`, `max_output_tokens` and `reasoning_effort` settings and writes them into isolated per-trial model configuration. The local run uses one agent at a time, 16K context, 2K maximum output, thinking disabled, 12 coding rounds and a five-minute agent timeout. These reduced limits and x86 emulation on Apple Silicon make it a diagnostic run, not a comparable Terminal-Bench leaderboard submission. Record setup failures separately from coding failures. Ollama must continue using local weights; a localhost address alone does not rule out a cloud-routed model.
 
 ## Pilot command — only after approving model spending
 

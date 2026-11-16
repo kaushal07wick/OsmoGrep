@@ -2629,10 +2629,6 @@ pub(crate) fn command_palette_items() -> &'static [CommandItem] {
             desc: "Open the workspace in Neovim",
         },
         CommandItem {
-            cmd: "/quit",
-            desc: "Interrupt the current run",
-        },
-        CommandItem {
             cmd: "/exit",
             desc: "Exit OsmoGrep",
         },
@@ -2696,6 +2692,7 @@ mod tests {
             "/autofix",
             "/gh",
             "/q",
+            "/quit",
             "/agents",
             "/team",
         ] {

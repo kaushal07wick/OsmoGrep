@@ -40,7 +40,7 @@ class OsmoGrepAgent(BaseInstalledAgent):
             raise ValueError("unrecognized OsmoGrep version output")
         return match[1]
 
-    def __init__(self, *args, version="0.3.9", max_iterations=90, reasoning_effort=None, **kwargs):
+    def __init__(self, *args, version="0.3.9", max_iterations=90, reasoning_effort=None, context_window=None, max_output_tokens=None, **kwargs):
         if not re.fullmatch(r"\d+\.\d+\.\d+", version):
             raise ValueError("version must be a pinned release such as 0.3.9")
         self.max_iterations = int(max_iterations)
@@ -49,6 +49,12 @@ class OsmoGrepAgent(BaseInstalledAgent):
         if reasoning_effort not in (None, "none", "low", "medium", "high", "xhigh"):
             raise ValueError("unsupported reasoning_effort")
         self.reasoning_effort = reasoning_effort
+        self.context_window = int(context_window) if context_window is not None else None
+        self.max_output_tokens = int(max_output_tokens) if max_output_tokens is not None else None
+        if self.context_window is not None and not 4096 <= self.context_window <= 4000000:
+            raise ValueError("invalid context_window")
+        if self.max_output_tokens is not None and not 256 <= self.max_output_tokens <= (self.context_window or 128000) // 2:
+            raise ValueError("invalid max_output_tokens")
         super().__init__(*args, version=version, **kwargs)
 
     async def install(self, environment):
@@ -105,6 +111,13 @@ test "$(osmogrep --version)" = "osmogrep $version"
             env["OSMOGREP_BASE_URL"] = connection.execution_base_url
         if self.reasoning_effort is not None:
             env["OSMOGREP_REASONING_EFFORT"] = self.reasoning_effort
+        options = {key: value for key, value in {"context_window": self.context_window, "max_output_tokens": self.max_output_tokens, "reasoning": self.reasoning_effort}.items() if value is not None}
+        if options:
+            directory = self.environment_logs_dir / "config" / "osmogrep"
+            await self.exec_as_agent(environment, f"mkdir -p {shlex.quote(str(directory))}")
+            content = f'[model_options.{json.dumps(connection.provider + "/" + connection.model_id)}]\n'
+            content += "".join(f"{key} = {json.dumps(value)}\n" for key, value in options.items())
+            await self._upload_config_text(environment, content=content, remote_path=str(directory / "config.toml"), filename="config.toml")
         prompt = str(self.environment_logs_dir / "instruction.txt")
         await self._upload_config_text(environment, content=instruction, remote_path=prompt, filename="instruction.txt")
         command = (

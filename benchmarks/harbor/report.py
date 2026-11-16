@@ -18,7 +18,7 @@ def trial_row(result, directory):
     config = result.get("config") or {}
     settings = config.get("agent") or {}
     safe_settings = {key: settings.get(key) for key in ("name", "import_path", "model_name", "model_api_format", "override_timeout_sec", "max_timeout_sec")}
-    safe_settings["kwargs"] = {key: value for key, value in settings.get("kwargs", {}).items() if key in ("version", "max_iterations", "reasoning_effort")}
+    safe_settings["kwargs"] = {key: value for key, value in settings.get("kwargs", {}).items() if key in ("version", "max_iterations", "reasoning_effort", "context_window", "max_output_tokens")}
     agent = result.get("agent_info") or {}
     timing = result.get("agent_execution") or {}
     seconds = None

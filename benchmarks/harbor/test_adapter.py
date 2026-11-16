@@ -2,6 +2,7 @@
 import json
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -61,6 +62,16 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(RuntimeError):
                 await agent.run("Fix the task", Environment(return_code=7), AgentContext())
             self.assertTrue((Path(folder) / "stderr.log").exists())
+
+    async def test_local_model_limits_and_disabled_thinking_reach_native_configuration(self):
+        with tempfile.TemporaryDirectory() as folder, patch.dict("os.environ", {"LITELLM_LOCAL_MODEL_COST_MAP":"True"}, clear=True):
+            agent = OsmoGrepAgent(logs_dir=Path(folder), model_name="ollama/local:latest", base_url="http://127.0.0.1:11434/v1", context_window=16384, max_output_tokens=2048, reasoning_effort="none")
+            env = Environment()
+            await agent.run("Fix the task", env, AgentContext())
+            text = next(value for name, value in env.uploads.items() if name.endswith("config.toml"))
+            self.assertEqual(tomllib.loads(text)["model_options"]["ollama/local:latest"], {"context_window":16384,"max_output_tokens":2048,"reasoning":"none"})
+            with self.assertRaises(ValueError):
+                OsmoGrepAgent(logs_dir=Path(folder), context_window=4096, max_output_tokens=4000)
 
     async def test_installer_is_pinned_and_checks_archive_before_extracting(self):
         with tempfile.TemporaryDirectory() as folder:

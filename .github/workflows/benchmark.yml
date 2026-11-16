@@ -37,6 +37,7 @@ jobs:
       - run: cargo build --locked
       - run: python -m pip install -r benchmarks/harbor/requirements.txt
       - run: python -m unittest benchmarks.harbor.test_adapter benchmarks.harbor.test_evaluation -v
+      - run: python -m unittest discover -s terminal-ui/scripts -p test_coding_grade.py -v
       - name: Exercise native adapter and independent grading in Debian containers
         run: |
           cp target/debug/osmogrep benchmarks/harbor/tasks/adapter-contract/environment/osmogrep

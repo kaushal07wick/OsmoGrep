@@ -20,10 +20,10 @@ impl Tool for Edit {
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string" },
-                    "old": { "type": "string" },
-                    "new": { "type": "string" },
-                    "all_occ": { "type": "boolean" }
+                    "path": { "type": "string", "description": "Workspace file to edit; read it first." },
+                    "old": { "type": "string", "description": "Exact nonempty text from the current file. It must occur once unless all_occ is true." },
+                    "new": { "type": "string", "description": "Text that replaces exactly the old span. Use full file content here only when old is the full file." },
+                    "all_occ": { "type": "boolean", "description": "Replace every matching old span; defaults to false." }
                 },
                 "required": ["path", "old", "new"],
                 "additionalProperties": false
