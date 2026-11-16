@@ -20,6 +20,15 @@ You can also check CLI discovery without starting a trial:
 PYTHONPATH=. LITELLM_LOCAL_MODEL_COST_MAP=True /tmp/osmogrep-benchmark-venv/bin/harbor agent auth benchmarks.harbor.osmogrep:OsmoGrepAgent
 ```
 
+To test the real local binary through the adapter without paid calls, run:
+
+```sh
+cargo build --locked
+PYTHONPATH=. LITELLM_LOCAL_MODEL_COST_MAP=True /tmp/osmogrep-benchmark-venv/bin/python benchmarks/harbor/smoke.py --binary target/debug/osmogrep
+```
+
+This smoke check creates a temporary repository and fake localhost model endpoint. It reads one fixture file through the real agent tool loop and checks the collected usage. It does not run the container installer or contact a model provider.
+
 The offline checks cover provider routing for Responses, Chat Completions and Anthropic Messages, custom endpoint delivery, exact prompt delivery without shell interpolation, failed-run propagation, log collection and token accounting. They execute neither installation commands nor model requests.
 
 ## Pilot command — only after approving model spending

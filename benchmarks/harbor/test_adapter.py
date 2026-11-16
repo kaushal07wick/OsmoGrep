@@ -45,6 +45,8 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                 call = env.commands[-1]
                 self.assertEqual(call["env"]["OSMOGREP_API"], protocol)
                 self.assertEqual(call["env"]["OSMOGREP_API_KEY"], "fixture-secret")
+                key_name = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY", "openrouter": "OPENROUTER_API_KEY"}[model.split("/", 1)[0]]
+                self.assertEqual(call["env"][key_name], "fixture-secret")
                 self.assertEqual(call["env"]["OSMOGREP_BASE_URL"], "http://fixture.invalid/v1")
                 self.assertEqual(call["env"]["OSMOGREP_MODEL"], model.split("/", 1)[1])
                 self.assertNotIn("fixture-secret", call["command"])

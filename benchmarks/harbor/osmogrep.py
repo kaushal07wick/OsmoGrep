@@ -89,6 +89,8 @@ osmogrep --version
         }
         if connection.api_key is not None:
             env["OSMOGREP_API_KEY"] = connection.api_key
+            # Native named providers read their own key even with a protocol override.
+            env[f"{connection.provider.upper()}_API_KEY"] = connection.api_key
         if connection.execution_base_url is not None:
             env["OSMOGREP_BASE_URL"] = connection.execution_base_url
         if self.reasoning_effort is not None:
