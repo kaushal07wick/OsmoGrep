@@ -150,7 +150,7 @@ Automatic review/test scheduling is **off by default**. A greeting or unrelated 
 
 - **Repository instructions:** root `.osmogrep.md`, `AGENTS.md`, `CLAUDE.md`, and `.cursorrules` are loaded within a shared size budget. They guide requested work rather than create tasks of their own.
 - **Skills:** browse `/skills` and invoke a selected skill with `$skill-name`. Discovery includes repository `skills/`, `.agents/skills/`, `.osmogrep/skills/`, and corresponding supported user skill directories.
-- **Neovim:** `/nv [file]` opens the editor through an isolated tmux integration. Narrow terminals use full-width windows; wide terminals can split. Requires tmux and Neovim.
+- **Neovim:** `/nv [file]` keeps the code editor and agent visible in the same workspace. They sit side by side from 60 columns and stack below that width. The editor follows the agent's active file and saved edits, with added and removed lines highlighted. Unsaved editor buffers pause following. **Space a** returns to chat, **Space e** browses files, and **Space f** pauses/resumes following. Requires tmux and Neovim; your personal Neovim configuration stays untouched.
 - **MCP and hooks:** `/mcp` inspects configured native stdio/Streamable HTTP servers and legacy command bridges. Optional `pre_shell`, `pre_edit`, and `post_edit` hooks are configured in `config.toml`.
 - **Advanced workflows:** GitHub triage, voice input, explicit worktree swarms, and bounded `ultracode` workflows remain available. They are optional and may need external services or tools.
 - **Regression intelligence:** optional revision-aware indexing, context queries, and prediction are documented in [the intelligence guide](prre.md). Normal coding does not depend on that integration.

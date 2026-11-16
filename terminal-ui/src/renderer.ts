@@ -224,11 +224,13 @@ export function render(v: View): Rendered {
   if(status){
     if(v.running&&activityHeight===4&&!v.update){
       const y=composerY-4,frame=orb(v.runElapsed??v.elapsed,light,!!v.preferences?.reduce_motion),info=activityInfo(v.runElapsed??v.elapsed,v.approval?'Waiting for approval':v.phase,v.approval?null:v.tool,!!v.preferences?.reduce_motion);
+      const id=(process.pid*128+125)>>>0;
+      const graphic=paperGraphics?renderImage(frame.png.toString('base64'),{widthPx:36,heightPx:36},{imageId:id,maxWidthCells:6,maxHeightCells:3,moveCursor:false}):null;
       frame.rows.forEach((line,i)=>{
         const label=i===1?accent+clip(info.label,Math.max(1,width-pad*2-8)):i===2?dim+clip(`${info.time} elapsed · esc interrupt`,Math.max(1,width-pad*2-8)):'';
-        put(y+i,dim+line+reset+'  '+label+reset,gutter+pad,Math.max(1,width-pad*2));
+        put(y+i,(graphic?' '.repeat(6):dim+line+reset)+'  '+label+reset,gutter+pad,Math.max(1,width-pad*2));
       });
-      if(paperGraphics){const id=(process.pid*128+125)>>>0,graphic=renderImage(frame.png.toString('base64'),{widthPx:36,heightPx:36},{imageId:id,maxWidthCells:6,maxHeightCells:3,moveCursor:false});if(graphic)images.push({id,x:gutter+pad,y,sequence:graphic.sequence});}
+      if(graphic)images.push({id,x:gutter+pad,y,sequence:graphic.sequence});
     }else{const action=v.running?'esc interrupt':'';const left=clip(status,Math.max(1,width-action.length-4));put(composerY-1,accent+left+reset+(width>action.length+visibleWidth(left)+3?' '.repeat(width-visibleWidth(left)-action.length)+dim+action+reset:''));}
   }
   if(approvalHeight){const y=composerY-approvalHeight-activityHeight-1;approvalRows.slice(0,approvalHeight).forEach((line,i)=>{const content=clip(line,width-2);put(y+i,bg+content.replaceAll(reset,reset+bg+fg)+' '.repeat(Math.max(0,width-visibleWidth(content)))+reset);});}

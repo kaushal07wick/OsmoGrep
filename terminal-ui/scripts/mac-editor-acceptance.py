@@ -5,7 +5,7 @@ p=argparse.ArgumentParser();p.add_argument('--binary',type=Path,required=True);p
 repo=Path(tempfile.mkdtemp(prefix='osmogrep-editor-test-')).resolve();(repo/'README.md').write_text('Controlled editor fixture.\n')
 config=repo/'config/nvim';config.mkdir(parents=True);(config/'init.lua').write_text('vim.opt.number=true\nvim.opt.swapfile=false\nvim.g.user_config_loaded=true\n')
 test_home=repo/'test-home';test_home.mkdir()
-env=os.environ.copy();env['HOME']=str(test_home);env['NVIM_LOG_FILE']=str(repo/'editor.log');env.pop('TMUX',None);env.pop('TMUX_PANE',None);env.update(OSMOGREP_UI='typescript',OSMOGREP_DISABLE_UPDATE_CHECK='1',VLLM_REALTIME_AUTOCONNECT='0',TERM='xterm-256color',OSMOGREP_MODEL='editor-test',XDG_CONFIG_HOME=str(repo/'config'),XDG_DATA_HOME=str(repo/'data'),XDG_STATE_HOME=str(repo/'state'))
+env=os.environ.copy();env['HOME']=str(test_home);env['NVIM_LOG_FILE']=str(repo/'editor.log');env.pop('TMUX',None);env.pop('TMUX_PANE',None);env.update(OSMOGREP_UI='typescript',OSMOGREP_DISABLE_UPDATE_CHECK='1',VLLM_REALTIME_AUTOCONNECT='0',TERM='xterm-256color',TERM_PROGRAM='ghostty',OSMOGREP_MODEL='editor-test',XDG_CONFIG_HOME=str(repo/'config'),XDG_DATA_HOME=str(repo/'data'),XDG_STATE_HOME=str(repo/'state'))
 folder=Path('/private/tmp')/f'tmux-{os.getuid()}';before=set(folder.glob('osmogrep-*'));socket=None
 master,slave=pty.openpty();fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',32,80,0,0));flags=termios.tcgetattr(slave)
 def controlling():os.setsid();fcntl.ioctl(0,termios.TIOCSCTTY,0)
@@ -35,6 +35,7 @@ try:
  wait(lambda:b'osmogrep' in transcript)
  latest_marker=next(test_home.rglob('*.latest'));initial_id=latest_marker.read_text().strip()
  user_config=(config/'init.lua').read_bytes()
+ workspace_start=len(transcript)
  os.write(master,b'\x1b[200~/nv README.md\x1b[201~\r')
  wait(lambda:bool(set(folder.glob('osmogrep-*'))-before))
  created=set(folder.glob('osmogrep-*'))-before;assert len(created)==1;socket=next(iter(created)).name
@@ -42,10 +43,13 @@ try:
  editor=next(row for row in panes() if row[1]);owner=editor[1]
  wait(lambda:any(p[0]==owner and p[4]=='osmogrep' for p in panes()))
  assert latest_marker.read_text().strip()==initial_id
- wait(lambda:'Editor continuity' in tmux('capture-pane','-p','-t',owner))
+ wait(lambda:'editor-test' in tmux('capture-pane','-p','-t',owner))
  result['workspace_handoff_resumes_the_current_session']=True
- assert len(panes())==2 and len({p[3] for p in panes()})==2,panes()
- assert all(int(p[2])==80 for p in panes()),panes();assert tmux('show-options','-v','-t','osmogrep','status')=='off';result['narrow_full_width_windows_no_status_bar']=True
+ assert len(panes())==2 and len({p[3] for p in panes()})==1,panes()
+ assert all(int(p[2])>=28 for p in panes()),panes();assert tmux('show-options','-v','-t','osmogrep','status')=='off';result['editor_and_chat_share_one_window_at_80_columns']=True
+ # tmux removes its DCS envelope before forwarding the graphics to this outer PTY.
+ wait(lambda:b'\x1b_Ga=t' in transcript[workspace_start:])
+ result['approved_graphics_forwarded_through_managed_tmux']=True
  tmux('send-keys','-t',editor[0],'i','unsaved acceptance change','Escape');drain(.3)
  command(owner,'/nv toggle')
  wait(lambda:'Save changes' in tmux('capture-pane','-p','-t',editor[0]))
@@ -68,6 +72,27 @@ try:
  tmux('select-pane','-t',editor[0]);tmux('send-keys','-t',editor[0],'Space','a')
  wait(lambda:tmux('display-message','-p','#{pane_id}')==owner)
  result['editor_shortcut_returns_focus_to_chat']=True
+ bridge=next(test_home.rglob('editor/*.json'),None)
+ if bridge is None:
+  command(editor[0],':lua vim.fn.writefile({vim.env.OSMOGREP_EDITOR_BRIDGE},'+json.dumps(str(repo/'bridge-path'))+')')
+  wait(lambda:(repo/'bridge-path').exists());bridge=Path((repo/'bridge-path').read_text().strip())
+ source=repo/'followed.py';source.write_text('first = 1\nsecond = 2\n')
+ def follow(sequence,phase):
+  bridge.parent.mkdir(parents=True,exist_ok=True)
+  temporary=bridge.with_suffix('.test-tmp');temporary.write_text(json.dumps({'sequence':sequence,'path':str(source),'line':2,'phase':phase}));temporary.replace(bridge)
+ follow('before-edit','editing')
+ wait(lambda:'second = 2' in tmux('capture-pane','-p','-t',editor[0]))
+ source.write_text('first = 1\nsecond = 3\n');follow('after-edit','edited')
+ wait(lambda:'second = 3' in tmux('capture-pane','-p','-t',editor[0]))
+ probe_marks=repo/'marks.json'
+ command(editor[0],':lua vim.fn.writefile({vim.json.encode(vim.api.nvim_buf_get_extmarks(0,vim.api.nvim_get_namespaces()["osmogrep-agent"],0,-1,{details=true}))},'+json.dumps(str(probe_marks))+')')
+ wait(lambda:probe_marks.exists());assert any(mark[3].get('line_hl_group')=='OsmoAdded' for mark in json.loads(probe_marks.read_text()))
+ result['agent_focus_reloads_saved_changes_and_highlights_lines']=True
+ tmux('send-keys','-t',editor[0],'i','UNSAVED','Escape');drain(.3)
+ source.write_text('EXTERNAL CHANGE\n');follow('protect-unsaved','edited');drain(.7)
+ assert 'UNSAVED' in tmux('capture-pane','-p','-t',editor[0])
+ result['following_never_overwrites_unsaved_editor_content']=True
+ command(editor[0],':e!')
  command(editor[0],':q');wait(lambda:len(panes())==1)
  assert int(panes()[0][2])==120;assert b'Native UI restored' not in transcript;result['resize_and_renderer_survive_editor_close']=True
  command(owner,'/exit');wait(lambda:b'EDITOR_EXIT=0' in transcript)

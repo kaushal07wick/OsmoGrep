@@ -9,6 +9,43 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 
+pub(crate) fn kitty_terminal() -> bool {
+    std::env::var_os("GHOSTTY_RESOURCES_DIR").is_some()
+        || std::env::var_os("KITTY_WINDOW_ID").is_some()
+        || std::env::var_os("WEZTERM_PANE").is_some()
+        || matches!(
+            std::env::var("TERM_PROGRAM").as_deref(),
+            Ok("ghostty" | "kitty" | "wezterm")
+        )
+}
+
+pub(super) fn tmux_graphics_enabled() -> bool {
+    if std::env::var_os("TMUX").is_none() {
+        return false;
+    }
+    if std::env::var("OSMOGREP_TMUX_GRAPHICS").as_deref() == Ok("1") {
+        return true;
+    }
+    if !kitty_terminal() {
+        return false;
+    }
+    std::process::Command::new("tmux")
+        .args(["show-options", "-wv", "allow-passthrough"])
+        .output()
+        .is_ok_and(|out| {
+            out.status.success()
+                && matches!(String::from_utf8_lossy(&out.stdout).trim(), "on" | "all")
+        })
+}
+
+pub(super) fn graphic_sequence(sequence: &str, tmux: bool) -> std::borrow::Cow<'_, str> {
+    if tmux {
+        format!("\x1bPtmux;{}\x1b\\", sequence.replace('\x1b', "\x1b\x1b")).into()
+    } else {
+        sequence.into()
+    }
+}
+
 pub struct TerminalSession {
     active: bool,
 }
@@ -120,6 +157,16 @@ fn parse_mouse_capture_setting(raw: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::parse_mouse_capture_setting;
+
+    #[test]
+    fn tmux_graphics_escape_each_inner_escape_and_leave_direct_terminals_unchanged() {
+        let image = "\x1b_Ga=T;data\x1b\\";
+        assert_eq!(super::graphic_sequence(image, false), image);
+        assert_eq!(
+            super::graphic_sequence(image, true),
+            "\x1bPtmux;\x1b\x1b_Ga=T;data\x1b\x1b\\\x1b\\"
+        );
+    }
 
     #[test]
     fn both_themes_set_explicit_contrasting_cursor_colors() {

@@ -1348,6 +1348,12 @@ fn run_tui(
         state.session_name = Some(name);
         persistence::save_or_log(&mut state);
     }
+    if let Some(path) = std::env::var_os("OSMOGREP_EDITOR_BRIDGE") {
+        state.ui.editor_follow = Some(editor::Follower::start(
+            path.into(),
+            state.repo_root.clone(),
+        )?);
+    }
     let mut agent = Agent::new();
     state.preferences.team_messages |= team_enabled;
     if open_center {
@@ -1420,6 +1426,19 @@ fn run_tui(
     let mut runtime = TuiRuntime::default();
 
     loop {
+        if let Some(error) = state
+            .ui
+            .editor_follow
+            .as_ref()
+            .and_then(editor::Follower::take_error)
+        {
+            log(
+                &mut state,
+                LogLevel::Warn,
+                format!("Editor follow: {error}"),
+            );
+            runtime.mark_dirty();
+        }
         if team::poll(&mut state, agent.model_config()) {
             runtime.mark_dirty();
         }
@@ -1873,12 +1892,16 @@ fn run_tui(
                                 phase,
                                 path,
                                 line,
+                                end_line,
                                 reason,
                                 ..
                             } => {
                                 runtime.mark_dirty();
                                 state.ui.run_phase = phase.clone();
                                 state.ui.active_edit_target = Some(path.clone());
+                                if let Some(editor) = &state.ui.editor_follow {
+                                    editor.focus(&path, line, end_line, &phase);
+                                }
                                 state.ui.run_detail = Some(reason.unwrap_or_else(|| {
                                     line.map(|line| format!("{path}:{line}"))
                                         .unwrap_or_else(|| path.clone())
@@ -1887,6 +1910,8 @@ fn run_tui(
 
                             AgentEvent::EditStart {
                                 path,
+                                start_line,
+                                end_line,
                                 operation,
                                 summary,
                                 ..
@@ -1894,6 +1919,9 @@ fn run_tui(
                                 runtime.mark_dirty();
                                 state.ui.run_phase = "editing".to_string();
                                 state.ui.active_edit_target = Some(path.clone());
+                                if let Some(editor) = &state.ui.editor_follow {
+                                    editor.focus(&path, start_line, end_line, "editing");
+                                }
                                 state.ui.current_tool_detail = Some(summary.clone());
                                 log_status(&mut state, format!("{operation} {path}"));
                             }
@@ -1917,12 +1945,22 @@ fn run_tui(
 
                             AgentEvent::EditComplete {
                                 path,
+                                start_line,
+                                end_line,
                                 changed,
                                 summary,
                                 ..
                             } => {
                                 runtime.mark_dirty();
                                 state.ui.active_edit_target = Some(path.clone());
+                                if let Some(editor) = &state.ui.editor_follow {
+                                    editor.focus(
+                                        &path,
+                                        start_line,
+                                        end_line,
+                                        if changed { "edited" } else { "unchanged" },
+                                    );
+                                }
                                 state.ui.last_tool_status = Some(summary.clone());
                                 log_tool_result(
                                     &mut state,

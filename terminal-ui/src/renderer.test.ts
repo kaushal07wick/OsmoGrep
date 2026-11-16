@@ -11,6 +11,19 @@ import { crc32, inflateSync } from 'node:zlib';
 
 setCapabilities({images:null,trueColor:true,hyperlinks:false});
 
+test('the approved graphical orb has no coarse fallback drawn underneath it', () => {
+  try {
+    setCapabilities({images:'kitty',trueColor:true,hyperlinks:false});
+    const frame = render({...fixture(), running:true, phase:'thinking', runElapsed:4000});
+    const y = frame.input.y - 4;
+    assert.ok(frame.images.some(image => image.y === y));
+    assert.ok(frame.rows.slice(y, y + 3).every(row => !/[\u2800-\u28ff]/u.test(stripTerminalSequences(row))));
+    assert.match(frame.rows.slice(y, y + 3).map(stripTerminalSequences).join(''), /Thinking/);
+  } finally {
+    setCapabilities({images:null,trueColor:true,hyperlinks:false});
+  }
+});
+
 
 test('matches the reference geometry at idle and during conversation', () => {
   const v = fixture(), idle = render(v);

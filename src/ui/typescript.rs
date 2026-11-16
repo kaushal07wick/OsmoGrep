@@ -176,6 +176,7 @@ impl IntroInteraction {
 }
 
 pub struct TypeScriptUi {
+    tmux_graphics: bool,
     pub(super) animation_interval_ms: Option<u64>,
     child: Child,
     input: SyncSender<Value>,
@@ -223,6 +224,7 @@ impl TypeScriptUi {
     }
 
     fn spawn(directory: PathBuf) -> Result<Self, String> {
+        let tmux_graphics = super::terminal::tmux_graphics_enabled();
         let script = directory.join("renderer.mjs");
         fs::write(&script, BUNDLE).map_err(|e| e.to_string())?;
         let mut command = Command::new("node");
@@ -249,6 +251,9 @@ impl TypeScriptUi {
             if let Some(value) = std::env::var_os(key) {
                 command.env(key, value);
             }
+        }
+        if tmux_graphics {
+            command.env("PI_IMAGE_PROTOCOL", "kitty");
         }
         let mut child = command.spawn().map_err(|e| e.to_string())?;
         let mut input = child.stdin.take().unwrap();
@@ -288,6 +293,7 @@ impl TypeScriptUi {
             }
         });
         Ok(Self {
+            tmux_graphics,
             child,
             input: requests,
             frames,
@@ -605,8 +611,15 @@ impl TypeScriptUi {
         for old in &self.images {
             let retained = old.retained_in(&frame.images);
             let delete = if retained { "i" } else { "I" };
-            write!(output, "\x1b_Ga=d,d={delete},i={},q=2;\x1b\\", old.id)
-                .map_err(|e| e.to_string())?;
+            write!(
+                output,
+                "{}",
+                super::terminal::graphic_sequence(
+                    &format!("\x1b_Ga=d,d={delete},i={},q=2;\x1b\\", old.id),
+                    self.tmux_graphics
+                )
+            )
+            .map_err(|e| e.to_string())?;
         }
         let resized = self.size != (width, height);
         if resized {
@@ -630,10 +643,24 @@ impl TypeScriptUi {
                 queue!(output, MoveTo(image.x, image.y)).map_err(|e| e.to_string())?;
                 let retained = image.retained_in(&self.images);
                 if !retained {
-                    queue!(output, Print(&image.sequence)).map_err(|e| e.to_string())?;
+                    queue!(
+                        output,
+                        Print(super::terminal::graphic_sequence(
+                            &image.sequence,
+                            self.tmux_graphics
+                        ))
+                    )
+                    .map_err(|e| e.to_string())?;
                 }
                 if let Some(placement) = &image.placement {
-                    queue!(output, Print(placement)).map_err(|e| e.to_string())?;
+                    queue!(
+                        output,
+                        Print(super::terminal::graphic_sequence(
+                            placement,
+                            self.tmux_graphics
+                        ))
+                    )
+                    .map_err(|e| e.to_string())?;
                 }
             }
         }
@@ -681,7 +708,14 @@ impl TypeScriptUi {
 impl Drop for TypeScriptUi {
     fn drop(&mut self) {
         for image in &self.images {
-            let _ = write!(io::stdout(), "\x1b_Ga=d,d=I,i={},q=2;\x1b\\", image.id);
+            let _ = write!(
+                io::stdout(),
+                "{}",
+                super::terminal::graphic_sequence(
+                    &format!("\x1b_Ga=d,d=I,i={},q=2;\x1b\\", image.id),
+                    self.tmux_graphics
+                )
+            );
         }
         let _ = io::stdout().flush();
         if self.intro.capture {
