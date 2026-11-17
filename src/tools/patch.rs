@@ -146,6 +146,24 @@ fn apply_begin_patch(patch: &str) -> ToolResult {
         Ok(changes) => changes,
         Err(error) => return Ok(begin_patch_error("", "", "", error)),
     };
+    apply_staged(changes)
+}
+pub(crate) fn apply_files(files: Vec<(String, Option<String>, Option<String>)>) -> ToolResult {
+    let root = crate::tools::repo_root()?;
+    let changes = files
+        .into_iter()
+        .map(|(path, before, after)| {
+            crate::file_guard::workspace_path(&root, Path::new(&path), true)?;
+            Ok(StagedChange {
+                path,
+                before,
+                after,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    apply_staged(changes)
+}
+fn apply_staged(changes: Vec<StagedChange>) -> ToolResult {
     for change in &changes {
         if read_optional(&change.path)? != change.before {
             return Ok(begin_patch_error(

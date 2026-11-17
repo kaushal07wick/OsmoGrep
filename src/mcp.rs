@@ -55,7 +55,7 @@ pub fn call_cancellable(
     if scfg.transport.as_deref() == Some("bridge")
         || (scfg.transport.is_none() && scfg.command.is_none() && scfg.url.is_none())
     {
-        return bridge_call(server, scfg, method, &args, timeout);
+        return bridge_call(server, scfg, method, &args, timeout, cancel);
     }
     native_call(server, scfg, method, &args, timeout, cancel)
 }
@@ -247,15 +247,61 @@ pub fn call_with_timeout(
     if transport != "bridge" {
         return native_call(&target, &scfg, method, &args, timeout, &|| false);
     }
-    bridge_call(&target, &scfg, method, &args, timeout)
+    bridge_call(&target, &scfg, method, &args, timeout, &|| false)
 }
 
+pub(crate) fn call_tool(
+    server: &str,
+    name: &str,
+    args: &Value,
+    timeout: Duration,
+    cancel: &dyn Fn() -> bool,
+) -> Result<Value, String> {
+    let cfg = effective_config().ok_or("MCP config not found")?;
+    if !cfg.enabled.unwrap_or(false) {
+        return Err("MCP is disabled".into());
+    }
+    let scfg = cfg
+        .servers
+        .as_ref()
+        .and_then(|servers| servers.get(server))
+        .ok_or("Unknown MCP server")?;
+    let timeout = timeout.min(Duration::from_millis(
+        scfg.timeout_ms.unwrap_or(30_000).clamp(1000, 120_000),
+    ));
+    if timeout.is_zero() || cancel() {
+        return Err("MCP operation cancelled or deadline exceeded".into());
+    }
+    let bridge = scfg.transport.as_deref() == Some("bridge")
+        || (scfg.transport.is_none() && scfg.command.is_none() && scfg.url.is_none());
+    if bridge {
+        bridge_call(
+            server,
+            scfg,
+            name,
+            &local::scoped_arguments(server, name, args)?,
+            timeout,
+            cancel,
+        )
+    } else {
+        let args = serde_json::json!({"name":name,"arguments":args});
+        native_call(
+            server,
+            scfg,
+            "tools/call",
+            &local::scoped_arguments(server, "tools/call", &args)?,
+            timeout,
+            cancel,
+        )
+    }
+}
 fn bridge_call(
     target: &str,
     scfg: &McpServerConfig,
     method: &str,
     args: &Value,
     timeout: Duration,
+    cancel: &dyn Fn() -> bool,
 ) -> Result<Value, String> {
     let mut cmd = Command::new("sh");
     cmd.args(["-lc", scfg.cmd.as_deref().ok_or("Bridge requires cmd")?])
@@ -265,17 +311,25 @@ fn bridge_call(
             "OSMOGREP_MCP_ARGS",
             serde_json::to_string(args).map_err(|e| e.to_string())?,
         );
-    let out = run_bridge(cmd, timeout)?;
+    let out = run_bridge_cancellable(cmd, timeout, cancel)?;
     Ok(
         serde_json::json!({"server":target,"method":method,"exit_code":out.exit_code,"stdout":String::from_utf8_lossy(&out.stdout),"stderr":truncate(&String::from_utf8_lossy(&out.stderr),4000)}),
     )
 }
 
+#[cfg(test)]
 fn run_bridge(
     cmd: Command,
     timeout: Duration,
 ) -> Result<crate::process_runner::ProcessRun, String> {
-    let out = crate::process_runner::run_command(cmd, timeout)?;
+    run_bridge_cancellable(cmd, timeout, &|| false)
+}
+fn run_bridge_cancellable(
+    cmd: Command,
+    timeout: Duration,
+    cancel: &dyn Fn() -> bool,
+) -> Result<crate::process_runner::ProcessRun, String> {
+    let out = crate::process_runner::run_command_cancellable(cmd, timeout, cancel)?;
     if out.timed_out || out.cancelled {
         return Err("MCP bridge timed out or was cancelled".into());
     }

@@ -820,6 +820,18 @@ impl RunAgent {
             .as_ref()
             .ok_or("Provider API key not set; use /key")?;
         let _team_request = crate::team::request_scope(&repo_root, user_text);
+        let (_context_session, context_corrections) = match crate::lab::context::begin(&repo_root) {
+            Ok(session) => session,
+            Err(error) => {
+                let _ = tx.send(AgentEvent::RunStatus {
+                    phase: "context".into(),
+                    detail: format!("Optional context evidence disabled: {error}"),
+                    iteration: 0,
+                    max_iterations: 0,
+                });
+                crate::lab::context::disabled()
+            }
+        };
         let max_iterations = self
             .task
             .as_ref()
@@ -841,6 +853,9 @@ impl RunAgent {
         let mut persisted = prior_messages;
         persisted.retain(|message| message["role"] != "system");
         persisted.insert(0, system_prompt(&repo_root));
+        if let Some(corrections) = context_corrections {
+            persisted.insert(1, json!({"role":"system","content":corrections}));
+        }
         if let Some(content) = persisted[0]["content"].as_str() {
             let peer = crate::team::for_root(&repo_root);
             let runtime = json!({
@@ -1080,7 +1095,11 @@ impl RunAgent {
                         let invocation = parse_tool_invocation(&item)?;
                         let name = invocation.name;
                         let call_id = invocation.call_id;
-                        let args = invocation.args;
+                        let args = if name == "lab" {
+                            crate::lab::compare::expand_apply(&repo_root, invocation.args)?
+                        } else {
+                            invocation.args
+                        };
                         let args_summary = invocation.args_summary;
                         let mut new_rules = String::new();
                         for path in crate::file_guard::edit_paths(&name, &args) {
@@ -1592,7 +1611,38 @@ impl RunAgent {
                 .as_ref()
                 .map(|task| task.reserve(&payload))
                 .transpose()?;
-            match provider::request(&self.model_cfg, api_key, &payload, &self.cancel, tx) {
+            let context_ticket =
+                match crate::lab::context::capture(&payload, &self.model_cfg.provider) {
+                    Ok(ticket) => ticket,
+                    Err(error) => {
+                        let _ = tx.send(AgentEvent::RunStatus {
+                            phase: "context".into(),
+                            detail: format!("Context evidence was not saved: {error}"),
+                            iteration: 0,
+                            max_iterations: 0,
+                        });
+                        None
+                    }
+                };
+            let started = std::time::Instant::now();
+            let outcome = provider::request(&self.model_cfg, api_key, &payload, &self.cancel, tx);
+            let evidence = crate::lab::context::finish(
+                context_ticket,
+                started.elapsed().as_millis() as u64,
+                outcome
+                    .as_ref()
+                    .map(|(value, _)| value)
+                    .map_err(|error| error.message.as_str()),
+            );
+            if let Err(error) = evidence {
+                let _ = tx.send(AgentEvent::RunStatus {
+                    phase: "context".into(),
+                    detail: format!("Context evidence was not completed: {error}"),
+                    iteration: 0,
+                    max_iterations: 0,
+                });
+            }
+            match outcome {
                 Ok((value, output_streamed)) => {
                     if let (Some(task), Some(reservation)) = (&self.task, reservation) {
                         task.account(reservation, &value)?;
@@ -1736,6 +1786,11 @@ fn parse_tool_invocation(item: &Value) -> Result<ToolInvocation, String> {
 
 fn summarize_args(tool: &str, args: &Value) -> String {
     match tool {
+        "lab" => format!(
+            "{} {}",
+            args["action"].as_str().unwrap_or("inspect"),
+            args["id"].as_str().unwrap_or("")
+        ),
         "patch" => args
             .get("patch")
             .and_then(Value::as_str)
@@ -1851,6 +1906,24 @@ fn post_tool_events(
     repo_root: &Path,
 ) -> Vec<AgentEvent> {
     let mut events = Vec::new();
+
+    if ok && name == "lab" && args["action"] == "apply" {
+        if let Some(changes) = result["changes"].as_array() {
+            for change in changes {
+                if let Some(path) = change["path"].as_str() {
+                    events.push(AgentEvent::EditComplete {
+                        path: repo_relative_path(repo_root, path),
+                        start_line: Some(1),
+                        end_line: change["after"]
+                            .as_str()
+                            .map(|s| s.lines().count().max(1) as u64),
+                        changed: true,
+                        summary: summary.into(),
+                    });
+                }
+            }
+        }
+    }
 
     if ok && matches!(name, "edit_file" | "write_file" | "patch" | "notebook_edit") {
         if let Some(path) = edit_result_path(name, args, result, repo_root) {
@@ -2281,6 +2354,22 @@ fn clip_event_text(text: &str) -> String {
 }
 
 fn tool_result_summary(tool: &str, result: &Value) -> String {
+    if tool == "lab" {
+        if let Some(changes) = result["changes"].as_array() {
+            return format!(
+                "{} files changed · checkpoint {}",
+                changes.len(),
+                result["checkpoint"].as_str().unwrap_or("saved")
+            );
+        }
+        if let Some(title) = result["title"].as_str() {
+            return format!(
+                "{} · {}",
+                result["kind"].as_str().unwrap_or("Lab report"),
+                title
+            );
+        }
+    }
     if let Some(error) = result.get("error").and_then(Value::as_str) {
         return format!("error: {}", clip(error));
     }

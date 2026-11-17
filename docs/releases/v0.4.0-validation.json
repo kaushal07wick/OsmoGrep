@@ -1,0 +1,77 @@
+{
+  "date": "2026-11-17T18:04:59.428708+00:00",
+  "version": "0.4.0",
+  "target": "aarch64-apple-darwin",
+  "binary_sha256": "818ed89cb0ff82cd92fdff448fc0c68f64124a426020bb039e1065813aeeadde",
+  "rust": {
+    "passed": 344,
+    "ignored": 5,
+    "excluded": [
+      "mac_clipboard_reads_an_image_without_changing_the_users_clipboard"
+    ]
+  },
+  "terminal_ui": {
+    "passed": 88
+  },
+  "npm_launcher": {
+    "passed": 5
+  },
+  "lab": {
+    "binary_sha256": "818ed89cb0ff82cd92fdff448fc0c68f64124a426020bb039e1065813aeeadde",
+    "checks": [
+      "help_and_idle_agents_do_not_create_lab_storage",
+      "accepted_contract_drift_is_delivered_once_to_the_subscriber_without_an_idle_model_call",
+      "contract_subscriptions_respect_explicit_no_messaging",
+      "opt_in_context_captures_actual_requests_usage_and_provenance_redacts_secrets_and_turns_off",
+      "cli_capture_import_tamper_rejection_comparison_and_stale_apply_preserve_source",
+      "unavailable_vm_saves_failure_without_executing_the_reproducer_on_host"
+    ],
+    "fixture_model_requests": 27,
+    "paid_calls": 0,
+    "real_device_runs": 0,
+    "real_vm_runs": 0
+  },
+  "team": {
+    "binary_sha256": "818ed89cb0ff82cd92fdff448fc0c68f64124a426020bb039e1065813aeeadde",
+    "checks": [
+      "independent_process_presence_and_repository_isolation",
+      "durability_restart_deduplication_and_receipts_without_idle_paid_turns",
+      "concurrent_broadcast_delivery",
+      "safe_boundary_delivery_preserves_user_task_and_durable_ack",
+      "cross_process_edit_contention_release_and_automatic_updates",
+      "crashed_instance_expires_without_stealing_session",
+      "natural_request_metadata_targeting_active_delivery_and_sender_only_reply_without_team_mode",
+      "messages_remain_pending_until_the_recipient_model_returns_successfully",
+      "contextual_read_and_send_followups_keep_the_previous_direct_partner_only",
+      "explicit_no_message_instruction_overrides_persistent_team_mode"
+    ],
+    "processes": 7,
+    "fixture_model_requests": 32,
+    "paid_model_requests": 0
+  },
+  "input": {
+    "binary_sha256": "818ed89cb0ff82cd92fdff448fc0c68f64124a426020bb039e1065813aeeadde",
+    "checks": [
+      "minified_diff_is_folded",
+      "typing_during_active_model_request",
+      "typing_after_completion",
+      "history_exposes_latest_action",
+      "native_accepts_renderer_frames",
+      "copy_feedback_uses_isolated_osc52_without_host_clipboard_writes",
+      "casual_interlude_preserves_coding_history_and_resumes_editing",
+      "stable_instructions_and_tool_order_across_turns"
+    ],
+    "initial_instruction_bytes": 2270,
+    "initial_tool_schema_bytes": 3543,
+    "fixture_model_requests": 7,
+    "paid_calls": 0
+  },
+  "real_vm_runs": 0,
+  "real_device_runs": 0,
+  "paid_calls": 0,
+  "limitations": [
+    "VM/device execution uses protocol fixtures; no real app runtime validation was performed.",
+    "Independent normalized VM attestations are required for a verified outcome.",
+    "Fault campaigns currently use environment and reproducer-controlled faults."
+  ]
+}

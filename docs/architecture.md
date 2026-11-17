@@ -16,6 +16,9 @@ src/
   agent.rs                 Conversation loop, tool dispatch, permission requests
   prompts/agent.md         Base agent instructions
   team.rs                  Durable mailboxes, presence, claims and receipts
+  lab/                     Opt-in replay, comparison, contracts, behavior, context and fault cases
+  lab/api.rs               Shared versioned action protocol for CLI, agent tool and TUI
+  cli/lab.rs               Explicit metadata and execution commands
   team/policy.rs           Natural-language routing hints for existing sessions
   provider.rs              Responses / Chat Completions / Anthropic transport
   provider_tests.rs        Wire-format, replay and cancellation contracts

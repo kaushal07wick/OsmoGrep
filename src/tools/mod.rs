@@ -17,7 +17,7 @@ mod glob;
 mod list_dir;
 mod mcp_call;
 mod notebook_edit;
-mod patch;
+pub(crate) mod patch;
 mod plan;
 mod read;
 mod regex_search;
@@ -75,6 +75,8 @@ pub trait Tool: Send + Sync {
         self.call(args)
     }
 }
+
+mod lab;
 
 pub struct ToolRegistry {
     tools: HashMap<&'static str, Box<dyn Tool>>,
@@ -312,6 +314,7 @@ impl ToolRegistry {
             Box::new(crate::subagents::Subagent),
             Box::new(crate::language_server::LanguageServer),
             Box::new(crate::team::Team),
+            Box::new(lab::Lab),
             Box::new(code_graph::CodeGraph {
                 root: repo_root.clone(),
             }),
@@ -371,6 +374,11 @@ impl ToolRegistry {
             .get(name)
             .ok_or_else(|| format!("unknown tool: {}", name))?;
 
+        let args = if name == "lab" {
+            crate::lab::compare::expand_apply(&self.repo_root, args)?
+        } else {
+            args
+        };
         let args = self.guard_args(name, self.resolve_parallel_args(name, args))?;
         let peer = crate::team::for_root(&self.repo_root);
         let paths = crate::file_guard::edit_paths(name, &args);
@@ -433,7 +441,8 @@ impl ToolRegistry {
         if !args.is_object() {
             return Err("Tool arguments must be a JSON object".into());
         }
-        let editing = matches!(name, "write_file" | "edit_file" | "notebook_edit" | "patch");
+        let editing = matches!(name, "write_file" | "edit_file" | "notebook_edit" | "patch")
+            || name == "lab" && args["action"] == "apply";
         if editing {
             let root = self.repo_root.canonicalize().map_err(|e| e.to_string())?;
             for path in crate::file_guard::edit_paths(name, &args) {

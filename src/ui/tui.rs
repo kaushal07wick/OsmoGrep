@@ -240,7 +240,7 @@ pub fn draw_ui<B: Backend>(
                 ];
                 if panel.previewing {
                     let max = panel.preview.len().saturating_sub(count);
-                    let at = if matches!(panel.section, 11 | 14) {
+                    let at = if matches!(panel.section, 11 | 14) || panel.section >= 15 {
                         panel.preview_offset.min(max)
                     } else {
                         panel

@@ -16,6 +16,7 @@ mod file_guard;
 mod harness;
 mod hooks;
 mod intelligence;
+mod lab;
 mod language_server;
 mod logger;
 mod long_runs;
@@ -133,6 +134,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum CliCommand {
+    /// Inspect and run opt-in workspace experiments
+    Lab(cli::lab::LabArgs),
     /// Manage supervised coding tasks
     Task(long_runs::TaskArgs),
     /// Serve the JSONL integration protocol
@@ -685,6 +688,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some(CliCommand::Version) => {
             println!("osmogrep {}", env!("CARGO_PKG_VERSION"));
         }
+        Some(CliCommand::Lab(args)) => cli::lab::run(args)?,
         Some(CliCommand::Doctor(args)) => diagnostics::run(args)?,
         Some(CliCommand::Update(args)) => cli::update(args)?,
         Some(CliCommand::Models(args)) => cli::models(args)?,

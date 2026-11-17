@@ -1,5 +1,6 @@
 //! Shell commands reuse the same services as the terminal UI.
 pub mod config;
+pub mod lab;
 mod models;
 use clap::{Args, Subcommand};
 pub use config::Args as ConfigArgs;

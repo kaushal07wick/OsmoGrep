@@ -207,6 +207,8 @@ osmogrep run \
 
 Persistent JSONL integrations use `osmogrep rpc --repo-root /path/to/project`. See [harness foundations](harness-foundations.md) for session resume/fork/recovery, model budgets, sandboxing, OAuth, MCP/LSP configuration, and the RPC contract.
 
+`osmogrep lab` provides the six opt-in [Workspace Lab workflows](workspace-lab.md). Open Settings → Lab in the TUI, or run `osmogrep lab guide` for exact JSON examples. Planning and reading reports do not execute them.
+
 Other CLI entry points include `auth`, `sessions`, `doctor`, `triage`, `index`, `context`, `predict`, `intelligence-mcp`, and `uninstall`. Run `osmogrep <command> --help` for their arguments.
 
 Important environment overrides:

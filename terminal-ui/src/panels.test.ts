@@ -67,3 +67,10 @@ test('doctor shows animated checking state and colored completed results',()=>{
   assert.ok(a.includes('230;100;100'));
  }
 });
+
+test('Lab reports use the shared evidence reader and never look like team messages',()=>{
+ const f=drawPanel({...panel,section:16,title:'Replays',previewing:true,preview:['Captured source revision','Reproduction command (not executed)','Independent expected behavior']},80,28,false,'');
+ const text=f.rows.map(stripTerminalSequences).join('\n');
+ assert.match(text,/Replays/);assert.match(text,/not executed/);assert.match(text,/Show less/);assert.doesNotMatch(text,/Team message/);
+ assert.ok(f.rows.every(row=>visibleWidth(row)<=80));
+});

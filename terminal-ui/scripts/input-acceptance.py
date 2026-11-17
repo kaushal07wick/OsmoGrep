@@ -154,12 +154,16 @@ try:
     args.output.write_text(json.dumps(report, indent=2)+'\n')
     print(json.dumps(report, indent=2))
 finally:
+    # Closing our controlling PTY sends SIGHUP without racing a reused process group.
+    os.close(master)
     if process.poll() is None:
-        os.killpg(process.pid, signal.SIGTERM)
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
-            process.wait(timeout=5)
-    os.close(master)
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
     server.shutdown()

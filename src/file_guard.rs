@@ -15,6 +15,12 @@ pub fn internal_dir(root: &Path, relative: &str) -> Result<PathBuf, String> {
 }
 
 pub fn edit_paths(tool: &str, args: &serde_json::Value) -> Vec<String> {
+    if tool == "lab" && args["action"] == "apply" {
+        return args["data"]["files"]
+            .as_object()
+            .map(|files| files.keys().cloned().collect())
+            .unwrap_or_default();
+    }
     if tool == "memory" && args["action"] != "read" {
         return vec![".osmogrep/MEMORY.md".into()];
     }

@@ -419,6 +419,9 @@ impl Peer {
             return Err("Invalid shared update kind".into());
         }
         self.store.connection()?.execute("INSERT INTO team_updates(project,workspace,session,kind,target,summary,at) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![self.project,self.workspace.to_string_lossy(),self.session,kind,bounded(target,512),bounded(summary,512),now()]).map_err(error)?;
+        if kind == "edit" {
+            crate::lab::contracts::on_edit(self, target)?;
+        }
         Ok(())
     }
     pub fn updates(&self, after: i64) -> Result<Vec<Update>, String> {
@@ -439,7 +442,40 @@ impl Peer {
         rows.collect::<Result<Vec<_>, _>>().map_err(error)
     }
     pub fn send(&self, recipient: Option<&str>, body: &str, nonce: &str) -> Result<i64, String> {
-        if !self.can_send(recipient) {
+        self.send_record(recipient, body, nonce, false)
+    }
+    pub(crate) fn send_contract_update(
+        &self,
+        id: &str,
+        recipient: &str,
+        path: Option<&str>,
+    ) -> Result<i64, String> {
+        let policy = self.communication.policy.load(Ordering::Relaxed);
+        if policy < 0 {
+            return Err("The current user instruction disables messaging".into());
+        }
+        if policy == 2
+            && self
+                .communication
+                .context_peer
+                .lock()
+                .map_err(error)?
+                .as_deref()
+                != Some(recipient)
+        {
+            return Err("Contract updates cannot widen the current recipient scope".into());
+        }
+        let (body, nonce) = crate::lab::contracts::message(self, id, recipient, path)?;
+        self.send_record(Some(recipient), &body, &nonce, true)
+    }
+    fn send_record(
+        &self,
+        recipient: Option<&str>,
+        body: &str,
+        nonce: &str,
+        subscribed: bool,
+    ) -> Result<i64, String> {
+        if !self.can_send(recipient) && !subscribed {
             if self.communication.policy.load(Ordering::Relaxed) < 0 {
                 return Err("The current user instruction disables messaging.".into());
             }

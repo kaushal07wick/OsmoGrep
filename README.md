@@ -76,6 +76,7 @@ OsmoGrep can search your code, follow symbols, edit files, apply patches, run co
 | Review the change | Inline diffs, expandable output, and conflict-aware turn checkpoints |
 | Keep the conversation moving | Multiline drafts, image attachments, and queued follow-ups |
 | Set your boundaries | Read-only mode, scoped approvals, optional OS sandbox, and explicit cancellation |
+| Workspace Lab | Opt-in replayable bugs, candidate comparisons, code contracts, UI behavior, context evidence and failure scenarios ([guide](docs/workspace-lab.md)) |
 | Bring your workflow | Project instructions, skills, configurable shortcuts, and Neovim integration |
 
 ## A terminal worth working in

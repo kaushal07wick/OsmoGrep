@@ -24,9 +24,20 @@ const SECTIONS: &[&str] = &[
     "Settings",
     "Workspace",
     "Doctor",
+    "Lab",
+    "Replays",
+    "Compare",
+    "Contracts",
+    "App behavior",
+    "Context",
+    "Scenarios",
 ];
 
 pub struct Panel {
+    lab_records: Vec<serde_json::Value>,
+    lab_before: Option<i64>,
+    lab_job: Option<std::sync::mpsc::Receiver<Result<serde_json::Value, String>>>,
+    load_lab: bool,
     health: Option<crate::diagnostics::Report>,
     health_scan: Option<std::sync::mpsc::Receiver<crate::diagnostics::Event>>,
     health_checks: Vec<crate::diagnostics::Check>,
@@ -67,6 +78,11 @@ pub struct Panel {
 
 #[derive(Clone)]
 enum Action {
+    LabRefresh,
+    LabRequest(serde_json::Value),
+    LabOlder(i64),
+    LabShow(String),
+    LabAsk(String),
     HealthScan(bool),
     HealthRepair,
     HealthDetails,
@@ -175,6 +191,10 @@ pub fn open(state: &mut AgentState, section: usize, model: Option<&ModelConfig>)
     state.ui.command_items.clear();
     let (days, notice) = load_usage(state, section);
     state.ui.panel = Some(Panel {
+        lab_records: vec![],
+        lab_before: None,
+        lab_job: None,
+        load_lab: section >= 15,
         health: None,
         health_scan: None,
         health_checks: vec![],
@@ -185,7 +205,7 @@ pub fn open(state: &mut AgentState, section: usize, model: Option<&ModelConfig>)
         team_before: None,
         load_team: section == 11,
         message_preview: false,
-        settings: section == 12,
+        settings: section == 12 || section >= 15,
         filter: 0,
         preview_session: None,
         preview_lines: Vec::new(),
@@ -342,10 +362,74 @@ pub fn choose_at(state: &mut AgentState, index: usize, label: &str) -> bool {
     true
 }
 
+fn lab_job(
+    root: std::path::PathBuf,
+    request: serde_json::Value,
+) -> std::sync::mpsc::Receiver<Result<serde_json::Value, String>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = serde_json::from_value(request)
+            .map_err(|e| e.to_string())
+            .and_then(|request| {
+                crate::tools::in_root(&root, || {
+                    crate::lab::api::execute(&root, request, &|| false)
+                })
+            });
+        let _ = tx.send(result);
+    });
+    rx
+}
 pub fn poll(state: &mut AgentState, agent: &crate::agent::Agent) -> bool {
     let Some(panel) = state.ui.panel.as_mut() else {
         return false;
     };
+    if panel.load_lab {
+        panel.load_lab = false;
+        let kind = match panel.section {
+            16 => Some("replay"),
+            17 => Some("comparison"),
+            18 => Some("contract"),
+            19 => Some("behavior"),
+            20 => Some("context"),
+            21 => Some("scenario"),
+            _ => None,
+        };
+        panel.lab_job = Some(lab_job(
+            state.repo_root.clone(),
+            serde_json::json!({"action":"list","kind":kind,"before":panel.lab_before}),
+        ));
+        panel.notice = "Loading saved Lab records…".into();
+        return true;
+    }
+    if let Some(receiver) = &panel.lab_job {
+        match receiver.try_recv() {
+            Ok(result) => {
+                panel.lab_job = None;
+                match result {
+                    Ok(value) => {
+                        if let Some(records) = value["records"].as_array() {
+                            panel.lab_records = records.clone();
+                            panel.notice =
+                                format!("{} saved records · execution is opt-in", records.len());
+                        } else {
+                            let text = crate::lab::api::present(&value);
+                            let width = state.ui.input_wrap_width.saturating_sub(12).clamp(1, 96);
+                            show_detail(panel, &text, width);
+                            panel.notice = "Lab result · chat draft preserved".into();
+                        }
+                    }
+                    Err(error) => panel.notice = format!("Lab: {error}"),
+                }
+                return true;
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                panel.lab_job = None;
+                panel.notice = "Lab worker stopped. Refresh to retry.".into();
+                return true;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        }
+    }
     if panel.load_health {
         panel.load_health = false;
         panel.health_started = std::time::Instant::now();
@@ -646,6 +730,7 @@ fn entries(state: &AgentState, panel: &Panel) -> Vec<Row> {
             (8, "Activity", "Weekly usage and recorded history"),
             (13, "Workspace", "Editor, virtual Mac and iPhone panes"),
             (11, "Team", "Saved messages, sessions and read receipts"),
+            (15, "Lab", "Replayable bugs and opt-in runtime evidence"),
             (
                 14,
                 "Doctor",
@@ -655,6 +740,115 @@ fn entries(state: &AgentState, panel: &Panel) -> Vec<Row> {
         .into_iter()
         .map(|(section, label, description)| row(label, description, "→", Action::Section(section)))
         .collect(),
+        15..=21 => {
+            let mut rows = vec![];
+            if panel.section == 15 {
+                for (section, title, description) in [
+                    (
+                        16,
+                        "Replayable bugs",
+                        "Capture, share and reproduce a specific failure",
+                    ),
+                    (
+                        17,
+                        "Compare two fixes",
+                        "Run identical checks against two captured candidates",
+                    ),
+                    (
+                        18,
+                        "Code contracts",
+                        "Versioned interfaces and explicit teammate subscriptions",
+                    ),
+                    (
+                        19,
+                        "App behavior",
+                        "Before / after flows on existing named companion targets",
+                    ),
+                    (
+                        20,
+                        "Context inspector",
+                        "Opt-in request evidence, sources and factual corrections",
+                    ),
+                    (
+                        21,
+                        "Failure scenarios",
+                        "Bounded fault cases in fresh isolated VM snapshots",
+                    ),
+                ] {
+                    rows.push(row(title, description, "Open", Action::Section(section)));
+                }
+            } else if panel.section == 18 {
+                rows.push(row("Propose an interface contract","Define sources, participants and dependent files before accepting","Ask agent",Action::LabAsk("Use the Lab contract guide to propose a code contract for the current task, with a precise interface, relevant source paths, explicit live participants and declared dependent files. Ask for missing scope. Do not accept or subscribe on anyone else's behalf.".into())));
+                rows.push(row("Review a contract","Check the definition, source drift and my session's acceptance","Ask agent",Action::LabAsk("Inspect the relevant Lab code contract and explain source drift and acceptance status. Ask which contract if ambiguous. A changed hash is a review request, not proof of a semantic break. Do not amend, accept or subscribe without my instruction.".into())));
+            } else if panel.section == 19 {
+                rows.push(row("Prepare a UI flow","Save ordered steps and assertions; no device input yet","Ask agent",Action::LabAsk("Use the Lab behavior guide to prepare a repeatable UI flow for this app, with explicit navigation/reset steps, stable accessibility identifiers and independent assertions. Select a named existing Mac VM or dedicated iPhone simulator and relevant source references; ask if ambiguous. Do not execute it or download runtimes.".into())));
+                rows.push(row("Capture or compare app behavior","Run only the flow and installed build I select","Ask agent",Action::LabAsk("Use the Lab behavior guide to capture or compare the before/after app builds I select. Inspect the flow first and ask for target, phase or installed build identity if missing. Use existing companions only. Preserve real screenshots and observations, export paired HTML if comparing, and distinguish pixel changes from regressions. Do not claim app build provenance or unavailable console/network metrics.".into())));
+            } else if panel.section == 20 {
+                rows.push(row(
+                    "Enable request evidence",
+                    "Save private redacted requests from the next turn · retains 100",
+                    "Enable",
+                    Action::LabRequest(
+                        serde_json::json!({"action":"configure_context","data":{"enabled":true}}),
+                    ),
+                ));
+                rows.push(row(
+                    "Disable request evidence",
+                    "Stop future capture; preserve previously recorded evidence",
+                    "Disable",
+                    Action::LabRequest(
+                        serde_json::json!({"action":"configure_context","data":{"enabled":false}}),
+                    ),
+                ));
+                rows.push(row("Add a factual correction","Use my explicit correction and optional source fingerprints","Ask agent",Action::LabAsk("Use the Lab context guide to save the factual correction I provide. Ask for the exact correction if missing; do not invent facts. Link relevant source paths when appropriate. Corrections are reference data and take effect next turn; stale source-linked corrections must be ignored.".into())));
+                rows.push(row("Clear active corrections","Disable capture and remove active references; keep saved history","Clear",Action::LabRequest(serde_json::json!({"action":"configure_context","data":{"enabled":false,"clear_corrections":true}}))));
+            } else if panel.section == 21 {
+                rows.push(row("Prepare failure cases","Use an existing replay and bounded fixture-controlled faults","Ask agent",Action::LabAsk("Use the Lab scenario guide to prepare a bounded failure campaign for the current app from a captured replay report. Keep an independent expected-behavior oracle. Choose relevant environment variations or faults explicitly implemented by the reproducer/fixture; do not pretend a variable changes the system network or clock. Save the plan without executing it.".into())));
+                rows.push(row("Run a failure campaign","Fresh isolated VM per run · preserve case evidence","Ask agent",Action::LabAsk("Run the saved Lab failure campaign I select in an existing isolated VM service. Inspect its cases and total run budget first; ask which plan if ambiguous. Never execute on the host or download a runtime. Preserve per-case replay IDs and distinguish observed failures, execution errors and inconclusive evidence. Do not fix workspace source automatically.".into())));
+            } else if panel.section == 17 {
+                rows.push(row("Prepare two candidates","Keep the workspace intact while comparing alternative fixes","Ask agent",Action::LabAsk("Prepare two candidate fixes for the current task as Lab replay reports using proposed file contents, without changing working source. Use the same captured Git base, identical reproducer and independent expected behavior for both. Create a Lab comparison plan; do not execute it or apply a candidate yet.".into())));
+                rows.push(row("Run a comparison","Execute the plan in an existing isolated VM service","Ask agent",Action::LabAsk("Run a saved Lab comparison relevant to the current task in an existing configured isolated VM service. Inspect the plan and both candidate scopes first; ask which plan if ambiguous. Preserve source files. Report actual outcomes and unavailable measurements; do not automatically choose or apply a winner.".into())));
+                rows.push(row("Apply a chosen candidate","Apply only my selected snapshot, rejecting intervening user edits","Ask agent",Action::LabAsk("Apply the Lab replay candidate I selected for the current task using the Lab apply action. Ask which candidate if I have not selected one. Inspect it first. Do not choose a winner for me or override stale-file protection.".into())));
+            } else {
+                rows.push(row("Capture a bug","Ask the agent to package the current failure without executing it","Ask agent",Action::LabAsk("Capture a replayable bug report for the current task using the Lab tool. Ask for the failing behavior if needed. Select only relevant source files, a bounded reproducer and independent expected behavior. Do not run the report, install runtimes, or change workspace source merely to capture it.".into())));
+                rows.push(row("Replay a saved bug","Inspect a report, then run its check in a configured isolated VM","Ask agent",Action::LabAsk("Replay a saved Lab bug report relevant to the current task. List and inspect its contents first; ask which report if ambiguous. Use only an existing configured isolated VM server. Do not install or download device/OS runtimes or execute reproduction commands on the host.".into())));
+            }
+            rows.push(row(
+                "Refresh",
+                "Read the latest saved records",
+                "Refresh",
+                Action::LabRefresh,
+            ));
+            for record in &panel.lab_records {
+                if let (Some(id), Some(title)) = (record["id"].as_str(), record["title"].as_str()) {
+                    let mut item = row(
+                        title,
+                        format!(
+                            "{} · {}",
+                            record["kind"].as_str().unwrap_or("report"),
+                            record["created"].as_str().unwrap_or("")
+                        ),
+                        "Inspect",
+                        Action::LabShow(id.into()),
+                    );
+                    item.id = Some(id.into());
+                    rows.push(item);
+                }
+            }
+            if let Some(before) = panel
+                .lab_records
+                .last()
+                .and_then(|record| record["cursor"].as_i64())
+            {
+                rows.push(row(
+                    "Older records",
+                    "Read the preceding page without deleting saved evidence",
+                    "Load",
+                    Action::LabOlder(before),
+                ));
+            }
+            rows
+        }
         14 => {
             let mut rows = vec![
                 row(
@@ -1285,7 +1479,7 @@ pub fn view(state: &AgentState) -> Option<PanelView> {
             panel.notice.clone()
         },
         editing: panel.edit.is_some() || panel.capture.is_some(),
-        footer: if panel.message_preview && panel.section == 14 {
+        footer: if panel.message_preview && (panel.section == 14 || panel.section >= 15) {
             "enter / esc Show less · ↑↓ read report"
         } else if panel.message_preview {
             "enter / esc Show less · ↑↓ read message"
@@ -1632,6 +1826,35 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
         {
             if let Some(row) = rows.get(index) {
                 match &row.action {
+                    Action::LabRequest(request) => {
+                        if panel.lab_job.is_none() {
+                            panel.lab_job = Some(lab_job(state.repo_root.clone(), request.clone()));
+                            panel.notice = "Saving explicit Lab setting…".into();
+                        }
+                    }
+                    Action::LabRefresh => {
+                        panel.lab_before = None;
+                        panel.load_lab = true;
+                    }
+                    Action::LabOlder(before) => {
+                        panel.lab_before = Some(*before);
+                        panel.load_lab = true;
+                        panel.selected = 0;
+                    }
+                    Action::LabShow(id) => {
+                        if panel.lab_job.is_none() {
+                            panel.lab_job = Some(lab_job(
+                                state.repo_root.clone(),
+                                serde_json::json!({"action":"show","id":id}),
+                            ));
+                            panel.notice = "Opening saved report…".into();
+                        }
+                    }
+                    Action::LabAsk(prompt) => {
+                        state.ui.queued_agent_prompts.push_back(prompt.clone());
+                        state.ui.queue_paused = false;
+                        close = true;
+                    }
                     Action::HealthScan(deep) => {
                         if panel.health_scan.is_none() {
                             panel.load_health = false;
@@ -2034,6 +2257,48 @@ pub fn statusline(state: &AgentState) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn lab_lists_all_six_features_without_opening_storage_or_running_a_model() {
+        let mut state = crate::init_state();
+        state.ui.input = "preserve my draft".into();
+        open(&mut state, 15, None);
+        let panel = view(&state).unwrap();
+        for title in [
+            "Replayable bugs",
+            "Compare two fixes",
+            "Code contracts",
+            "App behavior",
+            "Context inspector",
+            "Failure scenarios",
+        ] {
+            assert!(
+                panel.rows.iter().any(|row| row.label == title),
+                "Missing {title}"
+            );
+        }
+        assert!(state.ui.queued_agent_prompts.is_empty());
+        assert!(state.ui.panel.as_ref().unwrap().lab_job.is_none());
+        assert_eq!(state.ui.input, "preserve my draft");
+    }
+    #[test]
+    fn lab_capture_is_explicit_and_preserves_the_chat_draft() {
+        let mut state = crate::init_state();
+        state.ui.input = "keep this draft".into();
+        open(&mut state, 16, None);
+        assert!(state.ui.panel.as_ref().unwrap().load_lab);
+        assert!(state.ui.panel.as_ref().unwrap().lab_job.is_none());
+        assert!(state.ui.queued_agent_prompts.is_empty());
+        let capture = view(&state)
+            .unwrap()
+            .rows
+            .iter()
+            .position(|row| row.label == "Capture a bug")
+            .unwrap();
+        assert!(choose_at(&mut state, capture, "Capture a bug"));
+        assert_eq!(state.ui.input, "keep this draft");
+        assert_eq!(state.ui.queued_agent_prompts.len(), 1);
+        assert!(state.ui.queued_agent_prompts[0].contains("Do not run the report"));
+    }
+    #[test]
     fn doctor_opens_from_settings_and_queues_only_an_explicit_investigation() {
         let mut state = crate::init_state();
         state.ui.input_wrap_width = 100;
@@ -2166,7 +2431,7 @@ mod tests {
         state.insert_text("keep my draft");
         assert_eq!(section_for("/settings"), Some(12));
         open(&mut state, 12, None);
-        assert_eq!(view(&state).unwrap().rows.len(), 11);
+        assert_eq!(view(&state).unwrap().rows.len(), 12);
         handle_key(&mut state, key(KeyCode::Tab));
         assert_eq!(view(&state).unwrap().section, 12);
         assert!(choose_at(&mut state, 2, "Permissions"));

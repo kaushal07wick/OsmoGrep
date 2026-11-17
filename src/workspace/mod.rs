@@ -162,6 +162,15 @@ fn register_controls(
     target: &str,
     program: &Path,
 ) -> Result<(), String> {
+    register_named_controls(device, root, target, program, device.program())
+}
+pub(crate) fn register_named_controls(
+    device: Device,
+    root: &Path,
+    target: &str,
+    program: &Path,
+    name: &str,
+) -> Result<(), String> {
     let arguments = if device == Device::Mac {
         vec!["mcp".into(), target.into()]
     } else {
@@ -169,7 +178,7 @@ fn register_controls(
     };
     crate::mcp::register_local(
         root,
-        device.program(),
+        name,
         program.to_path_buf(),
         arguments,
         if device == Device::Phone {
