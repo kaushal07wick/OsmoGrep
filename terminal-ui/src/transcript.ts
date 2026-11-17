@@ -16,7 +16,7 @@ export function diffLines(diff:FileDiff,width:number,light:boolean,expanded:bool
     const wrapped=wrapTextWithAnsi(plain(line.text),Math.max(1,width-visibleWidth(prefix)-2));
     wrapped.forEach((text,i)=>{const content=' '+(i?' '.repeat(visibleWidth(prefix)):prefix)+text;lines.push(bg+color+fit(content,width)+' '.repeat(Math.max(0,width-visibleWidth(content)))+reset);});
   }
-  if(selected.length<diff.lines.length)lines.push(dim+`  … ${diff.lines.length-selected.length} more lines · ctrl+t expand`+reset);
+  if(diff.lines.length>14)lines.push(dim+(expanded?'  Show less':`  Show more · ${diff.lines.length-selected.length} more lines`)+reset);
   return lines.map(line=>fit(line,width));
 }
 

@@ -316,6 +316,23 @@ impl TypeScriptUi {
     }
 
     pub fn handle_visual_event(&mut self, event: &Event, state: &mut AgentState) -> bool {
+        if let Event::Mouse(mouse) = event {
+            if state.ui.input_mode != InputMode::ApiKey
+                && state.ui.pending_update.is_none()
+                && mouse.kind == MouseEventKind::Down(MouseButton::Left)
+                && mouse.modifiers.is_empty()
+                && self.controls.iter().any(|control| {
+                    control.id == "expand"
+                        && control
+                            .area
+                            .rect()
+                            .contains((mouse.column, mouse.row).into())
+                })
+            {
+                state.ui.expand_tools = !state.ui.expand_tools;
+                return true;
+            }
+        }
         if state.ui.pending_permission.is_some() {
             if let Event::Mouse(mouse) = event {
                 if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
@@ -466,7 +483,10 @@ impl TypeScriptUi {
                                     }
                                 }
                             }
-                            "team" => super::workbench::open(state, 11, None),
+                            "team" => match control.index.and_then(|id| i64::try_from(id).ok()) {
+                                Some(id) => super::workbench::open_team_message(state, id),
+                                None => super::workbench::open(state, 11, None),
+                            },
                             _ => super::workbench::open_selector(state, control.id == "provider"),
                         }
                         return true;
@@ -588,6 +608,7 @@ impl TypeScriptUi {
                         | "copy"
                         | "update"
                         | "permission"
+                        | "expand"
                 ) || c.id == "choice"
                     && (!c.index.is_some_and(|i| i <= 1000)
                         || c.label.as_ref().is_none_or(|s| s.len() > 160))
@@ -797,7 +818,7 @@ fn view(state: &AgentState, model: &ModelConfig, id: u64, width: u16, height: u1
         .unwrap_or_else(|_| state.repo_root.display().to_string());
     let diffs: Vec<_> = if ui.diff_active {
         ui.diff_snapshot.iter().map(|d| {
-        let diff = super::diff::Diff::from_texts(d.target.clone(), &d.before, &d.after);
+        let diff = super::diff::Diff::from_texts(d.target.clone(), &d.before, &d.after, ui.expand_tools);
         let after_log=if d.tool.starts_with("preview:") || d.tool.starts_with("live:"){None}else{state.logs.iter().enumerate().filter(|(_,line)|line.text.trim()==format!("└ edited {}",d.target)).map(|(index,_)|index).last()};
         json!({ "file":diff.file,"added":diff.added,"removed":diff.removed,"preview":d.tool.starts_with("preview:"),"afterLog":after_log, "lines":diff.lines.iter().map(|l| json!({"text":l.text,"kind":format!("{:?}",l.kind),"oldLine":l.old_lineno,"newLine":l.new_lineno})).collect::<Vec<_>>() })
     }).collect()
@@ -806,12 +827,13 @@ fn view(state: &AgentState, model: &ModelConfig, id: u64, width: u16, height: u1
     };
     let mut snapshot = json!({
         "id":id, "width":width, "height":height, "version":env!("CARGO_PKG_VERSION"),
+        "wallTime":chrono::Utc::now().timestamp_millis(),
         "cwd":cwd, "model":model.model, "provider":model.provider,
         "branch":ui.repo_branch.as_deref().unwrap_or(""), "indexed":ui.indexed, "indexing":ui.indexing,
         "theme":state.theme.as_str(), "accent":state.accent.as_str(), "density":state.density.as_str(), "session":state.session_name,
         "elapsed":state.started_at.elapsed().as_millis() as u64,
         "profile":state.permission_profile.as_str(), "autoApprove":ui.auto_approve, "planMode":state.plan_mode,
-        "logs":state.logs.iter().map(|l|json!({"text":l.text,"level":format!("{:?}",l.level)})).collect::<Vec<_>>(),
+        "logs":state.logs.iter().map(|l|json!({"text":l.text,"level":format!("{:?}",l.level),"kind":format!("{:?}",l.kind)})).collect::<Vec<_>>(),
         "plan":state.plan_items, "diffs":diffs, "input":input, "cursor":cursor, "selection":selection,
         "masked":ui.input_mode == InputMode::ApiKey, "inputMode":format!("{:?}",ui.input_mode),
         "attachments":ui.attachments.iter().filter(|a|ui.input.contains(&a.label)).map(|a|json!({"id":a.id,"label":a.label,"thumbnail":a.thumbnail,"width":a.width,"height":a.height})).collect::<Vec<_>>(),

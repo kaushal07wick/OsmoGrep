@@ -218,11 +218,16 @@ pub fn draw_ui<B: Backend>(
                     Line::from(""),
                 ];
                 if panel.previewing {
-                    let at = panel
-                        .preview
-                        .len()
-                        .saturating_sub(count)
-                        .saturating_sub(panel.preview_offset);
+                    let max = panel.preview.len().saturating_sub(count);
+                    let at = if panel.section == 11 {
+                        panel.preview_offset.min(max)
+                    } else {
+                        panel
+                            .preview
+                            .len()
+                            .saturating_sub(count)
+                            .saturating_sub(panel.preview_offset)
+                    };
                     lines.extend(
                         panel
                             .preview
@@ -382,6 +387,45 @@ fn execution_lines(state: &AgentState, width: u16) -> Vec<Line<'static>> {
         let level = log.level;
         let fresh = log.at.elapsed().as_secs() <= 2;
         let text = log.text.as_str();
+        if let Some(entry) = (log.kind == crate::state::LogKind::Peer)
+            .then(|| crate::team::transcript_message(text))
+            .flatten()
+        {
+            let message = entry.message;
+            let identity = if entry.outgoing {
+                format!(
+                    "↗ to {}",
+                    entry
+                        .recipient_name
+                        .or_else(|| message
+                            .recipient
+                            .as_deref()
+                            .map(|id| id.chars().take(8).collect::<String>()))
+                        .unwrap_or_else(|| "all agents".into())
+                )
+            } else {
+                format!("↙ {}", message.sender_title)
+            };
+            let time = chrono::DateTime::from_timestamp_millis(message.at)
+                .map(|time| time.format("%H:%M UTC").to_string())
+                .unwrap_or_default();
+            lines.push(Line::default());
+            lines.push(Line::from(vec![
+                Span::styled(identity, Style::default().fg(p.accent)),
+                Span::styled(format!(" · {time}"), Style::default().fg(p.fg_muted)),
+            ]));
+            for body in message.body.lines() {
+                lines.push(Line::from(vec![
+                    Span::styled("│ ", Style::default().fg(p.accent)),
+                    Span::styled(
+                        body.chars().filter(|c| !c.is_control()).collect::<String>(),
+                        Style::default().fg(p.fg_main),
+                    ),
+                ]));
+            }
+            lines.push(Line::default());
+            continue;
+        }
         if let Some(input) = parse_user_input_log(text) {
             let shell = logs
                 .peek()
@@ -475,7 +519,12 @@ fn execution_lines(state: &AgentState, width: u16) -> Vec<Line<'static>> {
             .diff_snapshot
             .iter()
             .map(|snap| {
-                crate::ui::diff::Diff::from_texts(snap.target.clone(), &snap.before, &snap.after)
+                crate::ui::diff::Diff::from_texts(
+                    snap.target.clone(),
+                    &snap.before,
+                    &snap.after,
+                    state.ui.expand_tools,
+                )
             })
             .collect();
         let total_added: usize = rendered_diffs.iter().map(|d| d.added).sum();
@@ -1183,7 +1232,7 @@ fn style_selected_input(spans: &mut [Span<'static>], selected: bool, p: UiPalett
     }
 }
 
-fn wrap_visual_lines(raw: &str, width: usize) -> Vec<String> {
+pub(crate) fn wrap_visual_lines(raw: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
     let mut visual = Vec::new();
 

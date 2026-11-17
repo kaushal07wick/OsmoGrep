@@ -676,6 +676,18 @@ mod tests {
     use uuid::Uuid;
 
     #[test]
+    fn natural_peer_requests_expose_team_without_searching_for_it() {
+        for prompt in [
+            "there is one more osmogrep agent working here, can u message him and talk to him",
+            "yeah message that peer only",
+        ] {
+            let scope = ToolScope::for_prompt(prompt);
+            assert!(scope.allows("team"), "{prompt}");
+            assert!(!scope.chat_only(), "{prompt}");
+        }
+    }
+
+    #[test]
     fn invalid_arguments_and_supervisor_record_writes_are_rejected() {
         let root = std::env::temp_dir().join(format!("tool-boundaries-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();

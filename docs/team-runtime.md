@@ -32,13 +32,15 @@ Previews refresh once a second; Up/down, PageUp/PageDown, Home/End scroll saved 
 
 ## Messages and shared progress
 
-The Team view shows unread messages and recorded progress. The composer shows a Team capsule when enabled or when messages are waiting. Click it to open the view.
+The latest message appears above the composer for seven seconds, then disappears. There is no persistent Team counter. Open **Settings → Team** (or `/team`) for durable history, newest first. Each message opens with sender and recipient names and session IDs, UTC timestamp, workspace, message ID and read receipts. Large messages offer Show more/Show less, and Older messages loads earlier pages without discarding bodies or receipts. A read receipt does not mean the teammate completed the requested work.
 
-Ask for unread messages, a teammate’s status, or a specific update in ordinary language. The Team view also provides Inbox, Message history, and Shared activity controls. The session center’s F4 shortcut can send a message directly to a selected session.
+Ask for unread messages, a teammate’s status, or a specific update in ordinary language. Team shows message history; the session center’s F4 shortcut can send directly to a selected session.
 
-The agent's `team` tool supports peers, inbox, history, updates, send, acknowledge, claim, and release. Sends use a stable client message ID, so retrying a send does not duplicate it. Broadcasts reach sessions already registered when sent; direct messages survive an offline recipient's restart. Acknowledgement means accepted into durable context or explicitly reviewed, not a guarantee that the model acted on it. The sender's UI tracks the latest outgoing acknowledgement.
+The agent's `team` tool supports peers, inbox, history, updates, send, acknowledge, claim, and release. Open sessions have a UUID, an instance ID, a name and an Agent A/B label. A directed send targets an open session in this repository by UUID, label or unique name. Closed sessions reject new sends; already committed messages survive a restart. Identical retries with a stable client ID are deduplicated. A different target or body using that ID is rejected. Broadcasts require separate authorization.
 
-During an active task, incoming messages are added at a completed tool boundary before the next model request. They are clearly marked collaborator reference data; they cannot replace the user's objective, grant tool approval, or authorize delegation. An idle instance shows an unread indicator until the user starts work or reads its inbox. Messages never silently create a paid turn.
+During an active task, incoming messages enter a durable run checkpoint before the next model request. Automatic receipts are written only after that request succeeds. A failed or cancelled request leaves the message pending. Messages are collaborator reference data: they can inform the current task and support a direct reply, but cannot replace the user's objective, grant tool approval or authorize delegation. Idle instances display the notice and retain the message for their next turn; they do not silently start a model call.
+
+The model receives its runtime identity, live peers, previous contact and latest sender. Short follow-ups stay scoped to an established conversation partner. Explicit denials still block sends. Transport uses local SQLite WAL and 250 ms polling, not a NATS server, ZeroMQ dependency, Git commit per message or manual Markdown mailbox. [Protocol details and research sources](team-messaging-design.md).
 
 Status and completed file-tool edits are recorded automatically. Raw shell arguments, provider credentials, and full tool output are not broadcast into the shared activity feed. Message bodies are visible to collaborating sessions and may reach their selected model providers.
 
@@ -65,7 +67,7 @@ The implementation uses the existing Rust runtime and pi-tui renderer. Reference
 
 ### Settings and release notices
 
-`/settings` opens eight visible categories. Choose one with Up/Down and Enter, or click it. Escape returns to the categories before closing; the composer draft stays intact. Direct shortcuts such as `/model` and `/permissions` still open their controls.
+`/settings` opens ten visible categories. Choose one with Up/Down and Enter, or click it. Escape returns to the categories before closing; the composer draft stays intact. Direct shortcuts such as `/model` and `/permissions` still open their controls.
 
 OsmoGrep checks GitHub releases at launch and every six hours. A release card appears when the agent is idle and the composer is empty, with short release highlights and three choices: **Update now**, **Later** (next launch), and **Skip this version** (remembered across launches; a newer version can still appear). Later is selected by default. Downloads use the existing checksum verification and binary replacement; the current session continues until you restart. `OSMOGREP_DISABLE_UPDATE_CHECK=1` disables the finder.
 

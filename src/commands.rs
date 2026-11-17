@@ -41,7 +41,12 @@ pub fn handle_command(
                 crate::team::for_root(&state.repo_root).ok_or("Team runtime is unavailable")?;
             match parts.get(1).copied().unwrap_or("") {
                 "on"|"off"=>{state.preferences.team_messages=parts[1]=="on";crate::team::enable(&state.repo_root,state.preferences.team_messages)?;persistence::save(state)?;Ok(vec![format!("Team messaging {}. Incoming messages enter active turns only; idle delivery does not start a model call.",parts[1])])},
-                "inbox"=>{let messages=peer.inbox()?;let lines=messages.iter().map(|m|format!("From {} · {} · #{}\n{}",m.sender_title,m.sender,m.id,m.body)).collect::<Vec<_>>();receipts=messages.iter().map(|m|m.id).collect();Ok(if lines.is_empty(){vec!["No unread team messages".into()]}else{lines})},
+                "inbox" => {
+                    let messages = peer.inbox()?;
+                    crate::team::show_messages(state, &peer)?;
+                    receipts = messages.iter().map(|m| m.id).collect();
+                    Ok(if messages.is_empty() { vec!["No unread team messages".into()] } else { vec![] })
+                },
                 "history"=>Ok(peer.history(None)?.into_iter().map(|m|format!("#{} · {} → {}\n{}\nAcknowledgements: {}",m["message"]["id"],m["message"]["sender_title"],m["message"]["recipient"],m["message"]["body"].as_str().unwrap_or(""),m["receipts"].as_array().map_or(0,Vec::len))).collect()),
                 "updates"=>Ok(peer.updates(0)?.into_iter().map(|u|format!("{} · {} · {} · {}",u.session,u.kind,u.target,u.summary)).collect()),
                 "send"=>{peer.enabled=true;let recipient=parts.get(2).ok_or("Use /team send <session UUID> <message>")?;let body=parts.get(3).ok_or("Missing message")?;let id=peer.send(Some(recipient),body,&uuid::Uuid::new_v4().to_string())?;Ok(vec![format!("Message #{id} queued durably")])},
@@ -540,6 +545,9 @@ fn assistant_response_blocks(logs: &LogBuffer) -> Vec<String> {
     let mut current = Vec::new();
 
     for line in logs.iter() {
+        if line.kind == crate::state::LogKind::Peer {
+            continue;
+        }
         if is_assistant_copy_line(line.level, &line.text) {
             current.push(line.text.clone());
         } else {
@@ -578,6 +586,7 @@ fn is_assistant_copy_line(level: LogLevel, text: &str) -> bool {
 
 fn transcript_text(logs: &LogBuffer) -> String {
     logs.iter()
+        .filter(|line| line.kind != crate::state::LogKind::Peer)
         .map(|line| {
             parse_user_input_log(&line.text)
                 .map(|input| format!("> {input}"))
@@ -2663,6 +2672,21 @@ fn normalize_command_prefix(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn peer_notices_do_not_pollute_assistant_or_main_transcript_copy() {
+        let mut logs = LogBuffer::new();
+        logs.push(LogLevel::Info, "First paragraph.");
+        logs.push_peer("TEAM|a durable peer message".into());
+        logs.push(LogLevel::Info, "Second paragraph.");
+        assert_eq!(
+            latest_assistant_response(&logs, 1).as_deref(),
+            Some("First paragraph.\nSecond paragraph.")
+        );
+        assert_eq!(
+            transcript_text(&logs),
+            "First paragraph.\nSecond paragraph."
+        );
+    }
     use super::{
         assistant_response_blocks, clear_logs, command_hints_for, latest_assistant_response,
         parse_copy_target, transcript_text, CopyTarget,

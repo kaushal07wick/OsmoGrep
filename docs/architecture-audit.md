@@ -4,8 +4,10 @@ integrations. This review assumes one to three instances on one Mac, large
 repositories and long conversations. It prioritizes data preservation, correct
 tool delivery and input responsiveness over cosmetic refactoring.
 
-Reviewed November 16, 2026. Resolved findings below describe fixes in 0.3.12 and
-the following workspace integration change. Open findings are explicitly marked.
+Reviewed November 16–17, 2026. Earlier resolved findings describe fixes in 0.3.12
+and subsequent workspace changes. The November 17 follow-up records current
+structural findings and separately identifies the messaging fixes made during
+this review. Open findings are explicitly marked.
 
 ## Must fix
 
@@ -109,16 +111,18 @@ the following workspace integration change. Open findings are explicitly marked.
    - **If we skip it:** The text cache helps average rendering time, but it does
      not guarantee smooth typing during slow frames.
 
-9. **Diff display limits do not bound diff computation — open**
+9. **Diff display limits do not bound diff computation — open in part**
    (`src/ui/diff.rs`, `Diff::from_texts`).
    - **What this is:** The UI computes a full line diff, then limits display rows.
-   - **Problem:** Large replacements still incur full comparison work before the
-     500-row cap; early return also makes addition/removal totals incomplete.
+   - **Problem:** Large replacements still incur full comparison work before
+     display folding, and unchanged diffs are rebuilt during animation frames.
+     The old early return also undercounted totals; that part is now fixed.
    - **Fix:** Compute and cache each diff at edit completion with a deadline,
-     count totals separately from rendered rows, and show an explicit bounded
-     fallback for oversized comparisons.
-   - **If we skip it:** A large generated-file edit can stall the UI and its
-     displayed totals can undercount changes.
+     count totals separately from rendered rows, and keep full contents available
+     on expansion. Totals and full expansion now have a regression check; caching
+     and a bounded comparison strategy remain open.
+   - **If we skip it:** A large generated-file edit can still stall the UI even
+     though its totals and expanded contents are now correct.
 
 10. **Core modules combine several independently changing jobs — open**
     (`src/main.rs`, `src/agent.rs`, `src/commands.rs`).
@@ -172,3 +176,117 @@ branch; dependency supply-chain/binary audit; physical iPhone control; live Mac
 guest input; Windows/Linux desktop acceptance; paid provider behavior; a new
 multi-hour task run. Readiness checks found no configured VM and no installed
 iOS runtime. The native-pane and actual companion MCP-discovery checks passed.
+
+## November 17 follow-up
+
+The Rust application remains a single binary crate with a bundled TypeScript
+renderer. There is no justification for turning each feature into a crate.
+Storage, process supervision, file guards and provider transport already provide
+useful boundaries. Runtime event ownership and presentation are the main weak
+connections between them.
+
+### Must fix
+
+13. **Saved edit history differs between execution modes — open**
+    (`src/main.rs`, `run_headless`; `src/rpc.rs`, event loop).
+    - **What this is:** Interactive, headless and RPC modes consume the same
+      agent events and save sessions.
+    - **Problem:** Interactive mode records `ToolDiff` in both session changes
+      and undo history. Headless mode records neither; RPC records only session
+      changes. A local fixture changed a file successfully but saved zero session
+      changes and zero undo entries.
+    - **Fix:** Apply session events through one shared reducer. Keep terminal,
+      JSON emission and permission-response effects in their respective adapters.
+    - **If we skip it:** Resuming an automated session loses the edit/diff/undo
+      capabilities users expect from an interactive session.
+
+14. **A failed undo consumes the undo entry — open**
+    (`src/commands.rs`, `undo_last_change`).
+    - **What this is:** Undo uses guarded replacement to preserve later edits.
+    - **Problem:** The command pops the undo stack before attempting restoration.
+      A content conflict or write error returns without putting that entry back.
+    - **Fix:** Inspect the last entry, restore successfully, then pop and persist.
+      Add one conflict-and-retry regression check.
+    - **If we skip it:** A recoverable undo conflict becomes an unavailable undo
+      operation on the next attempt.
+
+### Should fix
+
+15. **Configuration failures become silent defaults — open**
+    (`src/agent.rs`, `load_config`, `Agent::new`; `src/credentials.rs`, `get`).
+    - **What this is:** Startup chooses the provider/model and reads credentials.
+    - **Problem:** `.ok()` discards malformed TOML, read failures and credential
+      backend errors. A broken config can look like a default model selection or
+      a missing API key instead of reporting the actual problem.
+    - **Fix:** Distinguish absent settings/secrets from invalid or inaccessible
+      ones. Carry the diagnostic to startup and model selection.
+    - **If we skip it:** Users debug the wrong provider or re-enter a credential
+      that was already saved correctly.
+
+16. **Sequential and parallel tools duplicate the result lifecycle — open**
+    (`src/agent.rs`, sequential tool handling and parallel batch handling).
+    - **What this is:** Both paths add loop warnings, summarize results, emit
+      events, update the ledger and construct model-visible tool outputs.
+    - **Problem:** The same postprocessing sequence exists twice. Changing a
+      result warning, redaction or event requires finding both copies; checkpoint
+      and execution-policy differences are mixed into the duplicated sequence.
+    - **Fix:** Share result finalization while retaining the distinct execution
+      and checkpoint rules. Separate configuration/catalog code from the runner.
+    - **If we skip it:** Equivalent tool results can drift across execution modes
+      as new providers and tools are added.
+
+17. **An obsolete verification gate exists only in tests — open**
+    (`src/verify_stop.rs`; test-only declaration in `src/main.rs`).
+    - **What this is:** A 97-line module builds mandatory verify-before-finishing
+      instructions and tests its own behavior.
+    - **Problem:** It is compiled only under `cfg(test)` and has no production
+      callers, while architecture and PRRE docs still describe it as a feature.
+      Whole-tree searches found only its declaration, self-tests and those docs.
+    - **Fix:** Delete the module and its declaration; correct the two stale doc
+      references. Preserve the separately used verification ledger.
+    - **If we skip it:** Passing tests continue to suggest coverage of behavior
+      the actual application does not execute.
+
+18. **CI separates renderer tests from the native frame consumer — open**
+    (`.github/workflows/ci.yml`; `src/ui/typescript.rs`).
+    - **What this is:** Node renders frames that Rust validates and displays.
+    - **Problem:** TS snapshots and Rust tests run separately. The earlier
+      multi-row copy-control issue passed renderer tests but failed Rust's
+      one-row hit-area contract. Manual native checks caught it.
+    - **Fix:** Keep one real-binary pseudo-terminal smoke check in CI, using a
+      local fixture provider. Exercise a code-copy control and an expansion or
+      message action through the actual frame boundary.
+    - **If we skip it:** A visually correct TS change can silently trigger native
+      fallback when installed.
+
+### Cleanup order
+
+1. Fix shared event application and undo failure handling.
+2. Move interactive run/event handling out of `main.rs` into `runtime/`.
+3. Separate agent execution, tool-result finalization and provider configuration.
+4. Split command handlers by sessions, settings, workspace and execution.
+5. Keep team storage, routing policy and presentation separate. This change
+   already extracts the pure language-routing policy into `team/policy.rs`.
+6. Cache presentation by revision and remove frame waits from the input loop.
+
+Keep public event and persistence contracts stable during these moves. A smaller
+file is useful only when it owns a coherent job. Do not add wrapper traits,
+plugins, services or crates merely to distribute the same coupling.
+
+Messaging fixes made alongside the audit include live-recipient routing, stable
+labels, exact body preservation, post-response receipts, paginated history,
+transient notices and typed peer log entries. The default conversation now uses
+the same base prompt as the runtime; the old duplicate instruction string was
+removed. These fixes do not resolve the open architectural findings above.
+
+Verdict: Useful foundations, but shared runtime state and rendering need cleanup
+before claiming consistently smooth long runs or parity with other harnesses.
+
+Lean: at least 99 Rust lines can be removed by deleting the unused 97-line gate
+and its two-line declaration. No dependency removal is justified by this audit.
+
+Not checked: Clippy is unavailable in the installed Rust toolchain. No new paid
+provider run, multi-hour endurance run or line-by-line audit of every optional
+subsystem was performed. The review used code tracing, local reproductions,
+unit/UI checks, independent-process fixture checks and native terminal smoke
+checks; it is not a performance or security certification.

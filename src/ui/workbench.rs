@@ -26,6 +26,10 @@ const SECTIONS: &[&str] = &[
 ];
 
 pub struct Panel {
+    team_history: Vec<serde_json::Value>,
+    team_before: Option<i64>,
+    load_team: bool,
+    message_preview: bool,
     settings: bool,
     filter: usize,
     preview_session: Option<String>,
@@ -56,6 +60,8 @@ pub struct Panel {
 
 #[derive(Clone)]
 enum Action {
+    TeamMessage(i64),
+    TeamPage(Option<i64>),
     Section(usize),
     Session {
         id: String,
@@ -156,6 +162,10 @@ pub fn open(state: &mut AgentState, section: usize, model: Option<&ModelConfig>)
     state.ui.command_items.clear();
     let (days, notice) = load_usage(state, section);
     state.ui.panel = Some(Panel {
+        team_history: Vec::new(),
+        team_before: None,
+        load_team: section == 11,
+        message_preview: false,
         settings: section == 12,
         filter: 0,
         preview_session: None,
@@ -200,8 +210,84 @@ pub fn open_selector(state: &mut AgentState, provider: bool) {
         panel.notice = "Loading models from your endpoint…".into();
     }
 }
+pub fn open_team_message(state: &mut AgentState, id: i64) {
+    let entry = state
+        .logs
+        .iter()
+        .filter(|line| line.kind == crate::state::LogKind::Peer)
+        .filter_map(|log| crate::team::transcript_message(&log.text))
+        .find(|entry| entry.message.id == id);
+    open(state, 11, None);
+    let width = state.ui.input_wrap_width.saturating_sub(12).clamp(1, 96);
+    if let (Some(entry), Some(panel)) = (entry, state.ui.panel.as_mut()) {
+        let saved = crate::team::for_root(&state.repo_root)
+            .and_then(|peer| peer.history_page(None, id.checked_add(1)).ok())
+            .and_then(|history| history.into_iter().find(|item| item["message"]["id"] == id));
+        let entry = saved.unwrap_or_else(|| serde_json::json!({"message":entry.message}));
+        team_preview(panel, &entry, &state.repo_root, width);
+    }
+}
+fn team_preview(
+    panel: &mut Panel,
+    entry: &serde_json::Value,
+    workspace: &std::path::Path,
+    width: usize,
+) {
+    let message = &entry["message"];
+    let from = message["sender_title"].as_str().unwrap_or("Agent");
+    let sender = message["sender"].as_str().unwrap_or("unknown");
+    let recipient = message["recipient"].as_str().unwrap_or("All agents");
+    let to = entry["recipient_title"].as_str().unwrap_or(recipient);
+    let sent = team_time(message["at"].as_i64());
+    let mut detail = format!("From  {from}\nSender session  {sender}\nTo  {to}\nRecipient session  {recipient}\nSent  {sent}\nWorkspace  {}\nMessage  #{}\nStatus  {}", workspace.display(), message["id"], team_status(entry));
+    if let Some(receipts) = entry["receipts"].as_array() {
+        for receipt in receipts {
+            detail.push_str(&format!(
+                "\nRead by  {} · {}",
+                receipt[0].as_str().unwrap_or("unknown"),
+                team_time(receipt[1].as_i64())
+            ));
+        }
+    }
+    detail.push_str("\n\n");
+    detail.push_str(message["body"].as_str().unwrap_or(""));
+    let body = detail
+        .replace('\t', "    ")
+        .chars()
+        .filter(|c| !c.is_control() || *c == '\n')
+        .collect::<String>();
+    panel.preview_lines = super::tui::wrap_visual_lines(&body, width);
+    panel.preview_offset = 0;
+    panel.message_preview = true;
+}
+fn team_time(at: Option<i64>) -> String {
+    at.and_then(chrono::DateTime::from_timestamp_millis)
+        .map(|time| time.format("%d %b %Y %H:%M:%S UTC").to_string())
+        .unwrap_or_default()
+}
+fn team_status(entry: &serde_json::Value) -> &'static str {
+    if entry["receipts"]
+        .as_array()
+        .is_some_and(|receipts| !receipts.is_empty())
+    {
+        "Read"
+    } else {
+        "Sent"
+    }
+}
 
 pub fn choose_at(state: &mut AgentState, index: usize, label: &str) -> bool {
+    if index == 0
+        && label == "Show less"
+        && state
+            .ui
+            .panel
+            .as_ref()
+            .is_some_and(|panel| panel.message_preview)
+    {
+        state.ui.panel.as_mut().unwrap().message_preview = false;
+        return true;
+    }
     let Some(panel) = state.ui.panel.as_ref() else {
         return false;
     };
@@ -226,6 +312,26 @@ pub fn poll(state: &mut AgentState, agent: &crate::agent::Agent) -> bool {
     let Some(panel) = state.ui.panel.as_mut() else {
         return false;
     };
+    if panel.section == 11
+        && (panel.load_team
+            || (!panel.message_preview
+                && panel.team_before.is_none()
+                && panel.preview_refreshed.elapsed() >= std::time::Duration::from_secs(1)))
+    {
+        panel.load_team = false;
+        panel.preview_refreshed = std::time::Instant::now();
+        match crate::team::for_root(&state.repo_root)
+            .ok_or("Team runtime unavailable".to_string())
+            .and_then(|peer| peer.history_page(None, panel.team_before))
+        {
+            Ok(history) => {
+                panel.team_history = history;
+                panel.notice.clear();
+            }
+            Err(error) => panel.notice = error,
+        }
+        return true;
+    }
     if let Some(id) = panel.preview_session.as_deref() {
         if panel.preview_refreshed.elapsed() >= std::time::Duration::from_secs(1) {
             panel.preview_refreshed = std::time::Instant::now();
@@ -467,6 +573,7 @@ fn entries(state: &AgentState, panel: &Panel) -> Vec<Row> {
             (7, "Usage", "Tokens and context for this session"),
             (8, "Activity", "Weekly usage and recorded history"),
             (13, "Workspace", "Editor, virtual Mac and iPhone panes"),
+            (11, "Team", "Saved messages, sessions and read receipts"),
         ]
         .into_iter()
         .map(|(section, label, description)| row(label, description, "→", Action::Section(section)))
@@ -504,35 +611,82 @@ fn entries(state: &AgentState, panel: &Panel) -> Vec<Row> {
             ),
         ],
         10 => session_rows(state, panel, true),
-        11 => vec![
-            row(
-                "Message a teammate",
-                "Ask naturally: talk to the agent working on retries",
-                "plain language",
-                Action::None,
-            ),
-            row(
-                "Inbox",
-                format!(
-                    "{} unread messages · print and acknowledge in the transcript",
-                    state.ui.team.messages.len()
-                ),
-                "↵",
-                Action::Command("/team inbox".into()),
-            ),
-            row(
-                "Message history",
-                "Inspect sent messages and acknowledgement receipts",
-                "↵",
-                Action::Command("/team history".into()),
-            ),
-            row(
-                "Shared activity",
-                "Read recorded tool/file progress from this repository",
-                "↵",
-                Action::Command("/team updates".into()),
-            ),
-        ],
+        11 => {
+            let mut rows = vec![];
+            if panel.team_before.is_some() {
+                rows.push(row(
+                    "Newest messages",
+                    "Return to live history",
+                    "↵",
+                    Action::TeamPage(None),
+                ));
+            }
+            for entry in panel.team_history.iter().rev() {
+                let message = &entry["message"];
+                let outgoing = message["sender"].as_str() == Some(&state.session.id);
+                let name = if outgoing {
+                    message["recipient"]
+                        .as_str()
+                        .map(|id| {
+                            let label = state
+                                .ui
+                                .team
+                                .peers
+                                .iter()
+                                .find(|peer| peer.session == id)
+                                .map(crate::team::presence_name)
+                                .or_else(|| entry["recipient_title"].as_str().map(str::to_owned))
+                                .unwrap_or_else(|| id.chars().take(8).collect());
+                            format!("to {label}")
+                        })
+                        .unwrap_or_else(|| "to all agents".into())
+                } else {
+                    let title = message["sender_title"].as_str().unwrap_or("Agent");
+                    if title.starts_with('/') {
+                        "Agent".into()
+                    } else {
+                        title.into()
+                    }
+                };
+                let time = message["at"]
+                    .as_i64()
+                    .and_then(chrono::DateTime::from_timestamp_millis)
+                    .map(|time| time.format("%d %b %H:%M").to_string())
+                    .unwrap_or_default();
+                rows.push(row(
+                    format!("{} {}", if outgoing { "↗" } else { "↙" }, name),
+                    message["body"]
+                        .as_str()
+                        .unwrap_or("")
+                        .lines()
+                        .next()
+                        .unwrap_or(""),
+                    format!("{time} · {}", team_status(entry)),
+                    Action::TeamMessage(message["id"].as_i64().unwrap_or_default()),
+                ));
+            }
+            if panel.team_history.len() == 50 {
+                let before = panel
+                    .team_history
+                    .first()
+                    .and_then(|entry| entry["message"]["id"].as_i64());
+                rows.push(row(
+                    "Older messages",
+                    "History stays in the local mailbox",
+                    "↵",
+                    Action::TeamPage(before),
+                ));
+            }
+            if rows.is_empty() {
+                rows.push(row(
+                    "No messages yet",
+                    "Ask your agent to contact another open session",
+                    "",
+                    Action::None,
+                ));
+            }
+            rows
+        }
         0 => commands::command_palette_items()
             .iter()
             .map(|c| row(c.cmd, c.desc, "↵", Action::Command(c.cmd.into())))
@@ -908,7 +1062,7 @@ pub fn view(state: &AgentState) -> Option<PanelView> {
     let rows = entries(state, panel);
     Some(PanelView {
         settings: panel.settings,
-        previewing: panel.preview_session.is_some(),
+        previewing: panel.preview_session.is_some() || panel.message_preview,
         preview_offset: panel.preview_offset,
         center_filter: panel.filter,
         counts: (0..5)
@@ -928,7 +1082,7 @@ pub fn view(state: &AgentState) -> Option<PanelView> {
                     .count()
             })
             .collect(),
-        selecting: (panel.picker.is_some() || panel.section == 10 || panel.settings)
+        selecting: (panel.picker.is_some() || matches!(panel.section, 10 | 11) || panel.settings)
             && panel.edit.is_none()
             && panel.capture.is_none(),
         title: match panel.picker {
@@ -956,7 +1110,9 @@ pub fn view(state: &AgentState) -> Option<PanelView> {
             panel.notice.clone()
         },
         editing: panel.edit.is_some() || panel.capture.is_some(),
-        footer: if panel.section == 12 {
+        footer: if panel.message_preview {
+            "enter / esc Show less · ↑↓ read message"
+        } else if panel.section == 12 {
             "↑↓ choose category · enter open · click to open · esc close"
         } else if panel.settings
             && panel.edit.is_none()
@@ -984,7 +1140,7 @@ pub fn view(state: &AgentState) -> Option<PanelView> {
             "↑↓ navigate · enter select · tab section · esc close"
         }
         .into(),
-        preview: if panel.preview_session.is_some() {
+        preview: if panel.preview_session.is_some() || panel.message_preview {
             panel.preview_lines.clone()
         } else {
             statusline(state)
@@ -998,14 +1154,27 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
     let Some(mut panel) = state.ui.panel.take() else {
         return false;
     };
-    if panel.preview_session.is_some() && panel.edit.is_none() {
+    if (panel.preview_session.is_some() || panel.message_preview) && panel.edit.is_none() {
         match key.code {
+            KeyCode::Enter if panel.message_preview => {
+                panel.message_preview = false;
+                state.ui.panel = Some(panel);
+                return true;
+            }
             KeyCode::Esc => {
                 panel.preview_session = None;
+                panel.message_preview = false;
                 state.ui.panel = Some(panel);
                 return true;
             }
             KeyCode::Up | KeyCode::PageUp => {
+                if panel.message_preview {
+                    panel.preview_offset = panel
+                        .preview_offset
+                        .saturating_sub(if key.code == KeyCode::Up { 1 } else { 8 });
+                    state.ui.panel = Some(panel);
+                    return true;
+                }
                 panel.preview_offset = panel
                     .preview_offset
                     .saturating_add(if key.code == KeyCode::Up { 1 } else { 8 })
@@ -1014,6 +1183,14 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
                 return true;
             }
             KeyCode::Down | KeyCode::PageDown => {
+                if panel.message_preview {
+                    panel.preview_offset = panel
+                        .preview_offset
+                        .saturating_add(if key.code == KeyCode::Down { 1 } else { 8 })
+                        .min(panel.preview_lines.len());
+                    state.ui.panel = Some(panel);
+                    return true;
+                }
                 panel.preview_offset = panel
                     .preview_offset
                     .min(panel.preview_lines.len())
@@ -1022,12 +1199,12 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
                 return true;
             }
             KeyCode::Home => {
-                panel.preview_offset = usize::MAX;
+                panel.preview_offset = if panel.message_preview { 0 } else { usize::MAX };
                 state.ui.panel = Some(panel);
                 return true;
             }
             KeyCode::End => {
-                panel.preview_offset = 0;
+                panel.preview_offset = if panel.message_preview { usize::MAX } else { 0 };
                 state.ui.panel = Some(panel);
                 return true;
             }
@@ -1278,6 +1455,22 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
         {
             if let Some(row) = rows.get(index) {
                 match &row.action {
+                    Action::TeamPage(before) => {
+                        panel.team_before = *before;
+                        panel.load_team = true;
+                        panel.selected = 0;
+                    }
+                    Action::TeamMessage(id) => {
+                        if let Some(entry) = panel
+                            .team_history
+                            .iter()
+                            .find(|entry| entry["message"]["id"].as_i64() == Some(*id))
+                        {
+                            let entry = entry.clone();
+                            let width = state.ui.input_wrap_width.saturating_sub(12).clamp(1, 96);
+                            team_preview(&mut panel, &entry, &state.repo_root, width);
+                        }
+                    }
                     Action::Section(section) => {
                         open(state, *section, Some(&panel.model));
                         state.ui.panel.as_mut().unwrap().settings = true;
@@ -1619,6 +1812,32 @@ pub fn statusline(state: &AgentState) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn team_notice_opens_full_safe_text_and_show_less_preserves_the_draft() {
+        let mut state = crate::init_state();
+        state.ui.input = "keep my draft".into();
+        state.ui.input_wrap_width = 80;
+        let body = format!("\u{1b}[2J{}END OF MESSAGE", "\tcontext line\n".repeat(100));
+        state.logs.push_peer(format!(
+            "TEAM|{}",
+            serde_json::json!({
+                "outgoing":false,"message":{"id":77,"sender":uuid::Uuid::new_v4().to_string(),
+                "sender_title":"Agent B · API","recipient":state.session.id,"body":body,"at":0}
+            })
+        ));
+        open_team_message(&mut state, 77);
+        let panel = view(&state).unwrap();
+        assert!(panel.previewing);
+        assert!(panel.preview.len() > 100);
+        assert!(panel
+            .preview
+            .iter()
+            .any(|line| line.contains("END OF MESSAGE")));
+        assert!(!panel.preview.iter().any(|line| line.contains('\u{1b}')));
+        assert!(choose_at(&mut state, 0, "Show less"));
+        assert!(!view(&state).unwrap().previewing);
+        assert_eq!(state.ui.input, "keep my draft");
+    }
     use super::*;
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -1638,6 +1857,7 @@ mod tests {
             online,
             enabled: true,
             pinned: false,
+            role: "Agent A".into(),
         }
     }
     #[test]
@@ -1666,7 +1886,7 @@ mod tests {
         state.insert_text("keep my draft");
         assert_eq!(section_for("/settings"), Some(12));
         open(&mut state, 12, None);
-        assert_eq!(view(&state).unwrap().rows.len(), 9);
+        assert_eq!(view(&state).unwrap().rows.len(), 10);
         handle_key(&mut state, key(KeyCode::Tab));
         assert_eq!(view(&state).unwrap().section, 12);
         assert!(choose_at(&mut state, 2, "Permissions"));
@@ -1678,6 +1898,50 @@ mod tests {
         handle_key(&mut state, key(KeyCode::Esc));
         handle_key(&mut state, key(KeyCode::Esc));
         assert!(state.ui.panel.is_none());
+        assert_eq!(state.ui.input, "keep my draft");
+    }
+
+    #[test]
+    fn team_history_opens_from_settings_with_saved_metadata_and_read_receipts() {
+        let mut state = crate::init_state();
+        state.insert_text("keep my draft");
+        state.ui.input_wrap_width = 120;
+        open(&mut state, 12, None);
+        let team = view(&state)
+            .unwrap()
+            .rows
+            .iter()
+            .position(|row| row.label == "Team")
+            .unwrap();
+        assert!(choose_at(&mut state, team, "Team"));
+        assert_eq!(view(&state).unwrap().section, 11);
+        state.ui.panel.as_mut().unwrap().team_history = vec![serde_json::json!({
+            "message":{"id":42,"sender":"sender-session","sender_title":"Agent A · Backend",
+                "recipient":state.session.id,"body":"Full message\nLast line", "at":0},
+            "recipient_title":"Frontend", "receipts":[[state.session.id,1000]]
+        })];
+        let history = view(&state).unwrap();
+        assert!(history.rows[0].value.contains("Read"));
+        assert!(choose_at(&mut state, 0, &history.rows[0].label));
+        let preview = view(&state).unwrap().preview.join("\n");
+        for metadata in [
+            "Agent A · Backend",
+            "sender-session",
+            "Frontend",
+            "01 Jan 1970",
+            "UTC",
+            "Message  #42",
+            "Read",
+            "Read by",
+            "Last line",
+        ] {
+            assert!(preview.contains(metadata), "missing {metadata}");
+        }
+        assert!(preview.contains(&state.session.id));
+        assert!(preview.contains(&state.repo_root.display().to_string()));
+        assert!(choose_at(&mut state, 0, "Show less"));
+        handle_key(&mut state, key(KeyCode::Esc));
+        assert_eq!(view(&state).unwrap().section, 12);
         assert_eq!(state.ui.input, "keep my draft");
     }
 

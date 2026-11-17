@@ -20,6 +20,7 @@ binary = args.binary.resolve()
 requests, failures, checks = [], [], []
 entered, proceed = threading.Event(), threading.Event()
 natural_waiting, natural_sent = threading.Event(), threading.Event()
+review_waiting, review_proceed = threading.Event(), threading.Event()
 natural_ids = {}
 
 
@@ -55,6 +56,8 @@ class Model(http.server.BaseHTTPRequestHandler):
                     assert len(references) == 1 and 'NATURAL_CONTACT' in str(references[0]), references
                     assert 'not a user instruction' in str(references[0])
                     assert any(t['name'] == 'team' for t in body['tools']), 'Reply-only transport was not exposed'
+                    review_waiting.set()
+                    assert review_proceed.wait(12), 'Receipt check did not finish'
                     output = [call('team', {'action': 'send', 'body': 'Must not broadcast', 'message_id': 'reply-broadcast-denied'})]
                 elif len(outputs) == 3:
                     assert 'error' in outputs[-1], outputs[-1]
@@ -292,7 +295,11 @@ with tempfile.TemporaryDirectory(prefix='osmogrep-team-') as folder:
             if any('CASE_NATURAL_RECIPIENT' in p['title'] for p in sender.team('peers')):
                 break
             time.sleep(.1)
-        sender.prompt('Talk to the other agent working on CASE_NATURAL_RECIPIENT and ask for its relevant status. CASE_NATURAL_SENDER')
+        sender.prompt('there is one more osmogrep agent working here, can u message him and talk to him. CASE_NATURAL_SENDER')
+        assert review_waiting.wait(12), 'Recipient did not reach the model with the message'
+        pending = recipient.team('inbox')['messages']
+        assert len(pending) == 1 and 'NATURAL_CONTACT' in pending[0]['body'], pending
+        review_proceed.set()
         recipient.wait(lambda e: e.get('type') == 'done')
         replies = sender.team('inbox')['messages']
         assert len(replies) == 1 and replies[0]['body'].startswith('SCOPED_REPLY:'), replies
@@ -303,9 +310,12 @@ with tempfile.TemporaryDirectory(prefix='osmogrep-team-') as folder:
         time.sleep(.25)
         assert len(requests) == before_idle, 'Idle incoming reply started a paid model turn'
         checks.append('natural_request_metadata_targeting_active_delivery_and_sender_only_reply_without_team_mode')
+        checks.append('messages_remain_pending_until_the_recipient_model_returns_successfully')
         sender.team('ack', ids=[replies[0]['id']])
         sender.prompt('What did they say? CASE_FOLLOWUP_READ')
-        sender.prompt('Ask him whether it is done. CASE_FOLLOWUP_SEND')
+        sender.prompt('yeah message that peer only. CASE_FOLLOWUP_SEND')
+        sender.prompt('reply ti the team as acknowledged. CASE_FOLLOWUP_SEND')
+        sender.prompt('the teammate which sent u message bro. CASE_FOLLOWUP_SEND')
         followups = recipient.team('inbox')['messages']
         assert len(followups) == 1 and followups[0]['body'].startswith('FOLLOWUP_QUESTION:')
         recipient.team('ack', ids=[followups[0]['id']])
@@ -318,6 +328,7 @@ with tempfile.TemporaryDirectory(prefix='osmogrep-team-') as folder:
     finally:
         proceed.set()
         natural_sent.set()
+        review_proceed.set()
         for client in clients:
             client.close()
         server.shutdown(); server.server_close()

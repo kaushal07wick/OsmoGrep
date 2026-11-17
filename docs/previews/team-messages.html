@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OsmoGrep · Messages in the flow</title>
+  <style>
+    :root { color-scheme:dark; --ink:#dedbd1; --muted:#928b7e; --orange:#ee985d; --line:#2c2923; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:#0c0c0a; color:var(--ink); font:14px/1.65 "Hack Nerd Font Mono",Menlo,monospace; }
+    main { max-width:1500px; padding:30px 36px; margin:auto; }
+    header { display:flex; align-items:center; justify-content:space-between; gap:24px; border-bottom:1px solid var(--line); padding-bottom:22px; }
+    .brand { display:flex; align-items:center; gap:12px; font-weight:bold; }
+    .brand img { width:28px; height:28px; }
+    .muted, .meta { color:var(--muted); }
+    .orange { color:var(--orange); }
+    h1 { font-size:clamp(24px,3vw,36px); line-height:1.25; font-weight:500; letter-spacing:-1px; margin:32px 0 12px; }
+    .intro { max-width:780px; color:var(--muted); margin:0 0 24px; }
+    nav { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:22px; }
+    button { font:inherit; cursor:pointer; border:1px solid var(--line); padding:8px 15px; color:var(--muted); background:transparent; }
+    button[aria-pressed="true"] { color:var(--orange); border-color:#85502b; background:#20160f; }
+    button:hover { color:var(--ink); }
+    button:focus-visible { outline:2px solid var(--orange); outline-offset:3px; }
+    .workspace { display:grid; grid-template-columns:1fr 1fr; border:1px solid var(--line); background:#000; }
+    .terminal { min-width:0; display:flex; flex-direction:column; min-height:620px; }
+    .terminal + .terminal { border-left:1px solid var(--line); }
+    .pane-title { display:flex; justify-content:space-between; padding:14px 24px; border-bottom:1px solid var(--line); color:var(--muted); font-size:12px; }
+    .presence { color:#99b79a; }
+    .chat { padding:24px 26px; flex:1; overflow-wrap:anywhere; }
+    .request { font-weight:bold; line-height:1.6; margin:0 0 26px; }
+    .answer { margin:0 0 24px; }
+    .message { margin:24px 0; animation:arrive .3s ease-out both; }
+    .message-head { color:var(--orange); font-size:13px; margin-bottom:7px; }
+    .message-head time { color:var(--muted); }
+    .message-body { padding-left:16px; border-left:2px solid #b56c34; margin-left:4px; white-space:pre-line; }
+    .message-dock { margin:0 26px 12px; padding-top:14px; }
+    .message-dock .message { margin:0; font-size:13px; }
+    .message-dock .message-body { color:#b8b3a7; }
+    .message-dock .message-body { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+    .message-dock button { border:0; color:var(--orange); font-size:12px; padding:4px 0 0 20px; }
+    dialog { color:var(--ink); background:#10100e; border:1px solid var(--line); width:min(760px,92vw); padding:28px; max-height:85vh; }
+    dialog::backdrop { background:#000b; }
+    dialog h2 { font-size:19px; font-weight:500; margin:0 0 22px; }
+    dialog .message-body { max-height:60vh; overflow:auto; }
+    .composer { margin:0 24px 18px; padding:17px 18px; background:#24251f; color:#aaa596; }
+    .foot { display:flex; justify-content:space-between; padding:0 26px 18px; color:var(--muted); font-size:12px; gap:12px; }
+    .notes { display:flex; justify-content:space-between; flex-wrap:wrap; gap:20px; margin-top:20px; color:var(--muted); font-size:12px; }
+    @keyframes arrive { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
+    @media (prefers-reduced-motion:reduce) { .message { animation:none; } }
+    @media (max-width:850px) { main { padding:20px 16px; } .workspace { grid-template-columns:1fr; } .terminal { min-height:480px; } .terminal + .terminal { border-left:0; border-top:1px solid var(--line); } header .meta { display:none; } }
+  </style>
+</head>
+<body>
+<main>
+  <header><div class="brand"><img src="../assets/logo-dark.svg" alt=""> OsmoGrep</div><span class="meta">TEAM MESSAGING / INTERACTIVE PREVIEW</span></header>
+  <h1>A quiet message, just above your input.</h1>
+  <p class="intro">Agent A and B keep their session names. A small orange rule marks the latest message; your draft stays untouched. No “Team 1” badge or floating counter.</p>
+  <nav aria-label="Message preview states">
+    <button type="button" data-scene="received" aria-pressed="true">01 · Message received</button>
+    <button type="button" data-scene="reply" aria-pressed="false">02 · Working agent replies</button>
+    <button type="button" id="history">03 · Team history</button>
+  </nav>
+  <div class="workspace">
+    <section class="terminal" aria-label="Your coding agent">
+      <div class="pane-title"><span>AGENT A · UI WORK</span><span class="presence">● online</span></div>
+      <div class="chat">
+        <p class="request"><span class="orange">›</span> There is another agent working here. Can u message him?</p>
+        <p class="answer">I found the other online agent. I’ll ask what it’s working on.</p>
+        <article class="message" id="outgoing"><div class="message-head">↗ to Agent B · Retry policy <time>· 07:50 UTC</time></div><div class="message-body">What are you working on? I’m updating the retry UI. Let me know if our changes overlap.</div></article>
+        <div id="sender-reply"></div>
+      </div>
+      <div class="message-dock" id="sender-dock" aria-live="polite"></div>
+      <div class="composer"><span class="orange">›</span> Ask about this change, or keep building…</div>
+      <div class="foot"><span>gpt-5.3-codex ▾ · ~/work/atlas</span><span>ctrl+s sessions</span></div>
+    </section>
+    <section class="terminal" aria-label="The other coding agent">
+      <div class="pane-title"><span>AGENT B · RETRY POLICY</span><span class="presence">● online</span></div>
+      <div class="chat" aria-live="polite">
+        <p class="request"><span class="orange">›</span> Handle HTTP 429 in the retry policy.</p>
+        <p class="answer">I’m keeping the current three-attempt limit.</p>
+        <article class="message" id="incoming"><div class="message-head">↙ Agent A · UI work <time>· 07:50 UTC</time></div><div class="message-body">What are you working on? I’m updating the retry UI. Let me know if our changes overlap.</div></article>
+        <div id="recipient-reply"></div>
+      </div>
+      <div class="message-dock" id="recipient-dock" aria-live="polite"></div>
+      <div class="composer"><span class="orange">›</span> Keep the existing timeout</div>
+      <div class="foot"><span>qwen3.5:4b ▾ · ~/work/atlas</span><span>draft preserved</span></div>
+    </section>
+  </div>
+  <div class="notes"><span>Latest message stays above the composer. Earlier messages remain in scrollback.</span><span>Preview only · no agents contacted</span></div>
+</main>
+<dialog id="team-history"><h2>Team · Message history</h2><article class="message"><div class="message-head">Agent A · UI work → Agent B · Retry policy</div><div class="message-body">What are you working on? I’m updating the retry UI. Let me know if our changes overlap.</div></article><article class="message"><div class="message-head">Agent B · Retry policy → Agent A · UI work</div><div class="message-body">I’m editing src/retry.ts for HTTP 429. Your UI changes won’t overlap. The timeout stays unchanged.</div></article><button id="close-history">Show less</button></dialog>
+<script>
+  const reply = 'I’m editing src/retry.ts for HTTP 429. Your UI changes won’t overlap. The timeout stays unchanged.';
+  const outgoing = document.querySelector('#outgoing');
+  const incoming = document.querySelector('#incoming');
+  document.querySelector('#sender-dock').append(outgoing);
+  document.querySelector('#recipient-dock').append(incoming);
+  const history = document.querySelector('#team-history');
+  document.querySelector('#history').addEventListener('click', () => history.showModal());
+  document.querySelector('#close-history').addEventListener('click', () => history.close());
+  let expiry;
+  const resetNotices = () => {
+    document.querySelectorAll('.message-dock').forEach(dock => {
+      dock.hidden = false;
+      const button = document.createElement('button');
+      button.textContent = 'Show more';
+      button.addEventListener('click', () => history.showModal());
+      dock.append(button);
+    });
+    clearTimeout(expiry);
+    expiry = setTimeout(() => document.querySelectorAll('.message-dock').forEach(dock => dock.hidden = true), 7000);
+  };
+  const message = (heading) => `<article class="message"><div class="message-head">${heading} <time>· 07:50 UTC</time></div><div class="message-body">${reply}</div></article>`;
+  document.querySelectorAll('[data-scene]').forEach(button => button.addEventListener('click', () => {
+    const scene = button.dataset.scene;
+    document.querySelectorAll('[data-scene]').forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+    document.querySelector('#sender-reply').replaceChildren();
+    document.querySelector('#recipient-reply').replaceChildren();
+    document.querySelector('#sender-dock').innerHTML = scene === 'reply' ? message('↙ Agent B · Retry policy') : '';
+    document.querySelector('#recipient-dock').innerHTML = scene === 'reply' ? message('↗ to Agent A · UI work') : '';
+    if (scene !== 'reply') {
+      document.querySelector('#sender-dock').append(outgoing);
+      document.querySelector('#recipient-dock').append(incoming);
+    }
+    resetNotices();
+  }));
+  resetNotices();
+</script>
+</body>
+</html>

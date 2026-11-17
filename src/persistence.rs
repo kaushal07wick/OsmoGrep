@@ -148,6 +148,10 @@ fn apply_saved(state: &mut AgentState, saved: PersistedState) {
     state.ui.queue_paused = !state.ui.queued_agent_prompts.is_empty();
     state.logs.clear();
     for (level, text) in saved.logs {
+        if level == "peer" {
+            state.logs.push_peer(text);
+            continue;
+        }
         let level = match level.as_str() {
             "error" => crate::state::LogLevel::Error,
             "warn" => crate::state::LogLevel::Warn,
@@ -196,11 +200,15 @@ pub fn save(state: &AgentState) -> Result<(), String> {
             .iter()
             .map(|l| {
                 (
-                    match l.level {
-                        crate::state::LogLevel::Error => "error",
-                        crate::state::LogLevel::Warn => "warn",
-                        crate::state::LogLevel::Success => "success",
-                        _ => "info",
+                    if l.kind == crate::state::LogKind::Peer {
+                        "peer"
+                    } else {
+                        match l.level {
+                            crate::state::LogLevel::Error => "error",
+                            crate::state::LogLevel::Warn => "warn",
+                            crate::state::LogLevel::Success => "success",
+                            _ => "info",
+                        }
                     }
                     .to_string(),
                     l.text.clone(),
@@ -498,6 +506,20 @@ pub fn session_dir() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn peer_tags_survive_restoration_without_turning_model_text_into_messages() {
+        let saved: super::PersistedState = serde_json::from_value(serde_json::json!({
+            "logs": [["peer", "TEAM|trusted"], ["info", "TEAM|model output"]]
+        }))
+        .unwrap();
+        let mut state = crate::init_state();
+        super::apply_saved(&mut state, saved);
+        let kinds = state.logs.iter().map(|line| line.kind).collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            vec![crate::state::LogKind::Peer, crate::state::LogKind::Output]
+        );
+    }
     #[test]
     fn welcome_turn_count_survives_cleared_logs_and_compacted_history() {
         let saved: super::PersistedState = serde_json::from_value(serde_json::json!({

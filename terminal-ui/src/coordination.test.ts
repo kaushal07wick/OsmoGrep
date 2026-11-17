@@ -24,10 +24,11 @@ test('runtime status retains breathing room, completion alignment, and voice sta
  const v={...fixture(),running:true,phase:'thinking',runElapsed:9000,voice:'voice connected',voiceState:{enabled:true,connected:true,partial:false},team:{enabled:true,unread:2,online:1}};
  const f=render(v),text=f.rows.map(stripTerminalSequences).join('\n');
  const sphere=orb(9000);sphere.rows.forEach((row,i)=>assert.ok(f.rows[f.input.y-4+i]!.includes(row)));
- assert.match(text,/Working through your request/);assert.match(text,/Listening/);assert.match(text,/Team 1 · 2 new/);
+ assert.match(text,/Working through your request/);assert.match(text,/Listening/);assert.doesNotMatch(text,/Team 1|2 new/);
  assert.ok(f.execution.y+f.execution.height<=f.input.y-4);
  assert.equal(f.rows.map(stripTerminalSequences)[f.input.y-1]!.trim(),'');
- for(const id of ['voice','team'])assert.equal(f.controls?.find(c=>c.id===id)?.y,f.input.y);
+ assert.equal(f.controls?.find(c=>c.id==='voice')?.y,f.input.y);
+ assert.ok(!f.controls?.some(c=>c.id==='team'));
  assert.equal(completionLine('· Finished in 3.3s',70)?.length,70);
  assert.match(completionLine('· Finished in 3.3s',70)!,/^Done +3\.3s elapsed$/);
  assert.equal(completionLine('ordinary text',70),null);

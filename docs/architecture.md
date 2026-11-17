@@ -13,6 +13,8 @@ src/
   commands.rs              Interactive commands and background actions
   agent.rs                 Conversation loop, tool dispatch, permission requests
   prompts/agent.md         Base agent instructions
+  team.rs                  Durable mailboxes, presence, claims and receipts
+  team/policy.rs           Natural-language routing hints for existing sessions
   provider.rs              Responses / Chat Completions / Anthropic transport
   provider_tests.rs        Wire-format, replay and cancellation contracts
   model_options.rs         Reasoning controls and model capabilities

@@ -1,0 +1,28 @@
+{
+  "date": "2026-11-17",
+  "version": "0.3.19",
+  "target": "aarch64-apple-darwin",
+  "binary_sha256": "41453d24022f09f390576dc92d626f146396a8643e7420e64d02747cc966e318",
+  "rust": {"passed": 308, "ignored": 5, "excluded": ["mac_clipboard_reads_an_image_without_changing_the_users_clipboard"]},
+  "ui": {"passed": 76, "build": "passed"},
+  "npm_launcher": {"passed": 5, "version": "0.3.19"},
+  "team_acceptance": {
+    "processes": 7,
+    "fixture_model_requests": 32,
+    "paid_model_requests": 0,
+    "checks": [
+      "independent_process_presence_and_repository_isolation",
+      "durability_restart_deduplication_and_receipts_without_idle_paid_turns",
+      "concurrent_broadcast_delivery",
+      "safe_boundary_delivery_preserves_user_task_and_durable_ack",
+      "cross_process_edit_contention_release_and_automatic_updates",
+      "crashed_instance_expires_without_stealing_session",
+      "natural_request_metadata_targeting_active_delivery_and_sender_only_reply_without_team_mode",
+      "messages_remain_pending_until_the_recipient_model_returns_successfully",
+      "contextual_read_and_send_followups_keep_the_previous_direct_partner_only",
+      "explicit_no_message_instruction_overrides_persistent_team_mode"
+    ]
+  },
+  "native_frame": {"accepted": true, "orange_tab_visible": true, "copy_pixel_placements": true, "fixture_model_calls": 1, "paid_calls": 0},
+  "scope": "Local Apple silicon release checks with isolated fake providers. No live-model quality, endurance or other-platform performance claim. Ignored hardware/optional-package tests remain unverified."
+}

@@ -18,6 +18,24 @@ export function drawPanel(panel:PanelView,width:number,height:number,light:boole
   const gutter=width>=60?3:width>=24?1:0,card=Math.max(1,width-2*gutter),pad=card>=40?3:1,inner=Math.max(1,card-2*pad),top=height>=14?2:0,available=Math.max(1,height-top-(height>=14?2:0));
   const wrap=(s:string,n=2)=>wrapTextWithAnsi(s,inner).slice(0,n),rows=Array<string>(height).fill(root+' '.repeat(width)+reset);
   const controls:{id:'choice';index:number;label:string;x:number;y:number;width:number;height:number}[]=[];
+  if (panel.section === 11 && panel.previewing) {
+    const put = (y:number, text:string) => {
+      if (y >= 0 && y < height) {
+        const content = ' '.repeat(gutter + pad) + fit(text, inner);
+        rows[y] = root + content + root + ' '.repeat(Math.max(0, width-visibleWidth(content))) + reset;
+      }
+    };
+    put(top, accent + 'Team message' + reset);
+    const bodyTop = top + 2;
+    const bodyHeight = Math.max(0, height - bodyTop - 4);
+    const source = (panel.preview ?? []).flatMap(line => wrapTextWithAnsi(plain(line), inner));
+    const start = Math.min(panel.preview_offset ?? 0, Math.max(0, source.length - bodyHeight));
+    source.slice(start, start + bodyHeight).forEach((line, i) => put(bodyTop + i, fg + line));
+    const y = Math.max(0, height - 2);
+    put(y, accent + 'Show less' + reset);
+    controls.push({id:'choice',index:0,label:'Show less',x:gutter+pad,y,width:Math.min(9, inner),height:1});
+    return {rows,controls,cursor:{x:0,y:0}};
+  }
   const at=Math.max(0,Math.min(panel.selected,panel.rows.length-1)),current=panel.rows[at];
   const tabs=panel.sections.slice(Math.max(0,Math.min(panel.section-1,panel.sections.length-3)),Math.max(0,Math.min(panel.section-1,panel.sections.length-3))+3).map(s=>s===panel.sections[panel.section]?accent+bold+s+reset:dim+s+reset).join(dim+'  /  ');
   const header=panel.section===12&&available>=14?['',accent+'◌ '+bold+'Settings'+reset,'',dim+'Choose a category · enter or click',dim+'Search  '+fg+plain(panel.query),''] :available>=14?['',accent+'◌ '+bold+plain(panel.title??panel.sections[panel.section]??'Workspace')+reset+dim+'   /  WORKSPACE','',panel.settings?dim+(panel.section===12?'Choose a category · enter or click to open':'Settings / '+plain(panel.sections[panel.section]??'')+' · esc categories'):inner>=48?tabs:dim+'tab / shift+tab · sections','',...([7,8].includes(panel.section)?[]:[(panel.editing?accent+'Edit  ':dim+'Search  ')+fg+plain(panel.query)+(panel.query?'':'_'),''])]:[accent+plain(panel.title??panel.sections[panel.section]??'Workspace')];

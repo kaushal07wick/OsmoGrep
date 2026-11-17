@@ -25,9 +25,16 @@ pub enum LogLevel {
 
 #[derive(Clone, Debug)]
 pub struct LogLine {
+    pub kind: LogKind,
     pub level: LogLevel,
     pub text: String,
     pub at: Instant,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LogKind {
+    Output,
+    Peer,
 }
 
 pub struct LogBuffer {
@@ -46,13 +53,22 @@ impl LogBuffer {
     }
 
     pub fn push(&mut self, level: LogLevel, text: impl Into<String>) {
+        self.push_kind(level, text.into(), LogKind::Output);
+    }
+
+    pub fn push_peer(&mut self, text: String) {
+        self.push_kind(LogLevel::Info, text, LogKind::Peer);
+    }
+
+    fn push_kind(&mut self, level: LogLevel, text: String, kind: LogKind) {
         if self.logs.len() >= MAX_LOGS {
             self.logs.pop_front();
         }
 
         self.logs.push_back(LogLine {
+            kind,
             level,
-            text: text.into(),
+            text,
             at: Instant::now(),
         });
     }
@@ -978,29 +994,7 @@ impl ConversationHistory {
     pub fn new() -> Self {
         let messages = vec![json!({
             "role": "system",
-            "content":
-                "You are Osmogrep, an AI coding agent working inside this repository.\n\
-                \n\
-                This repository may include a machine-generated index stored as `.context/context.json` at the repository root.\n\
-                This file, if present, describes the structure of the codebase: files, symbols, and call relationships.\n\
-                \n\
-                The index is a regular file and must be discovered and read using tools.\n\
-                It may or may not exist.\n\
-                \n\
-                When working:\n\
-                - Check for the presence of `.context/context.json` using tools when repository structure matters.\n\
-                - If present, read it to understand the repository before acting.\n\
-                - Use tools to inspect other files or make changes as needed.\n\
-                - If `.context/context.json` is missing or insufficient, proceed normally and use tools freely.\n\
-                - For non-trivial coding work, use a disciplined loop: investigate, plan, implement, verify, and review residual risk.\n\
-                - Treat tests, builds, diffs, and command outputs as evidence. Do not claim the repo is green unless a relevant command actually passed.\n\
-                \n\
-                Philosophy:\n\
-                This repository will outlive any single contributor.\n\
-                Many people will read, use, and maintain this code over time.\n\
-                Leave the codebase better than you found it.\n\
-                Prefer clear structure, small deterministic functions, and reliable behavior.\n\
-                Make changes that are easy to understand, review, and maintain."
+            "content": include_str!("prompts/agent.md").trim()
         })];
 
         let mut this = Self {

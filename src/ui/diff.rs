@@ -2,10 +2,26 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
 };
-use similar::{ChangeTag, TextDiff};
+use similar::{ChangeTag, DiffTag, TextDiff};
 
 const CONTEXT_RADIUS: usize = 3;
 const MAX_RENDER_LINES: usize = 500;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn folded_diff_totals_are_complete_and_expansion_has_every_line() {
+        let after = (0..1000).map(|i| format!("line {i}\n")).collect::<String>();
+        let folded = Diff::from_texts("large.txt".into(), "old\n", &after, false);
+        assert_eq!((folded.added, folded.removed), (1000, 1));
+        assert!(folded.lines.len() <= MAX_RENDER_LINES + 1);
+        let full = Diff::from_texts("large.txt".into(), "old\n", &after, true);
+        assert_eq!((full.added, full.removed), (1000, 1));
+        assert!(full.lines.iter().any(|line| line.text == "line 999"));
+        assert!(full.lines.len() > MAX_RENDER_LINES);
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Diff {
@@ -33,11 +49,25 @@ pub enum DiffLineKind {
 }
 
 impl Diff {
-    pub fn from_texts(file: String, before: &str, after: &str) -> Self {
+    pub fn from_texts(file: String, before: &str, after: &str, expanded: bool) -> Self {
         let diff = TextDiff::from_lines(before, after);
         let mut lines = Vec::new();
-        let mut added = 0usize;
-        let mut removed = 0usize;
+        let (added, removed) = diff.ops().iter().fold((0, 0), |(added, removed), op| {
+            (
+                added
+                    + if matches!(op.tag(), DiffTag::Insert | DiffTag::Replace) {
+                        op.new_range().len()
+                    } else {
+                        0
+                    },
+                removed
+                    + if matches!(op.tag(), DiffTag::Delete | DiffTag::Replace) {
+                        op.old_range().len()
+                    } else {
+                        0
+                    },
+            )
+        });
 
         let groups = diff.grouped_ops(CONTEXT_RADIUS);
         for (group_idx, group) in groups.iter().enumerate() {
@@ -80,14 +110,8 @@ impl Diff {
 
                     let kind = match change.tag() {
                         ChangeTag::Equal => DiffLineKind::Context,
-                        ChangeTag::Insert => {
-                            added += 1;
-                            DiffLineKind::Added
-                        }
-                        ChangeTag::Delete => {
-                            removed += 1;
-                            DiffLineKind::Removed
-                        }
+                        ChangeTag::Insert => DiffLineKind::Added,
+                        ChangeTag::Delete => DiffLineKind::Removed,
                     };
 
                     lines.push(DiffRenderLine {
@@ -97,7 +121,7 @@ impl Diff {
                         text,
                     });
 
-                    if lines.len() >= MAX_RENDER_LINES {
+                    if !expanded && lines.len() >= MAX_RENDER_LINES {
                         lines.push(DiffRenderLine {
                             kind: DiffLineKind::Header,
                             old_lineno: None,

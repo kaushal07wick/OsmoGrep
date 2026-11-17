@@ -10,14 +10,16 @@ import {diffLines,highlightTranscript,selectedTranscript,type TranscriptSelectio
 import {paperRow,paperColors,paperGraphic} from './paper.ts';
 import {orb,activityInfo,completionLine} from './activity.ts';
 import {providerMarks} from './provider-marks.ts';
+import {teamMessageLines,teamNoticeActive} from './team.ts';
 
 export interface Rect { x: number; y: number; width: number; height: number }
 export interface Attachment { id: number; label: string; thumbnail: string; width: number; height: number }
 export interface View {
+  wallTime?: number;
   id: number; width: number; height: number; version: string; cwd: string;
   model: string; provider: string; branch: string; indexed: boolean; indexing: boolean;
   theme: string; accent: string; density: string; session: string | null; elapsed: number; profile: string; autoApprove: boolean; planMode: boolean;
-  logs: { text: string; level: string }[]; plan: { text: string; done: boolean; active: boolean }[];
+  logs: { text: string; level: string; kind?: string }[]; plan: { text: string; done: boolean; active: boolean }[];
   diffs: FileDiff[];
   input: string; cursor: number; selection: [number, number] | null; masked: boolean;
   inputMode: string; attachments: Attachment[]; running: boolean; phase: string; tool: string | null;
@@ -51,7 +53,7 @@ export interface Rendered {
   animate: boolean;
   animationIntervalMs?:number;
   artwork: Rect | null;
-  controls?:{id:'model'|'provider'|'choice'|'voice'|'team'|'copy'|'update'|'permission';index?:number;label?:string;x:number;y:number;width:number;height:number}[];
+  controls?:{id:'model'|'provider'|'choice'|'voice'|'team'|'copy'|'update'|'permission'|'expand';index?:number;label?:string;x:number;y:number;width:number;height:number}[];
   transcript?:{x:number;y:number;width:number;height:number;start:number;maxScroll:number;lineWidths:number[];scrollbar?:Rect|null};
   selectionText?:string;
   images: { id: number; x: number; y: number; sequence: string; placement?:string }[];
@@ -153,21 +155,57 @@ export function render(v: View): Rendered {
   const footerHeight = h > composerHeight + headerHeight + headerY + 1 ? 2 : 0;
   const composerY = Math.max(0, h - footerHeight - composerHeight);
   const inputRect = { x: gutter, y: composerY, width, height: composerHeight };
+  const lastTeam = v.logs.findLastIndex(log => log.kind === 'Peer');
+  const lastUser = v.logs.findLastIndex(log => log.text.startsWith('USER|'));
+  const teamLines = lastTeam > lastUser && v.followTail && !v.panel && !v.approval && !v.update && !v.masked && h >= 20 && width >= 24
+    && teamNoticeActive(v.logs[lastTeam]!.text, v.wallTime ?? Date.now())
+    ? teamMessageLines(v.logs[lastTeam]!.text, Math.max(1, width - pad * 2), light, accent) : null;
+  const teamDock = teamLines?.slice(1, -1).slice(0, 3) ?? [];
+  if (teamLines && teamLines.length > teamDock.length + 2) {
+    teamDock[teamDock.length - 1] = clip(teamDock.at(-1)!, Math.max(1, width - pad * 2 - 2)) + dim + ' …' + reset;
+    teamDock.push(accent + '  Show more' + reset);
+  }
+  const teamHeight = teamDock.length ? teamDock.length + 2 : 0;
+  const activityBottom = composerY - teamHeight;
   const activityHeight=v.running&&!v.update&&h>=24&&width>=36?4:v.workspaceStatus?2:1;
-  const execution = { x: gutter, y: headerY + headerHeight, width, height: Math.max(0, composerY - headerY - headerHeight - activityHeight) };
+  const execution = { x: gutter, y: headerY + headerHeight, width, height: Math.max(0, activityBottom - headerY - headerHeight - activityHeight) };
   const approvalRows=v.approval?permissionLines(v.approval.tool,v.approval.args,v.approval.selected??0,width,accent,light,h<32):v.release?updateLines(v.release,width,accent,light,h<40):[];
   const approvalHeight=Math.min(approvalRows.length,Math.max(0,Math.max(0,execution.height-3)));
   execution.height=Math.max(0,execution.height-(approvalHeight?approvalHeight+1:0));
   const transcript: string[] = [];
   const insertedDiffs=new Set<FileDiff>();
   const codeCopies:CodeCopy[]=[];
-  const appendMarkdown=(text:string)=>{const block=cachedCodeBlocks(text,Math.max(1,width-pad*2),light,text=>markdown(text,width-pad*2),v.copiedCode,accent,paperGraphics);codeCopies.push(...block.copies.map(copy=>({...copy,row:copy.row+transcript.length})));transcript.push(...block.rows);};
+  const expandActions: {row:number;label:string}[] = [];
+  const expandAction = (hidden?: number) => {
+    const label = v.expandTools ? 'Show less' : hidden == null ? 'Show more' : `Show more · ${hidden} more lines`;
+    expandActions.push({row:transcript.length,label});
+    transcript.push(accent + '  ' + label + reset);
+  };
+  const appendMarkdown = (text: string, fold = true) => {
+    const block = cachedCodeBlocks(text,Math.max(1,width-pad*2),light,text=>markdown(text,width-pad*2),v.copiedCode,accent,paperGraphics);
+    const large = fold && block.rows.length > 22;
+    const shown = large && !v.expandTools ? block.rows.slice(0,22) : block.rows;
+    codeCopies.push(...block.copies.filter(copy => copy.row < shown.length).map(copy => ({
+      ...copy,row:copy.row+transcript.length,height:Math.min(copy.height,shown.length-copy.row),
+    })));
+    transcript.push(...shown);
+    if (large) expandAction(block.rows.length - 22);
+  };
+  const appendDiff = (diff: FileDiff) => {
+    transcript.push(...diffLines(diff,Math.max(1,width-pad*2),light,!!v.expandTools));
+    if (diff.lines.length > 14) {
+      transcript.pop();
+      expandAction(diff.lines.at(-1)?.text.includes('diff truncated') ? undefined : diff.lines.length - 14);
+    }
+  };
   let paragraph: string[] = [];
   const flush = () => { if (paragraph.length) { appendMarkdown(paragraph.join('\n')); paragraph = []; } };
   for (let i = 0; i < v.logs.length; i++) {
     const firstLog=i;
     const entry = v.logs[i]!; const text = clean(entry.text);
-    if (text.startsWith('USER|')) {
+    if (entry.kind === 'Peer') {
+      flush();
+    } else if (text.startsWith('USER|')) {
       flush(); let command = text.slice(5), prefix = '❯ ';
       if (v.logs[i + 1]?.text === 'SHELL : $ ' + command) { i++; prefix = '$ '; }
       transcript.push('', ...wrapTextWithAnsi(accent + prefix + reset + fg + bold(command) + reset, Math.max(1, width - pad * 2)), '');
@@ -176,25 +214,31 @@ export function render(v: View): Rendered {
     } else if (text.trimStart().startsWith('└ ')) {
       flush();const results=[text];
       while(v.logs[i+1]?.text.trimStart().startsWith('└ '))results.push(clean(v.logs[++i]!.text));
-      const shown=v.expandTools?results:results.slice(0,3);
-      shown.forEach(line=>transcript.push(...wrapTextWithAnsi(dim+line+reset,Math.max(1,width-pad*2))));
-      if(shown.length<results.length)transcript.push(dim+`  … ${results.length-shown.length} more lines · ctrl+t expand`+reset);
+      const rendered = results.flatMap(line => wrapTextWithAnsi(dim+line+reset,Math.max(1,width-pad*2)));
+      transcript.push(...(v.expandTools ? rendered : rendered.slice(0,3)));
+      if (rendered.length > 3) expandAction(rendered.length - 3);
     } else if (text.startsWith('● ') || text.trimStart().startsWith('└ ') || text.startsWith('· ') || entry.level !== 'Info') {
       flush();
       const color = entry.level === 'Error' ? rgb(230, 100, 100) : entry.level === 'Warn' ? rgb(225, 185, 75) : text.startsWith('● ') ? accent : dim;
       transcript.push(...wrapTextWithAnsi(color + text + reset, Math.max(1, width - pad * 2)));
     } else { paragraph.push(stripTerminalSequences(entry.text).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g,'')); }
     for(const diff of v.diffs)if(diff.afterLog!=null&&diff.afterLog>=firstLog&&diff.afterLog<=i){
-      flush();transcript.push(...diffLines(diff,Math.max(1,width-pad*2),light,!!v.expandTools));insertedDiffs.add(diff);
+      flush();appendDiff(diff);insertedDiffs.add(diff);
     }
   }
   flush();
-  for(const diff of v.diffs)if(!insertedDiffs.has(diff))transcript.push(...diffLines(diff,Math.max(1,width-pad*2),light,!!v.expandTools));
-  if(v.stream)appendMarkdown(v.stream+'▍');
+  for(const diff of v.diffs)if(!insertedDiffs.has(diff))appendDiff(diff);
+  if(v.stream)appendMarkdown(v.stream+'▍',false);
   if (v.plan.length) transcript.push('', ...v.plan.map(p => `${p.done ? '✓' : p.active ? '›' : '·'} ${clean(p.text)}`));
   const maxScroll = Math.max(0, transcript.length - execution.height);
   const start = v.followTail ? maxScroll : Math.max(0,Math.min(maxScroll,v.scrollTop??maxScroll-v.scroll));
   transcript.slice(start, start + execution.height).forEach((line, i) => put(execution.y + i, highlightTranscript(line,start+i,v.transcriptSelection,light), gutter + pad, width - pad * 2));
+  if (!v.panel && !v.update && !v.masked) for (const action of expandActions) {
+    const y = execution.y + action.row - start;
+    if (y >= execution.y && y < execution.y + execution.height && width - pad * 2 > 2) {
+      controls.push({id:'expand',x:gutter+pad+2,y,width:Math.min(visibleWidth(action.label),Math.max(1,width-pad*2-2)),height:1});
+    }
+  }
   let copyIconIndex=0;
   if(!v.masked&&!v.approval&&!v.update&&!v.commands.length)for(const copy of codeCopies){
     const y=execution.y+copy.row-start,top=Math.max(execution.y,y),bottom=Math.min(execution.y+execution.height,y+copy.height);
@@ -203,7 +247,7 @@ export function render(v: View): Rendered {
     // The native frame protocol accepts one terminal row per hit area.
     for(let row=top;row<bottom;row++)controls.push({id:'copy',label:copy.text,x,y:row,width:copy.width,height:1});
     const iconY=y+(copy.iconRow??0);
-    if(copy.iconRow!=null&&iconY>=execution.y&&iconY<execution.y+execution.height){
+    if(copy.iconRow!=null&&iconY>=top&&iconY<bottom){
       // Keep code icons in a separate ID range from attachment and workspace graphics.
       const id=(0x40000000+process.pid*256+copyIconIndex++)>>>0;
       const graphic=renderImage(copyTabIcon(light,v.copiedCode===copy.text),{widthPx:20,heightPx:20},{imageId:id,maxWidthCells:2,maxHeightCells:1,moveCursor:false});
@@ -232,7 +276,7 @@ export function render(v: View): Rendered {
   const status = v.release?'':v.update ?? (v.permission&&!v.approval?v.permission:null) ?? (v.running ? activity(v.runElapsed??v.elapsed,v.approval?'Waiting for permission':v.phase,v.approval||v.phase==='thinking'?null:v.tool,!!v.preferences?.reduce_motion) : v.workspaceStatus??'');
   if(status){
     if(v.running&&activityHeight===4&&!v.update){
-      const y=composerY-4,frame=orb(v.runElapsed??v.elapsed,light,!!v.preferences?.reduce_motion),info=activityInfo(v.runElapsed??v.elapsed,v.approval?'Waiting for approval':v.phase,v.approval?null:v.tool,!!v.preferences?.reduce_motion);
+      const y=activityBottom-4,frame=orb(v.runElapsed??v.elapsed,light,!!v.preferences?.reduce_motion),info=activityInfo(v.runElapsed??v.elapsed,v.approval?'Waiting for approval':v.phase,v.approval?null:v.tool,!!v.preferences?.reduce_motion);
       const id=(process.pid*128+125)>>>0;
       const graphic=paperGraphics?renderImage(frame.png.toString('base64'),{widthPx:36,heightPx:36},{imageId:id,maxWidthCells:6,maxHeightCells:3,moveCursor:false}):null;
       frame.rows.forEach((line,i)=>{
@@ -240,10 +284,10 @@ export function render(v: View): Rendered {
         put(y+i,(graphic?' '.repeat(6):dim+line+reset)+'  '+label+reset,gutter+pad,Math.max(1,width-pad*2));
       });
       if(graphic)images.push({id,x:gutter+pad,y,sequence:graphic.sequence});
-    }else{const action=v.running?'esc interrupt':'';const left=clip(status,Math.max(1,width-action.length-4));put(composerY-(v.workspaceStatus&&!v.running?2:1),accent+left+reset+(width>action.length+visibleWidth(left)+3?' '.repeat(width-visibleWidth(left)-action.length)+dim+action+reset:''));}
+    }else{const action=v.running?'esc interrupt':'';const left=clip(status,Math.max(1,width-action.length-4));put(activityBottom-(v.workspaceStatus&&!v.running?2:1),accent+left+reset+(width>action.length+visibleWidth(left)+3?' '.repeat(width-visibleWidth(left)-action.length)+dim+action+reset:''));}
   }
   if(approvalHeight){
-    const y=composerY-approvalHeight-activityHeight-1;
+    const y=activityBottom-approvalHeight-activityHeight-1;
     approvalRows.slice(0,approvalHeight).forEach((line,i)=>{
       const content=clip(line,width-2);
       put(y+i,bg+content.replaceAll(reset,reset+bg+fg)+' '.repeat(Math.max(0,width-visibleWidth(content)))+reset);
@@ -259,8 +303,15 @@ export function render(v: View): Rendered {
     let right=gutter+width-pad;const capsules:{x:number;content:string}[]=[];
     const capsule=(id:'voice'|'team',label:string)=>{const content=clip(label,Math.max(1,right-gutter-pad));if(!content)return;const x=right-visibleWidth(content);capsules.push({x,content});controls.push({id,x,y:composerY,width:visibleWidth(content),height:1});right=x-3;};
     if(v.voiceState?.enabled||v.voiceState?.connected||(!v.voiceState&&v.voice)) capsule('voice',v.voiceState?.connected?`◉ ${v.voiceState.partial?'Hearing you':'Listening'}`:v.voiceState?.enabled?'◌ Connecting voice':plain(v.voice??'○ Voice'));
-    if(v.team&&(v.team.enabled||v.team.unread))capsule('team',`◌ Team ${v.team.online}${v.team.unread?` · ${v.team.unread} new`:''}`);
     let line='';for(const c of capsules.sort((a,b)=>a.x-b.x))line+=' '.repeat(Math.max(0,c.x-gutter-visibleWidth(line)))+c.content;if(capsules.length)put(composerY,paperRow(line,width,0,composerHeight,light,paperGraphics));
+  }
+  teamDock.forEach((line, index) => put(composerY - teamHeight + 1 + index, line, gutter + pad, Math.max(1, width - pad * 2)));
+  if (teamDock.length) {
+    const messageId = JSON.parse(v.logs[lastTeam]!.text.slice(5)).message.id;
+    if (Number.isSafeInteger(messageId) && messageId > 0) {
+      controls.push({id:'team',index:messageId,x:gutter+pad,y:composerY-teamHeight+1,width:Math.max(1,width-pad*2),height:1});
+      if (teamDock.length > 3) controls.push({id:'team',index:messageId,x:gutter+pad,y:composerY-2,width:Math.min(12,width-pad*2),height:1});
+    }
   }
   if (previewHeight) {
     let x = gutter + pad + 2;
@@ -348,7 +399,7 @@ export function render(v: View): Rendered {
   if(paperGraphics)images.unshift({...paperGraphic(width,composerHeight,light,(process.pid*128+126)>>>0),x:gutter,y:composerY});
   if (v.panel && !v.permission && !v.update) {
     const panel=drawPanel(v.panel,w,h,light,accent,!!v.preferences?.reduce_motion);
-    return {id:v.id,rows:panel.rows,input:inputRect,execution,editorWidth:textWidth,animate:!v.preferences?.reduce_motion&&((v.panel.section===8&&(v.panel.elapsed??900)<900)||(v.panel.section===10&&!v.panel.previewing&&(v.panel.elapsed??900)<240)),artwork:null,cursor:panel.cursor,cursorVisible:v.panel.section!==8,images:[],controls:panel.controls};
+    return {id:v.id,rows:panel.rows,input:inputRect,execution,editorWidth:textWidth,animate:!v.preferences?.reduce_motion&&((v.panel.section===8&&(v.panel.elapsed??900)<900)||(v.panel.section===10&&!v.panel.previewing&&(v.panel.elapsed??900)<240)),artwork:null,cursor:panel.cursor,cursorVisible:v.panel.section!==8&&!v.panel.previewing,images:[],controls:panel.controls};
   }
 
   return {
@@ -356,7 +407,7 @@ export function render(v: View): Rendered {
       const clipped = clip(row, w);
       return rootBackground + fg + clipped.replaceAll(reset, reset + rootBackground + fg)
         + ' '.repeat(Math.max(0, w - visibleWidth(clipped))) + reset;
-    }), input: inputRect, execution, editorWidth: textWidth, animate: v.running || !!artwork && !v.preferences?.reduce_motion, animationIntervalMs:artwork&&introElapsed>=introDuration?125:undefined,artwork,
+    }), input: inputRect, execution, editorWidth: textWidth, animate: v.running || !!teamDock.length || !!artwork && !v.preferences?.reduce_motion, animationIntervalMs:teamDock.length&&!v.running?250:artwork&&introElapsed>=introDuration?125:undefined,artwork,
     cursor: { x: Math.min(w - 1, gutter + pad + 2 + input.position.x), y: Math.min(h - 1, textY + input.position.y - topLine) },
     images, controls,
     transcript:{x:gutter+pad,y:execution.y,width:Math.max(1,width-pad*2),height:execution.height,start,maxScroll,scrollbar,lineWidths:transcript.slice(start,start+execution.height).map(line=>Math.min(Math.max(1,width-pad*2),visibleWidth(line)))},

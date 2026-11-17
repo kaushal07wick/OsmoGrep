@@ -79,7 +79,7 @@ test('copy pixels use the tab background and native graphics follow visible cont
  assert.notEqual(copyTabIcon(false,true),copyTabIcon(false,false));
  setCapabilities({images:'kitty',trueColor:true,hyperlinks:false});
  try{
-  const v={...fixture(),height:30,width:80,logs:Array.from({length:14},(_,i)=>({level:'Info',text:'```sh\necho '+i+'\n```'}))};
+  const v={...fixture(),height:30,width:80,expandTools:true,logs:Array.from({length:14},(_,i)=>({level:'Info',text:'```sh\necho '+i+'\n```'}))};
   for(const scrollTop of [0,1,2,3,8,20]){
    const frame=render({...v,followTail:false,scrollTop}),copies=frame.controls!.filter(c=>c.id==='copy'),icons=frame.images.filter(i=>i.id>=0x40000000);
    assert.ok(icons.length>0);
