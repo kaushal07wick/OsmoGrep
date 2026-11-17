@@ -1,0 +1,64 @@
+{
+  "date": "2026-11-17T16:36:02.774185+00:00",
+  "version": "0.3.22",
+  "target": "aarch64-apple-darwin",
+  "binary_sha256": "494c1f3dd01878868d17f7963414e4483239d9a2bfeca028697725960e5b0195",
+  "rust": {
+    "passed": 325,
+    "ignored": 5,
+    "excluded": [
+      "mac_clipboard_reads_an_image_without_changing_the_users_clipboard"
+    ]
+  },
+  "npm_launcher": {
+    "passed": 5
+  },
+  "prompt": {
+    "shared_instructions_before_bytes": 8457,
+    "shared_instructions_after_bytes": 1947,
+    "ordinary_default_tool_count": 7,
+    "default_tool_schema_bytes": 3543,
+    "measurement": "UTF-8 bytes, not model-token counts"
+  },
+  "input": {
+    "binary_sha256": "494c1f3dd01878868d17f7963414e4483239d9a2bfeca028697725960e5b0195",
+    "checks": [
+      "minified_diff_is_folded",
+      "typing_during_active_model_request",
+      "typing_after_completion",
+      "history_exposes_latest_action",
+      "native_accepts_renderer_frames",
+      "copy_feedback_uses_isolated_osc52_without_host_clipboard_writes",
+      "casual_interlude_preserves_coding_history_and_resumes_editing",
+      "stable_instructions_and_tool_order_across_turns"
+    ],
+    "initial_instruction_bytes": 2271,
+    "initial_tool_schema_bytes": 3543,
+    "fixture_model_requests": 7,
+    "paid_calls": 0
+  },
+  "team": {
+    "binary_sha256": "494c1f3dd01878868d17f7963414e4483239d9a2bfeca028697725960e5b0195",
+    "checks": [
+      "independent_process_presence_and_repository_isolation",
+      "durability_restart_deduplication_and_receipts_without_idle_paid_turns",
+      "concurrent_broadcast_delivery",
+      "safe_boundary_delivery_preserves_user_task_and_durable_ack",
+      "cross_process_edit_contention_release_and_automatic_updates",
+      "crashed_instance_expires_without_stealing_session",
+      "natural_request_metadata_targeting_active_delivery_and_sender_only_reply_without_team_mode",
+      "messages_remain_pending_until_the_recipient_model_returns_successfully",
+      "contextual_read_and_send_followups_keep_the_previous_direct_partner_only",
+      "explicit_no_message_instruction_overrides_persistent_team_mode"
+    ],
+    "processes": 7,
+    "fixture_model_requests": 32,
+    "paid_model_requests": 0
+  },
+  "paid_calls": 0,
+  "limitations": [
+    "No live-provider latency or cache-hit benchmark was run. Provider caching remains provider-dependent.",
+    "UI source is unchanged; existing UI tests were not repeated. Native terminal interaction was checked with the release binary.",
+    "npm registry publication still requires renewed authentication."
+  ]
+}

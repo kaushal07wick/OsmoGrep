@@ -220,7 +220,9 @@ impl ToolScope {
             "worktree_swarm" | "subagent" => self.include_worktree_swarm,
             "dynamic_workflow" => self.include_dynamic_workflow,
             "query_code_graph" => self.include_intelligence,
-            _ => true,
+            "read_file" | "write_file" | "edit_file" | "run_shell" | "search" | "update_plan"
+            | "tool_search" => true,
+            _ => false,
         }
     }
 }
@@ -554,7 +556,8 @@ impl ToolRegistry {
 
     pub fn scoped_schema(&self, scope: &ToolScope) -> Vec<Value> {
         let enabled = self.enabled.lock().unwrap_or_else(|e| e.into_inner());
-        self.tools
+        let mut tools: Vec<_> = self
+            .tools
             .iter()
             .filter_map(|(name, tool)| {
                 (scope.allows(name)
@@ -563,7 +566,10 @@ impl ToolRegistry {
                         && enabled.contains(*name)))
                 .then(|| tool.schema())
             })
-            .collect()
+            .collect();
+        // Stable tool ordering keeps equivalent requests eligible for prefix caching.
+        tools.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+        tools
     }
 
     fn call_in_repo_root(
@@ -687,6 +693,40 @@ mod tests {
         }
     }
 
+    #[test]
+    fn everyday_tools_are_compact_deterministic_and_specialists_load_on_demand() {
+        let root = std::env::temp_dir();
+        let registry = ToolRegistry::with_root(root.clone());
+        let mut scope = ToolScope::for_prompt("explain closures");
+        scope.include_mcp = false;
+        scope.include_team = false;
+        let schema = registry.scoped_schema(&scope);
+        let names = schema_names(&schema);
+        assert!(names.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(names.contains(&"tool_search".into()));
+        assert!(!names.contains(&"find_definition".into()));
+        for _ in 0..5 {
+            assert_eq!(
+                schema,
+                ToolRegistry::with_root(root.clone()).scoped_schema(&scope)
+            );
+        }
+        let size = serde_json::to_string(&schema).unwrap().len();
+        eprintln!("Everyday tool schemas: {} tools, {size} bytes", names.len());
+        assert!(
+            size < 6500,
+            "Everyday tool definitions grew to {size} bytes"
+        );
+        registry
+            .call_cancellable("tool_search", json!({"query":"find_definition"}), &|| false)
+            .unwrap();
+        assert!(schema_names(&registry.scoped_schema(&scope)).contains(&"find_definition".into()));
+        let protected = scope.read_only();
+        registry
+            .call_cancellable("tool_search", json!({"query":"write_file"}), &|| false)
+            .unwrap();
+        assert!(!schema_names(&registry.scoped_schema(&protected)).contains(&"write_file".into()));
+    }
     #[test]
     fn invalid_arguments_and_supervisor_record_writes_are_rejected() {
         let root = std::env::temp_dir().join(format!("tool-boundaries-{}", Uuid::new_v4()));

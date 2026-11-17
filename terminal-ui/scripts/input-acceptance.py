@@ -36,8 +36,22 @@ class Model(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         requests.append(body)
-        completed = sum(item.get('type') == 'function_call_output' for item in body['input'])
-        if completed == 0:
+        latest = max(i for i, item in enumerate(body['input']) if item.get('role') == 'user')
+        prompt = body['input'][latest]['content']
+        completed = sum(item.get('type') == 'function_call_output' for item in body['input'][latest+1:])
+        if prompt in ['Explain a closure in one sentence.', 'Now update that file to say RESUMED_VALUE.']:
+            assert body['input'][0] == requests[0]['input'][0], 'Stable instructions changed across turns'
+            assert body['tools'] == requests[0]['tools'], 'Tool definitions or ordering changed'
+            assert any(item.get('type') == 'function_call' and item.get('name') == 'write_file' for item in body['input'][:latest]), 'Coding history was dropped'
+            if prompt.startswith('Explain'):
+                output = [{'type':'message','role':'assistant','content':[{'type':'output_text','text':'INTERLUDE_FINISHED: A closure retains its surrounding bindings.'}]}]
+            elif completed == 0:
+                output = [{'type':'function_call','call_id':'resume-read','name':'read_file','arguments':json.dumps({'path':'site.css'})}]
+            elif completed == 1:
+                output = [{'type':'function_call','call_id':'resume-edit','name':'edit_file','arguments':json.dumps({'path':'site.css','old':'END_OF_CSS','new':'RESUMED_VALUE'})}]
+            else:
+                output = [{'type':'message','role':'assistant','content':[{'type':'output_text','text':'RESUME_FINISHED'}]}]
+        elif completed == 0:
             output = [{'type': 'function_call', 'call_id': 'write', 'name': 'write_file',
                        'arguments': json.dumps({'path': 'site.css', 'content': source})}]
         elif completed == 1:
@@ -121,18 +135,31 @@ try:
     assert b'\x1b]52;c;' in terminal
     assert b'\x1b[38;2;95;175;255mCopied ' in terminal
     assert (root/'site.css').read_text() == source
+    os.write(master, b'Explain a closure in one sentence.\r')
+    wait_for(lambda: b'INTERLUDE_FINISHED' in terminal)
+    os.write(master, b'Now update that file to say RESUMED_VALUE.\r')
+    wait_for(lambda: b'RESUME_FINISHED' in terminal)
+    assert (root/'site.css').read_text() == source.replace('END_OF_CSS', 'RESUMED_VALUE')
     assert b'Native UI restored' not in terminal
     (root/'terminal.ansi').write_bytes(terminal)
     report = {'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
               'checks': ['minified_diff_is_folded', 'typing_during_active_model_request',
                          'typing_after_completion', 'history_exposes_latest_action',
-                         'native_accepts_renderer_frames', 'copy_feedback_uses_isolated_osc52_without_host_clipboard_writes'],
+                         'native_accepts_renderer_frames', 'copy_feedback_uses_isolated_osc52_without_host_clipboard_writes',
+                         'casual_interlude_preserves_coding_history_and_resumes_editing',
+                         'stable_instructions_and_tool_order_across_turns'],
+              'initial_instruction_bytes': len(requests[0]['input'][0]['content'].encode()),
+              'initial_tool_schema_bytes': len(json.dumps(requests[0]['tools'], separators=(',', ':')).encode()),
               'fixture_model_requests': len(requests), 'paid_calls': 0, 'fixture': str(root)}
     args.output.write_text(json.dumps(report, indent=2)+'\n')
     print(json.dumps(report, indent=2))
 finally:
     if process.poll() is None:
         os.killpg(process.pid, signal.SIGTERM)
-        process.wait(timeout=5)
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait(timeout=5)
     os.close(master)
     server.shutdown()

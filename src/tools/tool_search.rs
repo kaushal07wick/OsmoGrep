@@ -43,7 +43,11 @@ impl Tool for ToolSearch {
             })
             .filter(|(score, _)| *score > 0)
             .collect::<Vec<_>>();
-        ranked.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
+        ranked.sort_by(|(a_score, a), (b_score, b)| {
+            b_score
+                .cmp(a_score)
+                .then_with(|| a["name"].as_str().cmp(&b["name"].as_str()))
+        });
         let tools = ranked
             .into_iter()
             .take(6)
@@ -61,5 +65,30 @@ impl Tool for ToolSearch {
         Ok(
             json!({"tools":tools,"note":"Schemas enabled for the next request. Normal permission and read-only policies still apply."}),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn tied_search_results_ignore_catalog_insertion_order() {
+        let catalog: Vec<_> = ["zeta", "alpha", "beta", "delta", "epsilon", "gamma", "eta"]
+            .into_iter()
+            .map(|name| json!({"name":name,"description":"source lookup"}))
+            .collect();
+        let search = |catalog| ToolSearch {
+            catalog,
+            enabled: Arc::new(Mutex::new(BTreeSet::new())),
+        };
+        let first = search(catalog.clone())
+            .call(json!({"query":"source"}))
+            .unwrap();
+        let second = search(catalog.into_iter().rev().collect())
+            .call(json!({"query":"source"}))
+            .unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first["tools"][0]["name"], "alpha");
+        assert_eq!(first["tools"].as_array().unwrap().len(), 6);
     }
 }
