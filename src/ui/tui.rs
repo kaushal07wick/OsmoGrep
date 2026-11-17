@@ -19,7 +19,7 @@ use crate::{
     },
 };
 
-const FG_MAIN: Color = Color::Rgb(220, 220, 220);
+const FG_MAIN: Color = Color::Rgb(255, 255, 255);
 const FG_DIM: Color = Color::Rgb(170, 170, 170);
 const FG_MUTED: Color = Color::Rgb(120, 120, 120);
 const ACCENT_ORANGE: Color = Color::Rgb(255, 165, 80);
@@ -186,6 +186,27 @@ pub fn draw_ui<B: Backend>(
         render_voice_bar(f, panels[2], state);
         render_input_box(f, input_rect, state);
         render_status_bar(f, panels[4], state);
+        if let Some((characters, _)) = state
+            .ui
+            .copy_notice
+            .filter(|(_, at)| at.elapsed().as_secs() < 3)
+        {
+            if input_rect.y > area.y
+                && state.ui.pending_permission.is_none()
+                && state.ui.panel.is_none()
+            {
+                let notice = Rect {
+                    y: input_rect.y - 1,
+                    height: 1,
+                    ..input_rect
+                };
+                f.render_widget(
+                    Paragraph::new(format!("Copied {characters} characters to clipboard"))
+                        .style(Style::default().fg(Color::Rgb(95, 175, 255))),
+                    notice,
+                );
+            }
+        }
 
         if !state.ui.command_items.is_empty() {
             let height = ((state.ui.command_items.len().min(10) + 2) as u16)
@@ -485,8 +506,13 @@ fn execution_lines(state: &AgentState, width: u16) -> Vec<Line<'static>> {
         if let Some(seconds) = text
             .strip_prefix("· Finished in ")
             .and_then(|s| s.strip_suffix('s'))
+            .and_then(|seconds| seconds.parse::<f64>().ok())
+            .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
         {
-            let time = format!("{seconds}s elapsed");
+            let time = format!(
+                "{} elapsed",
+                super::helper::elapsed_text((seconds * 1000.0) as u64, true)
+            );
             let width = width.saturating_sub(4) as usize;
             lines.push(Line::default());
             lines.push(Line::from(Span::styled(
@@ -523,7 +549,7 @@ fn execution_lines(state: &AgentState, width: u16) -> Vec<Line<'static>> {
                     snap.target.clone(),
                     &snap.before,
                     &snap.after,
-                    state.ui.expand_tools,
+                    state.ui.expand_tools || snap.tool.starts_with("live:"),
                 )
             })
             .collect();

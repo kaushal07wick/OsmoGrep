@@ -504,6 +504,8 @@ impl TypeScriptUi {
                                 {
                                     match crate::clipboard::copy_text_to_clipboard(text) {
                                         Ok(_) => {
+                                            state.ui.copy_notice =
+                                                Some((text.chars().count(), Instant::now()));
                                             self.copied_code = Some(text.into());
                                             state.ui.input_clipboard = text.into();
                                         }
@@ -817,6 +819,9 @@ impl TypeScriptUi {
                 if let Err(error) = crate::clipboard::copy_text_to_clipboard(&frame.selection_text)
                 {
                     crate::logger::log_status(state, format!("Copy failed: {error}"));
+                } else {
+                    state.ui.copy_notice =
+                        Some((frame.selection_text.chars().count(), Instant::now()));
                 }
             }
         }
@@ -826,7 +831,11 @@ impl TypeScriptUi {
             frame.input.rect(),
             frame.execution.rect(),
             frame.editor_width as usize,
-            frame.animate,
+            frame.animate
+                || state
+                    .ui
+                    .copy_notice
+                    .is_some_and(|(_, at)| at.elapsed().as_secs() < 3),
         )))
     }
 }
@@ -880,7 +889,7 @@ fn view(state: &AgentState, model: &ModelConfig, id: u64, width: u16, height: u1
         ui.diff_snapshot.iter().map(|d| {
         let diff = super::diff::Diff::from_texts(d.target.clone(), &d.before, &d.after, ui.expand_tools);
         let after_log=if d.tool.starts_with("preview:") || d.tool.starts_with("live:"){None}else{state.logs.iter().enumerate().filter(|(_,line)|line.text.trim()==format!("└ edited {}",d.target)).map(|(index,_)|index).last()};
-        json!({ "file":diff.file,"added":diff.added,"removed":diff.removed,"preview":d.tool.starts_with("preview:"),"afterLog":after_log, "lines":diff.lines.iter().map(|l| json!({"text":l.text,"kind":format!("{:?}",l.kind),"oldLine":l.old_lineno,"newLine":l.new_lineno})).collect::<Vec<_>>() })
+        json!({ "file":diff.file,"added":diff.added,"removed":diff.removed,"preview":d.tool.starts_with("preview:"),"streaming":d.tool.starts_with("live:"),"afterLog":after_log, "lines":diff.lines.iter().map(|l| json!({"text":l.text,"kind":format!("{:?}",l.kind),"oldLine":l.old_lineno,"newLine":l.new_lineno})).collect::<Vec<_>>() })
     }).collect()
     } else {
         Vec::new()
@@ -906,6 +915,20 @@ fn view(state: &AgentState, model: &ModelConfig, id: u64, width: u16, height: u1
         "commands":ui.command_items.iter().map(|c|json!({"cmd":c.cmd,"desc":c.desc})).collect::<Vec<_>>(),
         "selectedCommand":ui.command_selected, "tokens":state.usage.prompt_tokens+state.usage.completion_tokens,
     });
+    snapshot["streaming"] = json!(ui.streaming_active);
+    let logs = snapshot["logs"].as_array().unwrap();
+    snapshot["streamingStart"] = json!(if ui.streaming_lines_logged == 0 {
+        logs.len()
+    } else {
+        logs.iter()
+            .enumerate()
+            .rev()
+            .filter(|(_, log)| log["kind"] != "Peer")
+            .nth(ui.streaming_lines_logged - 1)
+            .map(|(index, _)| index)
+            .unwrap_or(0)
+    });
+    snapshot["copyNotice"] = json!(ui.copy_notice.filter(|(_,at)| at.elapsed().as_secs() < 3).map(|(characters,at)| json!({"characters":characters,"age":at.elapsed().as_millis() as u64})));
     snapshot["queuedMessages"] = json!(ui.queued_agent_prompts.len());
     snapshot["workspaceStatus"] = json!(ui.workspace_status);
     snapshot["userTurns"] = json!(ui.user_turns);
@@ -1071,6 +1094,26 @@ mod tests {
         assert!(!animation.retained_in(&[animation.clone()]));
     }
 
+    #[test]
+    fn snapshot_keeps_stream_boundaries_and_expires_copy_feedback_without_clipboard_contents() {
+        let mut state = crate::init_state();
+        state.logs.clear();
+        state.logs.push(crate::state::LogLevel::Info, "USER|test");
+        state.logs.push(crate::state::LogLevel::Info, "first line");
+        state.logs.push_peer("peer fixture".into());
+        state.logs.push(crate::state::LogLevel::Info, "second line");
+        state.ui.streaming_active = true;
+        state.ui.streaming_lines_logged = 2;
+        state.ui.streaming_buffer = "first line\nsecond line\ntail".into();
+        state.ui.copy_notice = Some(("hi 🦀".chars().count(), Instant::now()));
+        let snapshot = view(&state, &ModelConfig::default(), 1, 160, 44);
+        assert_eq!(snapshot["streamingStart"], 1);
+        assert_eq!(snapshot["streaming"], true);
+        assert_eq!(snapshot["stream"], "tail");
+        assert_eq!(snapshot["copyNotice"]["characters"], 4);
+        state.ui.copy_notice = Some((4, Instant::now() - Duration::from_secs(3)));
+        assert!(view(&state, &ModelConfig::default(), 2, 160, 44)["copyNotice"].is_null());
+    }
     #[test]
     fn inactive_voice_status_is_not_sent_to_the_renderer() {
         let mut state = crate::init_state();

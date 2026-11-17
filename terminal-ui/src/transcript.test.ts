@@ -67,3 +67,43 @@ test('completion status has one clear row above the composer while quick actions
  assert.equal(stripTerminalSequences(f.rows[f.input.y-1]!).trim(),'');
  assert.match(stripTerminalSequences(f.rows[f.input.y-2]!),/Done.*2\.1s elapsed/);
 });
+
+test('streamed replies stay continuous until completion, including lines that resemble tool status',()=>{
+ const logs=Array.from({length:70},(_,i)=>({level:'Info',text:i===40?'· still part of the answer':`answer line ${i}`}));
+ for(const stream of ['', 'last sentence'])for(const expandTools of [false,true]){
+  const f=render({...fixture(),userTurns:2,height:44,running:true,streaming:true,streamingStart:0,logs,stream,expandTools});
+  assert.ok(!f.controls?.some(c=>c.id==='expand'));
+  assert.doesNotMatch(f.rows.map(stripTerminalSequences).join('\n'),/Show more|Show less/);
+  assert.match(f.rows.map(stripTerminalSequences).join('\n'),/answer line 69/);
+ }
+ const finished=render({...fixture(),userTurns:2,height:60,logs:[...logs.map(log=>({...log,text:log.text.replace('· still part of the answer','still part of the answer')})),{level:'Info',text:'last sentence'},{level:'Info',text:'· Finished in 92.1s'}]});
+ const text=finished.rows.map(stripTerminalSequences).join('\n');
+ assert.match(text,/Show more/); assert.match(text,/1m 32s elapsed/);
+ assert.doesNotMatch(text,/last sentence/);
+});
+
+test('live file diffs offer no folding controls until the edit completes',()=>{
+ const diff={file:'live.py',streaming:true,lines:Array.from({length:60},(_,i)=>({text:`value_${i} = ${i}`,kind:'Added',newLine:i+1}))};
+ const live=diffLines(diff,80,false,false).map(stripTerminalSequences).join('\n');
+ assert.match(live,/value_59/); assert.doesNotMatch(live,/Show more|Show less/);
+ assert.match(diffLines({...diff,streaming:false},80,false,false).map(stripTerminalSequences).join('\n'),/Show more/);
+});
+
+test('copy success is blue, brief, above the input and never includes clipboard contents',()=>{
+ for(const theme of ['dark','light']){
+  const base={...fixture(),theme,userTurns:2,preferences:{status_fields:[],reduce_motion:true,ambient_art:false},copyNotice:{characters:2582,age:200}};
+  const f=render(base),row=f.rows[f.input.y-1]!;
+  assert.match(stripTerminalSequences(row),/Copied 2,582 characters to clipboard/);
+  assert.ok(row.includes(theme==='dark'?'95;175;255':'20;105;210')); assert.equal(f.animate,true);
+  const expired=render({...base,copyNotice:{characters:2582,age:3000}});
+  assert.doesNotMatch(expired.rows.map(stripTerminalSequences).join('\n'),/Copied/);
+  assert.equal(expired.animate,false);
+ }
+});
+
+
+test('dark chat prose and neutral code text use pure white',()=>{
+ const f=render({...fixture(),userTurns:2,logs:[{text:'WHITE_PROSE\n\n```python\nvalue = symbol\n```',level:'Info'}]});
+ const prose=f.rows.find(row=>row.includes('WHITE_PROSE'))!,code=f.rows.find(row=>row.includes('symbol'))!;
+ assert.ok(prose.includes('38;2;255;255;255m'));assert.ok(code.includes('38;2;255;255;255m'));
+});

@@ -59,8 +59,26 @@ pub struct Report {
     pub deep: bool,
     pub checks: Vec<Check>,
     pub repairs: Vec<String>,
+    pub duration_ms: u64,
 }
-impl Report {
+pub enum Event {
+    Checking(String),
+    Checked(Check),
+    Finished(Report),
+}
+struct Scan {
+    report: Report,
+    events: Option<std::sync::mpsc::Sender<Event>>,
+}
+impl Scan {
+    fn emit(&self, event: Event) {
+        if let Some(events) = &self.events {
+            let _ = events.send(event);
+        }
+    }
+    fn checking(&self, title: &str) {
+        self.emit(Event::Checking(title.into()));
+    }
     fn add(
         &mut self,
         id: &str,
@@ -70,15 +88,19 @@ impl Report {
         remedy: Option<&str>,
         repairable: bool,
     ) {
-        self.checks.push(Check {
+        let check = Check {
             id: id.into(),
             title: title.into(),
             status,
             detail: detail.into(),
             remedy: remedy.map(str::to_owned),
             repairable,
-        });
+        };
+        self.report.checks.push(check.clone());
+        self.emit(Event::Checked(check));
     }
+}
+impl Report {
     pub fn failed(&self) -> bool {
         self.checks.iter().any(|check| check.status == Status::Fail)
     }
@@ -100,6 +122,11 @@ impl Report {
                 lines.push(format!("    Next: {remedy}"));
             }
         }
+        lines.push(format!(
+            "Completed {} checks in {}",
+            self.checks.len(),
+            crate::ui::helper::elapsed_text(self.duration_ms, true)
+        ));
         lines.extend(self.repairs.iter().cloned());
         crate::cli::clean(&lines.join("\n"))
     }
@@ -120,12 +147,21 @@ pub fn run(args: Args) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 pub fn scan(root: &Path, deep: bool, fix: bool) -> Report {
+    scan_with_progress(root, deep, fix, None)
+}
+pub fn scan_with_progress(
+    root: &Path,
+    deep: bool,
+    fix: bool,
+    events: Option<std::sync::mpsc::Sender<Event>>,
+) -> Report {
+    let started = std::time::Instant::now();
     let directory = crate::persistence::config_dir();
     let repairs = if fix { repair(&directory) } else { vec![] };
-    let mut report = inspect_storage(root, &directory, deep);
+    let mut report = inspect_storage_progress(root, &directory, deep, events);
     for repair in repairs {
         match repair {
-            Ok(message) => report.repairs.push(message),
+            Ok(message) => report.report.repairs.push(message),
             Err(error) => report.add(
                 "repair",
                 "Repair could not be completed",
@@ -136,6 +172,7 @@ pub fn scan(root: &Path, deep: bool, fix: bool) -> Report {
             ),
         }
     }
+    report.checking("Selected provider");
     let agent = crate::agent::Agent::new();
     let model = agent.model_config();
     report.add("provider","Selected provider",if agent.is_configured(){Status::Pass}else{Status::Warn},format!("{} / {} · {}",crate::cli::clean(&model.provider),crate::cli::clean(&model.model),if agent.is_configured(){"authentication available or local provider"}else{"no matching authentication found"}),(!agent.is_configured()).then_some("Configure this provider in /model or use `osmogrep auth login <provider>` for a configured OAuth client."),false);
@@ -164,6 +201,7 @@ pub fn scan(root: &Path, deep: bool, fix: bool) -> Report {
             &["--version"],
             false,
         );
+        report.checking("Provider connection");
         let result = agent
             .model_catalog(model.clone())
             .recv_timeout(Duration::from_secs(8));
@@ -176,6 +214,7 @@ pub fn scan(root: &Path, deep: bool, fix: bool) -> Report {
             ("mac", crate::workspace::Device::Mac),
             ("phone", crate::workspace::Device::Phone),
         ] {
+            report.checking(&format!("{id} companion"));
             match crate::workspace::resolve(device, root) {
                 Ok(path) => report.add(
                     id,
@@ -196,9 +235,11 @@ pub fn scan(root: &Path, deep: bool, fix: bool) -> Report {
             }
         }
     }
-    report
+    report.report.duration_ms = started.elapsed().as_millis() as u64;
+    report.report
 }
-fn probe(report: &mut Report, id: &str, title: &str, program: &str, args: &[&str], renderer: bool) {
+fn probe(report: &mut Scan, id: &str, title: &str, program: &str, args: &[&str], renderer: bool) {
+    report.checking(title);
     let mut command = Command::new(program);
     command.args(args);
     match crate::process_runner::run_command(command, Duration::from_secs(3)) {
@@ -232,15 +273,29 @@ fn node_supported(version: &str) -> bool {
     let minor = parts.next().unwrap_or(0);
     major > 22 || major == 22 && minor >= 19
 }
+#[cfg(test)]
 fn inspect_storage(root: &Path, directory: &Path, deep: bool) -> Report {
-    let mut report = Report {
-        version: env!("CARGO_PKG_VERSION"),
-        at: chrono::Utc::now().to_rfc3339(),
-        workspace: root.canonicalize().unwrap_or_else(|_| root.into()),
-        deep,
-        checks: vec![],
-        repairs: vec![],
+    inspect_storage_progress(root, directory, deep, None).report
+}
+fn inspect_storage_progress(
+    root: &Path,
+    directory: &Path,
+    deep: bool,
+    events: Option<std::sync::mpsc::Sender<Event>>,
+) -> Scan {
+    let mut report = Scan {
+        events,
+        report: Report {
+            version: env!("CARGO_PKG_VERSION"),
+            at: chrono::Utc::now().to_rfc3339(),
+            workspace: root.canonicalize().unwrap_or_else(|_| root.into()),
+            deep,
+            checks: vec![],
+            repairs: vec![],
+            duration_ms: 0,
+        },
     };
+    report.checking("Local installation and storage");
     report.add(
         "workspace",
         "Workspace",
@@ -309,6 +364,7 @@ fn inspect_storage(root: &Path, directory: &Path, deep: bool) -> Report {
         );
         private_permissions(&mut report, directory, true);
     }
+    report.checking("Configuration");
     let config = directory.join("config.toml");
     match crate::cli::config::read(&config) {
         Ok(document) => {
@@ -360,6 +416,7 @@ fn inspect_storage(root: &Path, directory: &Path, deep: bool) -> Report {
     ] {
         private_permissions(&mut report, &directory.join(name), false);
     }
+    report.checking("Saved sessions");
     let sessions = directory.join("sessions");
     match fs::read_dir(&sessions) {
         Ok(entries) => {
@@ -422,6 +479,7 @@ fn inspect_storage(root: &Path, directory: &Path, deep: bool) -> Report {
             false,
         ),
     }
+    report.checking("Team mailbox integrity");
     let database = directory.join("team.sqlite3");
     if database.exists() {
         let result = (|| -> Result<String, rusqlite::Error> {
@@ -455,7 +513,7 @@ fn inspect_storage(root: &Path, directory: &Path, deep: bool) -> Report {
     }
     report
 }
-fn private_permissions(report: &mut Report, path: &Path, directory: bool) {
+fn private_permissions(report: &mut Scan, path: &Path, directory: bool) {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -608,6 +666,37 @@ mod tests {
             fs::read_to_string(root.join("real/config.toml")).unwrap(),
             "# preserve contents\n"
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn progress_reports_real_checks_in_order_without_waiting_for_the_final_report() {
+        let root = std::env::temp_dir().join(format!("doctor-progress-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let scan = inspect_storage_progress(&root, &root, true, Some(tx));
+        let events: Vec<_> = rx.try_iter().collect();
+        assert!(matches!(events.first(), Some(Event::Checking(_))));
+        let ids: Vec<_> = events
+            .iter()
+            .filter_map(|event| {
+                if let Event::Checked(check) = event {
+                    Some(check.id.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(
+            ids,
+            scan.report
+                .checks
+                .iter()
+                .map(|check| check.id.as_str())
+                .collect::<Vec<_>>()
+        );
+        assert!(events.iter().any(
+            |event| matches!(event,Event::Checking(stage) if stage=="Team mailbox integrity")
+        ));
         fs::remove_dir_all(root).unwrap();
     }
     #[test]

@@ -64,7 +64,7 @@ export function cachedCodeBlocks(
 
 // shortcut: basic tokens cover common snippets; use a grammar highlighter when language-specific parsing is needed.
 function highlight(line:string,language:string,light:boolean){
- const ink=light?'\x1b[38;2;40;45;50m':'\x1b[38;2;220;220;210m';
+ const ink=light?'\x1b[38;2;40;45;50m':'\x1b[38;2;255;255;255m';
  const colors=light?['100;110;105','45;110;60','125;65;155','170;85;25']:['120;130;125','145;195;150','190;160;215','225;158;100'];
  const shell=/^(bash|sh|zsh|shell|console)$/.test(language);
  const tokens=/(?:#[^\n]*|\/\/[^\n]*)|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b(?:def|class|return|import|from|for|while|if|else|elif|in|const|let|var|function|async|await|export|fn|pub|use|true|false|null|None|True|False)\b|\b\d+(?:\.\d+)?\b|--?[a-zA-Z][\w-]*/g;

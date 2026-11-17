@@ -28,7 +28,9 @@ const SECTIONS: &[&str] = &[
 
 pub struct Panel {
     health: Option<crate::diagnostics::Report>,
-    health_scan: Option<std::sync::mpsc::Receiver<crate::diagnostics::Report>>,
+    health_scan: Option<std::sync::mpsc::Receiver<crate::diagnostics::Event>>,
+    health_checks: Vec<crate::diagnostics::Check>,
+    health_started: std::time::Instant,
     health_deep: bool,
     load_health: bool,
     team_history: Vec<serde_json::Value>,
@@ -135,6 +137,7 @@ pub struct PanelView {
     pub title: String,
     pub selecting: bool,
     pub elapsed: u64,
+    pub health_running: bool,
     pub sections: Vec<&'static str>,
     pub section: usize,
     pub query: String,
@@ -174,6 +177,8 @@ pub fn open(state: &mut AgentState, section: usize, model: Option<&ModelConfig>)
     state.ui.panel = Some(Panel {
         health: None,
         health_scan: None,
+        health_checks: vec![],
+        health_started: std::time::Instant::now(),
         health_deep: false,
         load_health: section == 14,
         team_history: Vec::new(),
@@ -281,10 +286,11 @@ fn health_scan(
     root: std::path::PathBuf,
     deep: bool,
     fix: bool,
-) -> std::sync::mpsc::Receiver<crate::diagnostics::Report> {
+) -> std::sync::mpsc::Receiver<crate::diagnostics::Event> {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let _ = tx.send(crate::diagnostics::scan(&root, deep, fix));
+        let report = crate::diagnostics::scan_with_progress(&root, deep, fix, Some(tx.clone()));
+        let _ = tx.send(crate::diagnostics::Event::Finished(report));
     });
     rx
 }
@@ -342,23 +348,40 @@ pub fn poll(state: &mut AgentState, agent: &crate::agent::Agent) -> bool {
     };
     if panel.load_health {
         panel.load_health = false;
+        panel.health_started = std::time::Instant::now();
+        panel.notice = "Checking local installation…".into();
         panel.health_scan = Some(health_scan(state.repo_root.clone(), false, false));
         return true;
     }
     if let Some(receiver) = &panel.health_scan {
-        match receiver.try_recv() {
-            Ok(report) => {
-                panel.health = Some(report);
-                panel.health_scan = None;
-                panel.notice.clear();
-                return true;
+        let mut changed = false;
+        for _ in 0..64 {
+            match receiver.try_recv() {
+                Ok(crate::diagnostics::Event::Checking(title)) => {
+                    panel.notice = format!("Checking {title}…");
+                    changed = true;
+                }
+                Ok(crate::diagnostics::Event::Checked(check)) => {
+                    panel.health_checks.push(check);
+                    changed = true;
+                }
+                Ok(crate::diagnostics::Event::Finished(report)) => {
+                    panel.health = Some(report);
+                    panel.health_checks.clear();
+                    panel.health_scan = None;
+                    panel.notice.clear();
+                    return true;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    panel.health_scan = None;
+                    panel.notice = "Health check stopped unexpectedly. Choose Scan again.".into();
+                    return true;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
             }
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                panel.health_scan = None;
-                panel.notice = "Health check stopped unexpectedly. Choose Scan again.".into();
-                return true;
-            }
-            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        }
+        if changed {
+            return true;
         }
     }
     if panel.section == 11
@@ -649,11 +672,12 @@ fn entries(state: &AgentState, panel: &Panel) -> Vec<Row> {
             ];
             if panel.health_scan.is_some() || panel.load_health {
                 rows.push(row(
-                    "Checking health…",
-                    "The chat and draft remain available",
-                    "",
+                    &panel.notice,
+                    &format!("{} checks finished", panel.health_checks.len()),
+                    "Checking",
                     Action::None,
                 ));
+                rows.last_mut().unwrap().tag = Some("checking".into());
             } else if let Some(report) = &panel.health {
                 if report.checks.iter().any(|check| check.repairable) {
                     rows.push(row(
@@ -675,20 +699,24 @@ fn entries(state: &AgentState, panel: &Panel) -> Vec<Row> {
                     "Show more",
                     Action::HealthDetails,
                 ));
-                for check in report
-                    .checks
-                    .iter()
-                    .filter(|check| !check.id.starts_with("snapshot-"))
-                {
-                    let mut item = row(
-                        &check.title,
-                        &check.detail,
-                        check.status.label(),
-                        Action::HealthDetails,
-                    );
-                    item.tag = Some(check.status.label().to_ascii_lowercase());
-                    rows.push(item);
-                }
+            }
+            let checks = panel
+                .health
+                .as_ref()
+                .map(|report| &report.checks)
+                .unwrap_or(&panel.health_checks);
+            for check in checks
+                .iter()
+                .filter(|check| !check.id.starts_with("snapshot-"))
+            {
+                let mut item = row(
+                    &check.title,
+                    &check.detail,
+                    check.status.label(),
+                    Action::HealthDetails,
+                );
+                item.tag = Some(check.status.label().to_ascii_lowercase());
+                rows.push(item);
             }
             rows
         }
@@ -1073,7 +1101,7 @@ fn entries(state: &AgentState, panel: &Panel) -> Vec<Row> {
                 row(
                     "Provider wait",
                     "Includes retries; not total agent runtime",
-                    format!("{:.1}s", sum(|d| d.duration_ms) as f64 / 1000.0),
+                    super::helper::elapsed_text(sum(|d| d.duration_ms), true),
                     Action::None,
                 ),
                 row(
@@ -1207,6 +1235,7 @@ pub fn view(state: &AgentState) -> Option<PanelView> {
             None => SECTIONS[panel.section].into(),
         },
         elapsed: panel.opened.elapsed().as_millis() as u64,
+        health_running: panel.section == 14 && (panel.load_health || panel.health_scan.is_some()),
         sections: SECTIONS.to_vec(),
         section: panel.section,
         selected: selected_index(panel, &rows),
@@ -1220,7 +1249,37 @@ pub fn view(state: &AgentState) -> Option<PanelView> {
                 .map(|(_, text)| text.clone())
                 .unwrap_or_else(|| panel.query.clone())
         },
-        notice: if panel.notice.is_empty() {
+        notice: if panel.section == 14 && !panel.message_preview {
+            if panel.health_scan.is_some() || panel.load_health {
+                format!(
+                    "{} · {} · {} checks finished",
+                    panel.notice,
+                    super::helper::elapsed_text(
+                        panel.health_started.elapsed().as_millis() as u64,
+                        false
+                    ),
+                    panel.health_checks.len()
+                )
+            } else if let Some(report) = &panel.health {
+                let warnings = report
+                    .checks
+                    .iter()
+                    .filter(|check| check.status == crate::diagnostics::Status::Warn)
+                    .count();
+                let failures = report
+                    .checks
+                    .iter()
+                    .filter(|check| check.status == crate::diagnostics::Status::Fail)
+                    .count();
+                format!(
+                    "Scan complete · {} checks · {warnings} warnings · {failures} failures · {}",
+                    report.checks.len(),
+                    super::helper::elapsed_text(report.duration_ms, true)
+                )
+            } else {
+                panel.notice.clone()
+            }
+        } else if panel.notice.is_empty() {
             "Workspace settings · saved locally · draft preserved".into()
         } else {
             panel.notice.clone()
@@ -1577,12 +1636,18 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
                         if panel.health_scan.is_none() {
                             panel.load_health = false;
                             panel.health_deep = *deep;
+                            panel.health = None;
+                            panel.health_checks.clear();
+                            panel.health_started = std::time::Instant::now();
                             panel.health_scan =
                                 Some(health_scan(state.repo_root.clone(), *deep, false));
                             panel.notice = "Checking health…".into();
                         }
                     }
                     Action::HealthRepair => {
+                        panel.health = None;
+                        panel.health_checks.clear();
+                        panel.health_started = std::time::Instant::now();
                         panel.health_scan = Some(health_scan(
                             state.repo_root.clone(),
                             panel.health_deep,
@@ -1947,7 +2012,10 @@ pub fn status_entries(state: &AgentState) -> Vec<(String, String)> {
                     .current_tool
                     .clone()
                     .unwrap_or_else(|| state.ui.run_phase.clone()),
-                "elapsed" => format!("{}m", state.started_at.elapsed().as_secs() / 60),
+                "elapsed" => super::helper::elapsed_text(
+                    state.started_at.elapsed().as_millis().min(u64::MAX as u128) as u64,
+                    false,
+                ),
                 "version" => format!("v{}", env!("CARGO_PKG_VERSION")),
                 _ => return None,
             };
@@ -1981,6 +2049,7 @@ mod tests {
         assert_eq!(view(&state).unwrap().section, 14);
         assert!(state.ui.panel.as_ref().unwrap().health_scan.is_none());
         let report = crate::diagnostics::Report {
+            duration_ms: 1200,
             version: "test",
             at: "now".into(),
             workspace: state.repo_root.clone(),

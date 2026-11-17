@@ -137,12 +137,16 @@ impl TuiRuntime {
         }
         state.ui.exec_scroll_max = usize::MAX;
         let (input, _, exec) = draw_ui(terminal, state)?;
-        self.animating = !state.preferences.reduce_motion
-            && state
-                .ui
-                .pending_update
-                .as_ref()
-                .is_some_and(|update| update.installing);
+        self.animating = state
+            .ui
+            .copy_notice
+            .is_some_and(|(_, at)| at.elapsed().as_secs() < 3)
+            || !state.preferences.reduce_motion
+                && state
+                    .ui
+                    .pending_update
+                    .as_ref()
+                    .is_some_and(|update| update.installing);
         self.input_rect = input;
         self.exec_rect = exec;
         state.ui.input_wrap_width = input.width.saturating_sub(3).max(1) as usize;

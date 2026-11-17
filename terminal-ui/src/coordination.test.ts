@@ -103,3 +103,10 @@ test('established conversations show session and shortcut hints below the select
  assert.equal(f.controls?.find(c=>c.id==='model')?.y,v.height-2);
  assert.ok(!render({...v,running:true}).rows.map(stripTerminalSequences).at(-1)!.includes('F8 shortcuts'));
 });
+
+test('elapsed time carries seconds into minutes and hours',()=>{
+ for(const [seconds,expected] of [[59.9,'59.9s'],[59.999,'1m 0s'],[92.1,'1m 32s'],[3599.999,'1h 0m 0s'],[3723.4,'1h 2m 3s']] as const){
+  assert.equal(completionLine(`· Finished in ${seconds}s`,8),`Done · ${expected}`);
+ }
+ assert.equal(activityInfo(92100,'thinking',null).time,'1m 32s');
+});

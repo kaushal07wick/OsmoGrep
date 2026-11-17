@@ -1,0 +1,64 @@
+{
+  "date": "2026-11-17T14:55:09.785270+00:00",
+  "version": "0.3.21",
+  "target": "aarch64-apple-darwin",
+  "binary_sha256": "bdbaddc8ba2544cf42c08f178fdaa24b83cc0d20d6de50705fc964ceefe138ea",
+  "rust": {
+    "passed": 322,
+    "ignored": 5,
+    "excluded": [
+      "mac_clipboard_reads_an_image_without_changing_the_users_clipboard"
+    ]
+  },
+  "ui": {
+    "passed": 87,
+    "build": "passed",
+    "coverage": [
+      "streaming_replies_and_live_edits_have_no_fold_controls",
+      "completed_long_answers_fold_as_one_block",
+      "copy_notice_color_position_and_expiration",
+      "doctor_checking_animation_and_status_colors",
+      "elapsed_minutes_and_hours",
+      "pure_white_dark_chat_text"
+    ]
+  },
+  "npm_launcher": {
+    "passed": 5
+  },
+  "cli": {
+    "binary_sha256": "bdbaddc8ba2544cf42c08f178fdaa24b83cc0d20d6de50705fc964ceefe138ea",
+    "checks": [
+      "atomic_validated_settings_and_secret_redaction",
+      "model_discovery_and_configured_reasoning",
+      "deep_diagnostics_repair_permissions_and_preserve_damaged_data",
+      "completions_generated_and_available_shell_parsers_pass",
+      "team_inspection_does_not_register_phantom_agents_or_acknowledge_messages"
+    ],
+    "catalog_requests": 3,
+    "model_generation_requests": 0,
+    "paid_calls": 0,
+    "completion_parsers": [
+      "bash",
+      "zsh"
+    ]
+  },
+  "input": {
+    "binary_sha256": "bdbaddc8ba2544cf42c08f178fdaa24b83cc0d20d6de50705fc964ceefe138ea",
+    "checks": [
+      "minified_diff_is_folded",
+      "typing_during_active_model_request",
+      "typing_after_completion",
+      "history_exposes_latest_action",
+      "native_accepts_renderer_frames",
+      "copy_feedback_uses_isolated_osc52_without_host_clipboard_writes"
+    ],
+    "fixture_model_requests": 3,
+    "paid_calls": 0
+  },
+  "paid_calls": 0,
+  "limitations": [
+    "OS clipboard contents were not read or changed; copy acceptance used OSC52 captured inside an isolated PTY.",
+    "Streaming fold and Doctor progress states have unit coverage; the PTY fixture uses deterministic local model responses.",
+    "npm registry publication requires a renewed authenticated npm session."
+  ]
+}

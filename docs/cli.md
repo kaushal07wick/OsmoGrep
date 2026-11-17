@@ -57,6 +57,8 @@ Deep checks parse up to 2,000 saved snapshots of at most 32 MiB each, check SQLi
 
 `--fix` creates missing application directories and secures private Unix file permissions, then reruns checks. It preserves invalid configuration and damaged sessions/databases, and refuses linked application directories. Other problems receive suggested next steps. On Windows, file ACL repair remains manual.
 
+The TUI shows the current check while it runs, adds completed results as they arrive, and colors OK, WARN and FAIL statuses. A completed scan includes its duration and warning/failure totals. Checks run without artificial delays.
+
 In the TUI, **Ask agent to investigate** explicitly queues the report into the current conversation. The model can inspect evidence and make focused repairs under the normal tool and approval policy. Opening Doctor or running a scan alone never starts a model turn.
 
 ## Shell completions

@@ -64,6 +64,7 @@ environment.update(HOME=str(home), XDG_CONFIG_HOME=str(root/'config'), TERM='xte
                    OSMOGREP_PROVIDER='openai', OSMOGREP_MODEL='input-fixture', OSMOGREP_API='responses',
                    OSMOGREP_BASE_URL=f'http://127.0.0.1:{server.server_port}',
                    OSMOGREP_UI='typescript', OSMOGREP_DISABLE_UPDATE_CHECK='1',
+                   OSMOGREP_CLIPBOARD_OSC52='1',
                    NO_PROXY='127.0.0.1,localhost', OSMOGREP_SANDBOX='off')
 config = home/'Library/Application Support/osmogrep' if sys.platform == 'darwin' else root/'config/osmogrep'
 sessions = config/'sessions'
@@ -115,13 +116,17 @@ try:
     os.write(master, b'\x1b[<64;40;8M')
     wait_for(lambda: b'Latest' in terminal, 3)
     assert b'Show more' in terminal
+    os.write(master, b'\x15/copy\r')
+    wait_for(lambda: b'characters to clipboard' in terminal, 3)
+    assert b'\x1b]52;c;' in terminal
+    assert b'\x1b[38;2;95;175;255mCopied ' in terminal
     assert (root/'site.css').read_text() == source
     assert b'Native UI restored' not in terminal
     (root/'terminal.ansi').write_bytes(terminal)
     report = {'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
               'checks': ['minified_diff_is_folded', 'typing_during_active_model_request',
                          'typing_after_completion', 'history_exposes_latest_action',
-                         'native_accepts_renderer_frames'],
+                         'native_accepts_renderer_frames', 'copy_feedback_uses_isolated_osc52_without_host_clipboard_writes'],
               'fixture_model_requests': len(requests), 'paid_calls': 0, 'fixture': str(root)}
     args.output.write_text(json.dumps(report, indent=2)+'\n')
     print(json.dumps(report, indent=2))

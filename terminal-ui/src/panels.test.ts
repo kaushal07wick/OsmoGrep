@@ -51,3 +51,19 @@ test('settings lists every category at normal size without hidden tab navigation
  const category=drawPanel({...settings,section:3,sections:['','','','Permissions'],title:'Permissions',footer:'esc categories'},80,30,false,'');
  assert.match(category.rows.map(stripTerminalSequences).join('\n'),/Settings \/ Permissions/);
 });
+
+test('doctor shows animated checking state and colored completed results',()=>{
+ for(const light of [false,true]){
+  const health={...panel,section:14,selected:0,elapsed:0,health_running:true,rows:[
+   {label:'Provider connection',description:'Model catalog',value:'Checking',tag:'checking'},
+   {label:'Storage',description:'Private files',value:'OK',tag:'ok'},
+   {label:'Credentials',description:'Needs attention',value:'WARN',tag:'warn'},
+   {label:'Snapshot',description:'Invalid',value:'FAIL',tag:'fail'},
+  ]};
+  const a=drawPanel(health,120,40,light,'\x1b[38;2;235;155;105m').rows.join('\n');
+  const b=drawPanel({...health,elapsed:150},120,40,light,'\x1b[38;2;235;155;105m').rows.join('\n');
+  assert.notEqual(a,b); assert.match(a,/◐ Checking/);
+  assert.ok(a.includes(light?'30;130;75':'100;190;130'));
+  assert.ok(a.includes('230;100;100'));
+ }
+});

@@ -24,24 +24,6 @@ pub enum CopyBackend {
     Osc52,
 }
 
-impl CopyBackend {
-    pub fn label(self) -> &'static str {
-        match self {
-            #[cfg(target_os = "macos")]
-            Self::MacosPbcopy => "pbcopy",
-            #[cfg(target_os = "windows")]
-            Self::WindowsClip => "clip",
-            #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
-            Self::WlCopy => "wl-copy",
-            #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
-            Self::Xclip => "xclip",
-            #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
-            Self::Xsel => "xsel",
-            Self::Osc52 => "OSC52",
-        }
-    }
-}
-
 pub fn copy_text_to_clipboard(text: &str) -> Result<CopyBackend, String> {
     if text.is_empty() {
         return Err("Nothing to copy.".to_string());
@@ -168,7 +150,7 @@ fn osc52_sequence(text: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{osc52_sequence, CopyBackend, OSC52_MAX_RAW_BYTES};
+    use super::{osc52_sequence, OSC52_MAX_RAW_BYTES};
 
     #[test]
     fn osc52_sequence_encodes_text() {
@@ -181,20 +163,5 @@ mod tests {
         let err = osc52_sequence(&text).unwrap_err();
 
         assert!(err.contains("OSC52 payload too large"));
-    }
-
-    #[test]
-    fn backend_labels_are_stable() {
-        #[cfg(target_os = "macos")]
-        assert_eq!(CopyBackend::MacosPbcopy.label(), "pbcopy");
-        #[cfg(target_os = "windows")]
-        assert_eq!(CopyBackend::WindowsClip.label(), "clip");
-        #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
-        {
-            assert_eq!(CopyBackend::WlCopy.label(), "wl-copy");
-            assert_eq!(CopyBackend::Xclip.label(), "xclip");
-            assert_eq!(CopyBackend::Xsel.label(), "xsel");
-        }
-        assert_eq!(CopyBackend::Osc52.label(), "OSC52");
     }
 }

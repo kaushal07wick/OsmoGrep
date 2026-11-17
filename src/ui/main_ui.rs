@@ -535,8 +535,15 @@ fn apply_input_control_action(state: &mut AgentState, action: InputControlAction
         }
         InputControlAction::CopyAll => {
             if state.copy_input() {
-                let _ = crate::clipboard::copy_text_to_clipboard(&state.ui.input_clipboard);
-                crate::logger::log_status(state, "Copied input.");
+                match crate::clipboard::copy_text_to_clipboard(&state.ui.input_clipboard) {
+                    Ok(_) => {
+                        state.ui.copy_notice = Some((
+                            state.ui.input_clipboard.chars().count(),
+                            std::time::Instant::now(),
+                        ))
+                    }
+                    Err(error) => crate::logger::log_status(state, format!("Copy failed: {error}")),
+                }
             } else if state.ui.agent_running {
                 request_agent_cancel(state);
             }
@@ -546,8 +553,15 @@ fn apply_input_control_action(state: &mut AgentState, action: InputControlAction
         }
         InputControlAction::CutAll => {
             if state.cut_input() {
-                let _ = crate::clipboard::copy_text_to_clipboard(&state.ui.input_clipboard);
-                crate::logger::log_status(state, "Cut input.");
+                match crate::clipboard::copy_text_to_clipboard(&state.ui.input_clipboard) {
+                    Ok(_) => {
+                        state.ui.copy_notice = Some((
+                            state.ui.input_clipboard.chars().count(),
+                            std::time::Instant::now(),
+                        ))
+                    }
+                    Err(error) => crate::logger::log_status(state, format!("Copy failed: {error}")),
+                }
             }
         }
         InputControlAction::Paste => {

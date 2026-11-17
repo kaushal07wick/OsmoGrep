@@ -93,6 +93,7 @@ pub struct CommandItem {
 }
 
 pub struct UiState {
+    pub copy_notice: Option<(usize, Instant)>,
     pub user_turns: u64,
     pub open_session: Option<SessionTarget>,
     pub team: crate::team::Snapshot,
@@ -170,6 +171,7 @@ pub struct UiState {
 impl Default for UiState {
     fn default() -> Self {
         Self {
+            copy_notice: None,
             user_turns: 0,
             open_session: None,
             team: crate::team::Snapshot::default(),

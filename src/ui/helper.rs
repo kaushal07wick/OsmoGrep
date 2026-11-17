@@ -5,10 +5,35 @@ pub fn running_pulse(start: Option<Instant>) -> Option<String> {
     let t = (start.elapsed().as_millis() / 90) as usize;
     let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     Some(format!(
-        "{} {:>4.1}s",
+        "{} {}",
         frames[t % frames.len()],
-        start.elapsed().as_secs_f32()
+        elapsed_text(
+            start.elapsed().as_millis().min(u64::MAX as u128) as u64,
+            false
+        )
     ))
+}
+pub fn elapsed_text(milliseconds: u64, precise: bool) -> String {
+    let rounded = if precise {
+        milliseconds.saturating_add(50) / 100 * 100
+    } else {
+        milliseconds / 1000 * 1000
+    };
+    let seconds = rounded / 1000;
+    if seconds >= 3600 {
+        format!(
+            "{}h {}m {}s",
+            seconds / 3600,
+            seconds % 3600 / 60,
+            seconds % 60
+        )
+    } else if seconds >= 60 {
+        format!("{}m {}s", seconds / 60, seconds % 60)
+    } else if precise {
+        format!("{:.1}s", rounded as f64 / 1000.0)
+    } else {
+        format!("{seconds}s")
+    }
 }
 
 pub fn git_branch(repo_root: &std::path::Path) -> Option<String> {
@@ -46,6 +71,21 @@ pub fn calculate_input_lines(input: &str, width: usize, prompt_len: usize) -> us
 #[cfg(test)]
 mod tests {
     use super::calculate_input_lines;
+    #[test]
+    fn elapsed_time_carries_seconds_into_minutes_and_hours() {
+        for (milliseconds, expected) in [
+            (3300, "3.3s"),
+            (59900, "59.9s"),
+            (59999, "1m 0s"),
+            (60000, "1m 0s"),
+            (92100, "1m 32s"),
+            (3599999, "1h 0m 0s"),
+            (3723400, "1h 2m 3s"),
+        ] {
+            assert_eq!(super::elapsed_text(milliseconds, true), expected);
+        }
+        assert_eq!(super::elapsed_text(59999, false), "59s");
+    }
 
     #[test]
     fn calculate_input_lines_counts_multibyte_chars_not_bytes() {

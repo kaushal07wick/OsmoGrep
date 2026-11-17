@@ -471,7 +471,7 @@ fn copy_output(state: &mut AgentState, cmd: &str) {
         }
     };
 
-    let (text, description) = match target {
+    let text = match target {
         CopyTarget::LatestAssistant(nth) => {
             let Some(text) = latest_assistant_response(&state.logs, nth) else {
                 log(
@@ -481,7 +481,7 @@ fn copy_output(state: &mut AgentState, cmd: &str) {
                 );
                 return;
             };
-            (text, assistant_copy_description(nth))
+            text
         }
         CopyTarget::Transcript => {
             let text = transcript_text(&state.logs);
@@ -489,16 +489,12 @@ fn copy_output(state: &mut AgentState, cmd: &str) {
                 log(state, LogLevel::Warn, "No transcript text found to copy.");
                 return;
             }
-            (text, "transcript".to_string())
+            text
         }
     };
 
     match clipboard::copy_text_to_clipboard(&text) {
-        Ok(backend) => log(
-            state,
-            LogLevel::Success,
-            format!("Copied {description} via {}.", backend.label()),
-        ),
+        Ok(_) => state.ui.copy_notice = Some((text.chars().count(), std::time::Instant::now())),
         Err(err) => log(state, LogLevel::Error, format!("Copy failed: {err}")),
     }
 }
@@ -519,15 +515,6 @@ fn parse_copy_target(arg: &str) -> Result<CopyTarget, String> {
         Ok(0) => Err("Usage: /copy [N] or /copy all".to_string()),
         Ok(nth) => Ok(CopyTarget::LatestAssistant(nth)),
         Err(_) => Err("Usage: /copy [N] or /copy all".to_string()),
-    }
-}
-
-fn assistant_copy_description(nth: usize) -> String {
-    match nth {
-        1 => "latest assistant response".to_string(),
-        2 => "2nd latest assistant response".to_string(),
-        3 => "3rd latest assistant response".to_string(),
-        n => format!("{n}th latest assistant response"),
     }
 }
 
@@ -648,7 +635,10 @@ fn show_status(state: &mut AgentState, agent: Option<&mut Agent>) {
         .unwrap_or_else(|| "unavailable".to_string());
     let session = state.session_name.as_deref().unwrap_or("untitled session");
     let branch = current_git_branch(&state.repo_root);
-    let uptime = state.started_at.elapsed().as_secs();
+    let uptime = crate::ui::helper::elapsed_text(
+        state.started_at.elapsed().as_millis().min(u64::MAX as u128) as u64,
+        false,
+    );
     let jobs_active = state
         .jobs
         .iter()
@@ -659,7 +649,7 @@ fn show_status(state: &mut AgentState, agent: Option<&mut Agent>) {
         state,
         LogLevel::Info,
         format!(
-            "Status: session=\"{}\" run={} model={} repo={} branch={} profile={} approvals={} jobs_active={} uptime={}s",
+            "Status: session=\"{}\" run={} model={} repo={} branch={} profile={} approvals={} jobs_active={} uptime={}",
             session,
             if state.ui.agent_running {
                 state.ui.run_phase.as_str()

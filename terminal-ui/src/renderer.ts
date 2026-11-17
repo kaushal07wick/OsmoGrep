@@ -25,6 +25,8 @@ export interface View {
   input: string; cursor: number; selection: [number, number] | null; masked: boolean;
   inputMode: string; attachments: Attachment[]; running: boolean; phase: string; tool: string | null;
   followTail: boolean; scroll: number; stream: string; permission: string | null; update: string | null;
+  streaming?:boolean;streamingStart?:number;
+  copyNotice?:{characters:number;age:number}|null;
   newActivity?:boolean;
   voiceState?:{enabled:boolean;connected:boolean;partial:boolean};
   team?:{enabled:boolean;unread:number;online:number};
@@ -93,7 +95,7 @@ export function render(v: View): Rendered {
   const w = Math.max(1, Math.min(1000, v.width)), h = Math.max(1, Math.min(500, v.height));
   const gutter = w >= 40 ? 1 : 0, width = Math.max(1, w - gutter * 2);
   const light = v.theme === 'light';
-  const fg = light ? rgb(35, 35, 35) : rgb(233, 229, 220);
+  const fg = light ? rgb(35, 35, 35) : rgb(255, 255, 255);
   const dim = light ? rgb(95, 95, 95) : rgb(145, 145, 145);
   const border = light ? rgb(190, 190, 190) : rgb(65, 65, 65);
   const accents = light
@@ -186,13 +188,13 @@ export function render(v: View): Rendered {
   const appendMarkdown = (text: string, fold = true) => {
     const from=transcript.length;
     const block = cachedCodeBlocks(text,Math.max(1,width-pad*2),light,text=>markdown(text,width-pad*2),v.copiedCode,accent,paperGraphics);
-    const large = fold && block.rows.length > 22;
-    const shown = large && !v.expandTools ? block.rows.slice(0,22) : block.rows;
+    const large = fold && block.rows.length > 32;
+    const shown = large && !v.expandTools ? block.rows.slice(0,32) : block.rows;
     codeCopies.push(...block.copies.filter(copy => copy.row < shown.length).map(copy => ({
       ...copy,row:copy.row+transcript.length,height:Math.min(copy.height,shown.length-copy.row),
     })));
     transcript.push(...shown);
-    if (large) expandAction(block.rows.length - 22,from);
+    if (large) expandAction(block.rows.length - 32,from);
   };
   const appendDiff = (diff: FileDiff) => {
     const from=transcript.length,rows=diffLines(diff,Math.max(1,width-pad*2),light,!!v.expandTools);
@@ -208,7 +210,9 @@ export function render(v: View): Rendered {
     const firstLog=i;
     const entry = v.logs[i]!; const text = clean(entry.text);
     if (entry.kind === 'Peer') {
-      flush();
+      continue;
+    } else if (v.streaming && i >= (v.streamingStart??0)) {
+      paragraph.push(stripTerminalSequences(entry.text));
     } else if (text.startsWith('USER|')) {
       flush(); let command = text.slice(5), prefix = '❯ ';
       if (v.logs[i + 1]?.text === 'SHELL : $ ' + command) { i++; prefix = '$ '; }
@@ -231,9 +235,11 @@ export function render(v: View): Rendered {
       flush();appendDiff(diff);insertedDiffs.add(diff);
     }
   }
-  flush();
+  if(v.streaming||v.stream){
+    appendMarkdown([...paragraph,v.stream+'▍'].join('\n'),false);
+    paragraph=[];
+  } else flush();
   for(const diff of v.diffs)if(!insertedDiffs.has(diff))appendDiff(diff);
-  if(v.stream)appendMarkdown(v.stream+'▍',false);
   if (v.plan.length) transcript.push('', ...v.plan.map(p => `${p.done ? '✓' : p.active ? '›' : '·'} ${clean(p.text)}`));
   const contentHeight=Math.max(0,execution.height-(v.expandTools&&expandActions.length?1:0));
   const maxScroll = Math.max(0, transcript.length - contentHeight);
@@ -323,7 +329,11 @@ export function render(v: View): Rendered {
     let line='';for(const c of capsules.sort((a,b)=>a.x-b.x))line+=' '.repeat(Math.max(0,c.x-gutter-visibleWidth(line)))+c.content;if(capsules.length)put(composerY,paperRow(line,width,0,composerHeight,light,paperGraphics));
   }
   teamDock.forEach((line, index) => put(composerY - teamHeight + 1 + index, line, gutter + pad, Math.max(1, width - pad * 2)));
-  if(!v.followTail&&maxScroll>0&&composerY>0&&!v.panel&&!v.approval&&!v.update&&!v.masked&&!v.commands.length&&width>=24){
+  const copyNotice = v.copyNotice && v.copyNotice.age < 3000 && Number.isSafeInteger(v.copyNotice.characters) && v.copyNotice.characters >= 0;
+  if(copyNotice&&!v.panel&&!v.approval&&!v.update&&composerY>0){
+    put(composerY-1,accents.blue+`Copied ${v.copyNotice!.characters.toLocaleString('en-US')} characters to clipboard`+reset,gutter+pad,width-pad*2);
+  }
+  if(!copyNotice&&!v.followTail&&maxScroll>0&&composerY>0&&!v.panel&&!v.approval&&!v.update&&!v.masked&&!v.commands.length&&width>=24){
     const label=(v.newActivity?'● ':'')+'↓ Latest',x=gutter+width-pad-visibleWidth(label),y=composerY-1;
     put(y,(v.newActivity?accent:dim)+label+reset,x,visibleWidth(label));
     controls.push({id:'latest',label:'Latest output',x,y,width:visibleWidth(label),height:1});
@@ -421,7 +431,7 @@ export function render(v: View): Rendered {
   if(paperGraphics)images.unshift({...paperGraphic(width,composerHeight,light,(process.pid*128+126)>>>0),x:gutter,y:composerY});
   if (v.panel && !v.permission && !v.update) {
     const panel=drawPanel(v.panel,w,h,light,accent,!!v.preferences?.reduce_motion);
-    return {id:v.id,rows:panel.rows,input:inputRect,execution,editorWidth:textWidth,animate:!v.preferences?.reduce_motion&&((v.panel.section===8&&(v.panel.elapsed??900)<900)||(v.panel.section===10&&!v.panel.previewing&&(v.panel.elapsed??900)<240)),artwork:null,cursor:panel.cursor,cursorVisible:v.panel.section!==8&&!v.panel.previewing,images:[],controls:panel.controls};
+    return {id:v.id,rows:panel.rows,input:inputRect,execution,editorWidth:textWidth,animate:!v.preferences?.reduce_motion&&(v.panel.health_running||(v.panel.section===8&&(v.panel.elapsed??900)<900)||(v.panel.section===10&&!v.panel.previewing&&(v.panel.elapsed??900)<240)),artwork:null,cursor:panel.cursor,cursorVisible:v.panel.section!==8&&!v.panel.previewing,images:[],controls:panel.controls};
   }
 
   return {
@@ -429,7 +439,7 @@ export function render(v: View): Rendered {
       const clipped = clip(row, w);
       return rootBackground + fg + clipped.replaceAll(reset, reset + rootBackground + fg)
         + ' '.repeat(Math.max(0, w - visibleWidth(clipped))) + reset;
-    }), input: inputRect, execution, editorWidth: textWidth, animate: v.running || !!teamDock.length || !!artwork && !v.preferences?.reduce_motion, animationIntervalMs:teamDock.length&&!v.running?250:artwork&&introElapsed>=introDuration?125:undefined,artwork,
+    }), input: inputRect, execution, editorWidth: textWidth, animate: !!copyNotice || v.running || !!teamDock.length || !!artwork && !v.preferences?.reduce_motion, animationIntervalMs:teamDock.length&&!v.running?250:artwork&&introElapsed>=introDuration?125:undefined,artwork,
     cursor: { x: Math.min(w - 1, gutter + pad + 2 + input.position.x), y: Math.min(h - 1, textY + input.position.y - topLine) },
     images, controls,
     transcript:{x:gutter+pad,y:execution.y,width:Math.max(1,width-pad*2),height:execution.height,start,maxScroll,scrollbar,lineWidths:transcript.slice(start,start+contentHeight).map(line=>Math.min(Math.max(1,width-pad*2),visibleWidth(line)))},

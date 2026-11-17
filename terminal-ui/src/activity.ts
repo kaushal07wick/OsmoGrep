@@ -23,13 +23,21 @@ export function orb(elapsed:number,light=false,reduced=false){
  const value={png:rgbPng(36,36,raw),rows};cache.set(key,value);return value;
 }
 export function activityInfo(elapsed:number,phase:string,tool:string|null,reduced=false){
- const seconds=Math.max(0,Math.floor(elapsed/1000)),time=seconds>=3600?`${Math.floor(seconds/3600)}h ${Math.floor(seconds%3600/60)}m`:seconds>=60?`${Math.floor(seconds/60)}m ${seconds%60}s`:`${seconds}s`;
+ const time=elapsedText(elapsed);
  const labels:Record<string,string>={list_dir:'Exploring files',read_file:'Reading source',edit_file:'Editing',write_file:'Writing',patch:'Applying a change',run_shell:'Running a command',run_tests:'Running tests',diagnostics:'Checking diagnostics',language_server:'Consulting language server'};
  const thoughts=['Thinking','Working through your request','Considering the next step','Connecting the pieces'];
  const label=phase==='thinking'?thoughts[reduced?0:Math.floor(elapsed/6000)%thoughts.length]!:tool?(labels[tool]??tool.replaceAll('_',' ')):phase==='starting'?'Preparing context':phase.replaceAll('_',' ');
  return {label,time};
 }
+export function elapsedText(milliseconds:number,precise=false):string {
+ const safe=Number.isFinite(milliseconds)?Math.max(0,milliseconds):0;
+ const rounded=precise?Math.round(safe/100)*100:Math.floor(safe/1000)*1000,seconds=Math.floor(rounded/1000);
+ if(seconds>=3600)return `${Math.floor(seconds/3600)}h ${Math.floor(seconds%3600/60)}m ${seconds%60}s`;
+ if(seconds>=60)return `${Math.floor(seconds/60)}m ${seconds%60}s`;
+ return precise?`${(rounded/1000).toFixed(1)}s`:`${seconds}s`;
+}
 export function completionLine(text:string,width:number){
  const match=/^· Finished in ([\d.]+)s$/.exec(text);if(!match)return null;
- const label='Done',time=`${match[1]}s elapsed`;return width>=label.length+time.length+3?label+' '.repeat(width-label.length-time.length)+time:`Done · ${match[1]}s`;
+ const seconds=Number(match[1]);if(!Number.isFinite(seconds))return null;
+ const duration=elapsedText(seconds*1000,true),label='Done',time=`${duration} elapsed`;return width>=label.length+time.length+3?label+' '.repeat(width-label.length-time.length)+time:`Done · ${duration}`;
 }

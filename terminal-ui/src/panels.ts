@@ -5,6 +5,7 @@ import {drawCenter} from './center.ts';
 import {usageLines} from './usage.ts';
 import {websiteMark} from './brand.ts';
 export interface PanelView {
+  health_running?:boolean;
   settings?:boolean;previewing?:boolean; preview_offset?:number;
   title?:string;elapsed?:number;selecting?:boolean;center_filter?:number;counts?:number[];
   sections:string[];section:number;query:string;selected:number;editing:boolean;
@@ -40,19 +41,25 @@ export function drawPanel(panel:PanelView,width:number,height:number,light:boole
   const tabs=panel.sections.slice(Math.max(0,Math.min(panel.section-1,panel.sections.length-3)),Math.max(0,Math.min(panel.section-1,panel.sections.length-3))+3).map(s=>s===panel.sections[panel.section]?accent+bold+s+reset:dim+s+reset).join(dim+'  /  ');
   const header=panel.section===12&&available>=14?['',accent+'◌ '+bold+'Settings'+reset,'',dim+'Choose a category · enter or click',dim+'Search  '+fg+plain(panel.query),''] :available>=14?['',accent+'◌ '+bold+plain(panel.title??panel.sections[panel.section]??'Workspace')+reset+dim+'   /  WORKSPACE','',panel.settings?dim+(panel.section===12?'Choose a category · enter or click to open':'Settings / '+plain(panel.sections[panel.section]??'')+' · esc categories'):inner>=48?tabs:dim+'tab / shift+tab · sections','',...([7,8].includes(panel.section)?[]:[(panel.editing?accent+'Edit  ':dim+'Search  ')+fg+plain(panel.query)+(panel.query?'':'_'),''])]:[accent+plain(panel.title??panel.sections[panel.section]??'Workspace')];
   const detail=[7,8].includes(panel.section)?'':panel.section===4?(panel.preview??[]).map(plain).join(' · '):plain(current?(inner<60?current.label+' · ':'')+current.description:'');
+  if(panel.section===14&&available>=14){
+    const pulse=panel.health_running?(reduceMotion?'◌ ':['◐ ','◓ ','◑ ','◒ '][Math.floor((panel.elapsed??0)/150)%4]):'✓ ';
+    header.splice(4,2,...wrap((panel.health_running?accent:fg)+pulse+plain(panel.notice)), '');
+  }
   const notice=panel.section===7?'Provider-reported · this workspace · cached input is included in input':panel.section===8?(panel.demo?'Sample data · preview only · D switches to recorded data':'Recorded provider usage · D previews sample data'):plain(panel.notice);
-  const tail=[7,12].includes(panel.section)&&available>=14?['',...wrap(accent+plain(panel.footer)),'','']:available>=14?['',...(detail?wrap(dim+detail):[]),...wrap(dim+notice),'',...wrap(accent+plain(panel.footer)),'','']:[accent+'↑↓ · enter · esc'];
+  const tail=[7,12].includes(panel.section)&&available>=14?['',...wrap(accent+plain(panel.footer)),'','']:available>=14?['',...(detail?wrap(dim+detail):[]),...(panel.section===14?[]:wrap(dim+notice)),'',...wrap(accent+plain(panel.footer)),'','']:[accent+'↑↓ · enter · esc'];
   const count=Math.max(0,available-header.length-tail.length),body:string[]=[];
   if(panel.section===7){body.push(...(panel.notice.startsWith('Usage history unavailable:')?wrap(dim+plain(panel.notice),3):usageLines(panel.history??[],panel.rows,inner,count,light)));}
   else if(panel.section===8){body.push(...statsLines(panel.history??[],inner,count,light,!!panel.demo,Date.now(),reduceMotion?1:Math.max(0,Math.min(1,(panel.elapsed??900)/900))));}
   else{
     const n=Math.min(count,Math.max(1,panel.rows.length)),start=Math.max(0,Math.min(at-Math.floor(n/2),panel.rows.length-n));
-    const labelWidth=inner<60?Math.max(1,inner-4):Math.min(32,Math.floor(inner*.36));
+    const labelWidth=panel.section===14&&inner<60?Math.max(1,inner-14):inner<60?Math.max(1,inner-4):Math.min(32,Math.floor(inner*.36));
     for(let i=0;i<n;i++){
       const r=panel.rows[start+i];if(!r)break;
       if(panel.selecting)controls.push({id:'choice',index:start+i,label:r.id??r.label,x:gutter+pad,y:top+header.length+i,width:inner,height:1});const active=start+i===at,label=fit(plain(r.label),labelWidth);
-      const value=fit(plain(r.value),Math.min(24,Math.floor(inner*.22))),descWidth=Math.max(0,inner-labelWidth-visibleWidth(value)-7);
-      const suffix=inner>=60?' '.repeat(Math.max(1,labelWidth-visibleWidth(label)+2))+dim+fit(plain(r.description),descWidth)+' '.repeat(Math.max(1,descWidth-visibleWidth(fit(plain(r.description),descWidth))+2))+(active?accent:fg)+value:'';
+      const statusColor=panel.section===14?({ok:light?'\x1b[38;2;30;130;75m':'\x1b[38;2;100;190;130m',warn:light?'\x1b[38;2;155;100;15m':'\x1b[38;2;225;185;75m',fail:'\x1b[38;2;230;100;100m',info:dim,checking:accent}[r.tag??'']??(active?accent:fg)):(active?accent:fg);
+      const statusValue=r.tag==='checking'?`${reduceMotion?'◌':['◐','◓','◑','◒'][Math.floor((panel.elapsed??0)/150)%4]} Checking`:r.value;
+      const value=fit(plain(statusValue),Math.min(24,Math.floor(inner*.22))),descWidth=Math.max(0,inner-labelWidth-visibleWidth(value)-7);
+      const suffix=inner>=60?' '.repeat(Math.max(1,labelWidth-visibleWidth(label)+2))+dim+fit(plain(r.description),descWidth)+' '.repeat(Math.max(1,descWidth-visibleWidth(fit(plain(r.description),descWidth))+2))+statusColor+value:panel.section===14?'  '+statusColor+value:'';
       body.push((active?accent+'▸ '+bold:dim+'  ')+label+reset+suffix);
     }
     if(!panel.rows.length)body.push(dim+(panel.query?'No matching controls.':'Nothing available here yet.'));
