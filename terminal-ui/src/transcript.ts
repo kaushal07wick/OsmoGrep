@@ -6,17 +6,24 @@ export function diffLines(diff:FileDiff,width:number,light:boolean,expanded:bool
   const dim='\x1b[38;2;126;125;116m',ink=light?'\x1b[38;2;45;45;45m':'\x1b[38;2;205;204;193m';
   const added=diff.added??diff.lines.filter(l=>l.kind==='Added').length,removed=diff.removed??diff.lines.filter(l=>l.kind==='Removed').length;
   const lines=['',ink+plain(diff.file)+reset+dim+`  +${added} −${removed}  /  ${diff.preview?'pending approval':'changed'}`+reset];
-  const selected=expanded?diff.lines:diff.lines.slice(0,14),numberWidth=Math.min(6,String(Math.max(1,...diff.lines.map(l=>l.newLine??l.oldLine??0))).length);
-  for(const line of selected){
-    if(line.kind==='Header'){lines.push(dim+'  '+plain(line.text)+reset);continue;}
+  const numberWidth=Math.min(6,String(diff.lines.reduce((max,line)=>Math.max(max,line.newLine??line.oldLine??0),1)).length);
+  let visualRows=0,hidden=false;
+  for(const [index,line] of diff.lines.entries()){
+    if(!expanded&&visualRows>=14){hidden=true;break;}
+    if(line.kind==='Header'){lines.push(dim+'  '+plain(line.text)+reset);visualRows++;continue;}
     const add=line.kind==='Added',remove=line.kind==='Removed';
     const bg=add?(light?'\x1b[48;2;225;243;226m':'\x1b[48;2;9;30;20m'):remove?(light?'\x1b[48;2;250;226;225m':'\x1b[48;2;39;15;18m'):(light?'\x1b[48;2;243;241;236m':'\x1b[48;2;13;13;13m');
     const color=add?'\x1b[38;2;98;189;122m':remove?'\x1b[38;2;223;122;119m':dim;
     const prefix=String(line.newLine??line.oldLine??'').padStart(numberWidth)+' '+(add?'+':remove?'-':' ')+' ';
-    const wrapped=wrapTextWithAnsi(plain(line.text),Math.max(1,width-visibleWidth(prefix)-2));
+    const textWidth=Math.max(1,width-visibleWidth(prefix)-2),remaining=expanded?Infinity:14-visualRows;
+    const source=plain(line.text),preview=expanded?source:sliceByColumn(source,0,(remaining+1)*textWidth);
+    const visual=wrapTextWithAnsi(preview,textWidth),wrapped=visual.slice(0,remaining);
     wrapped.forEach((text,i)=>{const content=' '+(i?' '.repeat(visibleWidth(prefix)):prefix)+text;lines.push(bg+color+fit(content,width)+' '.repeat(Math.max(0,width-visibleWidth(content)))+reset);});
+    visualRows+=wrapped.length;
+    if(!expanded&&(preview.length<source.length||visual.length>wrapped.length)){hidden=true;break;}
+    if(!expanded&&visualRows>=14&&index<diff.lines.length-1){hidden=true;break;}
   }
-  if(diff.lines.length>14)lines.push(dim+(expanded?'  Show less':`  Show more · ${diff.lines.length-selected.length} more lines`)+reset);
+  if(hidden||visualRows>14||diff.lines.length>14)lines.push(dim+(expanded?'  Show less':'  Show more')+reset);
   return lines.map(line=>fit(line,width));
 }
 

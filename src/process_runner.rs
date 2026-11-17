@@ -78,6 +78,9 @@ fn run_captured(
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     if stdin.is_some() {
         command.stdin(Stdio::piped());
+    } else {
+        // Captured tools must not read keystrokes or change the parent terminal's input mode.
+        command.stdin(Stdio::null());
     }
     #[cfg(unix)]
     {
@@ -316,6 +319,19 @@ mod tests {
         assert_eq!(run.exit_code, 0);
         assert_eq!(String::from_utf8_lossy(&run.stdout), "ok");
         assert!(!run.timed_out);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn captured_commands_cannot_consume_parent_terminal_input() {
+        let path = std::env::temp_dir().join(format!("command-stdin-{}", uuid::Uuid::new_v4()));
+        std::fs::write(&path, "keyboard input belongs to the UI").unwrap();
+        let mut command = Command::new("cat");
+        command.stdin(Stdio::from(std::fs::File::open(&path).unwrap()));
+        let result = run_command(command, Duration::from_secs(2)).unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.is_empty());
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

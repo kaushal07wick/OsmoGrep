@@ -70,6 +70,17 @@ test('Team history exposes a full long message and a visible Show less target', 
   assert.ok(frame.controls.some(control => control.label === 'Show less' && control.height === 1));
 });
 
+test('Doctor report uses the shared readable preview with Show less in both themes', () => {
+  for(const light of [false,true]) {
+    const frame=drawPanel({sections:['Doctor'],section:14,title:'Doctor',query:'',selected:0,editing:false,rows:[],notice:'',footer:'',previewing:true,preview:['FAIL  Saved sessions','Original files preserved.','Next: inspect configuration.']},80,24,light,'');
+    const text=frame.rows.map(stripTerminalSequences).join('\n');
+    assert.match(text,/Diagnostic report/);
+    assert.match(text,/Original files preserved/);
+    assert.ok(frame.controls.some(control=>control.label==='Show less'));
+    assert.ok(frame.rows.every(line=>visibleWidth(line)<=80));
+  }
+});
+
 test('large answers fold with clickable Show more and Show less without losing source', () => {
   const source = Array.from({length:100},(_,i)=>`answer line ${i}`).join('\n');
   const view = {...fixture(),width:100,height:44,userTurns:2,input:'my draft',logs:[{text:source,level:'Info'}]};

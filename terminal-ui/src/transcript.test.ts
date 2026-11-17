@@ -1,6 +1,28 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';
 import {stripTerminalSequences} from '@earendil-works/pi-tui';
-import {selectedTranscript,highlightTranscript} from './transcript.ts';import {render} from './renderer.ts';import {fixture} from './test-fixture.ts';
+import {selectedTranscript,highlightTranscript,diffLines} from './transcript.ts';import {render} from './renderer.ts';import {fixture} from './test-fixture.ts';
+test('minified diffs fold by visual rows and expanded content retains a reachable collapse action',()=>{
+ const source='.selector{color:var(--accent);padding:12px}'.repeat(1500)+'END_OF_CSS';
+ const diff={file:'style.css',lines:[{kind:'Added',text:source,newLine:1}]};
+ const collapsed=diffLines(diff,76,false,false);
+ assert.ok(collapsed.length<=18);
+ assert.match(collapsed.map(stripTerminalSequences).join('\n'),/Show more/);
+ const full=diffLines(diff,76,false,true).map(stripTerminalSequences).join('\n').replace(/\s/g,'');
+ assert.ok(full.includes('END_OF_CSS')); assert.ok(full.includes('Showless'));
+ const view={...fixture(),width:80,height:32,userTurns:2,diffs:[diff],logs:[],followTail:false,scrollTop:0,expandTools:true};
+ const frame=render(view),action=frame.controls?.find(control=>control.id==='expand');
+ assert.ok(action); assert.equal(action.label,'Show less');
+ assert.ok(action.y<frame.input.y);
+});
+test('reading history exposes a quiet Latest action and new output does not move the viewport',()=>{
+ const view={...fixture(),width:80,height:32,userTurns:2,followTail:false,scrollTop:5,input:'my draft',logs:Array.from({length:80},(_,i)=>({text:`Entry ${i}`,level:'Success'}))};
+ const before=render(view),after=render({...view,newActivity:true,logs:[...view.logs,{text:'new output',level:'Success'}]});
+ assert.equal(after.transcript!.start,before.transcript!.start);
+ const action=after.controls?.find(control=>control.id==='latest');
+ assert.ok(action); assert.equal(action.y,after.input.y-1);
+ assert.match(stripTerminalSequences(after.rows[action.y]!),/● ↓ Latest/);
+ assert.ok(!render({...view,followTail:true}).controls?.some(control=>control.id==='latest'));
+});
 test('transcript selections copy plain Unicode text in either drag direction',()=>{
  const lines=['\x1b[38;2;1;2;3mA界B\x1b[0m','second line'];
  assert.equal(selectedTranscript(lines,[[0,1],[1,6]]),'界B\nsecond');assert.equal(selectedTranscript(lines,[[1,6],[0,1]]),'界B\nsecond');

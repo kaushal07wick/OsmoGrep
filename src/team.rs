@@ -44,6 +44,19 @@ fn now() -> i64 {
 fn error(e: impl std::fmt::Display) -> String {
     format!("Team store: {e}")
 }
+pub(crate) fn project_key(root: &Path) -> Result<String, String> {
+    let root = root.canonicalize().map_err(error)?;
+    let common = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .and_then(|path| PathBuf::from(path.trim()).canonicalize().ok());
+    Ok(common.unwrap_or(root).to_string_lossy().into_owned())
+}
 fn bounded(text: &str, limit: usize) -> String {
     text.chars()
         .filter(|c| !c.is_control() || *c == '\n')
@@ -195,20 +208,7 @@ impl Store {
     ) -> Result<Peer, String> {
         uuid::Uuid::parse_str(session).map_err(|_| "Invalid team session UUID")?;
         let workspace = workspace.canonicalize().map_err(error)?;
-        let common = std::process::Command::new("git")
-            .arg("-C")
-            .arg(&workspace)
-            .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .and_then(|o| String::from_utf8(o.stdout).ok())
-            .map(|s| PathBuf::from(s.trim()));
-        let project = common
-            .and_then(|p| p.canonicalize().ok())
-            .unwrap_or_else(|| workspace.clone())
-            .to_string_lossy()
-            .to_string();
+        let project = project_key(&workspace)?;
         let mut peer = Peer {
             store: self.clone(),
             id: uuid::Uuid::new_v4().to_string(),
@@ -304,6 +304,26 @@ impl Store {
     pub fn pin(&self, session: &str, pinned: bool) -> Result<(), String> {
         self.connection()?.execute("INSERT INTO team_pins VALUES(?1,?2) ON CONFLICT(session) DO UPDATE SET pinned=excluded.pinned",params![session,pinned]).map_err(error)?;
         Ok(())
+    }
+    pub(crate) fn history_for(
+        &self,
+        workspace: &Path,
+        session: &str,
+        before: Option<i64>,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        uuid::Uuid::parse_str(session)
+            .map_err(|_| "Use a valid session UUID from `osmogrep team --all`")?;
+        let peer = Peer {
+            store: self.clone(),
+            id: String::new(),
+            session: session.into(),
+            project: project_key(workspace)?,
+            workspace: workspace.canonicalize().map_err(error)?,
+            enabled: false,
+            role: String::new(),
+            communication: Arc::default(),
+        };
+        peer.history_page(None, before)
     }
 }
 impl Peer {

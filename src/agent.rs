@@ -599,7 +599,14 @@ impl Agent {
         };
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
-            let _ = tx.send(fetch_model_catalog(&model, key.as_deref()));
+            let result = (|| {
+                let key = match key {
+                    Some(key) => Some(key),
+                    None => crate::auth::access_token(&model.provider)?,
+                };
+                fetch_model_catalog(&model, key.as_deref())
+            })();
+            let _ = tx.send(result);
         });
         rx
     }

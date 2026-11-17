@@ -99,17 +99,12 @@ this review. Open findings are explicitly marked.
    - **If we skip it:** Long chats waste rendering work while only the activity
      indicator changes. This measurement excludes Rust and model latency.
 
-8. **Presentation still blocks the input thread — open** (`src/ui/typescript.rs`,
+8. **Renderer waiting fixed; snapshot computation remains open** (`src/ui/typescript.rs`,
    `TypeScriptUi::draw`, `view`).
-   - **What this is:** Rust sends a full snapshot to Node and waits for its frame.
-   - **Problem:** A busy renderer can hold the interactive loop for up to 1.5
-     seconds. Every snapshot also serializes unchanged history and reconstructs
-     active diffs, even when only animation time changed.
-   - **Fix:** Retain the last validated frame, consume newer frames without
-     blocking input, and send transcript/diff changes by revision. First measure
-     end-to-end key latency under a long transcript and stalled renderer.
-   - **If we skip it:** The text cache helps average rendering time, but it does
-     not guarantee smooth typing during slow frames.
+   - **What this is:** Rust sends a full snapshot to Node, while retaining the last validated frame.
+   - **Problem:** Snapshot construction still serializes unchanged history and reconstructs active diffs, even when only animation time changed.
+   - **Fix:** v0.3.20 polls one in-flight frame without blocking keyboard processing, preserves state revisions across delayed frames and limits event-drain batches. Captured commands no longer inherit terminal stdin. A real terminal fixture covers typing during a model request and after completion with a minified diff. Sending transcript/diff revisions and measuring latency under deliberately stalled rendering remain follow-ups.
+   - **If we skip the remaining work:** CPU-heavy snapshot construction can still delay large sessions; the current checks do not establish an end-to-end latency bound.
 
 9. **Diff display limits do not bound diff computation — open in part**
    (`src/ui/diff.rs`, `Diff::from_texts`).

@@ -3,12 +3,14 @@ mod approval_rules;
 mod attachments;
 mod auth;
 mod checkpoints;
+mod cli;
 mod clipboard;
 mod command_sessions;
 mod commands;
 mod compaction;
 mod context;
 mod credentials;
+mod diagnostics;
 mod editor;
 mod file_guard;
 mod harness;
@@ -91,27 +93,37 @@ enum JobEvent {
 #[command(
     name = "osmogrep",
     version,
-    about = "A lightweight Rust-based TUI Agent, for debugging, code reviews, and runtime bug catching."
+    about = env!("CARGO_PKG_DESCRIPTION"),
+    max_term_width = 100,
+    after_help = r#"Start with `osmogrep` to open a fresh chat in the current directory.
+
+Examples:
+  osmogrep
+  osmogrep --session "API work"
+  osmogrep agents
+  osmogrep run --prompt "Explain this repo"
+
+Use `osmogrep <command> --help` for command options."#
 )]
 struct Cli {
-    /// Allow collaboration messages to enter active model turns in this session
+    /// Enable teammate context during model turns
     #[arg(long, global = true)]
     team: bool,
-    /// Open the TUI with this session name
+    /// Name a new chat session
     #[arg(value_name = "SESSION_NAME", conflicts_with = "session")]
     session_name: Option<String>,
 
-    /// Open the TUI with this session name
+    /// Name a new chat session
     #[arg(short, long, value_name = "SESSION_NAME")]
     session: Option<String>,
 
-    /// Resume an independent saved thread in this workspace
-    #[arg(long, conflicts_with_all = ["fork", "new_session"])]
+    /// Reopen a saved session by ID
+    #[arg(long, value_name = "SESSION_ID", conflicts_with_all = ["fork", "new_session"])]
     resume: Option<String>,
-    /// Copy a saved thread into a new independent session
-    #[arg(long, conflicts_with = "new_session")]
+    /// Copy a saved session into a new chat
+    #[arg(long, value_name = "SESSION_ID", conflicts_with = "new_session")]
     fork: Option<String>,
-    /// Start a fresh session (the default), keeping previous threads
+    /// Start a fresh chat (default)
     #[arg(long = "new")]
     new_session: bool,
 
@@ -121,46 +133,63 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum CliCommand {
-    /// Start, resume or inspect an explicitly supervised long-running coding task
+    /// Manage supervised coding tasks
     Task(long_runs::TaskArgs),
-    /// Serve the versioned JSONL integration and worker control protocol
+    /// Serve the JSONL integration protocol
     Rpc {
+        /// Directory the agent can work in
         #[arg(long, default_value = ".")]
         repo_root: PathBuf,
+        /// Resume a saved session by ID
         #[arg(long)]
         session_id: Option<String>,
+        /// Tool access: read-only, workspace-auto, or full-access
         #[arg(long, default_value = "workspace-auto")]
         permission_profile: String,
+        /// Approve workspace actions without an interactive prompt
         #[arg(long)]
         auto_approve: bool,
     },
-    /// OAuth device login for a configured, user-registered provider client
+    /// Manage provider OAuth login
     Auth {
         #[arg(value_parser=["login","logout","status"])]
         action: String,
         provider: String,
     },
-    /// Browse all saved sessions and live coding instances
+    /// Browse saved sessions and live agents
     Agents,
     /// Print version information
     Version,
-    /// Print install, config, and session diagnostics
-    Doctor,
+    /// Diagnose health and repair application setup
+    Doctor(diagnostics::Args),
+    /// Check for or install an OsmoGrep update
+    Update(cli::UpdateArgs),
+    /// Discover models from a configured provider
+    Models(cli::ModelsArgs),
+    /// Inspect and change model and connection settings
+    Config(cli::ConfigArgs),
+    /// Inspect live teammates and saved message history
+    Team(cli::TeamArgs),
+    /// Generate shell completion scripts
+    Completions {
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
     /// List saved local sessions
     Sessions,
-    /// Remove the currently running osmogrep binary after confirmation
+    /// Remove OsmoGrep after confirmation
     Uninstall(UninstallArgs),
-    /// Run the coding agent headlessly and print events to stdout
+    /// Run a coding task without the terminal UI
     Run(RunArgs),
-    /// Analyze GitHub PRs/issues for duplicates, ranking, and scope drift
+    /// Triage GitHub pull requests and issues
     Triage(triage::TriageArgs),
-    /// Index committed code into the optional revision-aware intelligence graph
+    /// Build the optional code index
     Index(intelligence::cli::IndexArgs),
-    /// Query optional code, runtime and historical relationships
+    /// Query indexed code relationships
     Context(intelligence::cli::ContextArgs),
-    /// Selectively analyze changes and shared-resource PR interactions
+    /// Analyze changes and pull request interactions
     Predict(intelligence::cli::PredictArgs),
-    /// Serve optional repository-scoped intelligence tools over stdio MCP
+    /// Serve code intelligence over MCP
     IntelligenceMcp(intelligence::cli::McpArgs),
 }
 
@@ -193,7 +222,7 @@ struct RunArgs {
     #[arg(long, default_value_t = false)]
     json_events: bool,
 
-    /// Permission profile: read-only, workspace-auto, or full-access
+    /// Tool access: read-only, workspace-auto, or full-access
     #[arg(long, default_value = "workspace-auto")]
     permission_profile: String,
 
@@ -656,8 +685,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some(CliCommand::Version) => {
             println!("osmogrep {}", env!("CARGO_PKG_VERSION"));
         }
-        Some(CliCommand::Doctor) => {
-            print_doctor()?;
+        Some(CliCommand::Doctor(args)) => diagnostics::run(args)?,
+        Some(CliCommand::Update(args)) => cli::update(args)?,
+        Some(CliCommand::Models(args)) => cli::models(args)?,
+        Some(CliCommand::Config(args)) => cli::config::run(args)?,
+        Some(CliCommand::Team(args)) => cli::team(args)?,
+        Some(CliCommand::Completions { shell }) => {
+            use clap::CommandFactory;
+            clap_complete::generate(shell, &mut Cli::command(), "osmogrep", &mut io::stdout());
         }
         Some(CliCommand::Sessions) => {
             print_sessions()?;
@@ -718,29 +753,6 @@ fn normalize_session_name(value: &str) -> Option<String> {
     } else {
         Some(trimmed.chars().take(80).collect())
     }
-}
-
-fn print_doctor() -> Result<(), Box<dyn Error>> {
-    let current_exe = std::env::current_exe()?;
-    let config_dir = persistence::config_dir();
-    let session_dir = persistence::session_dir();
-    let sessions = persistence::list_sessions().unwrap_or_default();
-
-    println!("osmogrep {}", env!("CARGO_PKG_VERSION"));
-    println!("binary: {}", current_exe.display());
-    println!("config: {}", config_dir.display());
-    println!("sessions: {}", session_dir.display());
-    println!("saved_sessions: {}", sessions.len());
-    println!("repo: {}", std::env::current_dir()?.display());
-    println!(
-        "openai_api_key: {}",
-        if std::env::var("OPENAI_API_KEY").is_ok() {
-            "set"
-        } else {
-            "missing"
-        }
-    );
-    Ok(())
 }
 
 fn print_sessions() -> Result<(), Box<dyn Error>> {
@@ -1843,7 +1855,11 @@ fn run_tui(
         }
 
         if let Some(rx) = agent_rx.as_ref() {
-            loop {
+            let events_started = Instant::now();
+            for _ in 0..64 {
+                if events_started.elapsed() >= Duration::from_millis(8) {
+                    break;
+                }
                 match rx.try_recv() {
                     Ok(evt) => {
                         team::observe(&mut state, &evt);
@@ -2513,7 +2529,40 @@ fn current_tmux_session_name() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::Parser;
+    use clap::{CommandFactory, Parser};
+
+    #[test]
+    fn cli_help_descriptions_wrap_and_keep_every_command_discoverable() {
+        let command = Cli::command();
+        for width in [60, 80, 120] {
+            let mut commands = vec![command.clone()];
+            commands.extend(command.get_subcommands().cloned());
+            for mut command in commands {
+                let name = command.get_name().to_string();
+                command = command.term_width(width);
+                for help in [
+                    command.render_help().to_string(),
+                    command.render_long_help().to_string(),
+                ] {
+                    for line in help.lines() {
+                        assert!(
+                            line.chars().count() <= width,
+                            "{name}, width {width}: {line}"
+                        );
+                    }
+                }
+            }
+        }
+        let help = Cli::command().render_help().to_string();
+        assert!(help.contains(env!("CARGO_PKG_DESCRIPTION")));
+        assert!(help.contains("Examples:"));
+        assert!(help.contains("fresh chat"));
+        assert!(help.contains("<command> --help"));
+        assert!(!help.contains("runtime bug catching"));
+        for command in Cli::command().get_subcommands() {
+            assert!(help.contains(command.get_name()));
+        }
+    }
 
     #[test]
     fn background_update_results_leave_chat_and_input_available() {
@@ -2536,6 +2585,49 @@ mod tests {
             assert!(!state.ui.should_exit);
         }
         assert_eq!(state.ui.input, "draft!!");
+    }
+
+    #[test]
+    fn everyday_commands_validate_options_and_generate_shell_completions() {
+        Cli::command().debug_assert();
+        for args in [
+            vec!["update", "--check"],
+            vec!["update", "--yes"],
+            vec!["models", "--provider", "ollama", "--json"],
+            vec!["models", "--current"],
+            vec!["config", "show"],
+            vec!["config", "get", "model"],
+            vec!["config", "set", "reasoning", "high"],
+            vec!["team", "--all", "--json"],
+            vec!["team", "history", "--session", "test-id", "--before", "12"],
+            vec!["doctor", "--deep", "--fix", "--json"],
+        ] {
+            let mut argv = vec!["osmogrep"];
+            argv.extend(args);
+            assert!(Cli::try_parse_from(argv).is_ok());
+        }
+        for args in [
+            vec!["update", "--check", "--yes"],
+            vec!["config", "set", "api-key", "secret"],
+            vec!["team", "history"],
+            vec!["models", "--current", "--provider", "ollama"],
+        ] {
+            let mut argv = vec!["osmogrep"];
+            argv.extend(args);
+            assert!(Cli::try_parse_from(argv).is_err());
+        }
+        for shell in [
+            clap_complete::Shell::Bash,
+            clap_complete::Shell::Zsh,
+            clap_complete::Shell::Fish,
+        ] {
+            let mut bytes = Vec::new();
+            clap_complete::generate(shell, &mut Cli::command(), "osmogrep", &mut bytes);
+            let text = String::from_utf8(bytes).unwrap();
+            for command in ["osmogrep", "doctor", "models", "config", "completions"] {
+                assert!(text.contains(command));
+            }
+        }
     }
 
     #[test]

@@ -95,7 +95,7 @@ pub fn spawn_update_install(info: UpdateInfo, tx: Sender<UpdateEvent>) {
     });
 }
 
-fn check_for_update() -> Result<Option<UpdateInfo>, String> {
+pub(crate) fn check_for_update() -> Result<Option<UpdateInfo>, String> {
     let latest = fetch_latest_release()?;
     let latest_version = normalize_version(&latest.tag_name);
     let current_version = current_version();
@@ -184,7 +184,7 @@ fn fetch_latest_release() -> Result<Release, String> {
         .map_err(|e| e.to_string())
 }
 
-fn install_update(
+pub(crate) fn install_update(
     info: &UpdateInfo,
     mut progress: impl FnMut(InstallProgress),
 ) -> Result<(), String> {

@@ -7,6 +7,7 @@ import { drawPanel, permissionLines, updateLines, type ReleaseView, type PanelVi
 import type {Scene} from './scenes.ts';
 import {statusLayout,activity,type StatusEntry} from './chrome.ts';
 import {diffLines,highlightTranscript,selectedTranscript,type TranscriptSelection,type FileDiff} from './transcript.ts';
+import {webLinks} from './links.ts';
 import {paperRow,paperColors,paperGraphic} from './paper.ts';
 import {orb,activityInfo,completionLine} from './activity.ts';
 import {providerMarks} from './provider-marks.ts';
@@ -24,6 +25,7 @@ export interface View {
   input: string; cursor: number; selection: [number, number] | null; masked: boolean;
   inputMode: string; attachments: Attachment[]; running: boolean; phase: string; tool: string | null;
   followTail: boolean; scroll: number; stream: string; permission: string | null; update: string | null;
+  newActivity?:boolean;
   voiceState?:{enabled:boolean;connected:boolean;partial:boolean};
   team?:{enabled:boolean;unread:number;online:number};
   voice: string | null; commands: { cmd: string; desc: string }[]; selectedCommand: number; tokens: number;
@@ -53,7 +55,7 @@ export interface Rendered {
   animate: boolean;
   animationIntervalMs?:number;
   artwork: Rect | null;
-  controls?:{id:'model'|'provider'|'choice'|'voice'|'team'|'copy'|'update'|'permission'|'expand';index?:number;label?:string;x:number;y:number;width:number;height:number}[];
+  controls?:{id:'model'|'provider'|'choice'|'voice'|'team'|'copy'|'update'|'permission'|'expand'|'latest'|'link';index?:number;label?:string;x:number;y:number;width:number;height:number}[];
   transcript?:{x:number;y:number;width:number;height:number;start:number;maxScroll:number;lineWidths:number[];scrollbar?:Rect|null};
   selectionText?:string;
   images: { id: number; x: number; y: number; sequence: string; placement?:string }[];
@@ -105,7 +107,7 @@ export function render(v: View): Rendered {
   const paperGraphics=getCapabilities().images==='kitty';
   const tint = (color: string) => (s: string) => color + s + reset;
   const markdown = (text: string, n: number) => new Markdown(clean(text), 0, 0, {
-    heading: s => fg + bold(s) + reset, link: tint(accent), linkUrl: tint(dim), code: tint(accent),
+    heading: s => fg + bold(s) + reset, link: tint(light?rgb(38,103,175):rgb(112,166,224)), linkUrl: tint(light?rgb(38,103,175):rgb(112,166,224)), code: tint(accent),
     codeBlock: tint(fg), codeBlockBorder: tint(border), quote: tint(dim), quoteBorder: tint(border),
     hr: tint(border), listBullet: tint(accent), bold, italic: s => `\x1b[3m${s}\x1b[23m`,
     strikethrough: s => `\x1b[9m${s}\x1b[29m`, underline: s => `\x1b[4m${s}\x1b[24m`,
@@ -175,13 +177,14 @@ export function render(v: View): Rendered {
   const transcript: string[] = [];
   const insertedDiffs=new Set<FileDiff>();
   const codeCopies:CodeCopy[]=[];
-  const expandActions: {row:number;label:string}[] = [];
-  const expandAction = (hidden?: number) => {
+  const expandActions: {row:number;label:string;start:number}[] = [];
+  const expandAction = (hidden?: number, start = transcript.length) => {
     const label = v.expandTools ? 'Show less' : hidden == null ? 'Show more' : `Show more · ${hidden} more lines`;
-    expandActions.push({row:transcript.length,label});
+    expandActions.push({row:transcript.length,label,start});
     transcript.push(accent + '  ' + label + reset);
   };
   const appendMarkdown = (text: string, fold = true) => {
+    const from=transcript.length;
     const block = cachedCodeBlocks(text,Math.max(1,width-pad*2),light,text=>markdown(text,width-pad*2),v.copiedCode,accent,paperGraphics);
     const large = fold && block.rows.length > 22;
     const shown = large && !v.expandTools ? block.rows.slice(0,22) : block.rows;
@@ -189,13 +192,14 @@ export function render(v: View): Rendered {
       ...copy,row:copy.row+transcript.length,height:Math.min(copy.height,shown.length-copy.row),
     })));
     transcript.push(...shown);
-    if (large) expandAction(block.rows.length - 22);
+    if (large) expandAction(block.rows.length - 22,from);
   };
   const appendDiff = (diff: FileDiff) => {
-    transcript.push(...diffLines(diff,Math.max(1,width-pad*2),light,!!v.expandTools));
-    if (diff.lines.length > 14) {
+    const from=transcript.length,rows=diffLines(diff,Math.max(1,width-pad*2),light,!!v.expandTools);
+    transcript.push(...rows);
+    if (/^Show (more|less)$/.test(stripTerminalSequences(rows.at(-1)??'').trim())) {
       transcript.pop();
-      expandAction(diff.lines.at(-1)?.text.includes('diff truncated') ? undefined : diff.lines.length - 14);
+      expandAction(undefined,from);
     }
   };
   let paragraph: string[] = [];
@@ -213,10 +217,11 @@ export function render(v: View): Rendered {
       flush();transcript.push('',dim+(completionLine(text,Math.max(1,width-pad*2))??text)+reset);
     } else if (text.trimStart().startsWith('└ ')) {
       flush();const results=[text];
+      const from=transcript.length;
       while(v.logs[i+1]?.text.trimStart().startsWith('└ '))results.push(clean(v.logs[++i]!.text));
       const rendered = results.flatMap(line => wrapTextWithAnsi(dim+line+reset,Math.max(1,width-pad*2)));
       transcript.push(...(v.expandTools ? rendered : rendered.slice(0,3)));
-      if (rendered.length > 3) expandAction(rendered.length - 3);
+      if (rendered.length > 3) expandAction(rendered.length - 3,from);
     } else if (text.startsWith('● ') || text.trimStart().startsWith('└ ') || text.startsWith('· ') || entry.level !== 'Info') {
       flush();
       const color = entry.level === 'Error' ? rgb(230, 100, 100) : entry.level === 'Warn' ? rgb(225, 185, 75) : text.startsWith('● ') ? accent : dim;
@@ -230,18 +235,30 @@ export function render(v: View): Rendered {
   for(const diff of v.diffs)if(!insertedDiffs.has(diff))appendDiff(diff);
   if(v.stream)appendMarkdown(v.stream+'▍',false);
   if (v.plan.length) transcript.push('', ...v.plan.map(p => `${p.done ? '✓' : p.active ? '›' : '·'} ${clean(p.text)}`));
-  const maxScroll = Math.max(0, transcript.length - execution.height);
+  const contentHeight=Math.max(0,execution.height-(v.expandTools&&expandActions.length?1:0));
+  const maxScroll = Math.max(0, transcript.length - contentHeight);
   const start = v.followTail ? maxScroll : Math.max(0,Math.min(maxScroll,v.scrollTop??maxScroll-v.scroll));
-  transcript.slice(start, start + execution.height).forEach((line, i) => put(execution.y + i, highlightTranscript(line,start+i,v.transcriptSelection,light), gutter + pad, width - pad * 2));
+  transcript.slice(start, start + contentHeight).forEach((line, i) => {
+    const marked=webLinks(line,light);
+    put(execution.y+i,highlightTranscript(marked.text,start+i,v.transcriptSelection,light),gutter+pad,width-pad*2);
+    if(!v.panel&&!v.approval&&!v.update&&!v.masked&&!v.commands.length)for(const link of marked.links){
+      const length=Math.min(link.width,width-pad*2-link.x);
+      if(length>0)controls.push({id:'link',label:link.url,x:gutter+pad+link.x,y:execution.y+i,width:length,height:1});
+    }
+  });
   if (!v.panel && !v.update && !v.masked) for (const action of expandActions) {
-    const y = execution.y + action.row - start;
+    let y = execution.y + action.row - start;
+    if(v.expandTools&&action.start<start+contentHeight&&action.row>=start&&y>=execution.y+contentHeight){
+      y=execution.y+contentHeight;
+      put(y,accent+'  Show less'+reset,gutter+pad,Math.max(1,width-pad*2));
+    }
     if (y >= execution.y && y < execution.y + execution.height && width - pad * 2 > 2) {
-      controls.push({id:'expand',x:gutter+pad+2,y,width:Math.min(visibleWidth(action.label),Math.max(1,width-pad*2-2)),height:1});
+      controls.push({id:'expand',label:action.label,x:gutter+pad+2,y,width:Math.min(visibleWidth(action.label),Math.max(1,width-pad*2-2)),height:1});
     }
   }
   let copyIconIndex=0;
   if(!v.masked&&!v.approval&&!v.update&&!v.commands.length)for(const copy of codeCopies){
-    const y=execution.y+copy.row-start,top=Math.max(execution.y,y),bottom=Math.min(execution.y+execution.height,y+copy.height);
+    const y=execution.y+copy.row-start,top=Math.max(execution.y,y),bottom=Math.min(execution.y+contentHeight,y+copy.height);
     if(!copy.text||Buffer.byteLength(copy.text)>100000||bottom<=top)continue;
     const x=gutter+pad+copy.x;
     // The native frame protocol accepts one terminal row per hit area.
@@ -306,6 +323,11 @@ export function render(v: View): Rendered {
     let line='';for(const c of capsules.sort((a,b)=>a.x-b.x))line+=' '.repeat(Math.max(0,c.x-gutter-visibleWidth(line)))+c.content;if(capsules.length)put(composerY,paperRow(line,width,0,composerHeight,light,paperGraphics));
   }
   teamDock.forEach((line, index) => put(composerY - teamHeight + 1 + index, line, gutter + pad, Math.max(1, width - pad * 2)));
+  if(!v.followTail&&maxScroll>0&&composerY>0&&!v.panel&&!v.approval&&!v.update&&!v.masked&&!v.commands.length&&width>=24){
+    const label=(v.newActivity?'● ':'')+'↓ Latest',x=gutter+width-pad-visibleWidth(label),y=composerY-1;
+    put(y,(v.newActivity?accent:dim)+label+reset,x,visibleWidth(label));
+    controls.push({id:'latest',label:'Latest output',x,y,width:visibleWidth(label),height:1});
+  }
   if (teamDock.length) {
     const messageId = JSON.parse(v.logs[lastTeam]!.text.slice(5)).message.id;
     if (Number.isSafeInteger(messageId) && messageId > 0) {
@@ -410,7 +432,7 @@ export function render(v: View): Rendered {
     }), input: inputRect, execution, editorWidth: textWidth, animate: v.running || !!teamDock.length || !!artwork && !v.preferences?.reduce_motion, animationIntervalMs:teamDock.length&&!v.running?250:artwork&&introElapsed>=introDuration?125:undefined,artwork,
     cursor: { x: Math.min(w - 1, gutter + pad + 2 + input.position.x), y: Math.min(h - 1, textY + input.position.y - topLine) },
     images, controls,
-    transcript:{x:gutter+pad,y:execution.y,width:Math.max(1,width-pad*2),height:execution.height,start,maxScroll,scrollbar,lineWidths:transcript.slice(start,start+execution.height).map(line=>Math.min(Math.max(1,width-pad*2),visibleWidth(line)))},
+    transcript:{x:gutter+pad,y:execution.y,width:Math.max(1,width-pad*2),height:execution.height,start,maxScroll,scrollbar,lineWidths:transcript.slice(start,start+contentHeight).map(line=>Math.min(Math.max(1,width-pad*2),visibleWidth(line)))},
     selectionText:selectedTranscript(transcript,v.transcriptSelection),
   };
 }

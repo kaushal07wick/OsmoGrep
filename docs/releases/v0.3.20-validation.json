@@ -1,0 +1,68 @@
+{
+  "date": "2026-11-17T10:21:55.031756+00:00",
+  "version": "0.3.20",
+  "target": "aarch64-apple-darwin",
+  "binary_sha256": "cf2f51d369cdc305058ffdfe4a533bb1b2bf1bc176fd6b4758f0b0687a140539",
+  "rust": {
+    "passed": 320,
+    "ignored": 5,
+    "excluded": [
+      "mac_clipboard_reads_an_image_without_changing_the_users_clipboard"
+    ]
+  },
+  "ui": {
+    "passed": 81,
+    "build": "passed"
+  },
+  "npm_launcher": {
+    "passed": 5
+  },
+  "cli": {
+    "binary_sha256": "cf2f51d369cdc305058ffdfe4a533bb1b2bf1bc176fd6b4758f0b0687a140539",
+    "checks": [
+      "atomic_validated_settings_and_secret_redaction",
+      "model_discovery_and_configured_reasoning",
+      "deep_diagnostics_repair_permissions_and_preserve_damaged_data",
+      "completions_generated_and_available_shell_parsers_pass",
+      "team_inspection_does_not_register_phantom_agents_or_acknowledge_messages"
+    ],
+    "catalog_requests": 3,
+    "model_generation_requests": 0,
+    "paid_calls": 0,
+    "completion_parsers": [
+      "bash",
+      "zsh"
+    ]
+  },
+  "input": {
+    "binary_sha256": "cf2f51d369cdc305058ffdfe4a533bb1b2bf1bc176fd6b4758f0b0687a140539",
+    "checks": [
+      "minified_diff_is_folded",
+      "typing_during_active_model_request",
+      "typing_after_completion",
+      "history_exposes_latest_action",
+      "native_accepts_renderer_frames"
+    ],
+    "fixture_model_requests": 3,
+    "paid_calls": 0
+  },
+  "team": {
+    "binary_sha256": "cf2f51d369cdc305058ffdfe4a533bb1b2bf1bc176fd6b4758f0b0687a140539",
+    "checks": [
+      "independent_process_presence_and_repository_isolation",
+      "durability_restart_deduplication_and_receipts_without_idle_paid_turns",
+      "concurrent_broadcast_delivery",
+      "safe_boundary_delivery_preserves_user_task_and_durable_ack",
+      "cross_process_edit_contention_release_and_automatic_updates",
+      "crashed_instance_expires_without_stealing_session",
+      "natural_request_metadata_targeting_active_delivery_and_sender_only_reply_without_team_mode",
+      "messages_remain_pending_until_the_recipient_model_returns_successfully",
+      "contextual_read_and_send_followups_keep_the_previous_direct_partner_only",
+      "explicit_no_message_instruction_overrides_persistent_team_mode"
+    ],
+    "processes": 7,
+    "fixture_model_requests": 32,
+    "paid_model_requests": 0
+  },
+  "scope": "Isolated local Apple silicon checks using fake model/catalog services. The exact previously stalled live session was not reproduced or modified. No live-provider quality, endurance or other-platform performance claim. Optional hardware/package tests remain unverified."
+}

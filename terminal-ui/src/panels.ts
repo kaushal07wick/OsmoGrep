@@ -18,14 +18,14 @@ export function drawPanel(panel:PanelView,width:number,height:number,light:boole
   const gutter=width>=60?3:width>=24?1:0,card=Math.max(1,width-2*gutter),pad=card>=40?3:1,inner=Math.max(1,card-2*pad),top=height>=14?2:0,available=Math.max(1,height-top-(height>=14?2:0));
   const wrap=(s:string,n=2)=>wrapTextWithAnsi(s,inner).slice(0,n),rows=Array<string>(height).fill(root+' '.repeat(width)+reset);
   const controls:{id:'choice';index:number;label:string;x:number;y:number;width:number;height:number}[]=[];
-  if (panel.section === 11 && panel.previewing) {
+  if ([11,14].includes(panel.section) && panel.previewing) {
     const put = (y:number, text:string) => {
       if (y >= 0 && y < height) {
         const content = ' '.repeat(gutter + pad) + fit(text, inner);
         rows[y] = root + content + root + ' '.repeat(Math.max(0, width-visibleWidth(content))) + reset;
       }
     };
-    put(top, accent + 'Team message' + reset);
+    put(top, accent + (panel.section===14?'Diagnostic report':'Team message') + reset);
     const bodyTop = top + 2;
     const bodyHeight = Math.max(0, height - bodyTop - 4);
     const source = (panel.preview ?? []).flatMap(line => wrapTextWithAnsi(plain(line), inner));

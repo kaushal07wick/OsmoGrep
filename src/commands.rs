@@ -2582,6 +2582,10 @@ pub(crate) fn command_palette_items() -> &'static [CommandItem] {
             desc: "Inspect workspace and run status",
         },
         CommandItem {
+            cmd: "/doctor",
+            desc: "Check health, inspect diagnostics and repair setup",
+        },
+        CommandItem {
             cmd: "/mcp",
             desc: "Inspect connected tool servers",
         },

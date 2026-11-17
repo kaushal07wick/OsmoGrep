@@ -452,10 +452,10 @@ fn request_agent_cancel(state: &mut AgentState) {
 }
 
 fn scroll_execution_back(state: &mut AgentState, step: usize) {
-    let (offset, follow_tail) = scroll_back_offset(state.ui.exec_scroll, step);
+    let (offset, _) = scroll_back_offset(state.ui.exec_scroll, step);
     let offset = offset.min(state.ui.exec_scroll_max);
-    state.ui.exec_scroll = if offset == 0 { usize::MAX } else { offset };
-    state.ui.follow_tail = follow_tail || offset == 0;
+    state.ui.exec_scroll = offset;
+    state.ui.follow_tail = false;
 }
 
 fn scroll_execution_toward_tail(state: &mut AgentState, step: usize) {
@@ -843,6 +843,18 @@ mod tests {
     fn scroll_back_leaves_follow_mode() {
         assert_eq!(scroll_back_offset(usize::MAX, 6), (6, false));
         assert_eq!(scroll_back_offset(12, 6), (18, false));
+    }
+
+    #[test]
+    fn scrolling_back_pauses_future_output_even_before_the_viewport_is_full() {
+        let mut state = crate::init_state();
+        state.ui.exec_scroll_max = 0;
+        super::scroll_execution_back(&mut state, 1);
+        assert!(!state.ui.follow_tail);
+        assert_eq!(state.ui.exec_scroll, 0);
+        handle_key(&mut state, key(KeyCode::Char('x')));
+        assert_eq!(state.ui.input, "x");
+        assert!(!state.ui.follow_tail);
     }
 
     #[test]

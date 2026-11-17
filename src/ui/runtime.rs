@@ -21,6 +21,8 @@ pub struct TuiRuntime {
     last_visual: Option<std::time::Instant>,
     last_size: Rect,
     cursor_theme: Option<crate::state::UiTheme>,
+    revision: u64,
+    request_revision: Option<u64>,
 }
 
 impl Default for TuiRuntime {
@@ -45,6 +47,8 @@ impl Default for TuiRuntime {
             last_visual: None,
             last_size: Rect::default(),
             cursor_theme: None,
+            revision: 0,
+            request_revision: None,
         }
     }
 }
@@ -60,7 +64,7 @@ impl TuiRuntime {
         let size = terminal.size()?;
         if size != self.last_size {
             self.last_size = size;
-            self.dirty = true;
+            self.mark_dirty();
         }
         state.ui.presentation_model = Some(model.clone());
         if (!self.dirty && !self.animating) || !self.frame.draw_due(now) {
@@ -94,19 +98,25 @@ impl TuiRuntime {
             self.cursor_theme = Some(state.theme);
         }
         if let Some(ui) = self.typescript.as_mut() {
+            self.request_revision.get_or_insert(self.revision);
             let size = terminal.size()?;
             match ui.draw(state, model, size.width, size.height) {
-                Ok((input, exec, editor_width, animate)) => {
+                Ok(Some((input, exec, editor_width, animate))) => {
                     self.input_rect = input;
                     self.exec_rect = exec;
                     state.ui.input_wrap_width = editor_width;
                     self.animating = animate;
                     self.last_visual = Some(now);
                     self.frame.mark_drawn(now);
-                    self.dirty = false;
+                    self.dirty = self.request_revision.take() != Some(self.revision);
+                    return Ok(());
+                }
+                Ok(None) => {
+                    self.frame.mark_drawn(now);
                     return Ok(());
                 }
                 Err(error) => {
+                    self.request_revision = None;
                     self.typescript = None;
                     self.renderer_error = Some(error);
                     self.animating = false;
@@ -159,6 +169,7 @@ impl TuiRuntime {
 
     pub fn mark_dirty(&mut self) {
         self.dirty = true;
+        self.revision = self.revision.wrapping_add(1);
     }
 
     pub fn handle_visual_event(

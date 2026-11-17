@@ -9,6 +9,8 @@ and input to the Rust tool loop.
 ```text
 src/
   main.rs                  CLI dispatch, interactive lifecycle, event handling
+  cli/                     Update, model discovery, configuration and team inspection
+  diagnostics.rs           Shared CLI/TUI health reports and private-storage repairs
   state.rs                 Session, transcript, composer and UI state
   commands.rs              Interactive commands and background actions
   agent.rs                 Conversation loop, tool dispatch, permission requests
@@ -32,12 +34,11 @@ src/
   storage.rs               Atomic writes and shared file locking
   persistence.rs           Saved sessions and configuration
   preferences.rs           Workspace appearance and UI preferences
-  team.rs                  Cross-process discovery, messages, activity, file claims
   subagents.rs, worktree.rs Explicit delegation and isolated writable workers
   harness.rs               Run event ledger
   long_runs.rs             Budgeted task supervision and recovery
   verification.rs          Evidence accounting
-  verify_stop.rs           Optional verification completion policy
+  verify_stop.rs           Legacy verification stop policy (tests only)
   editor.rs, editor.lua    Editor launch and black Neovim UI
   editor/native.rs         Native Ghostty editor and private Neovim RPC
   editor/workspace.lua     File tree, tabs, live ticker and inspection windows

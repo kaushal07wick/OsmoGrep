@@ -156,7 +156,7 @@ Sessions and preferences stay on your machine. Prompts, attachments, and tool co
 | [Benchmark setup](benchmarks/README.md) | Optional Harbor adapter, offline checks, and a reproducible Terminal-Bench pilot |
 | [Contributing and development](docs/reference.md#development) | Build, test, renderer bundle, and repository structure |
 
-Use OsmoGrep in scripts with `osmogrep run --prompt "..." --json-events`. See the [headless guide](docs/reference.md#commands-and-headless-use) for permission flags and events.
+Use OsmoGrep in scripts with `osmogrep run --prompt "..." --json-events`. See the [headless guide](docs/reference.md#commands-and-headless-use) for permission flags and events. The [CLI guide](docs/cli.md) covers updates, model discovery, configuration, team history, shell completions and Doctor diagnostics.
 
 ---
 

@@ -5,7 +5,7 @@ use std::{
     path::PathBuf,
     process::{Child, Command, Stdio},
     sync::mpsc::{self, Receiver, SyncSender},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crossterm::{
@@ -26,6 +26,16 @@ use crate::{
 
 const BUNDLE: &str = include_str!("../../terminal-ui/bundle/renderer.mjs");
 const FRAME_TIMEOUT: Duration = Duration::from_millis(1500);
+fn poll_frame(
+    frames: &Receiver<Result<String, String>>,
+    sent: Instant,
+) -> Result<Option<String>, String> {
+    match frames.try_recv() {
+        Ok(frame) => frame.map(Some),
+        Err(mpsc::TryRecvError::Empty) if sent.elapsed() < FRAME_TIMEOUT => Ok(None),
+        _ => Err("TypeScript UI stopped responding".into()),
+    }
+}
 
 #[derive(Deserialize)]
 struct Region {
@@ -194,6 +204,9 @@ pub struct TypeScriptUi {
     scrolling: bool,
     copy_pending: bool,
     copied_code: Option<String>,
+    pending_since: Option<Instant>,
+    last_tail_activity: Option<(usize, usize, usize, usize)>,
+    requested_size: (u16, u16),
 }
 
 impl TypeScriptUi {
@@ -311,6 +324,9 @@ impl TypeScriptUi {
             scrolling: false,
             copy_pending: false,
             copied_code: None,
+            pending_since: None,
+            last_tail_activity: None,
+            requested_size: (0, 0),
             animation_interval_ms: None,
         })
     }
@@ -330,6 +346,10 @@ impl TypeScriptUi {
                 })
             {
                 state.ui.expand_tools = !state.ui.expand_tools;
+                state.ui.follow_tail = false;
+                if let Some(view) = &self.transcript {
+                    state.ui.exec_scroll = view.max_scroll.saturating_sub(view.start);
+                }
                 return true;
             }
         }
@@ -454,6 +474,18 @@ impl TypeScriptUi {
                             .contains((mouse.column, mouse.row).into())
                     }) {
                         match control.id.as_str() {
+                            "link" => {
+                                if let Some(url) = control.label.as_deref() {
+                                    if let Err(error) = super::links::open(url) {
+                                        crate::logger::log_status(state, error);
+                                    }
+                                }
+                            }
+                            "latest" => {
+                                state.ui.follow_tail = true;
+                                state.ui.exec_scroll = usize::MAX;
+                                state.ui.transcript_selection = None;
+                            }
                             "voice" => {
                                 state.ui.requested_command = Some(
                                     if state.voice.enabled || state.voice.connected {
@@ -561,24 +593,48 @@ impl TypeScriptUi {
         model: &ModelConfig,
         width: u16,
         height: u16,
-    ) -> Result<(Rect, Rect, usize, bool), String> {
-        self.sequence += 1;
-        let mut snapshot = view(state, model, self.sequence, width, height);
-        snapshot["introElapsed"] = json!(self
-            .intro
-            .started
-            .get_or_insert_with(std::time::Instant::now)
-            .elapsed()
-            .as_millis() as u64);
-        snapshot["introScene"] =
-            json!(["horizon", "interference", "life", "lorenz"][self.intro.variant]);
-        snapshot["introBright"] = json!(self.intro.bright);
-        snapshot["copiedCode"] = json!(self.copied_code);
-        self.input.try_send(snapshot).map_err(|e| e.to_string())?;
-        let raw = self
-            .frames
-            .recv_timeout(FRAME_TIMEOUT)
-            .map_err(|_| "TypeScript UI stopped responding")??;
+    ) -> Result<Option<(Rect, Rect, usize, bool)>, String> {
+        if self.pending_since.is_none() {
+            self.requested_size = (width, height);
+            self.sequence += 1;
+            let mut snapshot = view(state, model, self.sequence, width, height);
+            let activity = (
+                state.logs.iter().count(),
+                state.logs.iter().last().map_or(0, |log| log.text.len()),
+                state.ui.streaming_transcript.len(),
+                state
+                    .ui
+                    .diff_snapshot
+                    .last()
+                    .map_or(0, |diff| diff.after.len()),
+            );
+            snapshot["newActivity"] = json!(
+                !state.ui.follow_tail
+                    && self.last_tail_activity.is_some_and(|seen| seen != activity)
+            );
+            if state.ui.follow_tail {
+                self.last_tail_activity = Some(activity);
+            }
+            snapshot["introElapsed"] = json!(self
+                .intro
+                .started
+                .get_or_insert_with(std::time::Instant::now)
+                .elapsed()
+                .as_millis() as u64);
+            snapshot["introScene"] =
+                json!(["horizon", "interference", "life", "lorenz"][self.intro.variant]);
+            snapshot["introBright"] = json!(self.intro.bright);
+            snapshot["copiedCode"] = json!(self.copied_code);
+            self.input.try_send(snapshot).map_err(|e| e.to_string())?;
+            self.pending_since = Some(Instant::now());
+        }
+        let Some(raw) = poll_frame(&self.frames, self.pending_since.unwrap())? else {
+            return Ok(None);
+        };
+        self.pending_since = None;
+        if self.requested_size != (width, height) {
+            return Ok(None);
+        }
         let frame: Frame = serde_json::from_str(&raw).map_err(|_| "Invalid TypeScript UI frame")?;
         if frame.id != self.sequence
             || frame.rows.len() != height as usize
@@ -609,6 +665,8 @@ impl TypeScriptUi {
                         | "update"
                         | "permission"
                         | "expand"
+                        | "latest"
+                        | "link"
                 ) || c.id == "choice"
                     && (!c.index.is_some_and(|i| i <= 1000)
                         || c.label.as_ref().is_none_or(|s| s.len() > 160))
@@ -618,6 +676,8 @@ impl TypeScriptUi {
                         && c.label.as_ref().is_none_or(|s| {
                             s.is_empty() || s.len() > 100_000 || s.contains('\u{1b}')
                         })
+                    || c.id == "link"
+                        && c.label.as_ref().is_none_or(|url| !super::links::valid(url))
                     || c.area.width == 0
                     || c.area.height != 1
                     || !c.area.inside(width, height)
@@ -762,12 +822,12 @@ impl TypeScriptUi {
         }
         self.previous = frame.rows;
         self.size = (width, height);
-        Ok((
+        Ok(Some((
             frame.input.rect(),
             frame.execution.rect(),
             frame.editor_width as usize,
             frame.animate,
-        ))
+        )))
     }
 }
 
@@ -892,6 +952,19 @@ fn view(state: &AgentState, model: &ModelConfig, id: u64, width: u16, height: u1
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_pending_frame_never_blocks_keyboard_processing_and_timeouts_still_fail() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let now = std::time::Instant::now();
+        assert!(super::poll_frame(&rx, now).unwrap().is_none());
+        assert!(now.elapsed() < std::time::Duration::from_millis(500));
+        tx.send(Ok("frame".into())).unwrap();
+        assert_eq!(
+            super::poll_frame(&rx, now).unwrap().as_deref(),
+            Some("frame")
+        );
+        assert!(super::poll_frame(&rx, now - super::FRAME_TIMEOUT).is_err());
+    }
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 

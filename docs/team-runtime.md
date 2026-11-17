@@ -67,7 +67,7 @@ The implementation uses the existing Rust runtime and pi-tui renderer. Reference
 
 ### Settings and release notices
 
-`/settings` opens ten visible categories. Choose one with Up/Down and Enter, or click it. Escape returns to the categories before closing; the composer draft stays intact. Direct shortcuts such as `/model` and `/permissions` still open their controls.
+`/settings` opens visible categories, including Team and Doctor. Choose one with Up/Down and Enter, or click it. Escape returns to the categories before closing; the composer draft stays intact. Direct shortcuts such as `/model`, `/permissions` and `/doctor` still open their controls.
 
 OsmoGrep checks GitHub releases at launch and every six hours. A release card appears when the agent is idle and the composer is empty, with short release highlights and three choices: **Update now**, **Later** (next launch), and **Skip this version** (remembered across launches; a newer version can still appear). Later is selected by default. Downloads use the existing checksum verification and binary replacement; the current session continues until you restart. `OSMOGREP_DISABLE_UPDATE_CHECK=1` disables the finder.
 

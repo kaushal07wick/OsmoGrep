@@ -503,6 +503,19 @@ pub fn update_config(
 pub fn session_dir() -> PathBuf {
     config_dir().join("sessions")
 }
+pub(crate) fn snapshot_valid(path: &Path) -> Result<bool, String> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    fs::File::open(path)
+        .map_err(|error| error.to_string())?
+        .take(32 * 1024 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    if bytes.len() > 32 * 1024 * 1024 {
+        return Err("Snapshot exceeds the 32 MiB diagnostic limit".into());
+    }
+    Ok(serde_json::from_slice::<PersistedState>(&bytes).is_ok())
+}
 
 #[cfg(test)]
 mod tests {
