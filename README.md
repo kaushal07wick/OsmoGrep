@@ -50,7 +50,7 @@ export OPENAI_API_KEY="your-api-key"
 osmogrep
 ```
 
-The npm launcher needs **Node.js 22.19+** and downloads the matching Rust binary on first launch. Cargo installation requires Rust 1.89+. You can enter your key with `/key` instead, or connect another provider below. [Installation options and platform notes →](docs/reference.md#quickstart)
+The npm launcher needs **Node.js 22.19+** and downloads the matching Rust binary on first launch. Cargo installation requires Rust 1.89+. You can enter your key through **Settings → Model & provider → API key** instead, or connect another provider below. [Installation options and platform notes →](docs/reference.md#quickstart)
 
 Mac and iPhone companions are optional downloads in **Settings → Workspace**. They stay outside the main binary; installing them does not download a device OS or start a VM.
 Opening a device prepares or reuses it automatically. The agent can do the same
@@ -76,7 +76,7 @@ OsmoGrep can search your code, follow symbols, edit files, apply patches, run co
 | Review the change | Inline diffs, expandable output, and conflict-aware turn checkpoints |
 | Keep the conversation moving | Multiline drafts, image attachments, and queued follow-ups |
 | Set your boundaries | Read-only mode, scoped approvals, optional OS sandbox, and explicit cancellation |
-| Workspace Lab | Opt-in replayable bugs, candidate comparisons, code contracts, UI behavior, context evidence and failure scenarios ([guide](docs/workspace-lab.md)) |
+| Workspace Lab | Ask naturally for bug replays, fix comparisons, team contracts, app checks, context provenance and failure tests; inspect saved history in Settings ([guide](docs/workspace-lab.md)) |
 | Bring your workflow | Project instructions, skills, configurable shortcuts, and Neovim integration |
 
 ## A terminal worth working in
@@ -96,7 +96,7 @@ Paste a screenshot, edit a long prompt, or queue the next request while a run co
   </tr>
 </table>
 
-Make it yours with `/settings`, `/keymap`, and `/statusline`. On Kitty-compatible terminals, native graphics add fine paper grain and dot-dithered animation. Other terminals use a text fallback.
+Make it yours through `/settings`, including appearance, keyboard shortcuts and the status line. On Kitty-compatible terminals, native graphics add fine paper grain and dot-dithered animation. Other terminals use a text fallback.
 
 <details>
 <summary><strong>See the motion and usage views</strong></summary>
@@ -117,7 +117,7 @@ The central logo morphs and settles into the background. Click to replay; Reduce
 
 Use **OpenAI, Anthropic, OpenRouter, Groq, Mistral, DeepSeek, or xAI**. Run local models through **Ollama or LM Studio**. Bring a custom gateway when your setup needs one.
 
-Select your provider and model from the footer or `/model`. OsmoGrep supports Responses, Chat Completions, and native Anthropic Messages, with separately stored provider credentials, reasoning controls, and configurable model limits. New saved keys use your OS credential store; `/key migrate` moves legacy plaintext keys.
+Select your provider and model from the footer or `/model`. OsmoGrep supports Responses, Chat Completions, and native Anthropic Messages, with separately stored provider credentials, reasoning controls, and configurable model limits. New saved keys use your OS credential store; **Model & provider → Migrate saved keys** moves legacy plaintext keys.
 
 [Connect a provider →](docs/reference.md#providers) · [Custom endpoints and API support →](docs/agent-provider-design.md#configuration)
 

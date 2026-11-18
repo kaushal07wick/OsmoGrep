@@ -9,6 +9,7 @@ mod integration_tests;
 pub mod replay;
 pub mod runtime;
 pub mod scenarios;
+pub mod workflows;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -41,6 +42,13 @@ impl Store {
     }
     pub fn read_for_peer(peer: &crate::team::Peer) -> Result<Option<Self>> {
         let path = crate::persistence::config_dir().join("lab.sqlite3");
+        Self::read_at(&path, || Ok(peer.project.clone()))
+    }
+    pub fn read_existing(root: &Path) -> Result<Option<Self>> {
+        let path = crate::persistence::config_dir().join("lab.sqlite3");
+        Self::read_at(&path, || crate::team::project_key(root))
+    }
+    fn read_at(path: &Path, project: impl FnOnce() -> Result<String>) -> Result<Option<Self>> {
         match fs::symlink_metadata(&path) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Ok(meta) if meta.is_file() => {}
@@ -54,8 +62,8 @@ impl Store {
             .map_err(error)?;
         Ok(Some(Self {
             connection,
-            project: peer.project.clone(),
-            path,
+            project: project()?,
+            path: path.to_path_buf(),
         }))
     }
     pub fn at(path: &Path, root: &Path) -> Result<Self> {

@@ -366,7 +366,11 @@ pub fn handle_command(
         "/voice off" => voice_off(state, voice_tx),
 
         "/exit" => exit_app(state),
-        "/quit" | "/q" => quit_agent(state),
+        "/quit" | "/q" => log(
+            state,
+            LogLevel::Warn,
+            "Use Escape to interrupt the current run, or /exit to close OsmoGrep.",
+        ),
 
         "/key" => {
             if state.voice.enabled {
@@ -374,6 +378,19 @@ pub fn handle_command(
             }
             enter_api_key_mode(state);
         }
+        "/resume" | "/fork" => {
+            crate::ui::workbench::open(state, 10, agent.as_ref().map(|a| a.model_config()));
+        }
+        "/recover" => log(
+            state,
+            LogLevel::Info,
+            "Use /recover <run ID> to recover an interrupted run.",
+        ),
+        "/rewind" => log(
+            state,
+            LogLevel::Info,
+            "Choose a checkpoint with /checkpoints, then /rewind <id> code|conversation|both.",
+        ),
         "/new" => new_conversation(state),
         "/approve" => toggle_auto_approve(state),
         "/status" => show_status(state, agent),
@@ -586,13 +603,6 @@ fn transcript_text(logs: &LogBuffer) -> String {
 fn exit_app(state: &mut AgentState) {
     log(state, LogLevel::Info, "Exiting Osmogrep.");
     state.ui.should_exit = true;
-}
-
-fn quit_agent(state: &mut AgentState) {
-    log(state, LogLevel::Info, "Stopping agent execution.");
-    state.ui.cancel_requested = true;
-    state.stop_spinner();
-    state.ui.exec_scroll = usize::MAX;
 }
 
 fn new_conversation(state: &mut AgentState) {
@@ -2491,20 +2501,23 @@ fn command_hints_for(input: &str, prev_selected: usize) -> (Vec<CommandItem>, us
         return (Vec::new(), 0);
     }
 
-    let all = command_palette_items();
+    let mut all = command_palette_items().to_vec();
+    if input != "/" {
+        all.extend_from_slice(advanced_command_items());
+    }
     if all.iter().any(|item| item.cmd == input) || input == "/plan" {
         return (Vec::new(), 0);
     }
 
     let mut items = Vec::new();
-    for item in all {
+    for item in &all {
         if input == "/" || item.cmd.starts_with(input) {
             items.push(*item);
         }
     }
 
     if items.is_empty() {
-        for item in all {
+        for item in &all {
             if item.cmd.contains(input)
                 || item
                     .desc
@@ -2532,8 +2545,16 @@ pub(crate) fn command_palette_items() -> &'static [CommandItem] {
             desc: "Browse workspace controls",
         },
         CommandItem {
+            cmd: "/new",
+            desc: "Start a fresh conversation",
+        },
+        CommandItem {
+            cmd: "/sessions",
+            desc: "Open the session center",
+        },
+        CommandItem {
             cmd: "/model",
-            desc: "Choose provider and model",
+            desc: "Choose provider, model and reasoning",
         },
         CommandItem {
             cmd: "/permissions",
@@ -2544,112 +2565,73 @@ pub(crate) fn command_palette_items() -> &'static [CommandItem] {
             desc: "Configure this workspace",
         },
         CommandItem {
-            cmd: "/skills",
-            desc: "Browse and manage agent skills",
-        },
-        CommandItem {
-            cmd: "/keymap",
-            desc: "Customize keyboard shortcuts",
-        },
-        CommandItem {
-            cmd: "/statusline",
-            desc: "Arrange your status line",
-        },
-        CommandItem {
-            cmd: "/stats",
-            desc: "Explore recorded usage",
-        },
-        CommandItem {
-            cmd: "/theme",
-            desc: "Change appearance",
+            cmd: "/doctor",
+            desc: "Diagnose and repair setup",
         },
         CommandItem {
             cmd: "/usage",
             desc: "Inspect token and context usage",
         },
         CommandItem {
-            cmd: "/status",
-            desc: "Inspect workspace and run status",
-        },
-        CommandItem {
-            cmd: "/doctor",
-            desc: "Check health, inspect diagnostics and repair setup",
-        },
-        CommandItem {
-            cmd: "/mcp",
-            desc: "Inspect connected tool servers",
-        },
-        CommandItem {
-            cmd: "/voice",
-            desc: "Manage voice input",
-        },
-        CommandItem {
-            cmd: "/key",
-            desc: "Set provider API key",
-        },
-        CommandItem {
-            cmd: "/copy",
-            desc: "Copy an assistant response",
-        },
-        CommandItem {
-            cmd: "/rename",
-            desc: "Name this conversation",
-        },
-        CommandItem {
-            cmd: "/new",
-            desc: "Start a fresh conversation",
-        },
-        CommandItem {
-            cmd: "/sessions",
-            desc: "Find saved conversation threads",
-        },
-        CommandItem {
-            cmd: "/checkpoints",
-            desc: "Review turn checkpoints and rewind options",
-        },
-        CommandItem {
-            cmd: "/subagents",
-            desc: "Inspect explicitly requested workers",
-        },
-        CommandItem {
-            cmd: "/clear",
-            desc: "Clear the visible transcript",
-        },
-        CommandItem {
-            cmd: "/compact",
-            desc: "Compress conversation context",
+            cmd: "/diff",
+            desc: "Inspect session file changes",
         },
         CommandItem {
             cmd: "/undo",
             desc: "Revert the last agent file change",
         },
         CommandItem {
-            cmd: "/diff",
-            desc: "Inspect session file changes",
+            cmd: "/checkpoints",
+            desc: "Review turn checkpoints and rewind options",
         },
         CommandItem {
-            cmd: "/plan mode",
-            desc: "Use read-only planning mode",
+            cmd: "/compact",
+            desc: "Compress conversation context",
         },
         CommandItem {
-            cmd: "/steer",
-            desc: "Manage persistent instructions",
+            cmd: "/clear",
+            desc: "Clear the visible transcript",
         },
         CommandItem {
-            cmd: "/jobs",
-            desc: "Inspect background work",
-        },
-        CommandItem {
-            cmd: "/nv",
-            desc: "Open the workspace in Neovim",
+            cmd: "/copy",
+            desc: "Copy an assistant response",
         },
         CommandItem {
             cmd: "/workspace",
-            desc: "Open code, Mac and iPhone workspace panes",
+            desc: "Open editor, Mac and iPhone panes",
         },
         CommandItem {
             cmd: "/exit",
             desc: "Exit OsmoGrep",
+        },
+    ]
+}
+
+pub(crate) fn advanced_command_items() -> &'static [CommandItem] {
+    &[
+        CommandItem {
+            cmd: "/resume",
+            desc: "Resume a saved session by ID",
+        },
+        CommandItem {
+            cmd: "/fork",
+            desc: "Branch a saved conversation by ID",
+        },
+        CommandItem {
+            cmd: "/recover",
+            desc: "Recover an interrupted run by ID",
+        },
+        CommandItem {
+            cmd: "/rewind",
+            desc: "Restore code, conversation or both from a checkpoint",
+        },
+        CommandItem {
+            cmd: "/steer",
+            desc: "Manage persistent instructions and live steering",
+        },
+        CommandItem {
+            cmd: "/plan mode",
+            desc: "Enter or leave read-only planning mode",
         },
     ]
 }
@@ -2682,8 +2664,8 @@ mod tests {
         );
     }
     use super::{
-        assistant_response_blocks, clear_logs, command_hints_for, latest_assistant_response,
-        parse_copy_target, transcript_text, CopyTarget,
+        advanced_command_items, assistant_response_blocks, clear_logs, command_hints_for,
+        latest_assistant_response, parse_copy_target, transcript_text, CopyTarget,
     };
     use crate::state::{LogBuffer, LogLevel};
 
@@ -2736,12 +2718,19 @@ mod tests {
     }
 
     #[test]
-    fn command_hints_offer_planning_mode_without_manual_plan_management() {
+    fn advanced_controls_are_searchable_without_cluttering_the_main_menu() {
         let (items, selected) = command_hints_for("/pla", 0);
 
         assert_eq!(selected, 0);
         assert!(!items.iter().any(|item| item.cmd == "/plan"));
         assert!(items.iter().any(|item| item.cmd == "/plan mode"));
+        let (main, _) = command_hints_for("/", 0);
+        assert_eq!(main.len(), 16);
+        assert!(!main.iter().any(|item| item.cmd == "/plan mode"));
+        for command in advanced_command_items() {
+            let (found, _) = command_hints_for(&command.cmd[..command.cmd.len() - 1], 0);
+            assert!(found.iter().any(|item| item.cmd == command.cmd));
+        }
     }
 
     #[test]
@@ -2782,6 +2771,18 @@ mod tests {
         }
         assert!(items.iter().any(|item| item.cmd == "/model"));
         assert!(items.iter().any(|item| item.cmd == "/permissions"));
+    }
+
+    #[test]
+    fn retired_quit_aliases_do_not_cancel_or_exit() {
+        for command in ["/q", "/quit"] {
+            let mut state = crate::init_state();
+            state.ui.agent_running = true;
+            super::handle_command(&mut state, command, None, None, None);
+            assert!(!state.ui.cancel_requested);
+            assert!(!state.ui.should_exit);
+            assert!(transcript_text(&state.logs).contains("Escape"));
+        }
     }
 
     #[test]

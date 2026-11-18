@@ -78,12 +78,20 @@ pub(super) fn communication_intent(prompt: &str, contextual: bool) -> Intent {
                     | "check"
                     | "let"
                     | "broadcast"
+                    | "work"
             )
         }) else {
             continue;
         };
         let before = &words[..verb];
         let after = &words[verb + 1..];
+        if words[verb] == "work"
+            && !after
+                .first()
+                .is_some_and(|word| matches!(*word, "with" | "alongside" | "together"))
+        {
+            continue;
+        }
         let peer = after
             .iter()
             .take(14)
@@ -238,4 +246,36 @@ pub fn mentions_peer(prompt: &str) -> bool {
         ]
         .iter()
         .any(|s| lower.contains(s))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn collaboration_requests_authorize_contact_but_explanations_and_prohibitions_do_not() {
+        assert_eq!(
+            communication_intent("Work with Agent B on the shared interface", false),
+            Intent::Allow(false)
+        );
+        assert_eq!(
+            communication_intent("Please work alongside the other agent", false),
+            Intent::Allow(false)
+        );
+        assert_eq!(
+            communication_intent("Do not work with other agents", false),
+            Intent::Deny
+        );
+        for prompt in [
+            "How do agents work with each other?",
+            "Implement code that can work with agent sessions",
+            "Work on the agent status panel",
+            "Explain `work with the other agent`",
+        ] {
+            assert_eq!(
+                communication_intent(prompt, false),
+                Intent::None,
+                "{prompt}"
+            );
+        }
+    }
 }

@@ -101,6 +101,7 @@ enum Action {
     Density(&'static str),
     Profile(PermissionProfile),
     Approval,
+    RenameSession,
     Motion,
     Art,
     Status(String),
@@ -162,6 +163,7 @@ pub struct PanelView {
     pub notice: String,
     pub footer: String,
     pub editing: bool,
+    pub edit_label: String,
     pub preview: Vec<String>,
     pub history: Vec<crate::usage::Day>,
     pub demo: bool,
@@ -719,27 +721,75 @@ fn entries(state: &AgentState, panel: &Panel) -> Vec<Row> {
         return choices;
     }
     let mut rows = match panel.section {
-        12 => [
-            (1, "Appearance", "Theme, paper, accent and motion"),
-            (2, "Model & provider", "Models, reasoning and connection"),
-            (3, "Permissions", "Choose what tools may do"),
-            (4, "Status line", "Choose and arrange footer items"),
-            (5, "Keyboard", "Find and change shortcuts"),
-            (6, "Skills", "Browse available agent skills"),
-            (7, "Usage", "Tokens and context for this session"),
-            (8, "Activity", "Weekly usage and recorded history"),
-            (13, "Workspace", "Editor, virtual Mac and iPhone panes"),
-            (11, "Team", "Saved messages, sessions and read receipts"),
-            (15, "Lab", "Replayable bugs and opt-in runtime evidence"),
-            (
-                14,
-                "Doctor",
-                "Health checks, diagnostics and focused repairs",
-            ),
-        ]
-        .into_iter()
-        .map(|(section, label, description)| row(label, description, "→", Action::Section(section)))
-        .collect(),
+        12 => {
+            let mut rows = [
+                (1, "Appearance", "Theme, paper, accent and motion"),
+                (2, "Model & provider", "Models, reasoning and connection"),
+                (3, "Permissions", "Choose what tools may do"),
+                (4, "Status line", "Choose and arrange footer items"),
+                (5, "Keyboard", "Find and change shortcuts"),
+                (6, "Skills", "Browse available agent skills"),
+                (7, "Usage", "Tokens and context for this session"),
+                (8, "Usage history", "Weekly usage and recorded history"),
+                (
+                    9,
+                    "Status & activity",
+                    "Run state, verification, jobs and workers",
+                ),
+                (10, "Sessions", "Open, preview and fork conversations"),
+                (13, "Workspace", "Editor, virtual Mac and iPhone panes"),
+                (11, "Team", "Saved messages, sessions and read receipts"),
+                (15, "Lab", "Replayable bugs and opt-in runtime evidence"),
+                (
+                    14,
+                    "Doctor",
+                    "Health checks, diagnostics and focused repairs",
+                ),
+            ]
+            .into_iter()
+            .map(|(section, label, description)| {
+                row(label, description, "→", Action::Section(section))
+            })
+            .collect::<Vec<_>>();
+            rows.extend([
+                row(
+                    "Connected tool servers",
+                    "Inspect configured MCP integrations",
+                    "Open",
+                    Action::Command("/mcp".into()),
+                ),
+                row(
+                    "Voice input",
+                    "Explicitly start or stop microphone input",
+                    if state.voice.enabled {
+                        "On · turn off"
+                    } else {
+                        "Off · turn on"
+                    },
+                    Action::Command(
+                        if state.voice.enabled {
+                            "/voice off"
+                        } else {
+                            "/voice on"
+                        }
+                        .into(),
+                    ),
+                ),
+                row(
+                    "Voice connection",
+                    "Inspect voice service and model status",
+                    "Open",
+                    Action::Command("/voice".into()),
+                ),
+                row(
+                    "Conversation name",
+                    "Rename this conversation",
+                    state.session_name.as_deref().unwrap_or("Unnamed"),
+                    Action::RenameSession,
+                ),
+            ]);
+            rows
+        }
         15..=21 => {
             let mut rows = vec![];
             if panel.section == 15 {
@@ -778,11 +828,11 @@ fn entries(state: &AgentState, panel: &Panel) -> Vec<Row> {
                     rows.push(row(title, description, "Open", Action::Section(section)));
                 }
             } else if panel.section == 18 {
-                rows.push(row("Propose an interface contract","Define sources, participants and dependent files before accepting","Ask agent",Action::LabAsk("Use the Lab contract guide to propose a code contract for the current task, with a precise interface, relevant source paths, explicit live participants and declared dependent files. Ask for missing scope. Do not accept or subscribe on anyone else's behalf.".into())));
-                rows.push(row("Review a contract","Check the definition, source drift and my session's acceptance","Ask agent",Action::LabAsk("Inspect the relevant Lab code contract and explain source drift and acceptance status. Ask which contract if ambiguous. A changed hash is a review request, not proof of a semantic break. Do not amend, accept or subscribe without my instruction.".into())));
+                rows.push(row("Propose an interface contract","Define sources, participants and dependent files before accepting","Ask agent",Action::LabAsk("Propose a shared interface agreement for this task with the relevant live teammates. Prepare it for review; do not accept on anyone else's behalf.".into())));
+                rows.push(row("Review a contract","Check the definition, source drift and my session's acceptance","Ask agent",Action::LabAsk("Review the interface agreement for this task. Explain source changes and which teammates have accepted it. Ask which agreement only if it is ambiguous.".into())));
             } else if panel.section == 19 {
-                rows.push(row("Prepare a UI flow","Save ordered steps and assertions; no device input yet","Ask agent",Action::LabAsk("Use the Lab behavior guide to prepare a repeatable UI flow for this app, with explicit navigation/reset steps, stable accessibility identifiers and independent assertions. Select a named existing Mac VM or dedicated iPhone simulator and relevant source references; ask if ambiguous. Do not execute it or download runtimes.".into())));
-                rows.push(row("Capture or compare app behavior","Run only the flow and installed build I select","Ask agent",Action::LabAsk("Use the Lab behavior guide to capture or compare the before/after app builds I select. Inspect the flow first and ask for target, phase or installed build identity if missing. Use existing companions only. Preserve real screenshots and observations, export paired HTML if comparing, and distinguish pixel changes from regressions. Do not claim app build provenance or unavailable console/network metrics.".into())));
+                rows.push(row("Prepare a UI flow","Save ordered steps and assertions; no device input yet","Ask agent",Action::LabAsk("Prepare a repeatable app check for this task with navigation and assertions, using an existing Mac VM or dedicated iPhone simulator. Save it without running it.".into())));
+                rows.push(row("Capture or compare app behavior","Run only the flow and installed build I select","Ask agent",Action::LabAsk("Check the selected before/after app builds using the saved flow. Compare screenshots and assertions and export a visual report. Ask only if the target, installed build or flow is missing or ambiguous.".into())));
             } else if panel.section == 20 {
                 rows.push(row(
                     "Enable request evidence",
@@ -800,18 +850,18 @@ fn entries(state: &AgentState, panel: &Panel) -> Vec<Row> {
                         serde_json::json!({"action":"configure_context","data":{"enabled":false}}),
                     ),
                 ));
-                rows.push(row("Add a factual correction","Use my explicit correction and optional source fingerprints","Ask agent",Action::LabAsk("Use the Lab context guide to save the factual correction I provide. Ask for the exact correction if missing; do not invent facts. Link relevant source paths when appropriate. Corrections are reference data and take effect next turn; stale source-linked corrections must be ignored.".into())));
+                rows.push(row("Add a factual correction","Use my explicit correction and optional source fingerprints","Ask agent",Action::LabAsk("Remember the factual correction I provide for this workspace and link its source files. Ask for the exact correction if I have not provided it. Keep request recording unchanged.".into())));
                 rows.push(row("Clear active corrections","Disable capture and remove active references; keep saved history","Clear",Action::LabRequest(serde_json::json!({"action":"configure_context","data":{"enabled":false,"clear_corrections":true}}))));
             } else if panel.section == 21 {
-                rows.push(row("Prepare failure cases","Use an existing replay and bounded fixture-controlled faults","Ask agent",Action::LabAsk("Use the Lab scenario guide to prepare a bounded failure campaign for the current app from a captured replay report. Keep an independent expected-behavior oracle. Choose relevant environment variations or faults explicitly implemented by the reproducer/fixture; do not pretend a variable changes the system network or clock. Save the plan without executing it.".into())));
-                rows.push(row("Run a failure campaign","Fresh isolated VM per run · preserve case evidence","Ask agent",Action::LabAsk("Run the saved Lab failure campaign I select in an existing isolated VM service. Inspect its cases and total run budget first; ask which plan if ambiguous. Never execute on the host or download a runtime. Preserve per-case replay IDs and distinguish observed failures, execution errors and inconclusive evidence. Do not fix workspace source automatically.".into())));
+                rows.push(row("Prepare failure cases","Use an existing replay and bounded fixture-controlled faults","Ask agent",Action::LabAsk("Prepare bounded failure tests for this app from a reproducible case and independent expected behavior. Use faults actually implemented by the test fixture. Save the plan without running it.".into())));
+                rows.push(row("Run a failure campaign","Fresh isolated VM per run · preserve case evidence","Ask agent",Action::LabAsk("Run the selected failure-testing plan in an existing isolated VM. Preserve per-case evidence, failing replay IDs and working source. Ask which plan only if it is ambiguous.".into())));
             } else if panel.section == 17 {
-                rows.push(row("Prepare two candidates","Keep the workspace intact while comparing alternative fixes","Ask agent",Action::LabAsk("Prepare two candidate fixes for the current task as Lab replay reports using proposed file contents, without changing working source. Use the same captured Git base, identical reproducer and independent expected behavior for both. Create a Lab comparison plan; do not execute it or apply a candidate yet.".into())));
-                rows.push(row("Run a comparison","Execute the plan in an existing isolated VM service","Ask agent",Action::LabAsk("Run a saved Lab comparison relevant to the current task in an existing configured isolated VM service. Inspect the plan and both candidate scopes first; ask which plan if ambiguous. Preserve source files. Report actual outcomes and unavailable measurements; do not automatically choose or apply a winner.".into())));
-                rows.push(row("Apply a chosen candidate","Apply only my selected snapshot, rejecting intervening user edits","Ask agent",Action::LabAsk("Apply the Lab replay candidate I selected for the current task using the Lab apply action. Ask which candidate if I have not selected one. Inspect it first. Do not choose a winner for me or override stale-file protection.".into())));
+                rows.push(row("Prepare two candidates","Keep the workspace intact while comparing alternative fixes","Ask agent",Action::LabAsk("Prepare two candidate fixes for this task without changing working source or running them. Use identical checks and expected behavior, and save a comparison plan.".into())));
+                rows.push(row("Run a comparison","Execute the plan in an existing isolated VM service","Ask agent",Action::LabAsk("Run the comparison plan for this task in an existing isolated VM. Compare actual evidence and leave working source untouched. Ask which plan only if it is ambiguous.".into())));
+                rows.push(row("Apply a chosen candidate","Apply only my selected snapshot, rejecting intervening user edits","Ask agent",Action::LabAsk("Apply the candidate fix I selected for this task. Preserve a restore point and refuse to overwrite newer edits. Ask which candidate only if I have not selected one.".into())));
             } else {
-                rows.push(row("Capture a bug","Ask the agent to package the current failure without executing it","Ask agent",Action::LabAsk("Capture a replayable bug report for the current task using the Lab tool. Ask for the failing behavior if needed. Select only relevant source files, a bounded reproducer and independent expected behavior. Do not run the report, install runtimes, or change workspace source merely to capture it.".into())));
-                rows.push(row("Replay a saved bug","Inspect a report, then run its check in a configured isolated VM","Ask agent",Action::LabAsk("Replay a saved Lab bug report relevant to the current task. List and inspect its contents first; ask which report if ambiguous. Use only an existing configured isolated VM server. Do not install or download device/OS runtimes or execute reproduction commands on the host.".into())));
+                rows.push(row("Capture a bug","Ask the agent to package the current failure without executing it","Ask agent",Action::LabAsk("Save a replayable bug report for this task with relevant source, a reproducer and independent expected behavior. Capture only; do not run it or change working source.".into())));
+                rows.push(row("Replay a saved bug","Inspect a report, then run its check in a configured isolated VM","Ask agent",Action::LabAsk("Inspect and rerun the saved bug report for this task in an existing isolated VM. Preserve working source and evidence. Ask which report only if it is ambiguous.".into())));
             }
             rows.push(row(
                 "Refresh",
@@ -1360,7 +1410,13 @@ fn entries(state: &AgentState, panel: &Panel) -> Vec<Row> {
                 "Background work",
                 "Existing queued and running jobs",
                 state.jobs.len().to_string(),
-                Action::None,
+                Action::Command("/jobs".into()),
+            ),
+            row(
+                "Workers",
+                "Inspect explicitly requested subagents",
+                "Open",
+                Action::Command("/subagents".into()),
             ),
             row(
                 "Verification",
@@ -1479,6 +1535,11 @@ pub fn view(state: &AgentState) -> Option<PanelView> {
             panel.notice.clone()
         },
         editing: panel.edit.is_some() || panel.capture.is_some(),
+        edit_label: match panel.edit.as_ref().map(|(field, _)| *field) {
+            Some(100) => "Message",
+            Some(101) => "Name",
+            _ => "Edit",
+        }.into(),
         footer: if panel.message_preview && (panel.section == 14 || panel.section >= 15) {
             "enter / esc Show less · ↑↓ read report"
         } else if panel.message_preview {
@@ -1491,8 +1552,10 @@ pub fn view(state: &AgentState) -> Option<PanelView> {
             && panel.picker.is_none()
         {
             "↑↓ navigate · enter select · esc categories"
+        } else if panel.edit.is_some() {
+            "enter confirm · esc cancel edit"
         } else if panel.section == 10 {
-            "←/→ filter · enter open · ctrl+n new · F3 fork · F4 message · F5 pin · esc back"
+            "←/→ filter · enter open · ctrl+n new · ctrl+r rename current · F3 fork · F4 message · F5 pin · esc back"
         } else if panel.capture.is_some() {
             "press new chord · backspace default · delete unbind · esc cancel"
         } else if panel.picker.is_some() && panel.edit.is_none() {
@@ -1639,7 +1702,15 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
                     return true;
                 }
                 let field = *field;
-                if field < 2 && (text.is_empty() || text.chars().any(char::is_whitespace)) {
+                if field == 101 {
+                    if text.is_empty() || text.chars().any(char::is_control) {
+                        panel.notice =
+                            "Enter a nonempty conversation name without control characters".into();
+                    } else {
+                        state.ui.requested_command = Some(format!("/rename {text}"));
+                        return true;
+                    }
+                } else if field < 2 && (text.is_empty() || text.chars().any(char::is_whitespace)) {
                     panel.notice = "Use a nonempty provider/model identifier without spaces".into();
                 } else if field == 2
                     && !text.is_empty()
@@ -1725,6 +1796,12 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
                 })
                 .unwrap_or_else(|| state.repo_root.clone());
             close = request_session(state, &mut panel, None, root, false);
+        }
+        KeyCode::Char('r' | 'R')
+            if panel.section == 10 && key.modifiers.contains(KeyModifiers::CONTROL) =>
+        {
+            panel.edit = Some((101, state.session_name.clone().unwrap_or_default()));
+            panel.notice = "Rename the current conversation · Enter saves; Escape cancels".into();
         }
         KeyCode::F(3) if panel.section == 10 => {
             if let Some(Row {
@@ -1938,6 +2015,13 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
                                 false,
                             );
                         }
+                    }
+                    Action::RenameSession => {
+                        panel.section = 10;
+                        panel.settings = false;
+                        panel.edit = Some((101, state.session_name.clone().unwrap_or_default()));
+                        panel.notice =
+                            "Rename the current conversation · Enter saves; Escape cancels".into();
                     }
                     Action::Command(cmd) => {
                         state.ui.requested_command = Some(cmd.clone());
@@ -2296,7 +2380,7 @@ mod tests {
         assert!(choose_at(&mut state, capture, "Capture a bug"));
         assert_eq!(state.ui.input, "keep this draft");
         assert_eq!(state.ui.queued_agent_prompts.len(), 1);
-        assert!(state.ui.queued_agent_prompts[0].contains("Do not run the report"));
+        assert!(state.ui.queued_agent_prompts[0].contains("Capture only; do not run it"));
     }
     #[test]
     fn doctor_opens_from_settings_and_queues_only_an_explicit_investigation() {
@@ -2431,7 +2515,7 @@ mod tests {
         state.insert_text("keep my draft");
         assert_eq!(section_for("/settings"), Some(12));
         open(&mut state, 12, None);
-        assert_eq!(view(&state).unwrap().rows.len(), 12);
+        assert_eq!(view(&state).unwrap().rows.len(), 18);
         handle_key(&mut state, key(KeyCode::Tab));
         assert_eq!(view(&state).unwrap().section, 12);
         assert!(choose_at(&mut state, 2, "Permissions"));
@@ -2444,6 +2528,112 @@ mod tests {
         handle_key(&mut state, key(KeyCode::Esc));
         assert!(state.ui.panel.is_none());
         assert_eq!(state.ui.input, "keep my draft");
+    }
+
+    #[test]
+    fn hidden_commands_remain_accessible_from_settings_without_model_calls() {
+        let mut state = crate::init_state();
+        state.insert_text("keep my draft");
+        open(&mut state, 12, None);
+        let panel = view(&state).unwrap();
+        for label in [
+            "Model & provider",
+            "Permissions",
+            "Appearance",
+            "Status line",
+            "Keyboard",
+            "Skills",
+            "Usage",
+            "Usage history",
+            "Status & activity",
+            "Sessions",
+            "Team",
+            "Connected tool servers",
+            "Voice input",
+            "Conversation name",
+        ] {
+            assert!(panel.rows.iter().any(|row| row.label == label), "{label}");
+        }
+        assert!(!state.voice.enabled);
+        assert!(state.ui.requested_command.is_none());
+        assert!(state.ui.queued_agent_prompts.is_empty());
+        let voice = panel
+            .rows
+            .iter()
+            .position(|row| row.label == "Voice input")
+            .unwrap();
+        assert!(choose_at(&mut state, voice, "Voice input"));
+        assert_eq!(
+            state.ui.requested_command.take().as_deref(),
+            Some("/voice on")
+        );
+        assert!(!state.voice.enabled);
+        state.voice.enabled = true;
+        open(&mut state, 12, None);
+        let voice = view(&state)
+            .unwrap()
+            .rows
+            .iter()
+            .position(|row| row.label == "Voice input")
+            .unwrap();
+        assert!(choose_at(&mut state, voice, "Voice input"));
+        assert_eq!(
+            state.ui.requested_command.take().as_deref(),
+            Some("/voice off")
+        );
+        open(&mut state, 9, None);
+        let panel = state.ui.panel.as_ref().unwrap();
+        for command in ["/jobs", "/subagents", "/verify", "/mcp"] {
+            assert!(
+                entries(&state, panel)
+                    .iter()
+                    .any(|row| matches!(&row.action, Action::Command(cmd) if cmd == command)),
+                "{command}"
+            );
+        }
+        assert_eq!(state.ui.input, "keep my draft");
+    }
+
+    #[test]
+    fn rename_from_settings_preserves_draft_and_saves_only_after_confirmation() {
+        let mut state = crate::init_state();
+        state.insert_text("keep my draft");
+        state.session_name = Some("Original".into());
+        open(&mut state, 12, None);
+        let index = view(&state)
+            .unwrap()
+            .rows
+            .iter()
+            .position(|row| row.label == "Conversation name")
+            .unwrap();
+        assert!(choose_at(&mut state, index, "Conversation name"));
+        assert_eq!(view(&state).unwrap().edit_label, "Name");
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
+        );
+        for c in "New name".chars() {
+            handle_key(&mut state, key(KeyCode::Char(c)));
+        }
+        assert!(state.ui.requested_command.is_none());
+        assert_eq!(state.session_name.as_deref(), Some("Original"));
+        handle_key(&mut state, key(KeyCode::Enter));
+        assert_eq!(
+            state.ui.requested_command.take().as_deref(),
+            Some("/rename New name")
+        );
+        assert!(state.ui.panel.is_none());
+        assert_eq!(state.ui.input, "keep my draft");
+        open(&mut state, 10, None);
+        handle_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(view(&state).unwrap().edit_label, "Name");
+        handle_key(&mut state, key(KeyCode::Esc));
+        assert!(!view(&state).unwrap().editing);
+        assert!(state.ui.requested_command.is_none());
+        assert_eq!(state.session_name.as_deref(), Some("Original"));
     }
 
     #[test]
@@ -2494,7 +2684,13 @@ mod tests {
     fn workspace_category_exposes_editor_and_companion_controls() {
         let mut state = crate::init_state();
         open(&mut state, 12, None);
-        assert!(choose_at(&mut state, 8, "Workspace"));
+        let index = view(&state)
+            .unwrap()
+            .rows
+            .iter()
+            .position(|row| row.label == "Workspace")
+            .unwrap();
+        assert!(choose_at(&mut state, index, "Workspace"));
         let panel = view(&state).unwrap();
         assert_eq!(panel.section, 13);
         assert_eq!(panel.rows.len(), 5);

@@ -35,7 +35,11 @@ class Model(http.server.BaseHTTPRequestHandler):
             requests.append(body)
             items = body['input']
             index = max(i for i, item in enumerate(items) if item.get('role') == 'user')
-            raw = str(items[index]['content']).split('LAB_REQUEST ', 1)[1]
+            prompt = str(items[index]['content'])
+            if 'LAB_REQUEST ' not in prompt:
+                self.natural(body, items, index, prompt)
+                return
+            raw = prompt.split('LAB_REQUEST ', 1)[1]
             request = json.loads(raw)
             outputs = [json.loads(item['output']) for item in items[index + 1:]
                        if item.get('type') == 'function_call_output']
@@ -69,11 +73,81 @@ class Model(http.server.BaseHTTPRequestHandler):
             failures.append(repr(error))
             self.send_error(500, str(error))
 
+    def natural(self, body, items, index, prompt):
+        cases = {
+            'hello': ('greeting', None),
+            'Why are you assuming that? Check the context you have.': ('context', 'context provenance'),
+            'Work with Agent B on the shared interface.': ('contract', 'teammate interface contract'),
+            'Compare the saved Value fix A and Value fix B candidates; prepare the comparison without running or applying it.': ('comparison', 'compare alternative fixes'),
+            'Prepare failure cases for the saved Value fix A bug, but do not run them.': ('scenario', 'fault testing'),
+            'Prepare a repeatable check for the iPhone app using the existing dedicated simulator named test; do not run it yet.': ('behavior', 'iphone ui flows'),
+        }
+        label, query = cases[prompt]
+        outputs = [json.loads(item['output']) for item in items[index + 1:]
+                   if item.get('type') == 'function_call_output']
+        if label == 'greeting':
+            assert not body['tools']
+            output = []
+        elif not outputs:
+            descriptor = next(tool for tool in body['tools'] if tool['name'] == 'tool_search')
+            assert 'context provenance' in descriptor['description']
+            assert not any(tool['name'] == 'lab' for tool in body['tools'])
+            output = [call('tool_search', {'query': query})]
+        else:
+            guidance = outputs[0]['workflow']
+            kinds = {workflow['kind'] for workflow in guidance['workflows']}
+            assert label in kinds, (label, guidance)
+            assert 'grants no execution' in guidance['policy']
+            assert 'error' not in outputs[-1], outputs[-1]
+            if label == 'context' and len(outputs) == 1:
+                assert guidance['current_request_metadata']['persistent_record_created'] is False
+                assert guidance['current_request_metadata']['provenance']['items']
+                output = [call('lab', {'action': 'current_context'})]
+            elif label == 'contract' and len(outputs) == 1:
+                target = next(peer for peer in guidance['live_routing']['open_peers'] if peer['role'] == 'Agent B')
+                output = [call('team', {'action': 'send', 'recipient': target['session'],
+                                       'body': 'NATURAL_COORDINATION: review the shared interface within the existing task.',
+                                       'message_id': 'natural-work-with-peer'})]
+            elif label == 'comparison' and len(outputs) <= 2:
+                title = 'Value fix A' if len(outputs) == 1 else 'Value fix B'
+                target = next(record for record in guidance['recent_records']
+                              if record['kind'] == 'replay' and record['title'] == title)
+                output = [call('lab', {'action': 'show', 'id': target['id']})]
+            elif label == 'comparison' and len(outputs) == 3:
+                output = [call('lab', {'action': 'plan_comparison', 'title': 'Natural comparison',
+                                      'data': {'left': outputs[1]['id'], 'right': outputs[2]['id']}})]
+            elif label == 'scenario' and len(outputs) == 1:
+                target = next(record for record in guidance['recent_records']
+                              if record['kind'] == 'replay' and record['title'] == 'Value fix A')
+                output = [call('lab', {'action': 'show', 'id': target['id']})]
+            elif label == 'scenario' and len(outputs) == 2:
+                output = [call('lab', {'action': 'plan_scenario', 'title': 'Natural failure cases',
+                                      'data': {'replay': outputs[1]['id'], 'cases': [
+                                          {'name': 'UTC', 'environment': {'TZ': 'UTC'}}]}})]
+            elif label == 'behavior' and len(outputs) == 1:
+                output = [call('lab', {'action': 'plan_flow', 'title': 'Natural iPhone check',
+                                      'data': {'platform': 'iphone', 'target': 'test', 'sources': ['app.py'],
+                                               'steps': [{'tool': 'phone_observe', 'arguments': {'includeImage': True}}]}})]
+            else:
+                results['natural-' + label] = outputs[-1]
+                output = []
+        if not output:
+            results.setdefault('natural-' + label, {})
+            output = [{'type': 'message', 'role': 'assistant', 'content': [
+                {'type': 'output_text', 'text': 'The requested step is complete; working source is preserved.'}]}]
+        data = json.dumps({'output': output, 'usage': {'input_tokens': 31, 'output_tokens': 7}}).encode()
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
 
 class Peer:
-    def __init__(self, root, environment):
-        self.process = subprocess.Popen([str(binary), '--team', 'rpc', '--repo-root', str(root),
-                                         '--auto-approve'], cwd=root, env=environment,
+    def __init__(self, root, environment, team=True, profile="workspace-auto"):
+        command = [str(binary)] + (['--team'] if team else []) + [
+            'rpc', '--repo-root', str(root), '--permission-profile', profile, '--auto-approve']
+        self.process = subprocess.Popen(command, cwd=root, env=environment,
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         stderr=subprocess.PIPE, text=True)
         self.events, self.errors = queue.Queue(), []
@@ -116,6 +190,10 @@ class Peer:
         self.wait(lambda event: event.get('type') == 'done')
         assert label in results, (label, failures)
         return results[label]
+
+    def natural(self, prompt):
+        self.request('prompt', {'prompt': prompt})
+        self.wait(lambda event: event.get('type') == 'done')
 
     def close(self):
         if self.process.poll() is None:
@@ -160,6 +238,14 @@ with tempfile.TemporaryDirectory(prefix='osmogrep-lab-acceptance-') as folder:
         peers += [a, b]
         assert not list(home.rglob('lab.sqlite3'))
         checks.append('help_and_idle_agents_do_not_create_lab_storage')
+        observer = Peer(project, environment, team=False, profile='read-only'); peers.append(observer)
+        observer.natural('hello')
+        observer.natural('Why are you assuming that? Check the context you have.')
+        assert results['natural-context']['persistent_record_created'] is False
+        assert results['natural-context']['provenance']['items']
+        assert not list(home.rglob('lab.sqlite3'))
+        checks.append('natural_context_discovery_and_inspection_work_read_only_without_recording_or_storage')
+
         contract = a.act('create', {'action': 'create_contract', 'title': 'Value interface',
                                     'data': {'definition': 'VALUE: int = 1', 'sources': ['app.py'],
                                              'participants': [b.session], 'consumers': {b.session: ['client.py']}}})
@@ -204,7 +290,7 @@ with tempfile.TemporaryDirectory(prefix='osmogrep-lab-acceptance-') as folder:
         assert len(context_rows()) == count
         assert not (project/'.context/osmogrep-lab/context.json').exists()
         checks.append('opt_in_context_captures_actual_requests_usage_and_provenance_redacts_secrets_and_turns_off')
-        spec = {'action': 'capture_replay', 'title': 'Value regression', 'data': {
+        spec = {'action': 'capture_replay', 'title': 'Value fix A', 'data': {
             'paths': ['app.py'], 'files': {'app.py': 'VALUE = 2\n'},
             'experiment': {'path': 'osmogrep_repro_value.py',
                            'source': 'from app import VALUE\nassert VALUE == 1\n',
@@ -218,6 +304,7 @@ with tempfile.TemporaryDirectory(prefix='osmogrep-lab-acceptance-') as folder:
         package = json.loads((project/'replay.json').read_text())
         package['report']['title'] = 'tampered'; (project/'tampered.json').write_text(json.dumps(package))
         cli('import', 'tampered.json', fail=True)
+        spec['title'] = 'Value fix B'
         spec['data']['files']['app.py'] = 'VALUE = 3\n'
         second = execute(spec, create=True)
         plan = cli('compare', replay['id'], second['id'])
@@ -230,6 +317,20 @@ with tempfile.TemporaryDirectory(prefix='osmogrep-lab-acceptance-') as folder:
         assert (project/'app.py').read_text() == 'USER_EDIT = True\n'
         checks.append('cli_capture_import_tamper_rejection_comparison_and_stale_apply_preserve_source')
         checks.append('unavailable_vm_saves_failure_without_executing_the_reproducer_on_host')
+        collaborator = Peer(project, environment, team=False); peers.append(collaborator)
+        before = (project/'app.py').read_bytes()
+        collaborator.natural('Work with Agent B on the shared interface.')
+        assert any('NATURAL_COORDINATION' in message['body']
+                   for message in b.request('team', {'action': 'inbox'})['messages'])
+        collaborator.natural('Compare the saved Value fix A and Value fix B candidates; prepare the comparison without running or applying it.')
+        assert results['natural-comparison']['data']['state'] == 'planned'
+        collaborator.natural('Prepare failure cases for the saved Value fix A bug, but do not run them.')
+        assert results['natural-scenario']['data']['state'] == 'planned'
+        collaborator.natural('Prepare a repeatable check for the iPhone app using the existing dedicated simulator named test; do not run it yet.')
+        assert results['natural-behavior']['data']['state'] == 'planned'
+        assert (project/'app.py').read_bytes() == before
+        checks.append('natural_requests_chain_saved_ids_and_guides_without_slash_commands_or_preparation_side_effects')
+        checks.append('work_with_named_peer_routes_without_persistent_team_mode')
         assert not failures, failures
         args.output.write_text(json.dumps({'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
                                           'checks': checks, 'fixture_model_requests': len(requests),

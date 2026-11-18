@@ -4,6 +4,14 @@ Open **Settings → Lab** for replayable bugs, candidate comparisons, code contr
 app behavior, context evidence and failure scenarios. Each category keeps its own
 saved history. Opening a record does not run it. The chat draft is preserved.
 
+Use normal requests in chat, such as “save a replay of this bug”, “compare these two
+fixes”, “work with Agent B on the shared interface”, or “why are you assuming that?”
+The agent discovers the relevant guide, inspects matching saved records and live
+teammates, and chains the existing actions within your task permissions. You do not
+need slash commands, internal IDs or JSON. Settings remains available to inspect
+history and explicitly control recording. Ambiguous targets or missing installed
+builds still need clarification; ordinary fixes do not start expensive campaigns.
+
 The CLI and discoverable `lab` agent tool use the same Rust service. Lab is absent
 from the ordinary seven-tool request. It adds no idle model calls, startup jobs or
 new dependencies. Context settings require one small metadata lookup per agent
@@ -123,6 +131,12 @@ encoded / 4096×4096 pixels. Large visual exports require a smaller flow.
 
 ## 5. Context inspector
 
+Discovery for a context-provenance question includes the current request’s
+message/tool metadata and source provenance with recording disabled. The agent
+can inspect again later in the turn if needed. This creates no saved request record
+and does not expose private model reasoning or raw message text. Metadata describes
+the canonical harness input before provider translation, not a network capture.
+
 Enable or disable recording directly in **Lab → Context inspector**. From the next
 agent turn, opt-in capture records the actual canonical harness request before
 provider translation, message/tool provenance, byte sizes, fingerprints, elapsed
@@ -172,7 +186,8 @@ Production code lives in `src/lab/`, split into storage, replay/runtime, compari
 contracts, behavior, context and scenarios. `api.rs` owns the shared action protocol;
 CLI, TUI and the discoverable tool are adapters. SQLite records have optimistic
 versions and project isolation. Cross-process job locks prevent duplicate execution
-of a plan. No session format or default provider schema changed.
+of a plan. Session formats and the default seven-tool set remain compatible; tool discovery
+now includes a small workflow capability index.
 
 Local protocol/unit fixtures cover these paths. Real VM/device runs and independent
 hard-repository benchmark results must be reported separately; mocked execution

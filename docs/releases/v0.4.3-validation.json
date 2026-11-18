@@ -1,0 +1,154 @@
+{
+  "date": "2026-11-18T07:39:28.361055+00:00",
+  "version": "0.4.3",
+  "target": "aarch64-apple-darwin",
+  "binary_sha256": "c457baf0e80e9f62377f1d6968c856d6513d25a0b50965aa258f416c39eaf67d",
+  "rust": {
+    "passed": 352,
+    "ignored": 5,
+    "excluded": [
+      "mac_clipboard_reads_an_image_without_changing_the_users_clipboard"
+    ]
+  },
+  "terminal_ui": {
+    "passed": 89
+  },
+  "npm_launcher": {
+    "passed": 5
+  },
+  "lab": {
+    "binary_sha256": "c457baf0e80e9f62377f1d6968c856d6513d25a0b50965aa258f416c39eaf67d",
+    "checks": [
+      "help_and_idle_agents_do_not_create_lab_storage",
+      "natural_context_discovery_and_inspection_work_read_only_without_recording_or_storage",
+      "accepted_contract_drift_is_delivered_once_to_the_subscriber_without_an_idle_model_call",
+      "contract_subscriptions_respect_explicit_no_messaging",
+      "opt_in_context_captures_actual_requests_usage_and_provenance_redacts_secrets_and_turns_off",
+      "cli_capture_import_tamper_rejection_comparison_and_stale_apply_preserve_source",
+      "unavailable_vm_saves_failure_without_executing_the_reproducer_on_host",
+      "natural_requests_chain_saved_ids_and_guides_without_slash_commands_or_preparation_side_effects",
+      "work_with_named_peer_routes_without_persistent_team_mode"
+    ],
+    "fixture_model_requests": 46,
+    "paid_calls": 0,
+    "real_device_runs": 0,
+    "real_vm_runs": 0
+  },
+  "team": {
+    "binary_sha256": "c457baf0e80e9f62377f1d6968c856d6513d25a0b50965aa258f416c39eaf67d",
+    "checks": [
+      "independent_process_presence_and_repository_isolation",
+      "durability_restart_deduplication_and_receipts_without_idle_paid_turns",
+      "concurrent_broadcast_delivery",
+      "safe_boundary_delivery_preserves_user_task_and_durable_ack",
+      "cross_process_edit_contention_release_and_automatic_updates",
+      "crashed_instance_expires_without_stealing_session",
+      "natural_request_metadata_targeting_active_delivery_and_sender_only_reply_without_team_mode",
+      "messages_remain_pending_until_the_recipient_model_returns_successfully",
+      "contextual_read_and_send_followups_keep_the_previous_direct_partner_only",
+      "explicit_no_message_instruction_overrides_persistent_team_mode"
+    ],
+    "processes": 7,
+    "fixture_model_requests": 32,
+    "paid_model_requests": 0
+  },
+  "input": {
+    "binary_sha256": "c457baf0e80e9f62377f1d6968c856d6513d25a0b50965aa258f416c39eaf67d",
+    "checks": [
+      "minified_diff_is_folded",
+      "typing_during_active_model_request",
+      "typing_after_completion",
+      "history_exposes_latest_action",
+      "native_accepts_renderer_frames",
+      "copy_feedback_uses_isolated_osc52_without_host_clipboard_writes",
+      "casual_interlude_preserves_coding_history_and_resumes_editing",
+      "stable_instructions_and_tool_order_across_turns"
+    ],
+    "initial_instruction_bytes": 2270,
+    "initial_tool_schema_bytes": 3642,
+    "fixture_model_requests": 7,
+    "paid_calls": 0
+  },
+  "harness": {
+    "binary_sha256": "c457baf0e80e9f62377f1d6968c856d6513d25a0b50965aa258f416c39eaf67d",
+    "passed": 13,
+    "checks": [
+      "greeting_without_tools",
+      "queued_turns_preserve_conversation",
+      "independent_session_resume_and_full_history",
+      "permission_denial_preserves_files",
+      "turn_checkpoint_restore_and_conflict_protection",
+      "background_command_incremental_output_and_stdin",
+      "cancellation_is_responsive_and_rpc_remains_usable",
+      "provider_context_overflow_compacts_and_retries_once",
+      "in_loop_model_aware_compaction_archives_original_context",
+      "explicit_worker_isolation_includes_uncommitted_parent_changes",
+      "worker_permissions_and_reviewable_changes",
+      "worker_recursion_disabled",
+      "crash_recovery_keeps_completed_tools_without_automatic_reexecution"
+    ],
+    "model_requests": 34,
+    "paid_provider_calls": 0,
+    "scope": "Local process, filesystem, JSONL RPC, and deterministic HTTP fixtures; no model-quality or ultra-long-run claim"
+  },
+  "cli": {
+    "binary_sha256": "c457baf0e80e9f62377f1d6968c856d6513d25a0b50965aa258f416c39eaf67d",
+    "checks": [
+      "atomic_validated_settings_and_secret_redaction",
+      "model_discovery_and_configured_reasoning",
+      "deep_diagnostics_repair_permissions_and_preserve_damaged_data",
+      "completions_generated_and_available_shell_parsers_pass",
+      "team_inspection_does_not_register_phantom_agents_or_acknowledge_messages"
+    ],
+    "catalog_requests": 3,
+    "model_generation_requests": 0,
+    "paid_calls": 0,
+    "completion_parsers": [
+      "bash",
+      "zsh"
+    ]
+  },
+  "local_model_smoke": {
+    "model": "qwen2.5:3b",
+    "exit": 1,
+    "seconds": 72.74,
+    "calls": [
+      {
+        "name": "tool_search",
+        "args": {
+          "query": "context provenance"
+        }
+      },
+      {
+        "name": "update_plan",
+        "args": {
+          "action": "disable_and_clear"
+        }
+      },
+      {
+        "name": "update_plan",
+        "args": {
+          "action": "enable",
+          "id": null,
+          "item": null,
+          "items": null
+        }
+      },
+      {
+        "name": "update_plan",
+        "args": {
+          "action": "clear_corrections"
+        }
+      }
+    ],
+    "done": false,
+    "paid_calls": 0,
+    "outcome": "Discovery returned current request metadata, but qwen2.5:3b then invented update_plan actions and hit the four-iteration budget. Invalid actions were rejected; no recording settings were changed. This is not a passed model-quality test."
+  },
+  "limitations": [
+    "Deterministic model fixtures validate harness integration, not model quality or hard-repository benchmark performance.",
+    "Installed Qwen 3.5 evaluation model timed out before generation; Qwen 2.5 3B completed discovery but failed subsequent tool selection.",
+    "No paid API calls, runtime downloads, real isolated VM replays or real device flows.",
+    "npm registry publication requires renewed authentication; the versioned launcher tarball is attached to the GitHub release."
+  ]
+}

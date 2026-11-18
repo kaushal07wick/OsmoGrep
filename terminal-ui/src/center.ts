@@ -14,8 +14,9 @@ export function drawCenter(panel:PanelView,width:number,height:number,light:bool
  put(top,accent+'⠿ '+reset+bold+'Sessions'+reset+dim+'  /  OsmoGrep');
  const tabs=filters.map((name,i)=>(i===filter?accent+bold:dim)+name+' '+(panel.counts?.[i]??0)+reset).join(dim+'   ');
  if(height>=10)put(top+2,tabs);
+ const editLabel=panel.edit_label??'Message';
  const searchY=Math.min(height-1,top+(height>=10?4:1));
- put(searchY,(panel.editing?accent+'Message  ':dim+'/ ')+ink+plain(panel.query)+(panel.query?'':dim+(panel.editing?'Write to this collaborator':'Search tasks, models, and projects'))+reset);
+ put(searchY,(panel.editing?accent+editLabel+'  ':dim+'/ ')+ink+plain(panel.query)+(panel.query?'':dim+(panel.editing?(editLabel==='Name'?'Name this conversation':'Write to this collaborator'):'Search tasks, models, and projects'))+reset);
  const footerRows=height>=18?5:height>=10?3:1,bodyTop=Math.min(height,searchY+2),bodyHeight=Math.max(0,height-footerRows-bodyTop-(height>=18?1:0));
  if(panel.previewing){
   const lines=(panel.preview??[]).flatMap(line=>{const text=plain(line);return [fit(text,inner)];});
@@ -45,7 +46,7 @@ export function drawCenter(panel:PanelView,width:number,height:number,light:bool
  if(!panel.rows.length&&bodyHeight>0)put(bodyTop,dim+(panel.query?'No matching sessions.':'No sessions yet. Ctrl+N starts a conversation here.'));
  const footer=Math.max(bodyTop,height-footerRows);
  if(height>=18){put(footer,dim+fit(current?.description.split(' · ').slice(0,2).join(' · ')??panel.notice,inner));put(footer+1,dim+fit(panel.notice,inner));}
- const legend=panel.editing?'enter send · esc cancel':inner>=95?'←/→ filter · enter open · F1 preview · ctrl+n new · F3 fork · F4 message · F5 pin · esc back':'←/→ filter · enter open · ctrl+n new · esc back';
+ const legend=panel.editing?(editLabel==='Name'?'enter save · esc cancel':'enter send · esc cancel'):inner>=95?'←/→ filter · enter open · F1 preview · ctrl+n new · ctrl+r rename · F3 fork · F4 message · F5 pin · esc back':'←/→ filter · enter open · ctrl+n new · ctrl+r rename · esc back';
  put(height-(height>=10?2:1),dim+legend);
- return {rows:rows.map(r=>fit(r,width)),controls,cursor:{x:Math.min(width-1,margin+(panel.editing?9:2)+visibleWidth(plain(panel.query))),y:searchY}};
+ return {rows:rows.map(r=>fit(r,width)),controls,cursor:{x:Math.min(width-1,margin+(panel.editing?visibleWidth(editLabel)+2:2)+visibleWidth(plain(panel.query))),y:searchY}};
 }

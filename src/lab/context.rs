@@ -137,6 +137,23 @@ struct Capture {
     enabled: bool,
 }
 thread_local! {static ACTIVE:RefCell<Option<Capture>>=const{RefCell::new(None)};}
+thread_local! {static CURRENT:RefCell<Option<Value>>=const{RefCell::new(None)};}
+
+/// Compute request metadata only when the agent explicitly asks to inspect it.
+pub fn with_current_request<T>(root: &Path, payload: &Value, action: impl FnOnce() -> T) -> T {
+    struct Restore(Option<Value>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            CURRENT.with(|slot| *slot.borrow_mut() = self.0.take());
+        }
+    }
+    let metadata = json!({"model":payload["model"],"provenance":provenance(root,payload),"persistent_record_created":false,"meaning":"Metadata for the active canonical harness request, before provider translation. Message hashes identify inputs; they do not expose private model reasoning. The model can cite the actual inputs already in its conversation."});
+    let _restore = Restore(CURRENT.with(|slot| slot.replace(Some(metadata))));
+    action()
+}
+pub fn current() -> Result<Value> {
+    CURRENT.with(|slot|slot.borrow().clone()).ok_or("Current request context is available only inside an active agent turn; use saved context records from CLI or Settings".into())
+}
 pub struct Session(Option<Capture>);
 impl Drop for Session {
     fn drop(&mut self) {
@@ -214,7 +231,10 @@ fn provenance(root: &Path, payload: &Value) -> Value {
         let bytes=super::bounded_file(&file,32*1024).ok()?;
         Some(json!({"path":name,"sha256":crate::file_guard::digest(&bytes),"meaning":"Current instruction file fingerprint; inspect canonical_request to see included content"}))
     }).collect::<Vec<_>>();
-    let items=payload["input"].as_array().map(|items|items.iter().enumerate().map(|(index,item)|json!({"index":index,"role":item["role"],"type":item["type"],"name":item["name"],"call_id":item["call_id"],"bytes":item.to_string().len(),"sha256":crate::file_guard::digest(item.to_string().as_bytes())})).collect::<Vec<_>>()).unwrap_or_default();
+    let items=payload["input"].as_array().map(|items|items.iter().enumerate().map(|(index,item)|{
+        let args=item["arguments"].as_str().and_then(|text|serde_json::from_str::<Value>(text).ok());
+        json!({"index":index,"role":item["role"],"type":item["type"],"name":item["name"],"call_id":item["call_id"],"source_path":args.as_ref().and_then(|args|args["path"].as_str()),"bytes":item.to_string().len(),"sha256":crate::file_guard::digest(item.to_string().as_bytes())})
+    }).collect::<Vec<_>>()).unwrap_or_default();
     json!({"instructions":instructions,"items":items,"tool_names":payload["tools"].as_array().map(|tools|tools.iter().map(|t|t["name"].clone()).collect::<Vec<_>>()).unwrap_or_default()})
 }
 pub fn capture(payload: &Value, provider: &str) -> Result<Option<(PathBuf, String)>> {
@@ -257,6 +277,30 @@ pub fn finish(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn current_context_is_ephemeral_metadata_and_does_not_enable_recording() {
+        assert!(current().is_err());
+        let payload = json!({"model":"fixture","tools":[{"name":"lab"}],"input":[{"role":"user","content":"private original text"},{"type":"function_call","name":"read_file","call_id":"read-1","arguments":"{\"path\":\"src/main.rs\"}"}]});
+        with_current_request(&std::env::temp_dir(), &payload, || {
+            let report = current().unwrap();
+            assert_eq!(report["persistent_record_created"], false);
+            assert_eq!(
+                report["provenance"]["items"][1]["source_path"],
+                "src/main.rs"
+            );
+            assert!(!report.to_string().contains("private original text"));
+            let discovery =
+                crate::lab::workflows::discovery(&std::env::temp_dir(), "context provenance");
+            assert_eq!(discovery["current_request_metadata"], report);
+            assert!(
+                crate::lab::workflows::discovery(&std::env::temp_dir(), "compare fixes")
+                    ["current_request_metadata"]
+                    .is_null()
+            );
+            assert!(capture(&payload, "fixture").unwrap().is_none());
+        });
+        assert!(current().is_err());
+    }
     #[test]
     fn capture_off_is_zero_database_work_and_scrubs_images_and_reasoning() {
         let root = std::env::temp_dir().join(format!("lab-context-{}", uuid::Uuid::new_v4()));

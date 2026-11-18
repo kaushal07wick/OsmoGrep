@@ -110,3 +110,13 @@ test('elapsed time carries seconds into minutes and hours',()=>{
  }
  assert.equal(activityInfo(92100,'thinking',null).time,'1m 32s');
 });
+
+
+test('session rename uses a save action and a bounded cursor instead of message wording',()=>{
+ const panel={sections:['Sessions'],section:10,query:'New conversation name',selected:0,editing:true,edit_label:'Name',rows:[],notice:'',footer:''};
+ const frame=drawCenter(panel,100,30,false,'');
+ const text=frame.rows.map(stripTerminalSequences).join('\n');
+ assert.match(text,/Name  New conversation name/);
+ assert.match(text,/enter save/);assert.doesNotMatch(text,/enter send|Message  /);
+ assert.ok(frame.cursor.x>=0&&frame.cursor.x<100);
+});

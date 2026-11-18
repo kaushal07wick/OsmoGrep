@@ -1202,10 +1202,26 @@ impl RunAgent {
                         in_flight.push(item.clone());
                         ledger.checkpoint(&json!(in_flight), "tool_in_flight")?;
                         let cancel = self.cancel.clone();
-                        let mut result = self
-                            .tools
-                            .call_cancellable(&name, args.clone(), &|| cancel.is_cancelled())
-                            .unwrap_or_else(|e| json!({ "error": e }));
+                        let call = || {
+                            self.tools
+                                .call_cancellable(&name, args.clone(), &|| cancel.is_cancelled())
+                        };
+                        let inspect_context = (name == "lab"
+                            && args["action"] == "current_context")
+                            || (name == "tool_search"
+                                && args["query"]
+                                    .as_str()
+                                    .is_some_and(crate::lab::workflows::inspects_context));
+                        let result = if inspect_context {
+                            crate::lab::context::with_current_request(
+                                &repo_root,
+                                &self.responses_payload(&input, false),
+                                call,
+                            )
+                        } else {
+                            call()
+                        };
+                        let mut result = result.unwrap_or_else(|e| json!({"error":e}));
                         if result.get("error").is_none() {
                             turn_checkpoint.complete(&repo_root, &name, &args, &result)?;
                         }

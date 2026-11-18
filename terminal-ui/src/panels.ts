@@ -7,7 +7,7 @@ import {websiteMark} from './brand.ts';
 export interface PanelView {
   health_running?:boolean;
   settings?:boolean;previewing?:boolean; preview_offset?:number;
-  title?:string;elapsed?:number;selecting?:boolean;center_filter?:number;counts?:number[];
+  title?:string;edit_label?:string;elapsed?:number;selecting?:boolean;center_filter?:number;counts?:number[];
   sections:string[];section:number;query:string;selected:number;editing:boolean;
   rows:{label:string;description:string;value:string;id?:string|null;group?:string|null;tag?:string|null}[];notice:string;footer:string;preview?:string[];history?:Day[];demo?:boolean;
 }

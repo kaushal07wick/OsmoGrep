@@ -135,7 +135,6 @@ pub struct UiState {
     pub transcript_selection: Option<[[usize; 2]; 2]>,
     pub run_change_start: usize,
     pub follow_tail: bool,
-    pub active_spinner: Option<String>,
     pub spinner_started_at: Option<Instant>,
     pub agent_running: bool,
     pub run_phase: String,
@@ -212,7 +211,6 @@ impl Default for UiState {
             transcript_selection: None,
             run_change_start: 0,
             follow_tail: true,
-            active_spinner: None,
             spinner_started_at: None,
             agent_running: false,
             run_phase: "idle".to_string(),
@@ -836,11 +834,6 @@ impl AgentState {
 
     pub fn clear_autocomplete(&mut self) {
         self.ui.autocomplete = None;
-    }
-
-    pub fn stop_spinner(&mut self) {
-        self.ui.active_spinner = None;
-        self.ui.spinner_started_at = None;
     }
 }
 

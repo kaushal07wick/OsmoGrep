@@ -32,7 +32,7 @@ osmogrep
 
 Rust 1.89+ is required to build. Install **Node.js 22.19 or newer** for the TypeScript UI; the renderer bundle is already included, so users do not need to run npm. Without Node, OsmoGrep uses its native Rust terminal interface. Linux source builds also require `pkg-config` and ALSA development headers, as configured in [CI](../.github/workflows/ci.yml).
 
-Use `/key` inside the app to set credentials instead of an environment variable. `osmogrep doctor` reports installation and configuration details. For an existing checkout, pull the changes and repeat `cargo install --path . --locked` to update it.
+Use **Settings → Model & provider → API key** to set credentials instead of an environment variable. `osmogrep doctor` reports installation and configuration details. For an existing checkout, pull the changes and repeat `cargo install --path . --locked` to update it.
 
 The optional [installer](../install.sh) also attempts to install tmux/Neovim and initialize a managed editor configuration. The Cargo commands above install OsmoGrep itself.
 
@@ -57,7 +57,7 @@ The composer has a fine paper texture: **Graphite** in dark mode and **Cotton** 
 
 The welcome header stays through the first chat exchange and hides when you send the second message. Commands do not count as chat turns.
 
-Typing `/` opens an attached, searchable command tray. The model and provider in the status line are selectors. `/settings`, `/permissions`, `/skills`, `/keymap`, and `/statusline` open workspace controls.
+Typing `/` opens an attached, searchable command tray. The model and provider in the status line are selectors. The main tray has 16 controls. `/settings` groups appearance, keyboard, skills, integrations, voice, team history and activity; `/permissions` keeps approvals and OS sandbox controls explicit. Advanced commands appear only when you search for them.
 
 ![Attached command tray above the Graphite composer](assets/terminal-commands.png)
 
@@ -76,7 +76,7 @@ Typing `/` opens an attached, searchable command tray. The model and provider in
 | Escape | Cancel a run or dismiss a control; keep the app open |
 | `/exit` | Exit the application |
 
-Terminal-managed copy/paste shortcuts also remain available. Key bindings can be changed through `/keymap`. After cancellation, queued turns pause; Enter with an empty draft resumes them. Use `/steer now <text>` when you explicitly want to interrupt and redirect the current run.
+Terminal-managed copy/paste shortcuts also remain available. Key bindings can be changed through **Settings → Keyboard**. After cancellation, queued turns pause; Enter with an empty draft resumes them. Use `/steer now <text>` when you explicitly want to interrupt and redirect the current run.
 
 ### Images and readable output
 
@@ -147,7 +147,7 @@ Choose a profile through `/permissions`:
 
 These are application-level tool policies, not an operating-system sandbox. A shell guard blocks known destructive command patterns. `/undo` can restore the last captured agent edit; it does not reverse arbitrary shell side effects.
 
-Prompts, relevant context, attached images, and tool results go to your selected model provider. Provider credentials stay in the Rust process and are not sent to the TypeScript renderer. New keys entered through `/key` use macOS Keychain, Linux Secret Service (`secret-tool`), or Windows user-bound DPAPI. `/key migrate` moves legacy plaintext provider keys out of configuration; environment variables remain supported. Headless events mask secret-like values on a best-effort basis.
+Prompts, relevant context, attached images, and tool results go to your selected model provider. Provider credentials stay in the Rust process and are not sent to the TypeScript renderer. New keys entered through the masked credential input use macOS Keychain, Linux Secret Service (`secret-tool`), or Windows user-bound DPAPI. **Model & provider → Migrate saved keys** moves legacy plaintext provider keys out of configuration; environment variables remain supported. Headless events mask secret-like values on a best-effort basis.
 
 Repository indexing and run artifacts live under `.context/`:
 
@@ -168,8 +168,8 @@ Automatic review/test scheduling is **off by default**. A greeting or unrelated 
 ## Instructions, skills, and integrations
 
 - **Repository instructions:** root `.osmogrep.md`, `AGENTS.md`, `CLAUDE.md`, and `.cursorrules` are loaded within a shared size budget. They guide requested work rather than create tasks of their own.
-- **Skills:** browse `/skills` and invoke a selected skill with `$skill-name`. Discovery includes repository `skills/`, `.agents/skills/`, `.osmogrep/skills/`, and corresponding supported user skill directories.
-- **Neovim:** `/nv [file]` keeps chat on the left and opens the editor on the right in a native Ghostty pane. A compact project tree, clickable live-edit ticker and file tabs keep the agent's active file visible without taking over files you inspect. **Space a** returns to chat, **Space e** toggles the tree, **Space g** jumps to the live edit, **Space f** toggles following, and **Space s** opens/closes a second inspection window. Unsaved buffers are preserved. Requires Neovim and Ghostty 1.3+ on macOS; other terminals use the tmux fallback. `OSMOGREP_EDITOR_BACKEND=tmux` explicitly selects that fallback. Personal Neovim/terminal configuration stays untouched.
+- **Skills:** browse **Settings → Skills** and invoke a selected skill with `$skill-name`. Discovery includes repository `skills/`, `.agents/skills/`, `.osmogrep/skills/`, and corresponding supported user skill directories.
+- **Neovim:** **Workspace → Code editor** keeps chat on the left and opens the editor on the right (`/nv [file]` remains a compatibility alias) in a native Ghostty pane. A compact project tree, clickable live-edit ticker and file tabs keep the agent's active file visible without taking over files you inspect. **Space a** returns to chat, **Space e** toggles the tree, **Space g** jumps to the live edit, **Space f** toggles following, and **Space s** opens/closes a second inspection window. Unsaved buffers are preserved. Requires Neovim and Ghostty 1.3+ on macOS; other terminals use the tmux fallback. `OSMOGREP_EDITOR_BACKEND=tmux` explicitly selects that fallback. Personal Neovim/terminal configuration stays untouched.
 - **Mac and iPhone:** Settings → Workspace, or `/workspace mac|phone [name]`, automatically prepares or reuses the device and opens it in a native Ghostty pane. The agent can also use `device_workspace` for app tasks and control the device through its connected MCP tools. Background setup is pollable without blocking coding. See [requirements and data flow](device-workspace.md).
 - **Optional downloads:** Opening a device installs its companion if needed. You can preinstall only the small companion through Settings → Workspace or `/workspace install mac|phone`; this does not download an OS image or boot a device. Packages retain helpers/licenses and use verified checksums and signatures. Nothing downloads at app startup.
 - **MCP and hooks:** `/mcp` inspects configured native stdio/Streamable HTTP servers and legacy command bridges. Optional `pre_shell`, `pre_edit`, and `post_edit` hooks are configured in `config.toml`.
@@ -184,14 +184,30 @@ Use `/help` for searchable controls. For testing, reviewing, planning, and imple
 
 | Command | Purpose |
 | --- | --- |
-| `/model`, `/key`, `/permissions` | Configure the model, credentials, and tool policy |
-| `/settings`, `/theme`, `/keymap`, `/statusline` | Customize the workspace |
-| `/skills`, `/mcp` | Inspect available skills and connected tool bridges |
-| `/stats`, `/usage`, `/status` | Inspect activity and run state |
-| `/diff`, `/undo`, `/copy` | Inspect, revert, or copy session work |
-| `/new`, `/clear`, `/compact`, `/rename` | Manage the conversation |
-| `/steer <text>`, `/steer now <text>`, `/steer clear` | Persistent instructions or explicit live steering |
-| `/jobs`, `/nv`, `/exit` | Background work, editor integration, and exit |
+| `/help` | Browse controls and shortcuts |
+| `/new`, `/sessions` | Start or reopen a conversation |
+| `/model`, `/permissions`, `/settings` | Model/reasoning, explicit access policy and workspace preferences |
+| `/doctor`, `/usage` | Diagnostics, repairs and usage |
+| `/diff`, `/undo`, `/checkpoints` | Inspect edits and restore captured work |
+| `/compact`, `/clear`, `/copy` | Context compaction, visible transcript and clipboard |
+| `/workspace`, `/exit` | Editor/device panes and exit |
+
+Advanced controls remain searchable: `/resume <id>`, `/fork <id>`,
+`/recover <run-id>`, `/rewind <id> code|conversation|both`,
+`/steer <text>` (`now` for live steering, `clear` to remove it), and
+`/plan mode on|off`. They do not appear in the initial `/` tray.
+
+The session center also supports **Ctrl+R** to rename the current conversation;
+**Settings → Conversation name** opens the same edit. **Status & activity** links
+to jobs, workers and recorded verification. Voice input starts only after an
+explicit enable action; merely opening Settings does not access the microphone.
+
+Older settings aliases (`/theme`, `/keymap`, `/voice`, `/mcp`, `/nv`, etc.) and
+legacy workflow spellings remain accepted, hidden from suggestions, during the
+compatibility transition. Testing, triage, delegation, plans and team messaging
+should be requested in ordinary language. `/quit` and `/q` now explain the
+unambiguous alternatives: **Escape** interrupts and `/exit` exits. The shell CLI
+subcommands remain unchanged.
 
 Run without the terminal interface:
 
