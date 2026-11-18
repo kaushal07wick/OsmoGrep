@@ -186,13 +186,15 @@ impl Frozen {
             candidate_tree: String::new(),
         };
         let archive = frozen.path.join("source.tar");
+        let canonical_root = root.canonicalize().map_err(error)?;
+        let relative_archive = archive.strip_prefix(&canonical_root).map_err(error)?;
         git::run(
             root,
             &[
                 "archive",
                 "--format=tar",
                 "--output",
-                archive.to_str().ok_or("Non-UTF8 snapshot path")?,
+                relative_archive.to_str().ok_or("Non-UTF8 snapshot path")?,
                 &revision,
             ],
         )
@@ -201,7 +203,7 @@ impl Frozen {
             return Err("Unexpected source archive size".into());
         }
         let mut tar = Command::new("tar");
-        tar.arg("-xf").arg(&archive).arg("-C").arg(&frozen.path);
+        tar.current_dir(&frozen.path).args(["-xf", "source.tar"]);
         let extracted =
             crate::process_runner::run_command_cancellable(tar, Duration::from_secs(30), cancel)?;
         if extracted.exit_code != 0 || extracted.timed_out || extracted.cancelled {

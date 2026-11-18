@@ -884,6 +884,7 @@ mod tests {
         let (root, _, a, b) = fixture();
         let full_body = "full line\n\tindented\n".repeat(500);
         for index in 0..60 {
+            b.heartbeat("ready", "", "", "", "").unwrap();
             a.send(
                 Some(&b.session),
                 if index == 59 {

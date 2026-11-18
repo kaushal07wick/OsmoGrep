@@ -296,7 +296,7 @@ with tempfile.TemporaryDirectory(prefix='osmogrep-harness-') as folder:
         assert phases['overflow'] == 3
         results.append('provider_context_overflow_compacts_and_retries_once')
         editor.close()
-        (config / 'config.toml').write_text('[model_options."openai/fixture-model"]\ncontext_window = 16000\nmax_output_tokens = 2048\nreasoning = "none"\n')
+        (config / 'config.toml').write_text('[model_options."openai/fixture-model"]\ncontext_window = 8000\nmax_output_tokens = 2048\nreasoning = "none"\n')
         compacted = Client(project, env)
         clients.append(compacted)
         first_request = len(requests)

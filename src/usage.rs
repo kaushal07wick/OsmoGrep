@@ -71,7 +71,7 @@ fn repo_key(repo: &Path) -> String {
     format!("{:x}", Sha256::digest(repo.to_string_lossy().as_bytes()))
 }
 fn schema(conn: &Connection) -> Result<(), String> {
-    conn.busy_timeout(Duration::from_millis(250))
+    conn.busy_timeout(Duration::from_secs(2))
         .map_err(|e| e.to_string())?;
     conn.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS provider_usage (id TEXT PRIMARY KEY, repo TEXT NOT NULL, at INTEGER NOT NULL, model TEXT NOT NULL, provider TEXT NOT NULL, input INTEGER NOT NULL, output INTEGER NOT NULL, cached INTEGER NOT NULL, reasoning INTEGER NOT NULL, duration_ms INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS usage_repo_at ON provider_usage(repo,at);").map_err(|e|e.to_string())
 }

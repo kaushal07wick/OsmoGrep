@@ -2,6 +2,9 @@
 use std::{fs, io::Write, path::Path};
 
 pub fn lock_file(path: &Path) -> Result<fs::File, String> {
+    lock_file_with_timeout(path, std::time::Duration::from_millis(250))
+}
+fn lock_file_with_timeout(path: &Path, timeout: std::time::Duration) -> Result<fs::File, String> {
     let mut options = fs::OpenOptions::new();
     options.read(true).write(true).create(true).truncate(false);
     #[cfg(unix)]
@@ -10,7 +13,7 @@ pub fn lock_file(path: &Path) -> Result<fs::File, String> {
         options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
     }
     let lock = options.open(path).map_err(|e| e.to_string())?;
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
+    let deadline = std::time::Instant::now() + timeout;
     loop {
         match lock.try_lock() {
             Ok(()) => return Ok(lock),
@@ -32,7 +35,10 @@ pub fn update_toml(
         .parent()
         .ok_or("Settings path needs a parent directory")?;
     fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    let _lock = lock_file(&path.with_extension("lock"))?;
+    let _lock = lock_file_with_timeout(
+        &path.with_extension("lock"),
+        std::time::Duration::from_secs(2),
+    )?;
     let mut config = match fs::read_to_string(path) {
         Ok(text) => text.parse::<toml::Value>().map_err(|e| e.to_string())?,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
