@@ -31,9 +31,16 @@ const SECTIONS: &[&str] = &[
     "App behavior",
     "Context",
     "Scenarios",
+    "Account",
 ];
 
 pub struct Panel {
+    account: Option<crate::account::Profile>,
+    account_job: Option<crate::account::Job>,
+    account_verification: Option<(String, String)>,
+    account_loaded: bool,
+    account_setup: bool,
+    load_account: bool,
     lab_records: Vec<serde_json::Value>,
     lab_before: Option<i64>,
     lab_job: Option<std::sync::mpsc::Receiver<Result<serde_json::Value, String>>>,
@@ -78,6 +85,10 @@ pub struct Panel {
 
 #[derive(Clone)]
 enum Action {
+    Account(crate::account::Operation),
+    AccountCancel,
+    AccountBrowser,
+    AccountSkip,
     LabRefresh,
     LabRequest(serde_json::Value),
     LabOlder(i64),
@@ -155,6 +166,7 @@ pub struct PanelView {
     pub selecting: bool,
     pub elapsed: u64,
     pub health_running: bool,
+    pub account_running: bool,
     pub sections: Vec<&'static str>,
     pub section: usize,
     pub query: String,
@@ -172,6 +184,7 @@ pub struct PanelView {
 pub fn section_for(command: &str) -> Option<usize> {
     Some(match command {
         "/help" => 0,
+        "/login" => 22,
         "/settings" | "/config" => 12,
         "/theme" | "/color" | "/type" => 1,
         "/model" | "/providers" | "/account" => 2,
@@ -193,10 +206,16 @@ pub fn open(state: &mut AgentState, section: usize, model: Option<&ModelConfig>)
     state.ui.command_items.clear();
     let (days, notice) = load_usage(state, section);
     state.ui.panel = Some(Panel {
+        account: None,
+        account_job: None,
+        account_verification: None,
+        account_loaded: false,
+        account_setup: false,
+        load_account: section == 22,
         lab_records: vec![],
         lab_before: None,
         lab_job: None,
-        load_lab: section >= 15,
+        load_lab: (15..=21).contains(&section),
         health: None,
         health_scan: None,
         health_checks: vec![],
@@ -238,6 +257,23 @@ pub fn open(state: &mut AgentState, section: usize, model: Option<&ModelConfig>)
             Vec::new()
         },
     });
+}
+
+pub fn open_login(state: &mut AgentState, model: Option<&ModelConfig>) {
+    open(state, 22, model);
+    begin_account(
+        state.ui.panel.as_mut().unwrap(),
+        crate::account::Operation::Login,
+    );
+}
+
+pub fn open_account_setup(state: &mut AgentState, model: &ModelConfig) {
+    open(state, 22, Some(model));
+    let panel = state.ui.panel.as_mut().unwrap();
+    panel.account_setup = true;
+    panel.load_account = false;
+    panel.notice =
+        "Connect your GitHub-linked OsmoGrep account, or choose a local model / API key.".into();
 }
 
 pub fn open_selector(state: &mut AgentState, provider: bool) {
@@ -381,10 +417,66 @@ fn lab_job(
     });
     rx
 }
+fn begin_account(panel: &mut Panel, operation: crate::account::Operation) {
+    panel.account_job = None;
+    panel.account = None;
+    panel.account_loaded = false;
+    panel.account_verification = None;
+    panel.load_account = false;
+    panel.opened = std::time::Instant::now();
+    panel.notice = "Connecting to your OsmoGrep account…".into();
+    panel.account_job = Some(crate::account::start(operation));
+}
 pub fn poll(state: &mut AgentState, agent: &crate::agent::Agent) -> bool {
     let Some(panel) = state.ui.panel.as_mut() else {
         return false;
     };
+    if panel.load_account {
+        begin_account(panel, crate::account::Operation::Refresh);
+        return true;
+    }
+    if let Some(job) = &panel.account_job {
+        match job.events.try_recv() {
+            Ok(crate::account::Event::Waiting {
+                url,
+                code,
+                browser_error,
+            }) => {
+                panel.notice = browser_error.map(|error| format!("{error} · choose Open browser, or use osmogrep login --no-browser"))
+                    .unwrap_or_else(|| "Confirm the code in your browser. Opening the link does not approve the connection.".into());
+                panel.account_verification = Some((url, code));
+                return true;
+            }
+            Ok(crate::account::Event::Done(result)) => {
+                panel.account_job = None;
+                panel.account_verification = None;
+                match result {
+                    Ok(profile) => {
+                        panel.notice = if profile.is_some() {
+                            "Account connected · hosted metrics and local CLI usage stay separate"
+                        } else {
+                            "Not signed in · local models and API keys remain available"
+                        }
+                        .into();
+                        panel.account = profile;
+                        panel.account_loaded = true;
+                    }
+                    Err(error) => {
+                        panel.notice = error;
+                        panel.account_loaded = false;
+                    }
+                }
+                return true;
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                panel.account_job = None;
+                panel.account_verification = None;
+                panel.notice = "Account action stopped. Refresh to retry.".into();
+                return true;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        }
+    }
     if panel.load_lab {
         panel.load_lab = false;
         let kind = match panel.section {
@@ -723,6 +815,11 @@ fn entries(state: &AgentState, panel: &Panel) -> Vec<Row> {
     let mut rows = match panel.section {
         12 => {
             let mut rows = [
+                (
+                    22,
+                    "Account",
+                    "GitHub-linked identity, hosted usage and sign-in",
+                ),
                 (1, "Appearance", "Theme, paper, accent and motion"),
                 (2, "Model & provider", "Models, reasoning and connection"),
                 (3, "Permissions", "Choose what tools may do"),
@@ -788,6 +885,157 @@ fn entries(state: &AgentState, panel: &Panel) -> Vec<Row> {
                     Action::RenameSession,
                 ),
             ]);
+            rows
+        }
+        22 => {
+            let mut rows = vec![];
+            if let Some((_, code)) = &panel.account_verification {
+                rows.push(row(
+                    "Confirm code",
+                    "Check that this matches the browser before approving",
+                    code,
+                    Action::None,
+                ));
+                rows.push(row(
+                    "Open browser",
+                    "Continue with your existing GitHub-backed account",
+                    "Open",
+                    Action::AccountBrowser,
+                ));
+            }
+            if panel.account_job.is_some() {
+                rows.push(row(
+                    "Account connection",
+                    "Escape cancels and returns to Settings",
+                    "Waiting",
+                    Action::None,
+                ));
+                rows.push(row(
+                    "Cancel",
+                    "Stop waiting for this account action",
+                    "Cancel",
+                    Action::AccountCancel,
+                ));
+            } else {
+                rows.push(row(
+                    if panel.account.is_some() {
+                        "Switch account"
+                    } else {
+                        "Sign in with browser"
+                    },
+                    "Link your existing OsmoGrep account",
+                    "Sign in",
+                    Action::Account(crate::account::Operation::Login),
+                ));
+                if !panel.account_setup {
+                    rows.push(row(
+                        "Refresh account",
+                        "Read server-recorded account details on demand",
+                        "Refresh",
+                        Action::Account(crate::account::Operation::Refresh),
+                    ));
+                }
+                if !panel.account_setup && (panel.account.is_some() || !panel.account_loaded) {
+                    rows.push(row(
+                        "Sign out",
+                        "Revoke this CLI connection and remove its local credential",
+                        "Sign out",
+                        Action::Account(crate::account::Operation::Logout),
+                    ));
+                }
+            }
+            if panel.account_setup && panel.account_job.is_none() {
+                rows.push(row(
+                    "Choose a local model or API key",
+                    "Account identity and model access are separate",
+                    "Choose",
+                    Action::Section(2),
+                ));
+                rows.push(row(
+                    if panel.account.is_some() {
+                        "Continue to chat"
+                    } else {
+                        "Continue without an account"
+                    },
+                    "You can sign in later from Settings → Account",
+                    "Continue",
+                    Action::AccountSkip,
+                ));
+            }
+            if let Some(account) = &panel.account {
+                rows.push(row(
+                    "Account",
+                    account
+                        .user
+                        .username
+                        .as_deref()
+                        .map(|name| format!("GitHub · @{name}"))
+                        .unwrap_or_else(|| "GitHub-linked OsmoGrep identity".into()),
+                    &account.user.name,
+                    Action::None,
+                ));
+                if let Some(workspace) = &account.workspace {
+                    rows.push(row(
+                        "Workspace",
+                        &workspace.kind,
+                        &workspace.name,
+                        Action::None,
+                    ));
+                }
+                for (label, value) in [
+                    ("Reviews", account.stats.reviews),
+                    ("Verified fixes", account.stats.verified),
+                    ("Running", account.stats.running),
+                    ("Queued", account.stats.queued),
+                ] {
+                    rows.push(row(
+                        label,
+                        "Hosted workspace · recorded by OsmoGrep",
+                        crate::account::count(value),
+                        Action::None,
+                    ));
+                }
+                for (label, value) in [
+                    ("Model calls", account.usage.model_calls),
+                    ("Input tokens", account.usage.input_tokens),
+                    ("Output tokens", account.usage.output_tokens),
+                ] {
+                    rows.push(row(
+                        label,
+                        "Hosted account usage · excludes local CLI records",
+                        crate::account::count(value),
+                        Action::None,
+                    ));
+                }
+                rows.push(row(
+                    "Usage period",
+                    "Server-reported; no inferred billing window",
+                    match (&account.usage.period_start, &account.usage.period_end) {
+                        (Some(start), Some(end)) => format!("{start} – {end}"),
+                        _ => "unavailable".into(),
+                    },
+                    Action::None,
+                ));
+            } else if panel.account_job.is_none() && !panel.account_setup {
+                rows.push(row(
+                    "Account",
+                    "Model/provider credentials remain separate",
+                    if panel.account_loaded {
+                        "Not signed in"
+                    } else {
+                        "Unavailable"
+                    },
+                    Action::None,
+                ));
+            }
+            if !panel.account_setup {
+                rows.push(row(
+                    "Local CLI usage",
+                    "This machine's provider-reported tokens and calls",
+                    "Open",
+                    Action::Section(7),
+                ));
+            }
             rows
         }
         15..=21 => {
@@ -1482,10 +1730,12 @@ pub fn view(state: &AgentState) -> Option<PanelView> {
         title: match panel.picker {
             Some(0) => "Choose provider".into(),
             Some(_) => format!("Choose model · {}", panel.model.provider),
+            None if panel.account_setup => "Welcome to OsmoGrep".into(),
             None => SECTIONS[panel.section].into(),
         },
         elapsed: panel.opened.elapsed().as_millis() as u64,
         health_running: panel.section == 14 && (panel.load_health || panel.health_scan.is_some()),
+        account_running: panel.section == 22 && (panel.load_account || panel.account_job.is_some()),
         sections: SECTIONS.to_vec(),
         section: panel.section,
         selected: selected_index(panel, &rows),
@@ -1759,7 +2009,7 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
             if panel.picker.take().is_some() {
                 panel.query.clear();
                 panel.selected = 0;
-            } else if panel.settings && panel.section != 12 {
+            } else if panel.settings && panel.section != 12 && !panel.account_setup {
                 open(state, 12, Some(&panel.model));
                 return true;
             } else {
@@ -1857,6 +2107,9 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
                 (panel.section + SECTIONS.len() + if back { SECTIONS.len() - 1 } else { 1 })
                     % SECTIONS.len();
             panel.load_sessions = panel.section == 10;
+            panel.account_job = None;
+            panel.account_verification = None;
+            panel.load_account = panel.section == 22;
             panel.query.clear();
             panel.selected = 0;
             panel.notice.clear();
@@ -1907,6 +2160,23 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
                         if panel.lab_job.is_none() {
                             panel.lab_job = Some(lab_job(state.repo_root.clone(), request.clone()));
                             panel.notice = "Saving explicit Lab setting…".into();
+                        }
+                    }
+                    Action::Account(operation) => begin_account(&mut panel, *operation),
+                    Action::AccountSkip => close = true,
+                    Action::AccountCancel => {
+                        panel.account_job = None;
+                        panel.account_verification = None;
+                        panel.load_account = false;
+                        panel.notice =
+                            "Account action cancelled. Refresh to check the current connection."
+                                .into();
+                    }
+                    Action::AccountBrowser => {
+                        if let Some((url, _)) = &panel.account_verification {
+                            if let Err(error) = super::links::open(url) {
+                                panel.notice = error;
+                            }
                         }
                     }
                     Action::LabRefresh => {
@@ -2515,19 +2785,91 @@ mod tests {
         state.insert_text("keep my draft");
         assert_eq!(section_for("/settings"), Some(12));
         open(&mut state, 12, None);
-        assert_eq!(view(&state).unwrap().rows.len(), 18);
+        assert_eq!(view(&state).unwrap().rows.len(), 19);
         handle_key(&mut state, key(KeyCode::Tab));
         assert_eq!(view(&state).unwrap().section, 12);
-        assert!(choose_at(&mut state, 2, "Permissions"));
+        let permissions = view(&state)
+            .unwrap()
+            .rows
+            .iter()
+            .position(|row| row.label == "Permissions")
+            .unwrap();
+        assert!(choose_at(&mut state, permissions, "Permissions"));
         assert_eq!(view(&state).unwrap().section, 3);
         handle_key(&mut state, key(KeyCode::Esc));
         assert_eq!(view(&state).unwrap().section, 12);
         handle_key(&mut state, key(KeyCode::Enter));
-        assert_eq!(view(&state).unwrap().section, 1);
+        assert_eq!(view(&state).unwrap().section, 22);
         handle_key(&mut state, key(KeyCode::Esc));
         handle_key(&mut state, key(KeyCode::Esc));
         assert!(state.ui.panel.is_none());
         assert_eq!(state.ui.input, "keep my draft");
+    }
+
+    #[test]
+    fn fresh_setup_offers_tui_login_without_a_network_request_or_forced_account() {
+        let mut state = crate::init_state();
+        state.insert_text("keep my draft");
+        open_account_setup(&mut state, &ModelConfig::default());
+        let panel = state.ui.panel.as_ref().unwrap();
+        assert!(!panel.load_account && !panel.load_lab);
+        assert!(panel.account_job.is_none());
+        let view = view(&state).unwrap();
+        assert!(view
+            .rows
+            .iter()
+            .any(|row| row.label == "Sign in with browser"));
+        assert!(view
+            .rows
+            .iter()
+            .any(|row| row.label == "Choose a local model or API key"));
+        assert!(!view.rows.iter().any(|row| row.value == "Unavailable"));
+        handle_key(&mut state, key(KeyCode::Esc));
+        assert!(state.ui.panel.is_none());
+        assert_eq!(state.ui.input, "keep my draft");
+    }
+
+    #[test]
+    fn account_view_is_on_demand_and_labels_remote_metrics_without_changing_local_usage() {
+        let mut state = crate::init_state();
+        state.insert_text("keep this draft");
+        open(&mut state, 12, None);
+        let index = view(&state)
+            .unwrap()
+            .rows
+            .iter()
+            .position(|row| row.label == "Account")
+            .unwrap();
+        assert!(choose_at(&mut state, index, "Account"));
+        let panel = state.ui.panel.as_mut().unwrap();
+        assert_eq!(panel.section, 22);
+        assert!(panel.load_account);
+        assert!(!panel.load_lab);
+        assert!(panel.account_job.is_none());
+        panel.load_account = false;
+        panel.account_loaded = true;
+        let signed_out = view(&state).unwrap();
+        assert!(signed_out
+            .rows
+            .iter()
+            .any(|row| row.label == "Account" && row.value == "Not signed in"));
+        state.ui.panel.as_mut().unwrap().account = Some(serde_json::from_value(serde_json::json!({"user":{"id":"123","username":"octocat","name":"Fixture user"},"stats":{"reviews":12,"running":0}})).unwrap());
+        let account = view(&state).unwrap();
+        assert!(account.rows.iter().any(|row| row.label == "Reviews"
+            && row.value == "12"
+            && row.description.contains("Hosted")));
+        assert!(account
+            .rows
+            .iter()
+            .any(|row| row.label == "Input tokens" && row.value == "unavailable"));
+        assert!(account
+            .rows
+            .iter()
+            .any(|row| row.label == "Local CLI usage"));
+        assert!(state.ui.queued_agent_prompts.is_empty());
+        handle_key(&mut state, key(KeyCode::Esc));
+        assert_eq!(view(&state).unwrap().section, 12);
+        assert_eq!(state.ui.input, "keep this draft");
     }
 
     #[test]

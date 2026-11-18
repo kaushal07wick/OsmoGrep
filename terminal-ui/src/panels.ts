@@ -5,7 +5,7 @@ import {drawCenter} from './center.ts';
 import {usageLines} from './usage.ts';
 import {websiteMark} from './brand.ts';
 export interface PanelView {
-  health_running?:boolean;
+  health_running?:boolean;account_running?:boolean;
   settings?:boolean;previewing?:boolean; preview_offset?:number;
   title?:string;edit_label?:string;elapsed?:number;selecting?:boolean;center_filter?:number;counts?:number[];
   sections:string[];section:number;query:string;selected:number;editing:boolean;
@@ -41,12 +41,13 @@ export function drawPanel(panel:PanelView,width:number,height:number,light:boole
   const tabs=panel.sections.slice(Math.max(0,Math.min(panel.section-1,panel.sections.length-3)),Math.max(0,Math.min(panel.section-1,panel.sections.length-3))+3).map(s=>s===panel.sections[panel.section]?accent+bold+s+reset:dim+s+reset).join(dim+'  /  ');
   const header=panel.section===12&&available>=14?['',accent+'◌ '+bold+'Settings'+reset,'',dim+'Choose a category · enter or click',dim+'Search  '+fg+plain(panel.query),''] :available>=14?['',accent+'◌ '+bold+plain(panel.title??panel.sections[panel.section]??'Workspace')+reset+dim+'   /  WORKSPACE','',panel.settings?dim+(panel.section===12?'Choose a category · enter or click to open':'Settings / '+plain(panel.sections[panel.section]??'')+' · esc categories'):inner>=48?tabs:dim+'tab / shift+tab · sections','',...([7,8].includes(panel.section)?[]:[(panel.editing?accent+'Edit  ':dim+'Search  ')+fg+plain(panel.query)+(panel.query?'':'_'),''])]:[accent+plain(panel.title??panel.sections[panel.section]??'Workspace')];
   const detail=[7,8].includes(panel.section)?'':panel.section===4?(panel.preview??[]).map(plain).join(' · '):plain(current?(inner<60?current.label+' · ':'')+current.description:'');
-  if(panel.section===14&&available>=14){
-    const pulse=panel.health_running?(reduceMotion?'◌ ':['◐ ','◓ ','◑ ','◒ '][Math.floor((panel.elapsed??0)/150)%4]):'✓ ';
-    header.splice(4,2,...wrap((panel.health_running?accent:fg)+pulse+plain(panel.notice)), '');
+  if((panel.section===14||panel.section===22)&&available>=14){
+    const busy=panel.section===14?panel.health_running:panel.account_running;
+    const pulse=busy?(reduceMotion?'◌ ':['◐ ','◓ ','◑ ','◒ '][Math.floor((panel.elapsed??0)/150)%4]):panel.section===14?'✓ ':'';
+    header.splice(4,2,...wrap((busy?accent:fg)+pulse+plain(panel.notice)), '');
   }
   const notice=panel.section===7?'Provider-reported · this workspace · cached input is included in input':panel.section===8?(panel.demo?'Sample data · preview only · D switches to recorded data':'Recorded provider usage · D previews sample data'):plain(panel.notice);
-  const tail=[7,12].includes(panel.section)&&available>=14?['',...wrap(accent+plain(panel.footer)),'','']:available>=14?['',...(detail?wrap(dim+detail):[]),...(panel.section===14?[]:wrap(dim+notice)),'',...wrap(accent+plain(panel.footer)),'','']:[accent+'↑↓ · enter · esc'];
+  const tail=[7,12].includes(panel.section)&&available>=14?['',...wrap(accent+plain(panel.footer)),'','']:available>=14?['',...(detail?wrap(dim+detail):[]),...([14,22].includes(panel.section)?[]:wrap(dim+notice)),'',...wrap(accent+plain(panel.footer)),'','']:[accent+'↑↓ · enter · esc'];
   const count=Math.max(0,available-header.length-tail.length),body:string[]=[];
   if(panel.section===7){body.push(...(panel.notice.startsWith('Usage history unavailable:')?wrap(dim+plain(panel.notice),3):usageLines(panel.history??[],panel.rows,inner,count,light)));}
   else if(panel.section===8){body.push(...statsLines(panel.history??[],inner,count,light,!!panel.demo,Date.now(),reduceMotion?1:Math.max(0,Math.min(1,(panel.elapsed??900)/900))));}

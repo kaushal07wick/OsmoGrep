@@ -57,7 +57,7 @@ The composer has a fine paper texture: **Graphite** in dark mode and **Cotton** 
 
 The welcome header stays through the first chat exchange and hides when you send the second message. Commands do not count as chat turns.
 
-Typing `/` opens an attached, searchable command tray. The model and provider in the status line are selectors. The main tray has 16 controls. `/settings` groups appearance, keyboard, skills, integrations, voice, team history and activity; `/permissions` keeps approvals and OS sandbox controls explicit. Advanced commands appear only when you search for them.
+Typing `/` opens an attached, searchable command tray. The model and provider in the status line are selectors. The main tray has 17 controls, including `/login` for browser account connection. `/settings` groups appearance, keyboard, skills, integrations, voice, team history and activity; `/permissions` keeps approvals and OS sandbox controls explicit. Advanced commands appear only when you search for them.
 
 ![Attached command tray above the Graphite composer](assets/terminal-commands.png)
 
@@ -185,6 +185,7 @@ Use `/help` for searchable controls. For testing, reviewing, planning, and imple
 | Command | Purpose |
 | --- | --- |
 | `/help` | Browse controls and shortcuts |
+| `/login` | Connect the existing GitHub-backed OsmoGrep account through the browser (see [integration status](cli-account.md)) |
 | `/new`, `/sessions` | Start or reopen a conversation |
 | `/model`, `/permissions`, `/settings` | Model/reasoning, explicit access policy and workspace preferences |
 | `/doctor`, `/usage` | Diagnostics, repairs and usage |

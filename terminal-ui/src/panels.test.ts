@@ -74,3 +74,12 @@ test('Lab reports use the shared evidence reader and never look like team messag
  assert.match(text,/Replays/);assert.match(text,/not executed/);assert.match(text,/Show less/);assert.doesNotMatch(text,/Team message/);
  assert.ok(f.rows.every(row=>visibleWidth(row)<=80));
 });
+
+
+test('account approval keeps the code visible, bounded and animated only while waiting',()=>{
+ const account={...panel,section:22,title:'Account',sections:Array.from({length:23},(_,i)=>i===22?'Account':'Workspace'),settings:true,selecting:true,selected:0,account_running:true,notice:'Confirm the code in your browser',rows:[{label:'Confirm code',description:'Match the browser before approving',value:'ABCD-EFGH'},{label:'Open browser',description:'Continue with GitHub',value:'Open'},{label:'Cancel',description:'Cancel browser authorization',value:'Cancel'}]};
+ const frame=drawPanel(account,100,30,false,'');
+ const text=frame.rows.map(stripTerminalSequences).join('\n');
+ assert.match(text,/ABCD-EFGH/);assert.match(text,/Confirm the code/);assert.match(text,/Cancel/);
+ assert.ok(frame.rows.every(row=>visibleWidth(row)<=100));
+});

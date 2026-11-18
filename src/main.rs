@@ -1,3 +1,4 @@
+mod account;
 mod agent;
 mod approval_rules;
 mod attachments;
@@ -134,6 +135,19 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum CliCommand {
+    /// Sign in to your GitHub-linked OsmoGrep account
+    Login {
+        /// Print the verification link and code without opening a browser
+        #[arg(long)]
+        no_browser: bool,
+    },
+    /// Sign out of this OsmoGrep account connection
+    Logout,
+    /// Show your OsmoGrep account and server-recorded usage
+    Account {
+        #[arg(long)]
+        json: bool,
+    },
     /// Inspect and run opt-in workspace experiments
     Lab(cli::lab::LabArgs),
     /// Manage supervised coding tasks
@@ -157,6 +171,7 @@ enum CliCommand {
     Auth {
         #[arg(value_parser=["login","logout","status"])]
         action: String,
+        #[arg(default_value = "osmogrep")]
         provider: String,
     },
     /// Browse saved sessions and live agents
@@ -662,6 +677,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             auto_approve,
             team_enabled,
         )?,
+        Some(CliCommand::Login { no_browser }) => auth::login_browser("osmogrep", !no_browser)?,
+        Some(CliCommand::Logout) => {
+            auth::logout("osmogrep")?;
+            println!("Signed out of OsmoGrep");
+        }
+        Some(CliCommand::Account { json }) => account::print(json)?,
         Some(CliCommand::Auth { action, provider }) => match action.as_str() {
             "login" => auth::login(&provider)?,
             "logout" => {
@@ -1351,6 +1372,8 @@ fn run_tui(
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
+    let first_setup = !persistence::session_dir().exists()
+        && !persistence::config_dir().join("config.toml").exists();
     let mut state = init_state();
     if let Some(id) = resume.as_deref().or(fork.as_deref()) {
         persistence::load_id(&mut state, id, fork.is_some())?;
@@ -1377,6 +1400,8 @@ fn run_tui(
     if open_center {
         team::poll(&mut state, agent.model_config());
         ui::workbench::open(&mut state, 10, Some(agent.model_config()));
+    } else if first_setup && resume.is_none() && fork.is_none() && !agent.is_configured() {
+        ui::workbench::open_account_setup(&mut state, agent.model_config());
     }
     if env_truthy("OSMOGREP_NV_TIPS", false) {
         log(

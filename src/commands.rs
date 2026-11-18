@@ -276,6 +276,10 @@ pub fn handle_command(
         return;
     }
 
+    if cmd == "/login" {
+        crate::ui::workbench::open_login(state, agent.as_ref().map(|agent| agent.model_config()));
+        return;
+    }
     if let Some(section) = crate::ui::workbench::section_for(&cmd) {
         crate::ui::workbench::open(state, section, agent.as_ref().map(|a| a.model_config()));
         return;
@@ -2553,6 +2557,10 @@ pub(crate) fn command_palette_items() -> &'static [CommandItem] {
             desc: "Open the session center",
         },
         CommandItem {
+            cmd: "/login",
+            desc: "Sign in to your OsmoGrep account in the browser",
+        },
+        CommandItem {
             cmd: "/model",
             desc: "Choose provider, model and reasoning",
         },
@@ -2725,7 +2733,7 @@ mod tests {
         assert!(!items.iter().any(|item| item.cmd == "/plan"));
         assert!(items.iter().any(|item| item.cmd == "/plan mode"));
         let (main, _) = command_hints_for("/", 0);
-        assert_eq!(main.len(), 16);
+        assert_eq!(main.len(), 17);
         assert!(!main.iter().any(|item| item.cmd == "/plan mode"));
         for command in advanced_command_items() {
             let (found, _) = command_hints_for(&command.cmd[..command.cmd.len() - 1], 0);
@@ -2771,6 +2779,14 @@ mod tests {
         }
         assert!(items.iter().any(|item| item.cmd == "/model"));
         assert!(items.iter().any(|item| item.cmd == "/permissions"));
+    }
+
+    #[test]
+    fn login_is_a_discoverable_tui_control_without_transcript_or_model_work() {
+        let (items, _) = command_hints_for("/log", 0);
+        assert!(items.iter().any(|item| item.cmd == "/login"));
+        assert!(!super::is_transcript_command("/login"));
+        assert_eq!(crate::ui::workbench::section_for("/login"), Some(22));
     }
 
     #[test]

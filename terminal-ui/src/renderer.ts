@@ -431,7 +431,7 @@ export function render(v: View): Rendered {
   if(paperGraphics)images.unshift({...paperGraphic(width,composerHeight,light,(process.pid*128+126)>>>0),x:gutter,y:composerY});
   if (v.panel && !v.permission && !v.update) {
     const panel=drawPanel(v.panel,w,h,light,accent,!!v.preferences?.reduce_motion);
-    return {id:v.id,rows:panel.rows,input:inputRect,execution,editorWidth:textWidth,animate:!v.preferences?.reduce_motion&&(v.panel.health_running||(v.panel.section===8&&(v.panel.elapsed??900)<900)||(v.panel.section===10&&!v.panel.previewing&&(v.panel.elapsed??900)<240)),artwork:null,cursor:panel.cursor,cursorVisible:v.panel.section!==8&&!v.panel.previewing,images:[],controls:panel.controls};
+    return {id:v.id,rows:panel.rows,input:inputRect,execution,editorWidth:textWidth,animate:!v.preferences?.reduce_motion&&(v.panel.health_running||v.panel.account_running||(v.panel.section===8&&(v.panel.elapsed??900)<900)||(v.panel.section===10&&!v.panel.previewing&&(v.panel.elapsed??900)<240)),artwork:null,cursor:panel.cursor,cursorVisible:v.panel.section!==8&&!v.panel.previewing,images:[],controls:panel.controls};
   }
 
   return {

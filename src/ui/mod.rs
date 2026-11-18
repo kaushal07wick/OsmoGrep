@@ -3,7 +3,7 @@ pub mod diff;
 pub mod frame;
 pub mod helper;
 pub mod keymap;
-mod links;
+pub(crate) mod links;
 pub mod main_ui;
 pub mod markdown;
 pub mod runtime;

@@ -1,0 +1,56 @@
+{
+  "at": "2026-11-18T09:33:03.838764+00:00",
+  "status": "client_prepared_website_integration_pending",
+  "binary_sha256": "d358b9ee550ad9ea208531507f626e4f5ab56cb7d9d6118662cfc8bf05e4bbc3",
+  "rust": {
+    "passed": 360,
+    "ignored": 5,
+    "excluded": [
+      "mac_clipboard_reads_an_image_without_changing_the_users_clipboard"
+    ]
+  },
+  "terminal_ui": {
+    "passed": 90
+  },
+  "live_browser_login_verified": false,
+  "paid_calls": 0,
+  "tui_account": {
+    "binary_sha256": "d358b9ee550ad9ea208531507f626e4f5ab56cb7d9d6118662cfc8bf05e4bbc3",
+    "checks": [
+      "fresh_tui_offers_login_without_network_or_forced_account",
+      "tui_login_displays_code_and_uses_browser_launcher_without_private_device_code",
+      "escape_cancels_polling_and_restores_composer_without_credential_writes",
+      "existing_install_reopens_chat_without_account_checks",
+      "slash_login_opens_tui_authorization_without_a_model_turn"
+    ],
+    "account_requests": 3,
+    "real_browser_opens": 0,
+    "credential_writes": 0,
+    "model_requests": 0,
+    "paid_calls": 0,
+    "scope": "Actual TUI/process/browser-launcher boundary with a deterministic local account server; no successful token grant or live website login."
+  },
+  "existing_input": {
+    "binary_sha256": "d358b9ee550ad9ea208531507f626e4f5ab56cb7d9d6118662cfc8bf05e4bbc3",
+    "checks": [
+      "minified_diff_is_folded",
+      "typing_during_active_model_request",
+      "typing_after_completion",
+      "history_exposes_latest_action",
+      "native_accepts_renderer_frames",
+      "copy_feedback_uses_isolated_osc52_without_host_clipboard_writes",
+      "casual_interlude_preserves_coding_history_and_resumes_editing",
+      "stable_instructions_and_tool_order_across_turns"
+    ],
+    "initial_instruction_bytes": 2270,
+    "initial_tool_schema_bytes": 3642,
+    "fixture_model_requests": 7,
+    "paid_calls": 0
+  },
+  "boundaries": [
+    "No successful token grant or OS credential write was exercised by the TUI fixture.",
+    "Website device approval, server-side refresh/revocation, shared rate limits, workspace authorization and deployment belong to the website agent.",
+    "No account status fetch occurs during ordinary chat startup; the fresh welcome is local until an action is selected.",
+    "The /login command and account view are prepared in source and are not included in the preceding v0.4.3 release."
+  ]
+}
