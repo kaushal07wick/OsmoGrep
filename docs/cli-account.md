@@ -1,6 +1,6 @@
 # GitHub-linked CLI account
 
-Available in v0.4.4. The client uses the deployed account endpoints in
+Available in v0.4.5. The client uses the deployed account endpoints in
 [the shared protocol](cli-account-protocol.md). Existing dashboard accounts sign
 in through the browser; no GitHub App installation is required.
 
@@ -37,8 +37,9 @@ model workflows remain available.
 
 Account login is saved in `account/login.json` inside the application configuration
 directory. The directory is private (0700) and the token file is readable and writable
-only by your OS user (0600) on macOS/Linux; Windows uses a user-only directory ACL.
-The account token is not encrypted at rest. Provider API keys and provider OAuth
+only by your OS user (0600) on macOS/Linux. Windows reuses the existing local DPAPI-encrypted credential
+file, which only the current Windows user can decrypt. The Unix account file
+is not encrypted at rest. Provider API keys and provider OAuth
 credentials retain their existing OS credential storage. Refresh rotates credentials under a process-shared
 lock also used by login and logout. A failed remote revocation still removes the
 local credential and reports that remote revocation was not confirmed. A failure
@@ -59,8 +60,11 @@ Local fixtures verify the client protocol, response limits, invalid metrics,
 origin/redirect restrictions, waiting/cancellation, slowdown, denial and expiry.
 The release fixture also checks private-file persistence across processes,
 forced refresh, rotated-token storage, remote revocation and local logout.
-The final release binary completed real browser approval, private-file persistence,
+The Mac account implementation completed real browser approval, private-file persistence,
 account lookup, forced Rust refresh, rotated-token storage and logout against the
 deployed service. Both access-token generations were rejected after revocation.
-The disposable test connection was revoked and its local file removed. See
+The disposable test connection was revoked and its local file removed. That live
+run used the v0.4.4 candidate; v0.4.5 retains the Unix login logic, reuses the existing
+Windows DPAPI file instead of the failed new ACL setup, and passes the release
+fixtures again. See
 [the validation record](cli-account-validation.json) for these distinct scopes.

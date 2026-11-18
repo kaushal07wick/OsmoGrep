@@ -1,4 +1,5 @@
-//! Provider secrets use OS protection; account login uses an explicitly chosen private file.
+//! Provider secrets use OS protection; Unix account login uses a private local file.
+#[cfg(unix)]
 mod account_file;
 #[cfg(not(target_os = "macos"))]
 use std::{
@@ -31,7 +32,25 @@ mod tests {
         assert!(super::get(&account).unwrap().is_none());
     }
 }
+#[cfg(all(test, target_os = "windows"))]
+mod windows_tests {
+    #[test]
+    fn user_bound_credential_file_round_trip_and_delete() {
+        let provider = format!("account-file-test-{}", uuid::Uuid::new_v4());
+        assert!(super::get(&provider).unwrap().is_none());
+        super::set(&provider, "synthetic-fixture-only").unwrap();
+        let path = super::windows_path(&provider);
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(!raw.contains("synthetic-fixture-only"));
+        let result = super::get(&provider);
+        super::delete(&provider).unwrap();
+        assert_eq!(result.unwrap().as_deref(), Some("synthetic-fixture-only"));
+        assert!(super::get(&provider).unwrap().is_none());
+    }
+}
+
 pub fn set(provider: &str, key: &str) -> Result<(), String> {
+    #[cfg(unix)]
     if provider == "oauth/osmogrep" {
         return account_file::set(key);
     }
@@ -78,6 +97,7 @@ pub fn set(provider: &str, key: &str) -> Result<(), String> {
     )
 }
 pub fn get(provider: &str) -> Result<Option<String>, String> {
+    #[cfg(unix)]
     if provider == "oauth/osmogrep" {
         return account_file::get();
     }
@@ -116,12 +136,13 @@ pub fn get(provider: &str) -> Result<Option<String>, String> {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e.to_string()),
         };
-        return powershell("$s=ConvertTo-SecureString ([Console]::In.ReadToEnd()); $c=New-Object System.Management.Automation.PSCredential('osmogrep',$s); [Console]::Write($c.GetNetworkCredential().Password)",&value).map(Some);
+        return powershell("$s=ConvertTo-SecureString ([Console]::In.ReadToEnd()); $c=New-Object System.Management.Automation.PSCredential('osmogrep',$s); [Console]::Write($c.GetNetworkCredential().Password)",value.trim()).map(Some);
     }
     #[allow(unreachable_code)]
     Ok(None)
 }
 pub fn delete(provider: &str) -> Result<(), String> {
+    #[cfg(unix)]
     if provider == "oauth/osmogrep" {
         return account_file::delete();
     }

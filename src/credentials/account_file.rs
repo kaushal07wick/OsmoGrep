@@ -21,13 +21,6 @@ fn private(path: &Path, directory: bool) -> Result<(), String> {
             return Err(format!("Account storage is not private: {}. Restrict it to your OS user before signing in.", path.display()));
         }
     }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        if metadata.file_attributes() & 0x400 != 0 {
-            return Err("Account storage cannot use a Windows reparse point".into());
-        }
-    }
     Ok(())
 }
 fn prepare(path: &Path) -> Result<(), String> {
@@ -45,17 +38,6 @@ fn prepare(path: &Path) -> Result<(), String> {
         Err(error) => return Err(error.to_string()),
     }
     private(path, true)?;
-    #[cfg(windows)]
-    {
-        let output = std::process::Command::new("powershell.exe")
-            .args(["-NoProfile", "-NonInteractive", "-Command",
-                "$ErrorActionPreference='Stop'; $p=$env:OSMOGREP_ACCOUNT_DIRECTORY; $u=[System.Security.Principal.WindowsIdentity]::GetCurrent().User; $a=New-Object System.Security.AccessControl.DirectorySecurity; $a.SetOwner($u); $a.SetAccessRuleProtection($true,$false); $a.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($u,'FullControl','ContainerInherit,ObjectInherit','None','Allow'))); Set-Acl -LiteralPath $p -AclObject $a"])
-            .env("OSMOGREP_ACCOUNT_DIRECTORY", path)
-            .output().map_err(|_| "Could not protect the account directory")?;
-        if !output.status.success() {
-            return Err("Could not restrict account storage to your Windows user".into());
-        }
-    }
     Ok(())
 }
 fn read(path: &Path) -> Result<Option<String>, String> {

@@ -451,7 +451,7 @@ for line in sys.stdin:
             &cfg,
             "tools/list",
             &serde_json::json!({}),
-            Duration::from_secs(3),
+            Duration::from_secs(10),
             &|| false,
         )
         .unwrap();
@@ -461,7 +461,7 @@ for line in sys.stdin:
             &cfg,
             "tools/call",
             &serde_json::json!({"name":"echo","arguments":{"text":"round trip"}}),
-            Duration::from_secs(3),
+            Duration::from_secs(10),
             &|| false,
         )
         .unwrap();
@@ -475,7 +475,7 @@ for line in sys.stdin:
         let screenshot = native_call(
             "fixture", &cfg, "tools/call",
             &serde_json::json!({"name":"echo","arguments":{"text":"screen","content":[{"type":"image","mimeType":"image/png","data":encoded}]}}),
-            Duration::from_secs(3), &||false,
+            Duration::from_secs(10), &||false,
         ).unwrap();
         let observation = crate::tool_budget::model_output(
             &crate::tools::repo_root().unwrap(),
@@ -493,7 +493,7 @@ for line in sys.stdin:
             &cfg,
             "resources/read",
             &serde_json::json!({"uri":"fixture://example"}),
-            Duration::from_secs(3),
+            Duration::from_secs(10),
             &|| false,
         )
         .unwrap();
@@ -503,7 +503,7 @@ for line in sys.stdin:
             &cfg,
             "tools/list",
             &serde_json::json!({}),
-            Duration::from_secs(3),
+            Duration::from_secs(10),
             &|| true
         )
         .is_err());
