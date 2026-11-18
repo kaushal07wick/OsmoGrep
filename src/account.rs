@@ -1,5 +1,7 @@
 //! First-party account identity and server-recorded metrics; model credentials stay separate.
+mod identity;
 use crate::{agent::CancelToken, auth};
+pub use identity::{cached as cached_identity, forget as forget_identity, Identity};
 use serde::{Deserialize, Serialize};
 use std::{io::Read, sync::mpsc, time::Duration};
 
@@ -114,7 +116,9 @@ pub fn load() -> Result<Option<Profile>, String> {
     let Some(token) = auth::account_access_token()? else {
         return Ok(None);
     };
-    fetch(&auth::account_endpoint("/api/cli/account")?, &token).map(Some)
+    let profile = fetch(&auth::account_endpoint("/api/cli/account")?, &token)?;
+    identity::remember(&profile, &token);
+    Ok(Some(profile))
 }
 pub fn print(json: bool) -> Result<(), String> {
     let profile = load()?;

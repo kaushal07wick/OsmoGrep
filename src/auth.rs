@@ -143,7 +143,7 @@ fn token(value: &Value, previous: Option<String>) -> Result<Token, String> {
         expires_at: now().saturating_add(expires_in),
     })
 }
-fn credential_lock(provider: &str) -> Result<std::fs::File, String> {
+pub(crate) fn credential_lock(provider: &str) -> Result<std::fs::File, String> {
     let directory = crate::persistence::config_dir();
     std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
     crate::storage::lock_file(&directory.join(format!(
@@ -165,7 +165,12 @@ pub fn login_browser(provider: &str, open_browser: bool) -> Result<(), String> {
         }
         Ok(())
     })?;
-    println!("Signed in to {provider}. Credentials saved in the OS credential store.");
+    if provider == "osmogrep" {
+        let _ = crate::account::load();
+        println!("Signed in to OsmoGrep. Login saved locally.");
+    } else {
+        println!("Signed in to {provider}. Credentials saved in the OS credential store.");
+    }
     Ok(())
 }
 pub fn login_with(
@@ -189,7 +194,11 @@ pub fn login_with(
         crate::credentials::set(
             &format!("oauth/{provider}"),
             &serde_json::to_string(&saved).map_err(|e| e.to_string())?,
-        )
+        )?;
+        if provider == "osmogrep" {
+            crate::account::forget_identity();
+        }
+        Ok(())
     })();
     if let Err(error) = result {
         if provider == "osmogrep"
@@ -381,6 +390,9 @@ pub fn logout(provider: &str) -> Result<(), String> {
         Ok(())
     };
     crate::credentials::delete(&format!("oauth/{provider}"))?;
+    if provider == "osmogrep" {
+        crate::account::forget_identity();
+    }
     revoke.map_err(|_| "Signed out locally; server revocation could not be confirmed".into())
 }
 

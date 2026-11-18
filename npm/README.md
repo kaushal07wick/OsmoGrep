@@ -16,7 +16,7 @@ the same launcher as `osmogrep-npm.tgz` for direct tarball installation.
 Requires Node.js 22.19+. This small package downloads the matching, checksummed
 Rust executable on its first launch and reuses it afterward. It does not depend
 on install scripts, so pnpm's blocked lifecycle scripts do not prevent setup.
-Supported releases: macOS Apple silicon/Intel, Linux x64 with glibc, Windows x64.
+Supported releases: macOS Apple silicon, Linux x64 with glibc, Windows x64.
 macOS and iPhone companions are optional downloads inside Settings → Workspace;
 they are not included in the npm package or the Rust executable.
 

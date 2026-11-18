@@ -73,7 +73,7 @@ fn repo_key(repo: &Path) -> String {
 fn schema(conn: &Connection) -> Result<(), String> {
     conn.busy_timeout(Duration::from_secs(2))
         .map_err(|e| e.to_string())?;
-    conn.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS provider_usage (id TEXT PRIMARY KEY, repo TEXT NOT NULL, at INTEGER NOT NULL, model TEXT NOT NULL, provider TEXT NOT NULL, input INTEGER NOT NULL, output INTEGER NOT NULL, cached INTEGER NOT NULL, reasoning INTEGER NOT NULL, duration_ms INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS usage_repo_at ON provider_usage(repo,at);").map_err(|e|e.to_string())
+    conn.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS provider_usage (id TEXT PRIMARY KEY, repo TEXT NOT NULL, at INTEGER NOT NULL, model TEXT NOT NULL, provider TEXT NOT NULL, input INTEGER NOT NULL, output INTEGER NOT NULL, cached INTEGER NOT NULL, reasoning INTEGER NOT NULL, duration_ms INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS usage_repo_at ON provider_usage(repo,at); CREATE INDEX IF NOT EXISTS usage_at ON provider_usage(at);").map_err(|e|e.to_string())
 }
 fn insert(conn: &Connection, repo: &Path, u: &Usage) -> Result<(), String> {
     conn.execute(
@@ -114,12 +114,21 @@ fn count(row: &rusqlite::Row<'_>, column: usize) -> rusqlite::Result<u64> {
     let value: i64 = row.get(column)?;
     u64::try_from(value).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(column, value))
 }
+#[cfg(test)]
 fn query(conn: &Connection, repo: &Path) -> Result<Vec<Day>, String> {
+    query_scope(conn, Some(repo))
+}
+fn query_scope(conn: &Connection, repo: Option<&Path>) -> Result<Vec<Day>, String> {
     conn.busy_timeout(Duration::from_millis(250))
         .map_err(|e| e.to_string())?;
-    let mut stmt=conn.prepare("SELECT date(at,'unixepoch'),model,provider,SUM(input),SUM(output),SUM(cached),COUNT(*),SUM(duration_ms) FROM provider_usage WHERE repo=?1 AND at>=strftime('%s','now','-365 days') GROUP BY 1,2,3 ORDER BY 1 DESC LIMIT 2000").map_err(|e|e.to_string())?;
+    let sql = if repo.is_some() {
+        "SELECT date(at,'unixepoch'),model,provider,SUM(input),SUM(output),SUM(cached),COUNT(*),SUM(duration_ms) FROM provider_usage WHERE repo=?1 AND at>=strftime('%s','now','-365 days') GROUP BY 1,2,3 ORDER BY 1 DESC LIMIT 2000"
+    } else {
+        "SELECT date(at,'unixepoch'),model,provider,SUM(input),SUM(output),SUM(cached),COUNT(*),SUM(duration_ms) FROM provider_usage WHERE at>=strftime('%s','now','start of month') AND at<=strftime('%s','now') AND ?1 IS NULL GROUP BY 1,2,3 ORDER BY 1 DESC"
+    };
+    let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map([repo_key(repo)], |r| {
+        .query_map([repo.map(repo_key)], |r| {
             Ok(Day {
                 day: r.get(0)?,
                 model: r.get(1)?,
@@ -136,6 +145,12 @@ fn query(conn: &Connection, repo: &Path) -> Result<Vec<Day>, String> {
         .map_err(|e| e.to_string())
 }
 pub fn history(repo: &Path) -> Result<Vec<Day>, String> {
+    read_history(Some(repo))
+}
+pub fn monthly_history() -> Result<Vec<Day>, String> {
+    read_history(None)
+}
+fn read_history(repo: Option<&Path>) -> Result<Vec<Day>, String> {
     let path = crate::persistence::config_dir().join("usage.sqlite3");
     if !path.exists() {
         return Ok(Vec::new());
@@ -145,11 +160,41 @@ pub fn history(repo: &Path) -> Result<Vec<Day>, String> {
     }
     let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
         .map_err(|e| e.to_string())?;
-    query(&conn, repo)
+    query_scope(&conn, repo)
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn account_month_combines_workspaces_without_changing_workspace_history() {
+        let conn = Connection::open_in_memory().unwrap();
+        schema(&conn).unwrap();
+        let mut usage = reported(
+            &serde_json::json!({"usage":{"input_tokens":100,"output_tokens":20}}),
+            "test",
+            "local",
+            7,
+        )
+        .unwrap();
+        insert(&conn, Path::new("repo-a"), &usage).unwrap();
+        usage.id = uuid::Uuid::new_v4().to_string();
+        insert(&conn, Path::new("repo-b"), &usage).unwrap();
+        usage.id = uuid::Uuid::new_v4().to_string();
+        usage.at = chrono::Utc::now().timestamp() - 40 * 86400;
+        insert(&conn, Path::new("repo-a"), &usage).unwrap();
+        let all = query_scope(&conn, None).unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!((all[0].calls, all[0].input), (2, 200));
+        assert_eq!(query(&conn, Path::new("repo-b")).unwrap()[0].calls, 1);
+        assert_eq!(
+            query(&conn, Path::new("repo-a"))
+                .unwrap()
+                .iter()
+                .map(|d| d.calls)
+                .sum::<u64>(),
+            2
+        );
+    }
     #[test]
     fn only_valid_reported_usage_is_counted_and_details_are_subsets() {
         assert!(reported(&serde_json::json!({}), "test", "local", 1).is_none());

@@ -12,6 +12,7 @@ import pty
 import select
 import shlex
 import signal
+import sqlite3
 import struct
 import subprocess
 import tempfile
@@ -88,10 +89,10 @@ class Account(http.server.BaseHTTPRequestHandler):
                 requests.append((self.path,{}))
                 return self.respond({'data':[]})
             assert self.path=='/api/cli/account'
-            assert self.headers['Authorization']=='Bearer fixture-access-rotated'
+            assert self.headers['Authorization'] in ['Bearer fixture-access','Bearer fixture-access-rotated']
             assert not revoked
             requests.append((self.path,{}))
-            self.respond({'user':{'id':'fixture-user','name':None,'username':'octocat'},'workspace':{'id':'fixture-workspace','name':'Personal','kind':'personal'}})
+            self.respond({'user':{'id':'fixture-user','name':None,'username':'octocat'},'workspace':{'id':'fixture-workspace','name':'Personal','kind':'personal'},'stats':{'reviews':12,'verified':7,'running':0,'queued':0}})
         except Exception as error:
             failures.append(repr(error))
             self.send_error(500)
@@ -214,6 +215,41 @@ try:
     assert refreshes==1
     assert json.loads(saved.read_text())['refresh_token']=='fixture-refresh-rotated'
     checks.append('private_account_file_survives_process_restart_and_refresh_rotates_tokens')
+    # Recorded metadata exercises the account charts without any provider/model call.
+    with sqlite3.connect(saved.parent.parent/'usage.sqlite3') as db:
+        db.execute('CREATE TABLE provider_usage (id TEXT PRIMARY KEY, repo TEXT, at INTEGER, model TEXT, provider TEXT, input INTEGER, output INTEGER, cached INTEGER, reasoning INTEGER, duration_ms INTEGER)')
+        at=int(time.time())
+        for i in range(5):
+            db.execute('INSERT INTO provider_usage VALUES (?,?,?,?,?,?,?,?,?,?)',
+                       (str(i),'fixture-project',at,f'account-fixture-model-{i}','local',1000+i*100,100,500,0,3000))
+    terminal=Terminal()
+    before=len(requests)
+    terminal.wait(lambda:b'octocat' in terminal.output)
+    terminal.drain(.5)
+    assert len(requests)==before, 'Welcome identity must not make account HTTP requests'
+    assert b'indexed' not in terminal.output
+    terminal.send(b'/settings\r')
+    terminal.wait(lambda:b'Choose a category' in terminal.output)
+    terminal.send(b'\r')
+    terminal.wait(lambda:b'Cached input' in terminal.output)
+    terminal.send(b'\x1b[F')
+    terminal.wait(lambda:b'All 5 models' in terminal.output)
+    terminal.send(b'\x1b[H\t\r')
+    terminal.wait(lambda:b'No hosted usage reported' in terminal.output)
+    terminal.send(b'\x1b[Z\r')
+    terminal.drain(.2)
+    terminal.send(b'\t\t\r\x1b[F')
+    terminal.wait(lambda:b'account-fixture-model-0' in terminal.output and b'Fewer models' in terminal.output)
+    terminal.send(b'\x1b')
+    terminal.drain(.1)
+    terminal.send(b'\x1b')
+    terminal.drain(.1)
+    terminal.send(b'\x1b[200~account_panel_kept_input\x1b[201~')
+    terminal.wait(lambda:b'account_panel_kept_input' in terminal.output)
+    (root/'portrait-account.ansi').write_bytes(terminal.output)
+    terminal.close()
+    terminal=None
+    checks.append('cached_welcome_starts_without_http_and_account_charts_tabs_models_and_escape_work_in_real_tui')
     catalog=subprocess.run([str(binary),'models','--provider','osmogrep','--base-url',f'http://127.0.0.1:{server.server_port}/v1','--json'],cwd=root,env=environment,capture_output=True,text=True,timeout=20)
     assert catalog.returncode==0,catalog.stderr
     assert any(path=='/v1/models' for path,_ in requests)

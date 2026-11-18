@@ -238,6 +238,44 @@ pub fn draw_ui<B: Backend>(
                     )),
                     Line::from(""),
                 ];
+                if panel.section == 22 {
+                    lines = vec![Line::from("  YOUR ACCOUNT"), Line::from("")];
+                    if let Some(identity) = &panel.identity {
+                        lines.push(Line::styled(
+                            format!("  {}", identity.name),
+                            Style::default()
+                                .fg(Color::White)
+                                .add_modifier(Modifier::BOLD),
+                        ));
+                        if let Some(username) = &identity.username {
+                            lines.push(Line::styled(
+                                format!("  @{username}"),
+                                Style::default().fg(Color::Rgb(112, 166, 224)),
+                            ));
+                        }
+                        lines.push(Line::from("  ✓ Connected"));
+                        if let Some(profile) = &panel.account {
+                            let stats = [
+                                (profile.stats.reviews, "reviews"),
+                                (profile.stats.verified, "verified fixes"),
+                            ]
+                            .into_iter()
+                            .filter_map(|(n, label)| n.map(|n| format!("{n} {label}")))
+                            .collect::<Vec<_>>();
+                            lines.push(Line::from(format!("  {}", stats.join("    "))));
+                        }
+                    } else {
+                        lines.push(Line::from(if panel.title == "Welcome to OsmoGrep" {
+                            "  Welcome to OsmoGrep"
+                        } else {
+                            "  Your workspace, connected."
+                        }));
+                    }
+                    if let Some(code) = &panel.account_code {
+                        lines.push(Line::from(format!("  Confirm code: {code}")));
+                    }
+                    lines.push(Line::from(""));
+                }
                 if panel.previewing {
                     let max = panel.preview.len().saturating_sub(count);
                     let at = if matches!(panel.section, 11 | 14) || panel.section >= 15 {
@@ -282,7 +320,11 @@ pub fn draw_ui<B: Backend>(
                         },
                     ));
                 }
-                if let Some(row) = panel.rows.get(panel.selected) {
+                if let Some(row) = panel
+                    .rows
+                    .get(panel.selected)
+                    .filter(|_| panel.section != 22)
+                {
                     lines.push(Line::from(""));
                     lines.push(Line::from(row.description.clone()));
                 }
@@ -305,94 +347,31 @@ fn render_header(f: &mut Frame, area: Rect, state: &AgentState) {
         return;
     }
     let p = palette(state);
-    let branch = state
-        .ui
-        .repo_branch
-        .clone()
-        .unwrap_or_else(|| "detached".into());
-    let version = env!("CARGO_PKG_VERSION");
     let repo_display = state
         .repo_root
         .strip_prefix(dirs::home_dir().unwrap_or_default())
-        .map(|p| {
-            format!(
-                "~{}",
-                std::path::MAIN_SEPARATOR.to_string() + &p.display().to_string()
-            )
-        })
+        .map(|path| format!("~/{}", path.display()))
         .unwrap_or_else(|_| state.repo_root.display().to_string());
-
-    let budget = if state.ui.run_iteration_limit > 0 {
-        format!(
-            "{}/{}",
-            state.ui.run_iteration, state.ui.run_iteration_limit
-        )
-    } else {
-        "-".to_string()
-    };
-    let run_label = if state.ui.agent_running {
-        format!(" · {} {budget}", state.ui.run_phase)
-    } else {
-        String::new()
-    };
-    let approval = if state.plan_mode {
-        "plan-mode"
-    } else if state.ui.auto_approve {
-        "auto-approve"
-    } else {
-        "ask"
-    };
-    let tool = state
+    let identity = state
         .ui
-        .current_tool
-        .as_deref()
-        .map(|t| format!(" · tool {}", truncate_for_badge(t, 28)))
+        .account
+        .as_ref()
+        .map(|account| account.name.clone())
+        .or_else(|| {
+            state
+                .ui
+                .presentation_model
+                .as_ref()
+                .map(|model| format!("{} · {}", model.model, model.provider))
+        })
         .unwrap_or_default();
-    let session = state
-        .session_name
-        .as_deref()
-        .map(|name| format!(" · {}", truncate_for_badge(name, 24)))
-        .unwrap_or_default();
-
-    let status_line = Line::from(vec![
-        Span::styled(
-            "osmogrep",
-            Style::default().fg(p.accent).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(format!(" v{version}"), Style::default().fg(p.fg_muted)),
-        Span::styled(session, Style::default().fg(p.fg_dim)),
-        Span::styled(run_label, Style::default().fg(p.fg_main)),
-        Span::styled(tool, Style::default().fg(p.fg_dim)),
-        Span::styled(" · ", Style::default().fg(p.fg_muted)),
-        Span::styled(approval, Style::default().fg(p.fg_dim)),
-    ]);
-
-    let mut repo_line = Line::from(vec![
-        Span::styled(repo_display, Style::default().fg(p.fg_dim)),
-        Span::styled(" · ", Style::default().fg(p.fg_muted)),
-        Span::styled(branch, Style::default().fg(p.fg_dim)),
-    ]);
-
-    if state.ui.indexing {
-        repo_line.spans.push(Span::styled(
-            " · indexing…",
-            Style::default()
-                .fg(p.fg_muted)
-                .add_modifier(Modifier::ITALIC),
-        ));
-    } else if state.ui.indexed {
-        repo_line
-            .spans
-            .push(Span::styled(" · indexed ✓", Style::default().fg(p.fg_dim)));
-    }
-
     let lines = vec![
-        status_line,
-        repo_line,
-        Line::from(Span::styled(
-            "/help commands  ·  ! shell",
-            Style::default().fg(p.fg_muted),
-        )),
+        Line::styled(
+            "osmogrep",
+            Style::default().fg(p.fg_main).add_modifier(Modifier::BOLD),
+        ),
+        Line::styled(identity, Style::default().fg(p.fg_main)),
+        Line::styled(repo_display, Style::default().fg(p.fg_dim)),
     ];
     f.render_widget(Paragraph::new(lines), area);
 }
@@ -1579,7 +1558,7 @@ mod tests {
         assert_eq!(idle.x, 34);
         let buffer = terminal.backend().buffer();
         let header: String = (0..180).map(|x| buffer.get(x, 1).symbol()).collect();
-        assert!(header.trim_start().starts_with("osmogrep v"));
+        assert!(header.trim_start().starts_with("osmogrep"));
         let screen: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
         assert!(!screen.contains("What are we working on?"));
         crate::logger::log_user_input(&mut state, "Explain how this repository is organized.");

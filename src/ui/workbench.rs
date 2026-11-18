@@ -39,6 +39,10 @@ pub struct Panel {
     account_job: Option<crate::account::Job>,
     account_verification: Option<(String, String)>,
     account_loaded: bool,
+    account_hosted: bool,
+    account_expanded: bool,
+    account_scroll: usize,
+    account_usage_error: Option<String>,
     account_setup: bool,
     load_account: bool,
     lab_records: Vec<serde_json::Value>,
@@ -89,6 +93,9 @@ enum Action {
     AccountCancel,
     AccountBrowser,
     AccountSkip,
+    AccountScope(bool),
+    AccountModels,
+    AccountScroll(bool),
     LabRefresh,
     LabRequest(serde_json::Value),
     LabOlder(i64),
@@ -167,6 +174,13 @@ pub struct PanelView {
     pub elapsed: u64,
     pub health_running: bool,
     pub account_running: bool,
+    pub account: Option<crate::account::Profile>,
+    pub identity: Option<crate::account::Identity>,
+    pub account_code: Option<String>,
+    pub account_hosted: bool,
+    pub account_expanded: bool,
+    pub account_scroll: usize,
+    pub account_usage_error: Option<String>,
     pub sections: Vec<&'static str>,
     pub section: usize,
     pub query: String,
@@ -210,6 +224,11 @@ pub fn open(state: &mut AgentState, section: usize, model: Option<&ModelConfig>)
         account_job: None,
         account_verification: None,
         account_loaded: false,
+        account_hosted: false,
+        account_expanded: false,
+        account_scroll: 0,
+        account_usage_error: (section == 22 && notice.starts_with("Usage history unavailable:"))
+            .then(|| notice.clone()),
         account_setup: false,
         load_account: section == 22,
         lab_records: vec![],
@@ -453,12 +472,17 @@ pub fn poll(state: &mut AgentState, agent: &crate::agent::Agent) -> bool {
                 match result {
                     Ok(profile) => {
                         panel.notice = if profile.is_some() {
-                            "Account connected · hosted metrics and local CLI usage stay separate"
+                            "Account connected"
                         } else {
-                            "Not signed in · local models and API keys remain available"
+                            "Not signed in"
                         }
                         .into();
+                        state.ui.account = profile.as_ref().map(|p| {
+                            crate::account::cached_identity()
+                                .unwrap_or_else(|| crate::account::Identity::from_profile(p))
+                        });
                         panel.account = profile;
+                        panel.opened = std::time::Instant::now();
                         panel.account_loaded = true;
                     }
                     Err(error) => {
@@ -889,13 +913,7 @@ fn entries(state: &AgentState, panel: &Panel) -> Vec<Row> {
         }
         22 => {
             let mut rows = vec![];
-            if let Some((_, code)) = &panel.account_verification {
-                rows.push(row(
-                    "Confirm code",
-                    "Check that this matches the browser before approving",
-                    code,
-                    Action::None,
-                ));
+            if panel.account_verification.is_some() {
                 rows.push(row(
                     "Open browser",
                     "Continue with your existing GitHub-backed account",
@@ -904,12 +922,6 @@ fn entries(state: &AgentState, panel: &Panel) -> Vec<Row> {
                 ));
             }
             if panel.account_job.is_some() {
-                rows.push(row(
-                    "Account connection",
-                    "Escape cancels and returns to Settings",
-                    "Waiting",
-                    Action::None,
-                ));
                 rows.push(row(
                     "Cancel",
                     "Stop waiting for this account action",
@@ -929,8 +941,8 @@ fn entries(state: &AgentState, panel: &Panel) -> Vec<Row> {
                 ));
                 if !panel.account_setup {
                     rows.push(row(
-                        "Refresh account",
-                        "Read server-recorded account details on demand",
+                        "Refresh",
+                        "",
                         "Refresh",
                         Action::Account(crate::account::Operation::Refresh),
                     ));
@@ -962,79 +974,28 @@ fn entries(state: &AgentState, panel: &Panel) -> Vec<Row> {
                     Action::AccountSkip,
                 ));
             }
-            if let Some(account) = &panel.account {
-                rows.push(row(
-                    "Account",
-                    account
-                        .user
-                        .username
-                        .as_deref()
-                        .map(|name| format!("GitHub · @{name}"))
-                        .unwrap_or_else(|| "GitHub-linked OsmoGrep identity".into()),
-                    account.user.label(),
-                    Action::None,
-                ));
-                if let Some(workspace) = &account.workspace {
-                    rows.push(row(
-                        "Workspace",
-                        &workspace.kind,
-                        &workspace.name,
-                        Action::None,
-                    ));
-                }
-                for (label, value) in [
-                    ("Reviews", account.stats.reviews),
-                    ("Verified fixes", account.stats.verified),
-                    ("Running", account.stats.running),
-                    ("Queued", account.stats.queued),
+            if panel.account.is_some() {
+                let mut actions = vec![];
+                for (id, label, action) in [
+                    ("account.local", "This Mac", Action::AccountScope(false)),
+                    ("account.hosted", "Hosted", Action::AccountScope(true)),
+                    (
+                        "account.models",
+                        if panel.account_expanded {
+                            "Fewer models"
+                        } else {
+                            "All models"
+                        },
+                        Action::AccountModels,
+                    ),
+                    ("account.up", "Previous", Action::AccountScroll(false)),
+                    ("account.down", "More", Action::AccountScroll(true)),
                 ] {
-                    rows.push(row(
-                        label,
-                        "Hosted workspace · recorded by OsmoGrep",
-                        crate::account::count(value),
-                        Action::None,
-                    ));
+                    let mut item = row(label, "", "", action);
+                    item.id = Some(id.into());
+                    actions.push(item);
                 }
-                for (label, value) in [
-                    ("Model calls", account.usage.model_calls),
-                    ("Input tokens", account.usage.input_tokens),
-                    ("Output tokens", account.usage.output_tokens),
-                ] {
-                    rows.push(row(
-                        label,
-                        "Hosted account usage · excludes local CLI records",
-                        crate::account::count(value),
-                        Action::None,
-                    ));
-                }
-                rows.push(row(
-                    "Usage period",
-                    "Server-reported; no inferred billing window",
-                    match (&account.usage.period_start, &account.usage.period_end) {
-                        (Some(start), Some(end)) => format!("{start} – {end}"),
-                        _ => "unavailable".into(),
-                    },
-                    Action::None,
-                ));
-            } else if panel.account_job.is_none() && !panel.account_setup {
-                rows.push(row(
-                    "Account",
-                    "Model/provider credentials remain separate",
-                    if panel.account_loaded {
-                        "Not signed in"
-                    } else {
-                        "Unavailable"
-                    },
-                    Action::None,
-                ));
-            }
-            if !panel.account_setup {
-                rows.push(row(
-                    "Local CLI usage",
-                    "This machine's provider-reported tokens and calls",
-                    "Open",
-                    Action::Section(7),
-                ));
+                rows.splice(0..0, actions);
             }
             rows
         }
@@ -1736,6 +1697,13 @@ pub fn view(state: &AgentState) -> Option<PanelView> {
         elapsed: panel.opened.elapsed().as_millis() as u64,
         health_running: panel.section == 14 && (panel.load_health || panel.health_scan.is_some()),
         account_running: panel.section == 22 && (panel.load_account || panel.account_job.is_some()),
+        account: panel.account.clone(),
+        identity: panel.account.as_ref().map(|p| state.ui.account.clone().filter(|v|v.id==p.user.id).unwrap_or_else(||crate::account::Identity::from_profile(p))),
+        account_code: panel.account_verification.as_ref().map(|(_,code)|code.clone()),
+        account_hosted: panel.account_hosted,
+        account_expanded: panel.account_expanded,
+        account_scroll: panel.account_scroll,
+        account_usage_error: panel.account_usage_error.clone(),
         sections: SECTIONS.to_vec(),
         section: panel.section,
         selected: selected_index(panel, &rows),
@@ -2016,6 +1984,41 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
                 close = true
             }
         }
+        KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::BackTab if panel.section == 22 => {
+            if !rows.is_empty() {
+                let back = matches!(key.code, KeyCode::Left | KeyCode::BackTab);
+                let mut next = index;
+                for _ in 0..rows.len() {
+                    next = (next + if back { rows.len() - 1 } else { 1 }) % rows.len();
+                    if !matches!(rows[next].action, Action::AccountScroll(_))
+                        && !(panel.account_hosted
+                            && matches!(rows[next].action, Action::AccountModels))
+                    {
+                        break;
+                    }
+                }
+                panel.selected = next;
+            }
+        }
+        KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown
+            if panel.section == 22 =>
+        {
+            let step = if matches!(key.code, KeyCode::PageUp | KeyCode::PageDown) {
+                8
+            } else {
+                1
+            };
+            if matches!(key.code, KeyCode::Up | KeyCode::PageUp) {
+                panel.account_scroll = panel.account_scroll.saturating_sub(step);
+            } else {
+                panel.account_scroll = panel.account_scroll.saturating_add(step);
+            }
+        }
+        KeyCode::Home if panel.section == 22 => panel.account_scroll = 0,
+        KeyCode::End if panel.section == 22 => {
+            panel.account_scroll = panel.days.len().saturating_add(64)
+        }
+        KeyCode::Char(_) | KeyCode::Backspace if panel.section == 22 => {}
         KeyCode::Left | KeyCode::Right if panel.section == 10 => {
             panel.filter = (panel.filter + 5 + if key.code == KeyCode::Left { 4 } else { 1 }) % 5;
             panel.selected = 0;
@@ -2117,7 +2120,7 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
             panel.catalog = None;
             panel.load_models = false;
             panel.opened = std::time::Instant::now();
-            if matches!(panel.section, 7 | 8) {
+            if matches!(panel.section, 7 | 8 | 22) {
                 let (days, notice) = load_usage(state, panel.section);
                 panel.demo = panel.section == 8;
                 panel.days = days;
@@ -2162,7 +2165,28 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
                             panel.notice = "Saving explicit Lab setting…".into();
                         }
                     }
-                    Action::Account(operation) => begin_account(&mut panel, *operation),
+                    Action::Account(operation) => {
+                        let (days, notice) = load_usage(state, 22);
+                        panel.days = days;
+                        panel.account_usage_error = notice
+                            .starts_with("Usage history unavailable:")
+                            .then_some(notice);
+                        panel.account_scroll = 0;
+                        begin_account(&mut panel, *operation);
+                    }
+                    Action::AccountScope(hosted) => {
+                        panel.account_hosted = *hosted;
+                        panel.account_scroll = 0;
+                        panel.opened = std::time::Instant::now();
+                    }
+                    Action::AccountModels => panel.account_expanded = !panel.account_expanded,
+                    Action::AccountScroll(down) => {
+                        panel.account_scroll = if *down {
+                            panel.account_scroll.saturating_add(8)
+                        } else {
+                            panel.account_scroll.saturating_sub(8)
+                        };
+                    }
                     Action::AccountSkip => close = true,
                     Action::AccountCancel => {
                         panel.account_job = None;
@@ -2528,7 +2552,19 @@ pub fn handle_key(state: &mut AgentState, key: KeyEvent) -> bool {
     true
 }
 
+pub fn account_scrolled(state: &mut AgentState, requested: usize, offset: usize) {
+    if let Some(panel) = state.ui.panel.as_mut().filter(|p| p.section == 22) {
+        // An older frame must not discard input received while it was rendering.
+        if panel.account_scroll == requested {
+            panel.account_scroll = offset.min(requested);
+        }
+    }
+}
+
 pub fn paste(state: &mut AgentState, text: &str) {
+    if state.ui.panel.as_ref().is_some_and(|p| p.section == 22) {
+        return;
+    }
     if let Some(panel) = state.ui.panel.as_mut() {
         let target = if let Some((_, text)) = panel.edit.as_mut() {
             text
@@ -2849,23 +2885,55 @@ mod tests {
         panel.load_account = false;
         panel.account_loaded = true;
         let signed_out = view(&state).unwrap();
+        assert!(signed_out.account.is_none());
         assert!(signed_out
             .rows
             .iter()
-            .any(|row| row.label == "Account" && row.value == "Not signed in"));
-        state.ui.panel.as_mut().unwrap().account = Some(serde_json::from_value(serde_json::json!({"user":{"id":"123","username":"octocat","name":"Fixture user"},"stats":{"reviews":12,"running":0}})).unwrap());
+            .any(|row| row.label == "Sign in with browser"));
+        state.ui.panel.as_mut().unwrap().account = Some(serde_json::from_value(serde_json::json!({"user":{"id":"fixture-user","username":"octocat","name":"Fixture user"},"stats":{"reviews":12,"running":0}})).unwrap());
         let account = view(&state).unwrap();
-        assert!(account.rows.iter().any(|row| row.label == "Reviews"
-            && row.value == "12"
-            && row.description.contains("Hosted")));
+        assert_eq!(account.account.as_ref().unwrap().stats.reviews, Some(12));
+        assert!(account
+            .account
+            .as_ref()
+            .unwrap()
+            .usage
+            .input_tokens
+            .is_none());
+        assert_eq!(account.identity.as_ref().unwrap().name, "Fixture user");
+        assert_eq!(account.rows.len(), 8);
         assert!(account
             .rows
             .iter()
-            .any(|row| row.label == "Input tokens" && row.value == "unavailable"));
+            .all(|row| !matches!(row.action, Action::None)));
         assert!(account
             .rows
             .iter()
-            .any(|row| row.label == "Local CLI usage"));
+            .any(|row| row.id.as_deref() == Some("account.local")));
+        let before = account.selected;
+        handle_key(&mut state, key(KeyCode::Right));
+        assert_ne!(view(&state).unwrap().selected, before);
+        assert!(choose_at(&mut state, 1, "account.hosted"));
+        assert!(view(&state).unwrap().account_hosted);
+        handle_key(&mut state, key(KeyCode::PageDown));
+        assert_eq!(view(&state).unwrap().account_scroll, 8);
+        account_scrolled(&mut state, 8, 3);
+        handle_key(&mut state, key(KeyCode::Up));
+        assert_eq!(view(&state).unwrap().account_scroll, 2);
+        account_scrolled(&mut state, 8, 0);
+        assert_eq!(
+            view(&state).unwrap().account_scroll,
+            2,
+            "stale frames must preserve newer input"
+        );
+        assert!(choose_at(&mut state, 0, "account.local"));
+        assert!(!view(&state).unwrap().account_hosted);
+        assert_eq!(view(&state).unwrap().account_scroll, 0);
+        assert!(choose_at(&mut state, 2, "account.models"));
+        assert!(view(&state).unwrap().account_expanded);
+        handle_key(&mut state, key(KeyCode::Char('x')));
+        paste(&mut state, "ignore pasted search");
+        assert!(view(&state).unwrap().query.is_empty());
         assert!(state.ui.queued_agent_prompts.is_empty());
         handle_key(&mut state, key(KeyCode::Esc));
         assert_eq!(view(&state).unwrap().section, 12);
@@ -3308,10 +3376,14 @@ mod tests {
 }
 
 fn load_usage(state: &AgentState, section: usize) -> (Vec<crate::usage::Day>, String) {
-    if !matches!(section, 7 | 8) {
+    if !matches!(section, 7 | 8 | 22) {
         return (Vec::new(), String::new());
     }
-    match crate::usage::history(&state.repo_root) {
+    match if section == 22 {
+        crate::usage::monthly_history()
+    } else {
+        crate::usage::history(&state.repo_root)
+    } {
         Ok(days) => {
             let message = if days.is_empty() {
                 "No provider usage recorded yet. History begins with new reported responses."
@@ -3329,12 +3401,18 @@ pub fn refresh_usage(state: &mut AgentState) {
         .panel
         .as_ref()
         .map(|p| p.section)
-        .filter(|s| matches!(s, 7 | 8))
+        .filter(|s| matches!(s, 7 | 8 | 22))
     {
         let (days, notice) = load_usage(state, section);
         if let Some(panel) = state.ui.panel.as_mut() {
             panel.days = days;
-            panel.notice = notice;
+            if section == 22 {
+                panel.account_usage_error = notice
+                    .starts_with("Usage history unavailable:")
+                    .then_some(notice);
+            } else {
+                panel.notice = notice;
+            }
         }
     }
 }

@@ -49,6 +49,18 @@ mod windows_tests {
     }
 }
 
+pub fn account_present() -> bool {
+    #[cfg(unix)]
+    {
+        return account_file::exists();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        return windows_path("oauth/osmogrep").is_file();
+    }
+    #[allow(unreachable_code)]
+    false
+}
 pub fn set(provider: &str, key: &str) -> Result<(), String> {
     #[cfg(unix)]
     if provider == "oauth/osmogrep" {

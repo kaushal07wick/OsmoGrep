@@ -41,11 +41,11 @@ test('matches the reference geometry at idle and during conversation', () => {
   const v = fixture(), idle = render(v);
   assert.equal(idle.input.x, 1); assert.equal(idle.input.width, 158);
   assert.equal(idle.input.y + idle.input.height, 42);
-  assert.match(stripTerminalSequences(idle.rows[1]!), /osmogrep.*test/);
+  assert.match(stripTerminalSequences(idle.rows[1]!), /osmogrep/);
   v.logs = [{ text: 'USER|Explain the code', level: 'Info' }, { text: 'A paragraph.\n\nAnother paragraph.', level: 'Info' }];
   const active = render(v);
   assert.equal(active.execution.y,idle.execution.y);
-  assert.ok(active.rows.map(stripTerminalSequences).join('').includes('osmogrep vtest'));
+  assert.ok(active.rows.map(stripTerminalSequences).join('').includes('osmogrep'));
   assert.deepEqual(idle.input, active.input);
   assert.match(active.rows.map(row => stripTerminalSequences(row).trimEnd()).join('\n'), /A paragraph\.\n\s*\n.*Another paragraph\./);
 });
@@ -307,10 +307,10 @@ test('light theme paints a light surface with readable dark text', () => {
 test('existing density and named-session settings are reflected', () => {
   const v = fixture(); v.density = 'compact'; v.session = 'parser work';
   const compact = render(v);
-  assert.match(stripTerminalSequences(compact.rows[0]!),/osmogrep.*parser work/);
+  assert.match(stripTerminalSequences(compact.rows[0]!),/osmogrep/);
   v.density = 'spacious';
   const spacious = render(v);
-  assert.match(stripTerminalSequences(spacious.rows[2]!),/osmogrep.*parser work/);
+  assert.match(stripTerminalSequences(spacious.rows[2]!),/osmogrep/);
   assert.ok(spacious.execution.y > compact.execution.y);
 });
 

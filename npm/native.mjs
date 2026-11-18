@@ -10,7 +10,6 @@ import {pipeline} from 'node:stream/promises';
 const releases = 'https://github.com/kaushal07wick/OsmoGrep/releases/download';
 const targets = {
   'darwin-arm64': 'aarch64-apple-darwin',
-  'darwin-x64': 'x86_64-apple-darwin',
   'linux-x64': 'x86_64-unknown-linux-gnu',
   'win32-x64': 'x86_64-pc-windows-msvc',
 };

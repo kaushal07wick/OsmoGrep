@@ -1,19 +1,29 @@
+import {drawAccount,type AccountIdentity} from './account.ts';
 import {visibleWidth,wrapTextWithAnsi} from '@earendil-works/pi-tui';
 import {plain,fit} from './chrome.ts';
 import {statsLines,type Day} from './stats.ts';
 import {drawCenter} from './center.ts';
 import {usageLines} from './usage.ts';
 import {websiteMark} from './brand.ts';
+export interface PanelFrame {
+ rows:string[];controls:{id:'choice';index:number;label:string;x:number;y:number;width:number;height:number}[];
+ scroll?:{requested:number;offset:number};
+ cursor:{x:number;y:number};avatar:{x:number;y:number;width:number;height:number}|null;animate:boolean;
+}
 export interface PanelView {
   health_running?:boolean;account_running?:boolean;
+  identity?:AccountIdentity|null;account_code?:string|null;
+  account_hosted?:boolean;account_expanded?:boolean;account_scroll?:number;account_usage_error?:string|null;
+  account?:{workspace?:{name:string;kind:string}|null;stats?:{reviews?:number|null;verified?:number|null;running?:number|null;queued?:number|null};usage?:{input_tokens?:number|null;output_tokens?:number|null;model_calls?:number|null;period_start?:string|null;period_end?:string|null}}|null;
   settings?:boolean;previewing?:boolean; preview_offset?:number;
   title?:string;edit_label?:string;elapsed?:number;selecting?:boolean;center_filter?:number;counts?:number[];
   sections:string[];section:number;query:string;selected:number;editing:boolean;
   rows:{label:string;description:string;value:string;id?:string|null;group?:string|null;tag?:string|null}[];notice:string;footer:string;preview?:string[];history?:Day[];demo?:boolean;
 }
 const reset='\x1b[0m',bold='\x1b[1m';
-export function drawPanel(panel:PanelView,width:number,height:number,light:boolean,accent:string,reduceMotion=false){
-  if(panel.section===10)return drawCenter(panel,width,height,light,accent,reduceMotion);
+export function drawPanel(panel:PanelView,width:number,height:number,light:boolean,accent:string,reduceMotion=false,graphics=false):PanelFrame{
+  if(panel.section===22)return drawAccount(panel,width,height,light,accent,reduceMotion,graphics);
+  if(panel.section===10)return {...drawCenter(panel,width,height,light,accent,reduceMotion),avatar:null,animate:false};
   const root=light?'\x1b[48;2;250;250;250m':'\x1b[48;2;0;0;0m',surface=light?'\x1b[48;2;237;235;230m':'\x1b[48;2;18;18;18m';
   const fg=light?'\x1b[38;2;32;32;32m':'\x1b[38;2;225;220;210m',dim=light?'\x1b[38;2;105;105;105m':'\x1b[38;2;130;130;128m';
   const gutter=width>=60?3:width>=24?1:0,card=Math.max(1,width-2*gutter),pad=card>=40?3:1,inner=Math.max(1,card-2*pad),top=height>=14?2:0,available=Math.max(1,height-top-(height>=14?2:0));
@@ -35,7 +45,7 @@ export function drawPanel(panel:PanelView,width:number,height:number,light:boole
     const y = Math.max(0, height - 2);
     put(y, accent + 'Show less' + reset);
     controls.push({id:'choice',index:0,label:'Show less',x:gutter+pad,y,width:Math.min(9, inner),height:1});
-    return {rows,controls,cursor:{x:0,y:0}};
+    return {rows,controls,cursor:{x:0,y:0},avatar:null,animate:false};
   }
   const at=Math.max(0,Math.min(panel.selected,panel.rows.length-1)),current=panel.rows[at];
   const tabs=panel.sections.slice(Math.max(0,Math.min(panel.section-1,panel.sections.length-3)),Math.max(0,Math.min(panel.section-1,panel.sections.length-3))+3).map(s=>s===panel.sections[panel.section]?accent+bold+s+reset:dim+s+reset).join(dim+'  /  ');
@@ -70,7 +80,7 @@ export function drawPanel(panel:PanelView,width:number,height:number,light:boole
     const line=fit(content[i]!,inner);
     rows[top+i]=root+' '.repeat(gutter)+surface+fg+' '.repeat(Math.min(pad,card))+line.replaceAll(reset,reset+surface+fg)+' '.repeat(Math.max(0,card-pad-visibleWidth(line)))+reset+root+' '.repeat(gutter)+reset;
   }
-  return {controls,rows:rows.map(s=>fit(s,width)),cursor:{x:Math.max(0,Math.min(width-1,gutter+pad+(panel.editing?6:8)+visibleWidth(plain(panel.query)))),y:Math.min(height-1,top+(header.length>=6?(panel.section===12?4:5):0))}};
+  return {avatar:null,animate:false,controls,rows:rows.map(s=>fit(s,width)),cursor:{x:Math.max(0,Math.min(width-1,gutter+pad+(panel.editing?6:8)+visibleWidth(plain(panel.query)))),y:Math.min(height-1,top+(header.length>=6?(panel.section===12?4:5):0))}};
 }
 
 export function permissionLines(tool:string,args:string,selected:number,width:number,accent:string,light:boolean,compact=false):string[]{

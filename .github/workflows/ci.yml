@@ -17,7 +17,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-15-intel, windows-latest]
+        os: [ubuntu-latest, macos-15, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -51,7 +51,7 @@ jobs:
       matrix:
         os:
           - ubuntu-latest
-          - macos-15-intel
+          - macos-15
           - windows-latest
 
     runs-on: ${{ matrix.os }}

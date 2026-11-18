@@ -7,9 +7,9 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {checksumFor, ensureBinary, targetFor} from './native.mjs';
 
-test('platform selection matches the four published Rust targets',()=>{
+test('platform selection matches the three published Rust targets',()=>{
   assert.equal(targetFor('darwin','arm64'),'aarch64-apple-darwin');
-  assert.equal(targetFor('darwin','x64'),'x86_64-apple-darwin');
+  assert.throws(()=>targetFor('darwin','x64'),/Install from source/);
   assert.equal(targetFor('linux','x64'),'x86_64-unknown-linux-gnu');
   assert.equal(targetFor('win32','x64'),'x86_64-pc-windows-msvc');
   assert.throws(()=>targetFor('linux','arm64'),/No prebuilt/);

@@ -52,7 +52,7 @@ osmogrep
 
 The npm launcher needs **Node.js 22.19+** and downloads the matching Rust binary on first launch. Cargo installation requires Rust 1.89+. You can enter your key through **Settings → Model & provider → API key** instead, or connect another provider below. [Installation options and platform notes →](docs/reference.md#quickstart)
 
-Type **`/login`** inside the TUI to link your existing GitHub-backed OsmoGrep account in the browser. **Settings → Account** shows your profile, workspace and hosted usage. Local models and API keys remain available without account login. [Account login →](docs/cli-account.md)
+Type **`/login`** inside the TUI to link your existing GitHub-backed OsmoGrep account in the browser. **Settings → Account** shows your portrait, workspace stats and animated usage charts, with separate local and hosted views. Local models and API keys remain available without account login. [Account login →](docs/cli-account.md)
 
 Mac and iPhone companions are optional downloads in **Settings → Workspace**. They stay outside the main binary; installing them does not download a device OS or start a VM.
 Opening a device prepares or reuses it automatically. The agent can do the same

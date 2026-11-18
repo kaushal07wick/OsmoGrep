@@ -67,6 +67,10 @@ fn read(path: &Path) -> Result<Option<String>, String> {
         .map(Some)
         .map_err(|_| "Invalid account credential encoding".into())
 }
+pub(super) fn exists() -> bool {
+    std::fs::symlink_metadata(directory().join("login.json"))
+        .is_ok_and(|m| m.is_file() && !m.file_type().is_symlink())
+}
 pub(super) fn get() -> Result<Option<String>, String> {
     read(&directory().join("login.json"))
 }

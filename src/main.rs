@@ -2482,6 +2482,7 @@ fn init_state() -> AgentState {
     let repo_root = std::env::current_dir().unwrap();
     let mut ui = crate::state::UiState::default();
     ui.repo_branch = crate::ui::helper::git_branch(&repo_root);
+    ui.account = crate::account::cached_identity();
 
     AgentState {
         session: Default::default(),

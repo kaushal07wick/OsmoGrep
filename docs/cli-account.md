@@ -28,8 +28,21 @@ The terminal also exposes **Settings → Account** for sign-in, current profile,
 Closing that view cancels its pending operation. The ordinary chat startup makes
 no account request. It adds only the explicit `/login` control, with no account context in model prompts.
 
-Local CLI provider usage remains in its existing Usage view. Account metrics are
-labeled as hosted/server-recorded and do not silently include local model calls.
+The Account panel uses a portrait layout with recorded workspace counts, an
+animated dithered activity chart and a cache ring. **This Mac** shows the current
+UTC month's provider-reported usage across local workspaces; **Hosted** shows only
+the account server's figures. Cached input is included in input, not added to it.
+The top three models have compact usage bars; **All models** expands the rest.
+Use Tab / Left / Right and Enter for actions, and arrows or the mouse wheel to
+scroll a smaller terminal. Reduced motion shows settled charts immediately.
+The existing workspace-scoped Usage view keeps its original range and scope.
+
+A successful account lookup caches presentation-only identity and a small circular
+GitHub portrait in `account/profile.json`. Startup reads this local cache without
+an account HTTP request. Portrait downloads are bounded and optional; text-only
+terminals use initials. Logout and account switching clear the identity cache.
+The welcome header keeps the OsmoGrep mark, wordmark, account name and repo path,
+and hides from the second user message.
 Unknown counts and periods are unavailable, not zero. Signing into an account
 does not change the selected model, supply a provider subscription or upload
 local prompts, source, conversations or usage records. Existing API-key and local

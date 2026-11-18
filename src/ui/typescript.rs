@@ -119,6 +119,11 @@ impl Transcript {
     }
 }
 #[derive(Deserialize)]
+struct PanelScroll {
+    requested: usize,
+    offset: usize,
+}
+#[derive(Deserialize)]
 struct Frame {
     id: u64,
     rows: Vec<String>,
@@ -138,6 +143,8 @@ struct Frame {
     controls: Vec<Control>,
     #[serde(default)]
     transcript: Option<Transcript>,
+    #[serde(default, rename = "panelScroll")]
+    panel_scroll: Option<PanelScroll>,
     #[serde(default, rename = "selectionText")]
     selection_text: String,
 }
@@ -639,6 +646,10 @@ impl TypeScriptUi {
         }
         let frame: Frame = serde_json::from_str(&raw).map_err(|_| "Invalid TypeScript UI frame")?;
         if frame.id != self.sequence
+            || frame
+                .panel_scroll
+                .as_ref()
+                .is_some_and(|scroll| scroll.offset > scroll.requested)
             || frame.rows.len() != height as usize
             || !frame.input.inside(width, height)
             || !frame.execution.inside(width, height)
@@ -700,6 +711,9 @@ impl TypeScriptUi {
             })
         {
             return Err("TypeScript UI frame outside terminal bounds".into());
+        }
+        if let Some(scroll) = &frame.panel_scroll {
+            super::workbench::account_scrolled(state, scroll.requested, scroll.offset);
         }
         let mut output = io::stdout().lock();
         output
@@ -915,6 +929,7 @@ fn view(state: &AgentState, model: &ModelConfig, id: u64, width: u16, height: u1
         "commands":ui.command_items.iter().map(|c|json!({"cmd":c.cmd,"desc":c.desc})).collect::<Vec<_>>(),
         "selectedCommand":ui.command_selected, "tokens":state.usage.prompt_tokens+state.usage.completion_tokens,
     });
+    snapshot["account"] = json!(ui.account);
     snapshot["streaming"] = json!(ui.streaming_active);
     let logs = snapshot["logs"].as_array().unwrap();
     snapshot["streamingStart"] = json!(if ui.streaming_lines_logged == 0 {

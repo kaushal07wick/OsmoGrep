@@ -1,3 +1,4 @@
+import {type AccountIdentity} from './account.ts';
 import {plain} from './chrome.ts';
 import {cachedCodeBlocks,copyTabIcon,type CodeCopy} from './code.ts';
 import { Image, Markdown, getCapabilities, renderImage, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
@@ -19,6 +20,7 @@ export interface View {
   wallTime?: number;
   id: number; width: number; height: number; version: string; cwd: string;
   model: string; provider: string; branch: string; indexed: boolean; indexing: boolean;
+  account?:AccountIdentity|null;
   theme: string; accent: string; density: string; session: string | null; elapsed: number; profile: string; autoApprove: boolean; planMode: boolean;
   logs: { text: string; level: string; kind?: string }[]; plan: { text: string; done: boolean; active: boolean }[];
   diffs: FileDiff[];
@@ -60,6 +62,7 @@ export interface Rendered {
   controls?:{id:'model'|'provider'|'choice'|'voice'|'team'|'copy'|'update'|'permission'|'expand'|'latest'|'link';index?:number;label?:string;x:number;y:number;width:number;height:number}[];
   transcript?:{x:number;y:number;width:number;height:number;start:number;maxScroll:number;lineWidths:number[];scrollbar?:Rect|null};
   selectionText?:string;
+  panelScroll?:{requested:number;offset:number};
   images: { id: number; x: number; y: number; sequence: string; placement?:string }[];
 }
 const reset = '\x1b[0m';
@@ -131,15 +134,23 @@ export function render(v: View): Rendered {
     const empty={x:0,y:0,width:w,height:0};
     return {id:v.id,rows:rows.map(row=>root+fg+clip(row,w)+' '.repeat(Math.max(0,w-visibleWidth(clip(row,w))))+reset),input:empty,execution:empty,editorWidth:inner,animate:!!v.release?.installing&&!v.preferences?.reduce_motion,artwork:null,cursor:{x:0,y:0},cursorVisible:false,images:[],controls};
   }
+  if (v.panel && !v.permission && !v.update) {
+    const empty={x:0,y:0,width:w,height:0};
+    const panel=drawPanel(v.panel,w,h,light,accent,!!v.preferences?.reduce_motion,paperGraphics);
+    const portrait=panel.avatar;
+    const avatar=portrait&&v.panel.identity?.avatar&&paperGraphics?renderImage(v.panel.identity.avatar,{widthPx:96,heightPx:96},{imageId:(process.pid*128+116)>>>0,maxWidthCells:portrait.width,maxHeightCells:portrait.height,moveCursor:false}):null;
+    const accountImages=avatar&&portrait?[{id:(process.pid*128+116)>>>0,x:portrait.x,y:portrait.y,sequence:avatar.sequence}]:[];
+    return {id:v.id,rows:panel.rows,input:empty,execution:empty,editorWidth:Math.max(1,w-8),animate:!v.preferences?.reduce_motion&&(v.panel.health_running||v.panel.account_running||(v.panel.section===22&&panel.animate)||(v.panel.section===8&&(v.panel.elapsed??900)<900)||(v.panel.section===10&&!v.panel.previewing&&(v.panel.elapsed??900)<240)),animationIntervalMs:v.panel.section===22?(v.panel.account_running?150:33):undefined,artwork:null,panelScroll:panel.scroll,cursor:panel.cursor,cursorVisible:![8,22].includes(v.panel.section)&&!v.panel.previewing,images:accountImages,controls:panel.controls};
+  }
   const conversationStarted=v.conversationStarted||v.running||!!v.stream||v.logs.some(log=>log.text.startsWith('USER|'));
   const userTurns=v.userTurns??(v.conversationStarted?2:v.logs.filter(log=>log.text.startsWith('USER|')&&!log.text.startsWith('USER|/')).length);
   const hideHeader=userTurns>=2;
   const headerY = hideHeader || (v.approval&&h<32) || h < 15 || v.density === 'compact' ? 0 : v.density === 'spacious' ? 2 : 1;
   const headerHeight = hideHeader || v.approval&&h<32?0:h >= 15 && v.density !== 'compact' ? (v.density === 'spacious' ? 5 : 4) : h >= 8 ? 2 : 0;
   const header = [
-    fg + bold('osmogrep') + reset + dim + ` v${clean(v.version)}` + (v.session ? ` · ${clean(v.session)}` : '') + reset,
-    dim + clean(`${v.model} · ${v.provider}`) + reset,
-    dim + clean(v.cwd) + (v.branch ? ` · ${clean(v.branch)}` : '') + (v.indexing ? ' · indexing…' : v.indexed ? ' · indexed ✓' : '') + reset,
+    fg + bold('osmogrep') + reset,
+    v.account ? fg + clean(v.account.name) + reset : dim + clean(`${v.model} · ${v.provider}`) + reset,
+    dim + clean(v.cwd) + reset,
   ];
   const mark = websiteMark(light);
   if (headerHeight >= 4 && width >= 40) {
@@ -429,10 +440,7 @@ export function render(v: View): Rendered {
   }
   const rootBackground = light ? '\x1b[48;2;250;250;250m' : '\x1b[48;2;0;0;0m';
   if(paperGraphics)images.unshift({...paperGraphic(width,composerHeight,light,(process.pid*128+126)>>>0),x:gutter,y:composerY});
-  if (v.panel && !v.permission && !v.update) {
-    const panel=drawPanel(v.panel,w,h,light,accent,!!v.preferences?.reduce_motion);
-    return {id:v.id,rows:panel.rows,input:inputRect,execution,editorWidth:textWidth,animate:!v.preferences?.reduce_motion&&(v.panel.health_running||v.panel.account_running||(v.panel.section===8&&(v.panel.elapsed??900)<900)||(v.panel.section===10&&!v.panel.previewing&&(v.panel.elapsed??900)<240)),artwork:null,cursor:panel.cursor,cursorVisible:v.panel.section!==8&&!v.panel.previewing,images:[],controls:panel.controls};
-  }
+
 
   return {
     id: v.id, rows: rows.map(row => {
