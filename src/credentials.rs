@@ -203,6 +203,8 @@ fn windows_path(provider: &str) -> std::path::PathBuf {
 #[cfg(target_os = "windows")]
 fn powershell(script: &str, input: &str) -> Result<String, String> {
     let mut c = Command::new("powershell.exe");
+    // PowerShell 7 module paths cannot be loaded by Windows PowerShell 5.1.
+    c.env_remove("PSModulePath");
     c.args(["-NoProfile", "-NonInteractive", "-Command", script]);
     run(c, input.as_bytes())
 }

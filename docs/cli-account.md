@@ -1,6 +1,6 @@
 # GitHub-linked CLI account
 
-Available in v0.4.5. The client uses the deployed account endpoints in
+Available in v0.4.6. The client uses the deployed account endpoints in
 [the shared protocol](cli-account-protocol.md). Existing dashboard accounts sign
 in through the browser; no GitHub App installation is required.
 
@@ -64,7 +64,7 @@ The Mac account implementation completed real browser approval, private-file per
 account lookup, forced Rust refresh, rotated-token storage and logout against the
 deployed service. Both access-token generations were rejected after revocation.
 The disposable test connection was revoked and its local file removed. That live
-run used the v0.4.4 candidate; v0.4.5 retains the Unix login logic, reuses the existing
-Windows DPAPI file instead of the failed new ACL setup, and passes the release
+run used the v0.4.4 candidate; v0.4.6 retains the Unix login logic, reuses the existing
+Windows DPAPI file with isolated PowerShell module discovery, and passes the release
 fixtures again. See
 [the validation record](cli-account-validation.json) for these distinct scopes.

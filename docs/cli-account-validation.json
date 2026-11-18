@@ -1,8 +1,8 @@
 {
-  "at": "2026-11-18T13:50:58.710893+00:00",
-  "release": "v0.4.5",
+  "at": "2026-11-18T13:58:44.916845+00:00",
+  "release": "v0.4.6",
   "status": "account_implementation_live_verified_release_fixtures_verified",
-  "binary_sha256": "aec118fdeb3550c752b39619e47fb9c1c9bca9f91842f7cb437a3036e46451ed",
+  "binary_sha256": "15f0f65458263c7c20706f4154674af510fe6f8a744707bc593059dd9e363baa",
   "rust": {
     "passed": 362,
     "ignored": 6,
@@ -32,13 +32,13 @@
     "temporary_session_revoked": true,
     "candidate_version": "0.4.4",
     "candidate_binary_sha256": "0b20c3703bbf434f73602a153ccec6635027fa51eb582380fe869e8d1729c6e7",
-    "scope": "Actual Mac TUI approval, private-file persistence, account lookup, forced Rust refresh and logout against the deployed service. v0.4.5 changes Windows storage and a test-only timeout; Unix login logic is unchanged."
+    "scope": "Actual Mac TUI approval, private-file persistence, account lookup, forced Rust refresh and logout against the deployed service. Unix login logic is unchanged in v0.4.6. Windows storage uses the existing DPAPI file and isolates PowerShell 5.1 module discovery."
   },
   "credential_storage": "Private local account/login.json: Unix directory 0700 and file 0600; Windows reuses the existing user-bound DPAPI-encrypted credential file. Unix file is not encrypted at rest. Provider credential storage unchanged.",
   "website_source_commit": "897962c290d89e5e6fabb4e4e6c0faa2dc5e2457",
   "paid_calls": 0,
   "tui_account": {
-    "binary_sha256": "aec118fdeb3550c752b39619e47fb9c1c9bca9f91842f7cb437a3036e46451ed",
+    "binary_sha256": "15f0f65458263c7c20706f4154674af510fe6f8a744707bc593059dd9e363baa",
     "checks": [
       "fresh_tui_offers_login_without_network_or_forced_account",
       "tui_login_displays_code_and_uses_browser_launcher_without_private_device_code",
@@ -56,7 +56,7 @@
     "scope": "Actual TUI/process/browser-launcher boundary with a deterministic local account server; synthetic grants and private-file persistence; no live website login."
   },
   "existing_input": {
-    "binary_sha256": "aec118fdeb3550c752b39619e47fb9c1c9bca9f91842f7cb437a3036e46451ed",
+    "binary_sha256": "15f0f65458263c7c20706f4154674af510fe6f8a744707bc593059dd9e363baa",
     "checks": [
       "minified_diff_is_folded",
       "typing_during_active_model_request",
@@ -73,7 +73,7 @@
     "paid_calls": 0
   },
   "cli": {
-    "binary_sha256": "aec118fdeb3550c752b39619e47fb9c1c9bca9f91842f7cb437a3036e46451ed",
+    "binary_sha256": "15f0f65458263c7c20706f4154674af510fe6f8a744707bc593059dd9e363baa",
     "checks": [
       "atomic_validated_settings_and_secret_redaction",
       "model_discovery_and_configured_reasoning",
@@ -90,7 +90,7 @@
     ]
   },
   "lab": {
-    "binary_sha256": "aec118fdeb3550c752b39619e47fb9c1c9bca9f91842f7cb437a3036e46451ed",
+    "binary_sha256": "15f0f65458263c7c20706f4154674af510fe6f8a744707bc593059dd9e363baa",
     "checks": [
       "help_and_idle_agents_do_not_create_lab_storage",
       "natural_context_discovery_and_inspection_work_read_only_without_recording_or_storage",
@@ -108,7 +108,7 @@
     "real_vm_runs": 0
   },
   "team": {
-    "binary_sha256": "aec118fdeb3550c752b39619e47fb9c1c9bca9f91842f7cb437a3036e46451ed",
+    "binary_sha256": "15f0f65458263c7c20706f4154674af510fe6f8a744707bc593059dd9e363baa",
     "checks": [
       "independent_process_presence_and_repository_isolation",
       "durability_restart_deduplication_and_receipts_without_idle_paid_turns",
@@ -126,7 +126,7 @@
     "paid_model_requests": 0
   },
   "harness": {
-    "binary_sha256": "aec118fdeb3550c752b39619e47fb9c1c9bca9f91842f7cb437a3036e46451ed",
+    "binary_sha256": "15f0f65458263c7c20706f4154674af510fe6f8a744707bc593059dd9e363baa",
     "passed": 13,
     "checks": [
       "greeting_without_tools",
@@ -153,6 +153,6 @@
     "Hosted metrics do not silently include or upload local provider usage.",
     "Local checks used no paid model calls, device OS downloads or user clipboard modifications.",
     "Native live execution used macOS ARM; cross-platform release checks run in GitHub Actions.",
-    "v0.4.4 was not published because its new Windows ACL setup failed. v0.4.5 reuses the existing DPAPI file and adds a real Windows credential round-trip test."
+    "v0.4.4 and v0.4.5 were not published after Windows credential checks failed. v0.4.6 isolates the documented inherited PowerShell module-path incompatibility and retains the Windows credential round-trip check."
   ]
 }
