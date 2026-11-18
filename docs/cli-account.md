@@ -1,9 +1,8 @@
 # GitHub-linked CLI account
 
-Implementation status: the CLI integration is prepared; public browser login
-requires the website endpoints in [the shared protocol](cli-account-protocol.md)
-and a successful real browser round trip. Do not advertise it as deployed before
-that check. v0.4.3 is the preceding command-cleanup release.
+Available in v0.4.4. The client uses the deployed account endpoints in
+[the shared protocol](cli-account-protocol.md). Existing dashboard accounts sign
+in through the browser; no GitHub App installation is required.
 
 Inside the TUI, **`/login`** opens Account and starts browser authorization. The
 verification code and waiting/cancel state stay in the TUI. No model call is used.
@@ -36,8 +35,11 @@ does not change the selected model, supply a provider subscription or upload
 local prompts, source, conversations or usage records. Existing API-key and local
 model workflows remain available.
 
-Credentials use the existing OS store: macOS Keychain, Linux Secret Service or
-Windows user-bound protection. Refresh rotates credentials under a process-shared
+Account login is saved in `account/login.json` inside the application configuration
+directory. The directory is private (0700) and the token file is readable and writable
+only by your OS user (0600) on macOS/Linux; Windows uses a user-only directory ACL.
+The account token is not encrypted at rest. Provider API keys and provider OAuth
+credentials retain their existing OS credential storage. Refresh rotates credentials under a process-shared
 lock also used by login and logout. A failed remote revocation still removes the
 local credential and reports that remote revocation was not confirmed. A failure
 to remove the local credential remains an error. Profile responses are bounded,
@@ -55,6 +57,10 @@ configuration. Omitting the provider selects the first-party OsmoGrep account.
 
 Local fixtures verify the client protocol, response limits, invalid metrics,
 origin/redirect restrictions, waiting/cancellation, slowdown, denial and expiry.
-They do not establish that the website is deployed or that a live account login
-has succeeded. Server replay/concurrency, workspace authorization and browser
-CSRF checks belong to the website implementation and must also pass.
+The release fixture also checks private-file persistence across processes,
+forced refresh, rotated-token storage, remote revocation and local logout.
+The final release binary completed real browser approval, private-file persistence,
+account lookup, forced Rust refresh, rotated-token storage and logout against the
+deployed service. Both access-token generations were rejected after revocation.
+The disposable test connection was revoked and its local file removed. See
+[the validation record](cli-account-validation.json) for these distinct scopes.

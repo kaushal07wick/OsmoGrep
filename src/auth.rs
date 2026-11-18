@@ -178,18 +178,51 @@ pub fn login_with(
         |duration| wait(duration, cancel),
         announce,
     )?;
-    if cancel.is_cancelled() {
-        return Err("Login cancelled".into());
+    let result = (|| {
+        if cancel.is_cancelled() {
+            return Err("Login cancelled".to_string());
+        }
+        let _lock = credential_lock(provider)?;
+        if cancel.is_cancelled() {
+            return Err("Login cancelled".to_string());
+        }
+        crate::credentials::set(
+            &format!("oauth/{provider}"),
+            &serde_json::to_string(&saved).map_err(|e| e.to_string())?,
+        )
+    })();
+    if let Err(error) = result {
+        if provider == "osmogrep"
+            && revoke_account_at(&account_endpoint("/api/cli/auth/revoke")?, &saved).is_err()
+        {
+            return Err(format!(
+                "{error}. The new connection could not be revoked; remove it from your account."
+            ));
+        }
+        return Err(error);
     }
-    let _lock = credential_lock(provider)?;
-    if cancel.is_cancelled() {
-        return Err("Login cancelled".into());
-    }
-    crate::credentials::set(
-        &format!("oauth/{provider}"),
-        &serde_json::to_string(&saved).map_err(|e| e.to_string())?,
-    )
+    Ok(())
 }
+fn revoke_account_at(url: &str, saved: &Token) -> Result<(), String> {
+    let refresh = saved
+        .refresh_token
+        .as_ref()
+        .filter(|token| !token.is_empty())
+        .ok_or("Account credential has no revocable refresh token")?;
+    let value = post(
+        url,
+        &BTreeMap::from([
+            ("client_id", "osmogrep-cli".into()),
+            ("token", refresh.clone()),
+            ("token_type_hint", "refresh_token".into()),
+        ]),
+    )?;
+    if value["error"].is_string() {
+        return Err("Account server rejected revocation".into());
+    }
+    Ok(())
+}
+
 fn wait(duration: Duration, cancel: &crate::agent::CancelToken) -> Result<(), String> {
     let deadline = std::time::Instant::now() + duration;
     loop {
@@ -330,18 +363,7 @@ pub fn logout(provider: &str) -> Result<(), String> {
             };
             let saved: Token =
                 serde_json::from_str(&raw).map_err(|_| "Stored account credential is invalid")?;
-            let value = post(
-                &account_endpoint("/api/cli/auth/revoke")?,
-                &BTreeMap::from([
-                    ("client_id", "osmogrep-cli".into()),
-                    ("token", saved.refresh_token.unwrap_or(saved.access_token)),
-                    ("token_type_hint", "refresh_token".into()),
-                ]),
-            )?;
-            if value["error"].is_string() {
-                return Err("Account server rejected revocation".to_string());
-            }
-            Ok(())
+            revoke_account_at(&account_endpoint("/api/cli/auth/revoke")?, &saved)
         })()
     } else {
         Ok(())
@@ -567,6 +589,29 @@ mod tests {
         ] {
             assert!(token(&value, None).is_err());
         }
+    }
+
+    #[test]
+    fn account_revocation_uses_the_refresh_token_and_surfaces_remote_errors() {
+        let saved = Token {
+            access_token: "fixture-access".into(),
+            refresh_token: Some("fixture-refresh".into()),
+            expires_at: now() + 60,
+        };
+        let (base, server) = oauth_fixture(vec![serde_json::json!({})]);
+        revoke_account_at(&format!("{base}/revoke"), &saved).unwrap();
+        server.join().unwrap();
+        let (base, server) = oauth_fixture(vec![serde_json::json!({"error":"server_error"})]);
+        assert!(revoke_account_at(&format!("{base}/revoke"), &saved).is_err());
+        server.join().unwrap();
+        assert!(revoke_account_at(
+            "http://127.0.0.1:1/never",
+            &Token {
+                refresh_token: None,
+                ..saved
+            }
+        )
+        .is_err());
     }
 
     #[test]

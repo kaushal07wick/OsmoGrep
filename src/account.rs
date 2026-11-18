@@ -6,8 +6,16 @@ use std::{io::Read, sync::mpsc, time::Duration};
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct User {
     pub id: String,
-    pub name: String,
+    pub name: Option<String>,
     pub username: Option<String>,
+}
+impl User {
+    pub fn label(&self) -> &str {
+        self.name
+            .as_deref()
+            .or(self.username.as_deref())
+            .unwrap_or("GitHub account")
+    }
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Workspace {
@@ -42,7 +50,8 @@ pub struct Profile {
 fn parse(bytes: &[u8]) -> Result<Profile, String> {
     let value: Profile =
         serde_json::from_slice(bytes).map_err(|_| "Account server returned an invalid profile")?;
-    let mut labels = vec![value.user.id.as_str(), value.user.name.as_str()];
+    let mut labels = vec![value.user.id.as_str()];
+    labels.extend(value.user.name.as_deref());
     labels.extend(value.user.username.as_deref());
     if let Some(workspace) = &value.workspace {
         labels.extend([workspace.id.as_str(), workspace.name.as_str()]);
@@ -120,10 +129,11 @@ pub fn print(json: bool) -> Result<(), String> {
     } else if let Some(profile) = profile {
         println!(
             "{}{}",
-            profile.user.name,
+            profile.user.label(),
             profile
                 .user
                 .username
+                .as_ref()
                 .map(|name| format!(" · @{name}"))
                 .unwrap_or_default()
         );
@@ -218,6 +228,11 @@ mod tests {
     fn account_summary_keeps_missing_metrics_unavailable_and_rejects_invalid_identity_or_counts() {
         let profile = parse(br#"{"user":{"id":"123","name":"User","username":"octocat"},"stats":{"reviews":0},"provider_key":"must not escape"}"#).unwrap();
         assert_eq!(count(profile.stats.reviews), "0");
+        let unnamed = parse(br#"{"user":{"id":"123","name":null,"username":"octocat"}}"#).unwrap();
+        assert_eq!(unnamed.user.label(), "octocat");
+        let no_public_name =
+            parse(br#"{"user":{"id":"123","name":null,"username":null}}"#).unwrap();
+        assert_eq!(no_public_name.user.label(), "GitHub account");
         assert_eq!(count(profile.usage.model_calls), "unavailable");
         assert!(!serde_json::to_string(&profile)
             .unwrap()
@@ -275,3 +290,7 @@ mod tests {
         thread.join().unwrap();
     }
 }
+
+#[cfg(test)]
+#[path = "account/live_tests.rs"]
+mod live_tests;

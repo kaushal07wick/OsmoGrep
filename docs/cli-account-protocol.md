@@ -65,7 +65,8 @@ GitHub/provider credential.
 }
 ```
 
-User identity is required. Workspace, stats and usage are optional until available.
+User identity is required. A GitHub display name may be null; the CLI falls back
+to the GitHub username. Workspace, stats and usage are optional until available.
 Count fields must be nonnegative integers or null, never invented zeroes. The
 stats fields match the web dashboard. Usage fields represent server-recorded
 account usage for the stated period; they do not include local CLI records unless

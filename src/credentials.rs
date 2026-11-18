@@ -1,4 +1,5 @@
-//! OS-protected credentials. Never fall back to saving new secrets as plaintext.
+//! Provider secrets use OS protection; account login uses an explicitly chosen private file.
+mod account_file;
 #[cfg(not(target_os = "macos"))]
 use std::{
     io::Write,
@@ -31,6 +32,9 @@ mod tests {
     }
 }
 pub fn set(provider: &str, key: &str) -> Result<(), String> {
+    if provider == "oauth/osmogrep" {
+        return account_file::set(key);
+    }
     if key.len() > 64 * 1024 {
         return Err("Credential exceeds 64 KiB".into());
     }
@@ -41,9 +45,8 @@ pub fn set(provider: &str, key: &str) -> Result<(), String> {
             provider,
             key.as_bytes(),
         )
-        .map_err(|_| {
-            "Could not save to macOS Keychain. Unlock your keychain or use an environment variable."
-                .into()
+        .map_err(|error| {
+            format!("Could not save to macOS Keychain (OSStatus {}). Unlock your keychain or use an environment variable.", error.code())
         });
     }
     #[cfg(target_os = "linux")]
@@ -75,6 +78,9 @@ pub fn set(provider: &str, key: &str) -> Result<(), String> {
     )
 }
 pub fn get(provider: &str) -> Result<Option<String>, String> {
+    if provider == "oauth/osmogrep" {
+        return account_file::get();
+    }
     #[cfg(target_os = "macos")]
     {
         return match security_framework::passwords::get_generic_password(&service(), provider) {
@@ -116,6 +122,9 @@ pub fn get(provider: &str) -> Result<Option<String>, String> {
     Ok(None)
 }
 pub fn delete(provider: &str) -> Result<(), String> {
+    if provider == "oauth/osmogrep" {
+        return account_file::delete();
+    }
     #[cfg(target_os = "macos")]
     {
         return match security_framework::passwords::delete_generic_password(&service(), provider) {

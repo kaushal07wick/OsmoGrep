@@ -1,10 +1,11 @@
 {
-  "at": "2026-11-18T09:33:03.838764+00:00",
-  "status": "client_prepared_website_integration_pending",
-  "binary_sha256": "d358b9ee550ad9ea208531507f626e4f5ab56cb7d9d6118662cfc8bf05e4bbc3",
+  "at": "2026-11-18T13:32:50.722512+00:00",
+  "release": "v0.4.4",
+  "status": "live_rust_tui_and_deployed_website_verified",
+  "binary_sha256": "0b20c3703bbf434f73602a153ccec6635027fa51eb582380fe869e8d1729c6e7",
   "rust": {
-    "passed": 360,
-    "ignored": 5,
+    "passed": 362,
+    "ignored": 6,
     "excluded": [
       "mac_clipboard_reads_an_image_without_changing_the_users_clipboard"
     ]
@@ -12,26 +13,47 @@
   "terminal_ui": {
     "passed": 90
   },
-  "live_browser_login_verified": false,
+  "npm_launcher": {
+    "passed": 5
+  },
+  "live_browser_login_verified": true,
+  "live_account": {
+    "origin": "https://app.osmogrep.com",
+    "checks": [
+      "release_tui_slash_login_completed_real_browser_approval",
+      "release_binary_reads_private_file_credential_and_live_profile",
+      "rust_private_file_credential_persistence_verified",
+      "rust_forced_refresh_rotates_tokens_and_keeps_identity",
+      "rust_logout_revokes_both_access_generations_and_deletes_test_credential",
+      "release_binary_confirms_signed_out_after_revocation"
+    ],
+    "paid_calls": 0,
+    "model_requests": 0,
+    "temporary_session_revoked": true
+  },
+  "credential_storage": "Private local account/login.json: Unix directory 0700 and file 0600; Windows user-only directory ACL. Not encrypted at rest. Provider credential storage unchanged.",
+  "website_source_commit": "897962c290d89e5e6fabb4e4e6c0faa2dc5e2457",
   "paid_calls": 0,
   "tui_account": {
-    "binary_sha256": "d358b9ee550ad9ea208531507f626e4f5ab56cb7d9d6118662cfc8bf05e4bbc3",
+    "binary_sha256": "0b20c3703bbf434f73602a153ccec6635027fa51eb582380fe869e8d1729c6e7",
     "checks": [
       "fresh_tui_offers_login_without_network_or_forced_account",
       "tui_login_displays_code_and_uses_browser_launcher_without_private_device_code",
       "escape_cancels_polling_and_restores_composer_without_credential_writes",
       "existing_install_reopens_chat_without_account_checks",
-      "slash_login_opens_tui_authorization_without_a_model_turn"
+      "slash_login_opens_tui_authorization_without_a_model_turn",
+      "private_account_file_survives_process_restart_and_refresh_rotates_tokens",
+      "logout_revokes_remote_session_and_removes_private_token_file"
     ],
-    "account_requests": 3,
+    "account_requests": 8,
     "real_browser_opens": 0,
-    "credential_writes": 0,
+    "synthetic_credential_writes": 2,
     "model_requests": 0,
     "paid_calls": 0,
-    "scope": "Actual TUI/process/browser-launcher boundary with a deterministic local account server; no successful token grant or live website login."
+    "scope": "Actual TUI/process/browser-launcher boundary with a deterministic local account server; synthetic grants and private-file persistence; no live website login."
   },
   "existing_input": {
-    "binary_sha256": "d358b9ee550ad9ea208531507f626e4f5ab56cb7d9d6118662cfc8bf05e4bbc3",
+    "binary_sha256": "0b20c3703bbf434f73602a153ccec6635027fa51eb582380fe869e8d1729c6e7",
     "checks": [
       "minified_diff_is_folded",
       "typing_during_active_model_request",
@@ -47,10 +69,86 @@
     "fixture_model_requests": 7,
     "paid_calls": 0
   },
+  "cli": {
+    "binary_sha256": "0b20c3703bbf434f73602a153ccec6635027fa51eb582380fe869e8d1729c6e7",
+    "checks": [
+      "atomic_validated_settings_and_secret_redaction",
+      "model_discovery_and_configured_reasoning",
+      "deep_diagnostics_repair_permissions_and_preserve_damaged_data",
+      "completions_generated_and_available_shell_parsers_pass",
+      "team_inspection_does_not_register_phantom_agents_or_acknowledge_messages"
+    ],
+    "catalog_requests": 3,
+    "model_generation_requests": 0,
+    "paid_calls": 0,
+    "completion_parsers": [
+      "bash",
+      "zsh"
+    ]
+  },
+  "lab": {
+    "binary_sha256": "0b20c3703bbf434f73602a153ccec6635027fa51eb582380fe869e8d1729c6e7",
+    "checks": [
+      "help_and_idle_agents_do_not_create_lab_storage",
+      "natural_context_discovery_and_inspection_work_read_only_without_recording_or_storage",
+      "accepted_contract_drift_is_delivered_once_to_the_subscriber_without_an_idle_model_call",
+      "contract_subscriptions_respect_explicit_no_messaging",
+      "opt_in_context_captures_actual_requests_usage_and_provenance_redacts_secrets_and_turns_off",
+      "cli_capture_import_tamper_rejection_comparison_and_stale_apply_preserve_source",
+      "unavailable_vm_saves_failure_without_executing_the_reproducer_on_host",
+      "natural_requests_chain_saved_ids_and_guides_without_slash_commands_or_preparation_side_effects",
+      "work_with_named_peer_routes_without_persistent_team_mode"
+    ],
+    "fixture_model_requests": 46,
+    "paid_calls": 0,
+    "real_device_runs": 0,
+    "real_vm_runs": 0
+  },
+  "team": {
+    "binary_sha256": "0b20c3703bbf434f73602a153ccec6635027fa51eb582380fe869e8d1729c6e7",
+    "checks": [
+      "independent_process_presence_and_repository_isolation",
+      "durability_restart_deduplication_and_receipts_without_idle_paid_turns",
+      "concurrent_broadcast_delivery",
+      "safe_boundary_delivery_preserves_user_task_and_durable_ack",
+      "cross_process_edit_contention_release_and_automatic_updates",
+      "crashed_instance_expires_without_stealing_session",
+      "natural_request_metadata_targeting_active_delivery_and_sender_only_reply_without_team_mode",
+      "messages_remain_pending_until_the_recipient_model_returns_successfully",
+      "contextual_read_and_send_followups_keep_the_previous_direct_partner_only",
+      "explicit_no_message_instruction_overrides_persistent_team_mode"
+    ],
+    "processes": 7,
+    "fixture_model_requests": 32,
+    "paid_model_requests": 0
+  },
+  "harness": {
+    "binary_sha256": "0b20c3703bbf434f73602a153ccec6635027fa51eb582380fe869e8d1729c6e7",
+    "passed": 13,
+    "checks": [
+      "greeting_without_tools",
+      "queued_turns_preserve_conversation",
+      "independent_session_resume_and_full_history",
+      "permission_denial_preserves_files",
+      "turn_checkpoint_restore_and_conflict_protection",
+      "background_command_incremental_output_and_stdin",
+      "cancellation_is_responsive_and_rpc_remains_usable",
+      "provider_context_overflow_compacts_and_retries_once",
+      "in_loop_model_aware_compaction_archives_original_context",
+      "explicit_worker_isolation_includes_uncommitted_parent_changes",
+      "worker_permissions_and_reviewable_changes",
+      "worker_recursion_disabled",
+      "crash_recovery_keeps_completed_tools_without_automatic_reexecution"
+    ],
+    "model_requests": 34,
+    "paid_provider_calls": 0,
+    "scope": "Local process, filesystem, JSONL RPC, and deterministic HTTP fixtures; no model-quality or ultra-long-run claim"
+  },
   "boundaries": [
-    "No successful token grant or OS credential write was exercised by the TUI fixture.",
-    "Website device approval, server-side refresh/revocation, shared rate limits, workspace authorization and deployment belong to the website agent.",
-    "No account status fetch occurs during ordinary chat startup; the fresh welcome is local until an action is selected.",
-    "The /login command and account view are prepared in source and are not included in the preceding v0.4.3 release."
+    "Live approval used an existing GitHub-backed account; fresh GitHub signup was not tested.",
+    "No account requests occur during ordinary chat startup; the fresh welcome is local until an action is selected.",
+    "Hosted metrics do not silently include or upload local provider usage.",
+    "Local checks used no paid model calls, device OS downloads or user clipboard modifications.",
+    "Native live execution used macOS ARM; cross-platform release checks run in GitHub Actions."
   ]
 }

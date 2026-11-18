@@ -971,7 +971,7 @@ fn entries(state: &AgentState, panel: &Panel) -> Vec<Row> {
                         .as_deref()
                         .map(|name| format!("GitHub · @{name}"))
                         .unwrap_or_else(|| "GitHub-linked OsmoGrep identity".into()),
-                    &account.user.name,
+                    account.user.label(),
                     Action::None,
                 ));
                 if let Some(workspace) = &account.workspace {

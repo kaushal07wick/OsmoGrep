@@ -1,5 +1,5 @@
 """Exercise TUI-first device login/cancellation with a local server and fake browser.
-No real browser opens, model calls, successful grants or credential writes.
+No real browser opens, real credentials or model calls; tokens are synthetic fixtures.
 """
 import argparse
 import fcntl
@@ -33,12 +33,16 @@ launcher = home/'.codex/open-personal-link'
 launcher.write_text('#!/bin/sh\nprintf "%s" "$1" > '+shlex.quote(str(opened))+'\n')
 launcher.chmod(0o700)
 requests, failures = [], []
+approved=False
+revoked=False
+refreshes=0
 
 class Account(http.server.BaseHTTPRequestHandler):
     def log_message(self, *unused):
         pass
 
     def do_POST(self):
+        global revoked, refreshes
         try:
             form = parse_qs(self.rfile.read(int(self.headers['Content-Length'])).decode())
             requests.append((self.path, form))
@@ -51,17 +55,39 @@ class Account(http.server.BaseHTTPRequestHandler):
                          'verification_uri':uri,'verification_uri_complete':uri+'?user_code=ABCD-EFGH',
                          'interval':1,'expires_in':60}
                 status = 200
+            elif self.path == '/api/cli/auth/revoke':
+                assert form['token'] == ['fixture-refresh-rotated']
+                revoked=True
+                value,status={},200
             else:
                 assert self.path == '/api/cli/auth/token', self.path
+                if form['grant_type']==['refresh_token']:
+                    assert form['refresh_token']==['fixture-refresh']
+                    refreshes+=1
+                    return self.respond({'access_token':'fixture-access-rotated','refresh_token':'fixture-refresh-rotated','token_type':'Bearer','expires_in':900})
                 assert form['device_code'] == ['private-device-fixture']
                 assert form['grant_type'] == ['urn:ietf:params:oauth:grant-type:device_code']
-                value, status = {'error':'authorization_pending'}, 400
-            body = json.dumps(value).encode()
-            self.send_response(status)
-            self.send_header('Content-Type','application/json')
-            self.send_header('Content-Length',str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+                value,status=({'access_token':'fixture-access','refresh_token':'fixture-refresh','token_type':'Bearer','expires_in':900},200) if approved else ({'error':'authorization_pending'},400)
+            self.respond(value,status)
+        except Exception as error:
+            failures.append(repr(error))
+            self.send_error(500)
+
+    def respond(self,value,status=200):
+        body=json.dumps(value).encode()
+        self.send_response(status)
+        self.send_header('Content-Type','application/json')
+        self.send_header('Content-Length',str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        try:
+            assert self.path=='/api/cli/account'
+            assert self.headers['Authorization']=='Bearer fixture-access-rotated'
+            assert not revoked
+            requests.append((self.path,{}))
+            self.respond({'user':{'id':'fixture-user','name':None,'username':'octocat'},'workspace':{'id':'fixture-workspace','name':'Personal','kind':'personal'}})
         except Exception as error:
             failures.append(repr(error))
             self.send_error(500)
@@ -165,11 +191,37 @@ try:
     terminal.send(b'slash_login_returned_to_chat')
     terminal.wait(lambda:b'slash_login_returned_to_chat' in terminal.output)
     checks.append('slash_login_opens_tui_authorization_without_a_model_turn')
+    terminal.close()
+    terminal=None
+    approved=True
+    login=subprocess.run([str(binary),'login','--no-browser'],cwd=root,env=environment,capture_output=True,text=True,timeout=20)
+    assert login.returncode==0,login.stderr
+    files=list(home.rglob('account/login.json'))+list((root/'config').rglob('account/login.json'))
+    assert len(files)==1,files
+    saved=files[0]
+    assert saved.stat().st_mode&0o077==0
+    assert saved.parent.stat().st_mode&0o077==0
+    token=json.loads(saved.read_text())
+    assert token['access_token']=='fixture-access'
+    token['expires_at']=0
+    saved.write_text(json.dumps(token))
+    summary=subprocess.run([str(binary),'account','--json'],cwd=root,env=environment,capture_output=True,text=True,timeout=20)
+    assert summary.returncode==0,summary.stderr
+    assert json.loads(summary.stdout)['account']['user']['username']=='octocat'
+    assert refreshes==1
+    assert json.loads(saved.read_text())['refresh_token']=='fixture-refresh-rotated'
+    checks.append('private_account_file_survives_process_restart_and_refresh_rotates_tokens')
+    logout=subprocess.run([str(binary),'logout'],cwd=root,env=environment,capture_output=True,text=True,timeout=20)
+    assert logout.returncode==0,logout.stderr
+    assert revoked and not saved.exists()
+    signed_out=subprocess.run([str(binary),'account','--json'],cwd=root,env=environment,capture_output=True,text=True,timeout=20)
+    assert signed_out.returncode==0 and json.loads(signed_out.stdout)['signed_in'] is False
+    checks.append('logout_revokes_remote_session_and_removes_private_token_file')
     assert not failures, failures
     report={'binary_sha256':hashlib.sha256(binary.read_bytes()).hexdigest(),'checks':checks,
-            'account_requests':len(requests),'real_browser_opens':0,'credential_writes':0,
+            'account_requests':len(requests),'real_browser_opens':0,'synthetic_credential_writes':2,
             'model_requests':0,'paid_calls':0,'fixture':str(root),
-            'scope':'Actual TUI/process/browser-launcher boundary with a deterministic local account server; no successful token grant or live website login.'}
+            'scope':'Actual TUI/process/browser-launcher boundary with a deterministic local account server; synthetic grants and private-file persistence; no live website login.'}
     args.output.write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps({'checks':len(checks),'account_requests':len(requests),'paid_calls':0}))
 finally:
