@@ -13,7 +13,15 @@
   },
   "npm_launcher": {
     "passed": 5,
-    "public_github_download": "Packed v0.4.9 launcher installed in a private prefix, downloaded the public native archive and printed osmogrep 0.4.9"
+    "public_github_download": "Packed v0.4.9 launcher installed in a private prefix, downloaded the public native archive and printed osmogrep 0.4.9",
+    "registry": {
+      "version": "0.4.9",
+      "shasum": "504a062a36016b9f417a2842e0db8656118ad644",
+      "integrity": "sha512-YEvkJf8CsHsU02wW6Vdsmvx/RGkJNhMUKADZ0S95g6VGSWnb8INqeyIkgVarPpzRnWJSIpvMVWD4NVPoyUnTsQ==",
+      "latest": "0.4.9",
+      "fresh_install": "npm install of osmogrep@0.4.9 in a private prefix succeeded; first launch downloaded the public GitHub asset into a fresh cache and printed osmogrep 0.4.9",
+      "propagation": "npm processing and the initial cached tarball 404 cleared before this check"
+    }
   },
   "workspace_pty": {
     "checks": [
