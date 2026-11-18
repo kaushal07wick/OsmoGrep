@@ -319,7 +319,19 @@ pub fn has_token(provider: &str) -> bool {
         .flatten()
         .is_some()
 }
-pub fn access_token(provider: &str) -> Result<Option<String>, String> {
+pub fn has_provider_token(provider: &str) -> bool {
+    provider != "osmogrep" && has_token(provider)
+}
+pub fn provider_access_token(provider: &str) -> Result<Option<String>, String> {
+    if provider == "osmogrep" {
+        return Ok(None);
+    }
+    access_token(provider)
+}
+pub fn account_access_token() -> Result<Option<String>, String> {
+    access_token("osmogrep")
+}
+fn access_token(provider: &str) -> Result<Option<String>, String> {
     let Some(raw) = crate::credentials::get(&format!("oauth/{provider}"))? else {
         return Ok(None);
     };
@@ -375,6 +387,11 @@ pub fn logout(provider: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn account_tokens_are_never_selected_as_model_credentials() {
+        assert!(!has_provider_token("osmogrep"));
+        assert!(provider_access_token("osmogrep").unwrap().is_none());
+    }
     #[test]
     fn device_authorization_polls_pending_then_refreshes_through_http() {
         use std::io::{Read, Write};

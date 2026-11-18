@@ -471,7 +471,7 @@ impl Agent {
     pub fn is_configured(&self) -> bool {
         self.api_key.is_some()
             || matches!(self.model_cfg.provider.as_str(), "ollama" | "lmstudio")
-            || crate::auth::has_token(&self.model_cfg.provider)
+            || crate::auth::has_provider_token(&self.model_cfg.provider)
     }
 
     pub fn set_api_key(&mut self, key: String) -> Result<(), String> {
@@ -526,7 +526,7 @@ impl Agent {
         self.api_key
             .clone()
             .or_else(|| {
-                crate::auth::access_token(&self.model_cfg.provider)
+                crate::auth::provider_access_token(&self.model_cfg.provider)
                     .ok()
                     .flatten()
             })
@@ -598,7 +598,7 @@ impl Agent {
             let result = (|| {
                 let key = match key {
                     Some(key) => Some(key),
-                    None => crate::auth::access_token(&model.provider)?,
+                    None => crate::auth::provider_access_token(&model.provider)?,
                 };
                 fetch_model_catalog(&model, key.as_deref())
             })();
@@ -669,7 +669,7 @@ impl Agent {
         thread::spawn(move || {
             let api_key = match api_key {
                 Some(key) => Some(key),
-                None => match crate::auth::access_token(&model_cfg.provider) {
+                None => match crate::auth::provider_access_token(&model_cfg.provider) {
                     Ok(key) => key.or_else(|| {
                         matches!(model_cfg.provider.as_str(), "ollama" | "lmstudio")
                             .then(String::new)

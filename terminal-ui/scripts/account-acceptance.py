@@ -83,6 +83,10 @@ class Account(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         try:
+            if self.path=='/v1/models':
+                assert not self.headers.get('Authorization'), 'Account token leaked to a model provider'
+                requests.append((self.path,{}))
+                return self.respond({'data':[]})
             assert self.path=='/api/cli/account'
             assert self.headers['Authorization']=='Bearer fixture-access-rotated'
             assert not revoked
@@ -211,6 +215,10 @@ try:
     assert refreshes==1
     assert json.loads(saved.read_text())['refresh_token']=='fixture-refresh-rotated'
     checks.append('private_account_file_survives_process_restart_and_refresh_rotates_tokens')
+    catalog=subprocess.run([str(binary),'models','--provider','osmogrep','--base-url',f'http://127.0.0.1:{server.server_port}/v1','--json'],cwd=root,env=environment,capture_output=True,text=True,timeout=20)
+    assert catalog.returncode==0,catalog.stderr
+    assert any(path=='/v1/models' for path,_ in requests)
+    checks.append('signed_in_account_token_is_never_sent_to_model_catalogs')
     logout=subprocess.run([str(binary),'logout'],cwd=root,env=environment,capture_output=True,text=True,timeout=20)
     assert logout.returncode==0,logout.stderr
     assert revoked and not saved.exists()

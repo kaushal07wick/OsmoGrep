@@ -111,7 +111,7 @@ fn fetch(url: &str, token: &str) -> Result<Profile, String> {
     parse(&bytes)
 }
 pub fn load() -> Result<Option<Profile>, String> {
-    let Some(token) = auth::access_token("osmogrep")? else {
+    let Some(token) = auth::account_access_token()? else {
         return Ok(None);
     };
     fetch(&auth::account_endpoint("/api/cli/account")?, &token).map(Some)

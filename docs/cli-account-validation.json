@@ -1,10 +1,10 @@
 {
-  "at": "2026-11-18T13:58:44.916845+00:00",
-  "release": "v0.4.6",
+  "at": "2026-11-18T14:10:42.327229+00:00",
+  "release": "v0.4.7",
   "status": "account_implementation_live_verified_release_fixtures_verified",
-  "binary_sha256": "15f0f65458263c7c20706f4154674af510fe6f8a744707bc593059dd9e363baa",
+  "binary_sha256": "7417ace96ce72653389727def4874384fd6dde7ca8d9d323ebdc296c52f35261",
   "rust": {
-    "passed": 362,
+    "passed": 363,
     "ignored": 6,
     "excluded": [
       "mac_clipboard_reads_an_image_without_changing_the_users_clipboard"
@@ -32,13 +32,13 @@
     "temporary_session_revoked": true,
     "candidate_version": "0.4.4",
     "candidate_binary_sha256": "0b20c3703bbf434f73602a153ccec6635027fa51eb582380fe869e8d1729c6e7",
-    "scope": "Actual Mac TUI approval, private-file persistence, account lookup, forced Rust refresh and logout against the deployed service. Unix login logic is unchanged in v0.4.6. Windows storage uses the existing DPAPI file and isolates PowerShell 5.1 module discovery."
+    "scope": "Actual Mac TUI approval, private-file persistence, account lookup, forced Rust refresh and logout against the deployed service. v0.4.7 adds explicit account/model credential isolation with a black-box fixture regression; the browser account protocol is unchanged."
   },
   "credential_storage": "Private local account/login.json: Unix directory 0700 and file 0600; Windows reuses the existing user-bound DPAPI-encrypted credential file. Unix file is not encrypted at rest. Provider credential storage unchanged.",
   "website_source_commit": "897962c290d89e5e6fabb4e4e6c0faa2dc5e2457",
   "paid_calls": 0,
   "tui_account": {
-    "binary_sha256": "15f0f65458263c7c20706f4154674af510fe6f8a744707bc593059dd9e363baa",
+    "binary_sha256": "7417ace96ce72653389727def4874384fd6dde7ca8d9d323ebdc296c52f35261",
     "checks": [
       "fresh_tui_offers_login_without_network_or_forced_account",
       "tui_login_displays_code_and_uses_browser_launcher_without_private_device_code",
@@ -46,9 +46,10 @@
       "existing_install_reopens_chat_without_account_checks",
       "slash_login_opens_tui_authorization_without_a_model_turn",
       "private_account_file_survives_process_restart_and_refresh_rotates_tokens",
+      "signed_in_account_token_is_never_sent_to_model_catalogs",
       "logout_revokes_remote_session_and_removes_private_token_file"
     ],
-    "account_requests": 8,
+    "account_requests": 9,
     "real_browser_opens": 0,
     "synthetic_credential_writes": 2,
     "model_requests": 0,
@@ -56,7 +57,7 @@
     "scope": "Actual TUI/process/browser-launcher boundary with a deterministic local account server; synthetic grants and private-file persistence; no live website login."
   },
   "existing_input": {
-    "binary_sha256": "15f0f65458263c7c20706f4154674af510fe6f8a744707bc593059dd9e363baa",
+    "binary_sha256": "7417ace96ce72653389727def4874384fd6dde7ca8d9d323ebdc296c52f35261",
     "checks": [
       "minified_diff_is_folded",
       "typing_during_active_model_request",
@@ -73,7 +74,7 @@
     "paid_calls": 0
   },
   "cli": {
-    "binary_sha256": "15f0f65458263c7c20706f4154674af510fe6f8a744707bc593059dd9e363baa",
+    "binary_sha256": "7417ace96ce72653389727def4874384fd6dde7ca8d9d323ebdc296c52f35261",
     "checks": [
       "atomic_validated_settings_and_secret_redaction",
       "model_discovery_and_configured_reasoning",
@@ -90,7 +91,7 @@
     ]
   },
   "lab": {
-    "binary_sha256": "15f0f65458263c7c20706f4154674af510fe6f8a744707bc593059dd9e363baa",
+    "binary_sha256": "7417ace96ce72653389727def4874384fd6dde7ca8d9d323ebdc296c52f35261",
     "checks": [
       "help_and_idle_agents_do_not_create_lab_storage",
       "natural_context_discovery_and_inspection_work_read_only_without_recording_or_storage",
@@ -108,7 +109,7 @@
     "real_vm_runs": 0
   },
   "team": {
-    "binary_sha256": "15f0f65458263c7c20706f4154674af510fe6f8a744707bc593059dd9e363baa",
+    "binary_sha256": "7417ace96ce72653389727def4874384fd6dde7ca8d9d323ebdc296c52f35261",
     "checks": [
       "independent_process_presence_and_repository_isolation",
       "durability_restart_deduplication_and_receipts_without_idle_paid_turns",
@@ -126,7 +127,7 @@
     "paid_model_requests": 0
   },
   "harness": {
-    "binary_sha256": "15f0f65458263c7c20706f4154674af510fe6f8a744707bc593059dd9e363baa",
+    "binary_sha256": "7417ace96ce72653389727def4874384fd6dde7ca8d9d323ebdc296c52f35261",
     "passed": 13,
     "checks": [
       "greeting_without_tools",
@@ -153,6 +154,12 @@
     "Hosted metrics do not silently include or upload local provider usage.",
     "Local checks used no paid model calls, device OS downloads or user clipboard modifications.",
     "Native live execution used macOS ARM; cross-platform release checks run in GitHub Actions.",
-    "v0.4.4 and v0.4.5 were not published after Windows credential checks failed. v0.4.6 isolates the documented inherited PowerShell module-path incompatibility and retains the Windows credential round-trip check."
-  ]
+    "v0.4.4, v0.4.5 and v0.4.6 candidates were not published. Windows module-path isolation passed source CI; v0.4.7 additionally isolates account tokens from model credential lookup."
+  ],
+  "credential_boundary_regression": {
+    "before": "v0.4.6 candidate reproduced account-token selection for a model provider named osmogrep using only synthetic local credentials",
+    "after": "v0.4.7 release fixture confirms the signed-in account token is never sent to the model catalog",
+    "model_requests": 0,
+    "paid_calls": 0
+  }
 }
