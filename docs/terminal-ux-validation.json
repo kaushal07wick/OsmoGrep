@@ -12,7 +12,8 @@
     "passed": 102
   },
   "npm_launcher": {
-    "passed": 5
+    "passed": 5,
+    "public_github_download": "Packed v0.4.9 launcher installed in a private prefix, downloaded the public native archive and printed osmogrep 0.4.9"
   },
   "workspace_pty": {
     "checks": [
@@ -47,8 +48,49 @@
   "neovim_selection": "Exact visual selection and line range verified in headless Neovim; private bridge delivery and path rejection covered by Rust tests",
   "limits": [
     "No paid model calls, device boot, real account actions or host clipboard writes",
-    "Linux and Windows release binaries are built and tested by the release workflow",
+    "GitHub macOS Rust CI job remained queued at publication; local macOS tests passed with the documented clipboard exclusions",
     "Ghostty sizing is approximate; manual terminal zoom changes are outside remembered focus state",
-    "Homebrew Linux install is not exercised on this Mac"
-  ]
+    "Linux Homebrew install is not exercised on this Mac"
+  ],
+  "release": {
+    "url": "https://github.com/kaushal07wick/OsmoGrep/releases/tag/v0.4.9",
+    "tag_commit": "29722a7ef84b7fda2b9cfbc5291fbfe9cefc76d0",
+    "assets": 8,
+    "workflow": 44367087795,
+    "linux": "Release job 135023630513: tests, build, package smoke and archive checksum passed",
+    "windows": "Release job 135023629955: tests, build, package smoke and archive checksum passed",
+    "mac": "Locally built and tested Apple Silicon binary; queued release runner was cancelled after Linux and Windows completed"
+  },
+  "editor": {
+    "ghostty_checks": 7,
+    "tmux_checks": {
+      "workspace_handoff_resumes_the_current_session": true,
+      "editor_and_chat_share_one_window_at_80_columns": true,
+      "approved_graphics_forwarded_through_managed_tmux": true,
+      "toggle_preserves_unsaved_changes": true,
+      "closing_editor_restores_full_agent": true,
+      "normal_width_split_keeps_agent_readable": true,
+      "black_editor_without_user_dashboard_preserves_personal_config": true,
+      "editor_shortcut_returns_focus_to_chat": true,
+      "agent_focus_reloads_saved_changes_and_highlights_lines": true,
+      "following_never_overwrites_unsaved_editor_content": true,
+      "resize_and_renderer_survive_editor_close": true,
+      "clean_exit_restores_terminal": true
+    },
+    "tmux_fixture": "Seeded isolated session storage to exercise an existing workspace rather than the first-run account screen"
+  },
+  "native_updater": "Isolated copy of v0.4.8 updated through public GitHub assets to the exact v0.4.9 binary; user installation unchanged",
+  "homebrew": {
+    "tap": "kaushal07wick/tap",
+    "commit": "70472e8",
+    "version": "0.4.9",
+    "checks": [
+      "Ruby syntax",
+      "Homebrew style",
+      "strict audit",
+      "public Apple Silicon download and checksum",
+      "native Homebrew update/uninstall guards"
+    ],
+    "linux_install_tested": false
+  }
 }

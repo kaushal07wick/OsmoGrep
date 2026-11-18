@@ -36,7 +36,7 @@ npm install -g osmogrep
 pnpm add -g osmogrep
 ```
 
-On Apple Silicon Mac or Linux x64, use Homebrew:
+On Apple Silicon Mac or Linux x64 (glibc 2.35+), use Homebrew:
 
 ```sh
 brew install kaushal07wick/tap/osmogrep
