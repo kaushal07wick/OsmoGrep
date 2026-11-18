@@ -118,6 +118,9 @@ pub fn draw_ui<B: Backend>(
             render_update_screen(f, state);
             return;
         }
+        if state.ui.pending_permission.is_none() && super::experience::draw(f, state) {
+            return;
+        }
         let mut content = centered_content(area);
         let padding = top_padding(state).min(content.height / 2);
         content.y += padding;

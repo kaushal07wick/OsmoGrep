@@ -21,6 +21,12 @@ pub struct UpdateArgs {
     yes: bool,
 }
 pub fn update(args: UpdateArgs) -> Result<(), Box<dyn Error>> {
+    if std::env::current_exe().is_ok_and(|p| crate::updater::homebrew_managed(&p)) {
+        println!(
+            "Homebrew manages this installation. Run: brew upgrade kaushal07wick/tap/osmogrep"
+        );
+        return Ok(());
+    }
     let Some(info) = crate::updater::check_for_update()? else {
         println!("OsmoGrep {} is up to date.", env!("CARGO_PKG_VERSION"));
         return Ok(());

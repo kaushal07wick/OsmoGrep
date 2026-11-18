@@ -65,6 +65,12 @@ struct PersistedState {
     #[serde(default)]
     queued_prompts: Vec<String>,
     #[serde(default)]
+    references: Vec<crate::ui::references::Reference>,
+    #[serde(default)]
+    attachments: Vec<crate::attachments::Attachment>,
+    #[serde(default)]
+    reviewed_hunks: std::collections::BTreeSet<String>,
+    #[serde(default)]
     repo_root: String,
     #[serde(default)]
     logs: Vec<(String, String)>,
@@ -141,10 +147,28 @@ fn apply_saved(state: &mut AgentState, saved: PersistedState) {
         saved
             .conversation
             .iter()
-            .filter(|message| message["role"] == "user")
+            .filter(|message| message["role"] == "user" && message["content"].is_string())
             .count() as u64,
     );
     state.ui.queued_agent_prompts = saved.queued_prompts.into();
+    state.ui.references = saved.references;
+    state.ui.attachments = saved.attachments;
+    state.ui.next_attachment_id = state
+        .ui
+        .references
+        .iter()
+        .filter_map(|r| {
+            r.label
+                .strip_prefix("[Context #")?
+                .strip_suffix(']')?
+                .parse::<u32>()
+                .ok()
+        })
+        .chain(state.ui.attachments.iter().map(|a| a.id))
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1);
+    state.ui.reviewed_hunks = saved.reviewed_hunks;
     state.ui.queue_paused = !state.ui.queued_agent_prompts.is_empty();
     state.logs.clear();
     for (level, text) in saved.logs {
@@ -194,6 +218,22 @@ pub fn save(state: &AgentState) -> Result<(), String> {
     let payload = PersistedState {
         user_turns: state.ui.user_turns,
         queued_prompts: state.ui.queued_agent_prompts.iter().cloned().collect(),
+        references: state.ui.references.clone(),
+        attachments: state
+            .ui
+            .attachments
+            .iter()
+            .filter(|a| {
+                state.ui.input.contains(&a.label)
+                    || state
+                        .ui
+                        .queued_agent_prompts
+                        .iter()
+                        .any(|p| p.contains(&a.label))
+            })
+            .cloned()
+            .collect(),
+        reviewed_hunks: state.ui.reviewed_hunks.clone(),
         repo_root: state.repo_root.to_string_lossy().to_string(),
         logs: state
             .logs
@@ -260,6 +300,27 @@ fn session_path(id: &str) -> Result<PathBuf, String> {
         return Err("Invalid session ID".into());
     }
     Ok(session_dir().join(format!("{id}.json")))
+}
+
+pub fn session_logs(root: &Path, id: &str) -> Result<Vec<(String, String)>, String> {
+    let path = session_path(id)?;
+    let metadata = fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
+    if !metadata.is_file() || metadata.len() > 32 * 1024 * 1024 {
+        return Err("Session is not a regular snapshot under 32 MiB".into());
+    }
+    let saved: PersistedState = serde_json::from_slice(&fs::read(path).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+    if Path::new(&saved.repo_root) != root {
+        return Err("Session belongs to another workspace".into());
+    }
+    Ok(saved.logs)
+}
+pub fn read_session_log(root: &Path, id: &str, index: usize) -> Result<String, String> {
+    session_logs(root, id)?
+        .into_iter()
+        .nth(index)
+        .map(|(_, text)| text.trim_start_matches("USER|").to_string())
+        .ok_or_else(|| "Saved message is no longer present".into())
 }
 
 pub fn preview_session(id: &str) -> Result<Vec<String>, String> {
@@ -344,6 +405,12 @@ pub fn new_session(state: &mut AgentState) -> Result<(), String> {
     state.jobs.clear();
     state.reviewed_change_count = 0;
     state.ui.queued_agent_prompts.clear();
+    state.ui.references.clear();
+    state.ui.attachments.clear();
+    state.ui.jump_log = None;
+    state.ui.timing = Default::default();
+    state.ui.reviewed_hunks.clear();
+    state.ui.experience = None;
     state.ui.diff_active = false;
     state.ui.diff_snapshot.clear();
     state.usage.prompt_tokens = 0;

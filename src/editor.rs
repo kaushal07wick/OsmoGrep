@@ -20,11 +20,14 @@ pub enum Layout {
     Split(u16),
 }
 pub fn layout(columns: u16) -> Layout {
+    layout_width(columns, 42)
+}
+fn layout_width(columns: u16, percent: u16) -> Layout {
     if columns < 100 {
         Layout::Stacked
     } else {
         Layout::Split(
-            ((u32::from(columns) * 42 / 100) as u16)
+            ((u32::from(columns) * u32::from(percent.clamp(20, 80)) / 100) as u16)
                 .max(28)
                 .min(columns - 28),
         )
@@ -114,11 +117,12 @@ fn open_pane(
     root: &Path,
     entry: &str,
     columns: u16,
+    percent: u16,
     bridge: &Path,
 ) -> Result<String, String> {
     let cwd = root.display().to_string();
     let command = editor_command(root, entry, owner, bridge, None)?;
-    let pane = match layout(columns) {
+    let pane = match layout_width(columns, percent) {
         Layout::Stacked => run(
             socket,
             &[
@@ -233,7 +237,15 @@ fn open_inner(state: &mut AgentState, raw: &str) -> Result<(), String> {
                 )?;
             }
         } else {
-            open_pane(None, &owner, &state.repo_root, &entry, columns, &bridge)?;
+            open_pane(
+                None,
+                &owner,
+                &state.repo_root,
+                &entry,
+                columns,
+                state.preferences.editor_percent,
+                &bridge,
+            )?;
         }
         return Ok(());
     }
@@ -308,7 +320,15 @@ fn open_inner(state: &mut AgentState, raw: &str) -> Result<(), String> {
             socket,
             &["set-option", "-w", "-t", &owner, "allow-passthrough", "on"],
         );
-        open_pane(socket, &owner, &state.repo_root, &entry, columns, &bridge)?;
+        open_pane(
+            socket,
+            &owner,
+            &state.repo_root,
+            &entry,
+            columns,
+            state.preferences.editor_percent,
+            &bridge,
+        )?;
         Ok::<_, String>(())
     })();
     if let Err(error) = configure {
@@ -382,4 +402,88 @@ mod tests {
         assert!(command.contains("'\"'\"'"));
         std::fs::remove_dir_all(directory).unwrap();
     }
+}
+
+pub fn open_location(state: &mut AgentState, path: &str, line: usize) -> Result<(), String> {
+    let target = crate::file_guard::workspace_path(&state.repo_root, Path::new(path), false)?;
+    if target.is_dir() {
+        return open_inner(state, &format!("/nv {}", target.display()));
+    }
+    if !target.is_file() || line == 0 || line > u32::MAX as usize {
+        return Err("Select a regular workspace file and a valid line.".into());
+    }
+    open_inner(state, &format!("/nv {}", target.display()))?;
+    if let Some(follower) = &state.ui.editor_follow {
+        follower.focus(
+            &target.to_string_lossy(),
+            Some(line as u64),
+            None,
+            "inspect",
+        );
+    }
+    Ok(())
+}
+
+pub fn apply_layout(state: &mut AgentState, mode: &str) -> Result<(), String> {
+    match mode {
+        "review" => {
+            crate::ui::experience::open(state, crate::ui::experience::Page::Changes);
+            return Ok(());
+        }
+        "preview" => {
+            crate::ui::workbench::open(state, 13, None);
+            return Ok(());
+        }
+        "auto" | "chat" | "code" => {}
+        _ => return Err("Unknown workspace layout".into()),
+    }
+    if state.ui.workspace_task.is_some() {
+        return Err("Wait for the workspace pane to finish opening.".into());
+    }
+    let previous = state.preferences.workspace_layout.clone();
+    state.preferences.workspace_layout = mode.into();
+    let result = (|| {
+        if crate::workspace::ghostty::available() {
+            if !native::exists(state) && mode != "chat" {
+                open_inner(state, "/nv")?;
+            } else {
+                native::focus_layout(state, mode, &previous)?;
+            }
+        } else if env::var_os("TMUX").is_some() {
+            if mode != "chat" {
+                open_inner(state, "/nv")?;
+            }
+            let owner = env::var("TMUX_PANE").map_err(|_| "Cannot identify the chat pane")?;
+            let pane = if mode == "chat" {
+                owner.clone()
+            } else {
+                owned_editor(&owner).ok_or("Editor pane not found")?
+            };
+            let zoomed = run(
+                None,
+                &[
+                    "display-message",
+                    "-p",
+                    "-t",
+                    &owner,
+                    "#{window_zoomed_flag}",
+                ],
+            )? == "1";
+            if zoomed {
+                run(None, &["resize-pane", "-Z", "-t", &owner])?;
+            }
+            focus(None, &pane)?;
+            if mode != "auto" {
+                run(None, &["resize-pane", "-Z", "-t", &pane])?;
+            }
+        } else if mode == "chat" { /* Already a full-width chat. */
+        } else {
+            open_inner(state, "/nv")?;
+        }
+        crate::persistence::save(state)
+    })();
+    if result.is_err() {
+        state.preferences.workspace_layout = previous;
+    }
+    result
 }

@@ -409,6 +409,21 @@ fn start_agent_run(
     let (tx, rx) = mpsc::channel();
     let repo_root = state.repo_root.clone();
     let mut prior_messages = state.conversation.messages.clone();
+    match ui::references::message_for(state, text) {
+        Ok(Some(reference)) => {
+            if prior_messages.is_empty() {
+                prior_messages.push(agent::system_prompt(&state.repo_root));
+            }
+            prior_messages.push(reference);
+        }
+        Ok(None) => {}
+        Err(error) => {
+            state.ui.queued_agent_prompts.push_front(text.into());
+            state.ui.queue_paused = true;
+            log(state, LogLevel::Warn, error);
+            return;
+        }
+    }
     if let Some(images) = attachments::message_for(state, text) {
         if prior_messages.is_empty() {
             prior_messages.push(agent::system_prompt(&state.repo_root));
@@ -481,6 +496,7 @@ fn start_agent_run(
     state.ui.user_turns = state.ui.user_turns.saturating_add(1);
     state.ui.agent_running = true;
     state.ui.run_started_at = Some(Instant::now());
+    state.ui.timing.start();
     state.ui.cancelling = false;
     state.ui.run_phase = if state.plan_mode {
         "planning".to_string()
@@ -832,6 +848,9 @@ fn truncate_cli_field(value: &str, max: usize) -> String {
 fn uninstall_current_binary(args: UninstallArgs) -> Result<(), Box<dyn Error>> {
     let exe = std::env::current_exe()?;
     let exe = fs::canonicalize(&exe).unwrap_or(exe);
+    if updater::homebrew_managed(&exe) {
+        return Err("Homebrew manages this installation. Run: brew uninstall osmogrep".into());
+    }
     if exe.file_stem().and_then(|name| name.to_str()) != Some("osmogrep") {
         return Err(format!(
             "refusing to uninstall unexpected executable {}",
@@ -980,6 +999,10 @@ impl HeadlessEmitter {
     }
 
     fn emit_event(&mut self, evt: AgentEvent) {
+        if matches!(evt, AgentEvent::Timing { .. }) {
+            return;
+        }
+
         if self.json_events {
             self.emit_json_value(headless_json_value(evt, self.auto_approve));
         } else {
@@ -998,6 +1021,13 @@ impl HeadlessEmitter {
 
 fn headless_json_value(evt: AgentEvent, auto_approve: bool) -> serde_json::Value {
     match evt {
+        AgentEvent::Timing {
+            stage,
+            duration_ms,
+            attempt,
+        } => {
+            serde_json::json!({"type":"timing","stage":stage,"duration_ms":duration_ms,"attempt":attempt})
+        }
         AgentEvent::ToolCall { name, args } => {
             serde_json::json!({ "type": "tool_call", "name": name, "args": args })
         }
@@ -1237,6 +1267,7 @@ fn looks_like_secret(text: &str) -> bool {
 
 fn emit_headless_text(evt: AgentEvent, auto_approve: bool) {
     match evt {
+        AgentEvent::Timing { .. } => {}
         AgentEvent::ToolCall { name, args } => {
             println!("[tool] {} {}", name, compact_json(&args));
         }
@@ -1481,6 +1512,26 @@ fn run_tui(
                 format!("Editor follow: {error}"),
             );
             runtime.mark_dirty();
+        }
+        if state.ui.input_mode != InputMode::ApiKey && state.ui.experience.is_none() {
+            if let Some(selection) = state
+                .ui
+                .editor_follow
+                .as_ref()
+                .and_then(editor::Follower::take_selection)
+            {
+                let result = selection.and_then(|s| {
+                    ui::references::attach_text(
+                        &mut state,
+                        &format!("{}:{}-{} · editor selection", s.path, s.start, s.end),
+                        &s.text,
+                    )
+                });
+                if let Err(e) = result {
+                    log(&mut state, LogLevel::Warn, e);
+                }
+                runtime.mark_dirty();
+            }
         }
         if team::poll(&mut state, agent.model_config()) {
             runtime.mark_dirty();
@@ -1874,6 +1925,9 @@ fn run_tui(
             }
         }
 
+        if ui::experience::poll(&mut state) {
+            runtime.mark_dirty();
+        }
         if state.ui.cancel_requested {
             if let Some(token) = agent_cancel.as_ref() {
                 token.cancel();
@@ -1891,8 +1945,10 @@ fn run_tui(
                 }
                 match rx.try_recv() {
                     Ok(evt) => {
+                        state.ui.timing.observe(&evt);
                         team::observe(&mut state, &evt);
                         match evt {
+                            AgentEvent::Timing { .. } => {}
                             AgentEvent::Usage {
                                 usage: _,
                                 storage_error,

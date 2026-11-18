@@ -1,3 +1,5 @@
+import {sourceLinks} from './source-links.ts';
+import {workspaceFrame,type WorkspaceView} from './experience.ts';
 import {type AccountIdentity} from './account.ts';
 import {plain} from './chrome.ts';
 import {cachedCodeBlocks,copyTabIcon,type CodeCopy} from './code.ts';
@@ -40,6 +42,9 @@ export interface View {
   userTurns?:number;
   workspaceStatus?:string|null;
   panel?: PanelView | null;
+  experience?:WorkspaceView|null;
+  jumpLog?:number|null;
+  references?:{label:string;title:string}[];
   approval?: {tool:string;args:string;selected?:number} | null;
   statusLine?: string[];
   statusEntries?: StatusEntry[];
@@ -59,9 +64,11 @@ export interface Rendered {
   animate: boolean;
   animationIntervalMs?:number;
   artwork: Rect | null;
-  controls?:{id:'model'|'provider'|'choice'|'voice'|'team'|'copy'|'update'|'permission'|'expand'|'latest'|'link';index?:number;label?:string;x:number;y:number;width:number;height:number}[];
+  controls?:{id:'model'|'provider'|'choice'|'voice'|'team'|'copy'|'update'|'permission'|'expand'|'latest'|'link'|'workspace'|'source';index?:number;label?:string;x:number;y:number;width:number;height:number}[];
   transcript?:{x:number;y:number;width:number;height:number;start:number;maxScroll:number;lineWidths:number[];scrollbar?:Rect|null};
   selectionText?:string;
+  workspaceScroll?:{requested:number;offset:number};
+  jumpedLog?:number;
   panelScroll?:{requested:number;offset:number};
   images: { id: number; x: number; y: number; sequence: string; placement?:string }[];
 }
@@ -134,6 +141,7 @@ export function render(v: View): Rendered {
     const empty={x:0,y:0,width:w,height:0};
     return {id:v.id,rows:rows.map(row=>root+fg+clip(row,w)+' '.repeat(Math.max(0,w-visibleWidth(clip(row,w))))+reset),input:empty,execution:empty,editorWidth:inner,animate:!!v.release?.installing&&!v.preferences?.reduce_motion,artwork:null,cursor:{x:0,y:0},cursorVisible:false,images:[],controls};
   }
+  if(v.experience&&!v.permission&&!v.update)return workspaceFrame(v.id,v.experience,w,h,light,!!v.preferences?.reduce_motion,v.elapsed);
   if (v.panel && !v.permission && !v.update) {
     const empty={x:0,y:0,width:w,height:0};
     const panel=drawPanel(v.panel,w,h,light,accent,!!v.preferences?.reduce_motion,paperGraphics);
@@ -215,9 +223,11 @@ export function render(v: View): Rendered {
       expandAction(undefined,from);
     }
   };
+  const logRows:number[]=[];
   let paragraph: string[] = [];
   const flush = () => { if (paragraph.length) { appendMarkdown(paragraph.join('\n')); paragraph = []; } };
   for (let i = 0; i < v.logs.length; i++) {
+    logRows[i]=transcript.length;
     const firstLog=i;
     const entry = v.logs[i]!; const text = clean(entry.text);
     if (entry.kind === 'Peer') {
@@ -225,7 +235,7 @@ export function render(v: View): Rendered {
     } else if (v.streaming && i >= (v.streamingStart??0)) {
       paragraph.push(stripTerminalSequences(entry.text));
     } else if (text.startsWith('USER|')) {
-      flush(); let command = text.slice(5), prefix = '❯ ';
+      flush(); logRows[i]=transcript.length; let command = text.slice(5), prefix = '❯ ';
       if (v.logs[i + 1]?.text === 'SHELL : $ ' + command) { i++; prefix = '$ '; }
       transcript.push('', ...wrapTextWithAnsi(accent + prefix + reset + fg + bold(command) + reset, Math.max(1, width - pad * 2)), '');
     } else if (text.startsWith('· Finished in ')) {
@@ -254,10 +264,13 @@ export function render(v: View): Rendered {
   if (v.plan.length) transcript.push('', ...v.plan.map(p => `${p.done ? '✓' : p.active ? '›' : '·'} ${clean(p.text)}`));
   const contentHeight=Math.max(0,execution.height-(v.expandTools&&expandActions.length?1:0));
   const maxScroll = Math.max(0, transcript.length - contentHeight);
-  const start = v.followTail ? maxScroll : Math.max(0,Math.min(maxScroll,v.scrollTop??maxScroll-v.scroll));
+  const jump=v.jumpLog==null?null:logRows[Math.min(v.jumpLog,logRows.length-1)]??0;
+  const start = jump!=null?Math.min(maxScroll,jump):v.followTail ? maxScroll : Math.max(0,Math.min(maxScroll,v.scrollTop??maxScroll-v.scroll));
   transcript.slice(start, start + contentHeight).forEach((line, i) => {
-    const marked=webLinks(line,light);
+    const sources=sourceLinks(line,light);
+    const marked=webLinks(sources.text,light);
     put(execution.y+i,highlightTranscript(marked.text,start+i,v.transcriptSelection,light),gutter+pad,width-pad*2);
+    if(!v.panel&&!v.approval&&!v.update&&!v.masked&&!v.commands.length)for(const link of sources.links){const length=Math.min(link.width,width-pad*2-link.x);if(length>0)controls.push({id:'source',label:link.label,x:gutter+pad+link.x,y:execution.y+i,width:length,height:1});}
     if(!v.panel&&!v.approval&&!v.update&&!v.masked&&!v.commands.length)for(const link of marked.links){
       const length=Math.min(link.width,width-pad*2-link.x);
       if(length>0)controls.push({id:'link',label:link.url,x:gutter+pad+link.x,y:execution.y+i,width:length,height:1});
@@ -382,6 +395,7 @@ export function render(v: View): Rendered {
     }
     if (!value && !v.masked) styled = paper.muted + 'Try "explain this codebase"' + paper.foreground;
     const prefix = index === 0 ? '❯ ' : '  ';
+    for(const ref of v.references??[]){if(styled.includes(ref.label))styled=styled.replaceAll(ref.label,accent+ref.label+paper.foreground);}
     const content = ' '.repeat(pad) + accent + prefix + paper.foreground + styled;
     put(textY + i, paperRow(content,width,textY+i-composerY,composerHeight,light,paperGraphics));
   }
@@ -391,7 +405,9 @@ export function render(v: View): Rendered {
     const permission = v.planMode ? 'plan mode' : v.autoApprove ? 'auto-approve on' : 'ask approvals';
     const sessionsKey=(v.shortcuts?.agents??'super+left').replace('super+left','⌘←').replace('shift+left','shift+←');
     const sessionsHint=sessionsKey==='⌘←'?(width>=90?`⌘← / ${(v.shortcuts?.['sessions-fallback']??'ctrl+s')}`:(v.shortcuts?.['sessions-fallback']??'ctrl+s')):sessionsKey;
-    const right = dim+((v.queuedMessages??0)>0?`${v.queuedMessages} queued${v.queuePaused?' · enter resume':''}`:v.running?`${v.shortcuts?.queue??'tab'} queue`:`${sessionsHint} sessions`)+reset;
+    const quick=v.running&&value.trim()&&!v.masked;
+    const quickText=quick?'Send next · Steer now':(v.queuedMessages??0)>0?`${v.queuedMessages} queued`:null;
+    const right = (quick?accent:dim)+(quickText??((v.queuedMessages??0)>0?`${v.queuedMessages} queued${v.queuePaused?' · enter resume':''}`:v.running?`${v.shortcuts?.queue??'tab'} queue`:`${sessionsHint} sessions`))+reset;
     const reserve=width>=60?visibleWidth(right)+3:0;
     const entries=v.statusEntries??(v.statusLine?v.statusLine.map((value,i)=>({id:value.startsWith('~')||value.startsWith('/')?'directory':i===0?'model':'optional',value})):[{id:'permissions',value:`${v.profile} · ${permission}`}]);
     const providerMark=paperGraphics?providerMarks[v.provider.toLowerCase()]?.[light?'light':'dark']:undefined;
@@ -404,6 +420,7 @@ export function render(v: View): Rendered {
       const id=(process.pid*128+124)>>>0,graphic=renderImage(providerMark,{widthPx:16,heightPx:16},{imageId:id,maxWidthCells:2,maxHeightCells:1,moveCursor:false});
       if(graphic)images.push({id,x:gutter+pad+providerItem.x,y:statusY,sequence:graphic.sequence.replace('a=T','a=t'),placement:`\x1b_Ga=p,i=${id},p=1,c=2,r=1,C=1,q=2;\x1b\\`});
     }
+    if(reserve&&!v.masked){const rx=Math.max(gutter,gutter+width-pad-visibleWidth(right));if(quick){controls.push({id:'workspace',label:'send-next',x:rx,y:statusY,width:9,height:1},{id:'workspace',label:'steer-draft',x:rx+12,y:statusY,width:9,height:1});}else if((v.queuedMessages??0)>0)controls.push({id:'workspace',label:'open:queue',x:rx,y:statusY,width:visibleWidth(right),height:1});}
     if(reserve)rows[statusY]+=' '.repeat(Math.max(1,width-pad*2-visibleWidth(left)-visibleWidth(right)))+right;
 
     if(showHints){const keys=(v.shortcuts?.keymap??'f8').toUpperCase();put(h-1,' '.repeat(pad)+dim+`${sessionsKey} / ${(v.shortcuts?.['sessions-fallback']??'ctrl+s')} sessions · ${keys} shortcuts`+reset);}
@@ -451,6 +468,7 @@ export function render(v: View): Rendered {
     cursor: { x: Math.min(w - 1, gutter + pad + 2 + input.position.x), y: Math.min(h - 1, textY + input.position.y - topLine) },
     images, controls,
     transcript:{x:gutter+pad,y:execution.y,width:Math.max(1,width-pad*2),height:execution.height,start,maxScroll,scrollbar,lineWidths:transcript.slice(start,start+contentHeight).map(line=>Math.min(Math.max(1,width-pad*2),visibleWidth(line)))},
+    jumpedLog:jump!=null?v.jumpLog??undefined:undefined,
     selectionText:selectedTranscript(transcript,v.transcriptSelection),
   };
 }

@@ -10,6 +10,13 @@ pub struct Binding {
 }
 pub const BINDINGS: &[Binding] = &[
     Binding {
+        id: "find",
+        label: "Find anything",
+        group: "Workspace",
+        default: "ctrl+p",
+        command: Some("/find"),
+    },
+    Binding {
         id: "agents",
         label: "Sessions and team",
         group: "Workspace",
@@ -343,16 +350,16 @@ mod tests {
     #[test]
     fn remapping_disables_old_key_and_rejects_conflicts_and_unsafe_chords() {
         let mut p = Preferences::default();
-        assign(&mut p, "commands", "ctrl+p").unwrap();
+        assign(&mut p, "commands", "ctrl+g").unwrap();
         assert!(matches!(
-            resolve(&p, event("ctrl+p").unwrap()),
+            resolve(&p, event("ctrl+g").unwrap()),
             Resolved::Command("/help")
         ));
         assert!(matches!(
             resolve(&p, event("f1").unwrap()),
             Resolved::Ignore
         ));
-        assert!(assign(&mut p, "skills", "ctrl+p").is_err());
+        assert!(assign(&mut p, "skills", "ctrl+g").is_err());
         assert!(assign(&mut p, "skills", "a").is_err());
         assert!(assign(&mut p, "skills", "ctrl+c").is_err());
         assert!(assign(&mut p, "copy", "f6").is_err());

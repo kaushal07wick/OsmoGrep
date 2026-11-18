@@ -264,3 +264,22 @@ api.nvim_create_autocmd('WinClosed', { callback = function()
     if #windows == 1 and windows[1] == tree_window then vim.cmd('confirm qall') end
   end)
 end })
+
+-- Capture exactly what the user selected, including unsaved buffer text.
+vim.keymap.set('x', '<leader>a', function()
+  local first, last = vim.fn.getpos('v'), vim.fn.getpos('.')
+  local text = table.concat(vim.fn.getregion(first, last, { type = vim.fn.mode() }), '\n')
+  if #text == 0 or #text > 256 * 1024 then vim.notify('Select between 1 byte and 256 KiB.', vim.log.levels.WARN); return end
+  local destination = vim.env.OSMOGREP_EDITOR_BRIDGE
+  if not destination then return end
+  destination = destination:gsub('%.json$', '.selection.json')
+  local temporary = destination .. '.' .. vim.fn.getpid()
+  local data = vim.json.encode({ path = api.nvim_buf_get_name(0), start = math.min(first[2], last[2]), ['end'] = math.max(first[2], last[2]), text = text })
+  local ok = vim.fn.writefile({data}, temporary)
+  if ok ~= 0 then vim.notify('Could not attach selection.', vim.log.levels.ERROR); return end
+  vim.uv.fs_chmod(temporary, 384)
+  local renamed, err = vim.uv.fs_rename(temporary, destination)
+  if not renamed then vim.notify(tostring(err), vim.log.levels.ERROR); return end
+  api.nvim_feedkeys(api.nvim_replace_termcodes('<Esc>', true, false, true), 'n', false)
+  vim.schedule(osmogrep_focus_chat)
+end, { desc = 'Attach selection to OsmoGrep chat' })

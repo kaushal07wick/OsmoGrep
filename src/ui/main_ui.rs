@@ -44,6 +44,10 @@ fn handle_paste(state: &mut AgentState, text: &str) {
     if state.ui.pending_update.is_some() {
         return;
     }
+    if state.ui.experience.is_some() {
+        crate::ui::experience::paste(state, text);
+        return;
+    }
     if state.ui.panel.is_some() {
         crate::ui::workbench::paste(state, text);
         return;
@@ -65,7 +69,7 @@ fn normalize_paste_text(text: &str) -> String {
 }
 
 fn handle_key(state: &mut AgentState, k: KeyEvent) {
-    if matches!(k.code, KeyCode::Esc) && state.ui.agent_running {
+    if matches!(k.code, KeyCode::Esc) && state.ui.agent_running && state.ui.experience.is_none() {
         request_agent_cancel(state);
         return;
     }
@@ -170,24 +174,32 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
         return;
     }
 
+    if crate::ui::experience::handle_key(state, k) {
+        return;
+    }
     if crate::ui::workbench::handle_key(state, k) {
         return;
     }
-    let k = match crate::ui::keymap::resolve(&state.preferences, k) {
-        crate::ui::keymap::Resolved::Sessions => {
-            let model = state.ui.presentation_model.clone();
-            crate::ui::workbench::open(state, 10, model.as_ref());
-            return;
+    let editing = crate::ui::experience::editing(state);
+    let k = if editing || state.ui.input_mode == InputMode::ApiKey {
+        k
+    } else {
+        match crate::ui::keymap::resolve(&state.preferences, k) {
+            crate::ui::keymap::Resolved::Sessions => {
+                let model = state.ui.presentation_model.clone();
+                crate::ui::workbench::open(state, 10, model.as_ref());
+                return;
+            }
+            crate::ui::keymap::Resolved::Command(cmd) => {
+                state.ui.requested_command = Some(cmd.into());
+                return;
+            }
+            crate::ui::keymap::Resolved::Key(key) => key,
+            crate::ui::keymap::Resolved::Ignore => return,
+            crate::ui::keymap::Resolved::Unchanged => k,
         }
-        crate::ui::keymap::Resolved::Command(cmd) => {
-            state.ui.requested_command = Some(cmd.into());
-            return;
-        }
-        crate::ui::keymap::Resolved::Key(key) => key,
-        crate::ui::keymap::Resolved::Ignore => return,
-        crate::ui::keymap::Resolved::Unchanged => k,
     };
-    if k.code == KeyCode::Char('t') && k.modifiers.contains(KeyModifiers::CONTROL) {
+    if !editing && k.code == KeyCode::Char('t') && k.modifiers.contains(KeyModifiers::CONTROL) {
         state.ui.expand_tools = !state.ui.expand_tools;
         return;
     }
@@ -278,8 +290,26 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
 
         /* ---------- Text input ---------- */
         KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => {
+            if !editing
+                && state.ui.input_mode != InputMode::ApiKey
+                && c == '@'
+                && !k
+                    .modifiers
+                    .intersects(KeyModifiers::ALT | KeyModifiers::SUPER)
+                && (state.ui.input_cursor == 0
+                    || state.ui.input[..state.ui.input_cursor]
+                        .chars()
+                        .last()
+                        .is_some_and(char::is_whitespace))
+            {
+                state.push_char(c);
+                crate::ui::experience::open_context(state, true);
+                return;
+            }
+
             state.push_char(c);
-            if c == '$'
+            if !editing
+                && c == '$'
                 && state.ui.input_mode != InputMode::ApiKey
                 && state.ui.input_mode != InputMode::Shell
             {
@@ -336,13 +366,13 @@ fn handle_key(state: &mut AgentState, k: KeyEvent) {
 
         /* ---------- History (disabled during palette) ---------- */
         KeyCode::Up if !palette_active => {
-            if !state.move_cursor_up() && !k.modifiers.contains(KeyModifiers::SHIFT) {
+            if !state.move_cursor_up() && !editing && !k.modifiers.contains(KeyModifiers::SHIFT) {
                 state.history_prev();
             }
         }
 
         KeyCode::Down if !palette_active => {
-            if !state.move_cursor_down() && !k.modifiers.contains(KeyModifiers::SHIFT) {
+            if !state.move_cursor_down() && !editing && !k.modifiers.contains(KeyModifiers::SHIFT) {
                 state.history_next();
             }
         }
@@ -981,6 +1011,17 @@ mod tests {
 fn handle_mouse(state: &mut AgentState, m: MouseEvent) {
     if state.ui.pending_update.is_some() {
         return;
+    }
+    if state.ui.experience.is_some() && state.ui.pending_permission.is_none() {
+        let code = match m.kind {
+            MouseEventKind::ScrollUp => Some(KeyCode::PageUp),
+            MouseEventKind::ScrollDown => Some(KeyCode::PageDown),
+            _ => None,
+        };
+        if let Some(code) = code {
+            crate::ui::experience::handle_key(state, KeyEvent::new(code, KeyModifiers::NONE));
+            return;
+        }
     }
     if state.ui.panel.is_some()
         && state.ui.pending_permission.is_none()

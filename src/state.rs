@@ -104,6 +104,11 @@ pub struct UiState {
     pub cancelling: bool,
     pub presentation_model: Option<crate::agent::ModelConfig>,
     pub panel: Option<crate::ui::workbench::Panel>,
+    pub jump_log: Option<usize>,
+    pub experience: Option<crate::ui::experience::Panel>,
+    pub references: Vec<crate::ui::references::Reference>,
+    pub reviewed_hunks: std::collections::BTreeSet<String>,
+    pub timing: crate::ui::timing::Timing,
     pub requested_command: Option<String>,
     pub attachments: Vec<crate::attachments::Attachment>,
     pub next_attachment_id: u32,
@@ -181,6 +186,11 @@ impl Default for UiState {
             expand_tools: false,
             cancelling: false,
             panel: None,
+            jump_log: None,
+            experience: None,
+            references: Vec::new(),
+            reviewed_hunks: Default::default(),
+            timing: Default::default(),
             presentation_model: None,
             requested_command: None,
             attachments: Vec::new(),
@@ -614,8 +624,14 @@ impl AgentState {
     }
 
     fn attachment_edit_range(&self, mut range: std::ops::Range<usize>) -> std::ops::Range<usize> {
-        for image in &self.ui.attachments {
-            for (start, label) in self.ui.input.match_indices(&image.label) {
+        for label in self
+            .ui
+            .attachments
+            .iter()
+            .map(|a| &a.label)
+            .chain(self.ui.references.iter().map(|a| &a.label))
+        {
+            for (start, label) in self.ui.input.match_indices(label) {
                 let end = start + label.len();
                 if start < range.end && range.start < end {
                     range.start = range.start.min(start);

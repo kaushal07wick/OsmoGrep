@@ -59,13 +59,18 @@ function run(argv) {
     send("Ghst", "Clos", {"----": owner});
     return ids[index];
   }
+  if (direction === "action") {
+    if (command !== "toggle_split_zoom" && !/^resize_split:left,([1-7]?[0-9]{1,2}|800)$/.test(command)) throw new Error("Unsupported workspace action.");
+    send("Ghst", "PfAc", {"----": text(command), GonT: owner});
+    return ids[index];
+  }
   const configuration = D.recordDescriptor;
   configuration.setDescriptorForKeyword(text(directory), code("GScD"));
   configuration.setDescriptorForKeyword(text(command), code("GScC"));
   configuration.setDescriptorForKeyword(D.descriptorWithBoolean(false), code("GScW"));
   const created = send("Ghst", "Splt", { "----": owner, GSpd: enumerated(direction), GSpS: configuration });
   const pane = flatten(send("core", "getd", {"----": property("ID  ", created)}), [])[0];
-  const pixels = Math.max(0, Math.min(200, Number(grow) || 0));
+  const pixels = Math.max(0, Math.min(800, Number(grow) || 0));
   if (pixels) send("Ghst", "PfAc", {"----": text("resize_split:right," + pixels), GonT: owner});
   return pane;
 }

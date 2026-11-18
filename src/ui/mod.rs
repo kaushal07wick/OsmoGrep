@@ -11,3 +11,8 @@ pub mod terminal;
 pub mod tui;
 mod typescript;
 pub mod workbench;
+
+pub mod experience;
+pub mod references;
+pub mod review;
+pub mod timing;

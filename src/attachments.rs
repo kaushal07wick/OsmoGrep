@@ -15,7 +15,7 @@ use std::{
 const MAX_BYTES: usize = 20 * 1024 * 1024;
 const MAX_IMAGES: usize = 8;
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Attachment {
     pub id: u32,
     pub label: String,
@@ -33,6 +33,21 @@ impl Attachment {
             .read_to_end(&mut bytes)
             .map_err(|e| e.to_string())?;
         Self::from_bytes(bytes, id)
+    }
+    pub fn from_data_url(data: &str, id: u32) -> Result<Self, String> {
+        let (_, encoded) = data
+            .split_once(";base64,")
+            .filter(|(mime, _)| {
+                matches!(
+                    *mime,
+                    "data:image/png" | "data:image/jpeg" | "data:image/gif" | "data:image/webp"
+                )
+            })
+            .ok_or("Invalid saved image")?;
+        if encoded.len() > MAX_BYTES * 4 / 3 + 8 {
+            return Err("Saved image exceeds 20 MiB".into());
+        }
+        Self::from_bytes(STANDARD.decode(encoded).map_err(|e| e.to_string())?, id)
     }
     fn from_bytes(bytes: Vec<u8>, id: u32) -> Result<Self, String> {
         if bytes.len() > MAX_BYTES {

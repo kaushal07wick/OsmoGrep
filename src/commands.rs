@@ -280,6 +280,20 @@ pub fn handle_command(
         crate::ui::workbench::open_login(state, agent.as_ref().map(|agent| agent.model_config()));
         return;
     }
+    if let Some(page) = match cmd.as_str() {
+        "/find" => Some(crate::ui::experience::Page::Find),
+        "/context" => Some(crate::ui::experience::Page::Context),
+        "/queue" => Some(crate::ui::experience::Page::Queue),
+        "/changes" => Some(crate::ui::experience::Page::Changes),
+        "/retry" => Some(crate::ui::experience::Page::Retry),
+        "/pins" => Some(crate::ui::experience::Page::Pins),
+        "/layout" => Some(crate::ui::experience::Page::Layout),
+        "/timing" => Some(crate::ui::experience::Page::Timing),
+        _ => None,
+    } {
+        crate::ui::experience::open(state, page);
+        return;
+    }
     if let Some(section) = crate::ui::workbench::section_for(&cmd) {
         crate::ui::workbench::open(state, section, agent.as_ref().map(|a| a.model_config()));
         return;
@@ -438,6 +452,12 @@ pub fn copy_latest_output(state: &mut AgentState) {
 }
 
 pub fn is_transcript_command(text: &str) -> bool {
+    if matches!(
+        text.trim(),
+        "/find" | "/context" | "/queue" | "/changes" | "/retry" | "/pins" | "/layout" | "/timing"
+    ) {
+        return false;
+    }
     crate::ui::workbench::section_for(&normalize_command_prefix(text.trim())).is_none()
 }
 
@@ -2488,7 +2508,10 @@ fn voice_off(state: &mut AgentState, voice_tx: Option<&Sender<VoiceCommand>>) {
     }
 }
 pub fn update_command_hints(state: &mut AgentState) {
-    if state.ui.panel.is_some() {
+    if state.ui.panel.is_some()
+        || state.ui.experience.is_some()
+        || state.ui.input_mode == InputMode::ApiKey
+    {
         state.ui.command_items.clear();
         return;
     }
@@ -2544,6 +2567,10 @@ fn command_hints_for(input: &str, prev_selected: usize) -> (Vec<CommandItem>, us
 
 pub(crate) fn command_palette_items() -> &'static [CommandItem] {
     &[
+        CommandItem {
+            cmd: "/find",
+            desc: "Find anything · context, queue, changes and workspace",
+        },
         CommandItem {
             cmd: "/help",
             desc: "Browse workspace controls",
@@ -2617,6 +2644,34 @@ pub(crate) fn command_palette_items() -> &'static [CommandItem] {
 
 pub(crate) fn advanced_command_items() -> &'static [CommandItem] {
     &[
+        CommandItem {
+            cmd: "/context",
+            desc: "Attach files, symbols, line ranges and recent output",
+        },
+        CommandItem {
+            cmd: "/queue",
+            desc: "Edit, reorder and resume queued messages",
+        },
+        CommandItem {
+            cmd: "/changes",
+            desc: "Keep or restore individual changed hunks",
+        },
+        CommandItem {
+            cmd: "/retry",
+            desc: "Edit an earlier request in a new branch",
+        },
+        CommandItem {
+            cmd: "/pins",
+            desc: "Reusable local references",
+        },
+        CommandItem {
+            cmd: "/layout",
+            desc: "Choose workspace focus and editor width",
+        },
+        CommandItem {
+            cmd: "/timing",
+            desc: "Inspect measured turn timing",
+        },
         CommandItem {
             cmd: "/resume",
             desc: "Resume a saved session by ID",
@@ -2733,7 +2788,7 @@ mod tests {
         assert!(!items.iter().any(|item| item.cmd == "/plan"));
         assert!(items.iter().any(|item| item.cmd == "/plan mode"));
         let (main, _) = command_hints_for("/", 0);
-        assert_eq!(main.len(), 17);
+        assert_eq!(main.len(), 18);
         assert!(!main.iter().any(|item| item.cmd == "/plan mode"));
         for command in advanced_command_items() {
             let (found, _) = command_hints_for(&command.cmd[..command.cmd.len() - 1], 0);

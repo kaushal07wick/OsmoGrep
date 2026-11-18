@@ -55,8 +55,18 @@ struct Asset {
     browser_download_url: String,
 }
 
+pub(crate) fn homebrew_managed(path: &Path) -> bool {
+    let parts = path.components().map(|p| p.as_os_str()).collect::<Vec<_>>();
+    parts
+        .windows(2)
+        .any(|pair| pair[0] == "Cellar" && pair[1] == "osmogrep")
+        && path.file_name().is_some_and(|n| n == "osmogrep")
+}
+
 pub fn spawn_update_check(tx: Sender<UpdateEvent>) -> bool {
-    if env_flag("OSMOGREP_DISABLE_UPDATE_CHECK") {
+    if env_flag("OSMOGREP_DISABLE_UPDATE_CHECK")
+        || env::current_exe().is_ok_and(|p| homebrew_managed(&p))
+    {
         return false;
     }
     thread::spawn(move || {
@@ -190,6 +200,12 @@ pub(crate) fn install_update(
 ) -> Result<(), String> {
     let current = env::current_exe().map_err(|e| e.to_string())?;
     let install_path = canonical_install_path(&current);
+    if homebrew_managed(&install_path) {
+        return Err(
+            "Homebrew manages this installation. Run: brew upgrade kaushal07wick/tap/osmogrep"
+                .into(),
+        );
+    }
     let tmp_dir = env::temp_dir().join(format!("osmogrep-update-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
     let result = (|| {
@@ -712,5 +728,25 @@ mod tests {
             0o111
         );
         let _ = fs::remove_dir_all(dir);
+    }
+}
+
+#[cfg(test)]
+mod homebrew_tests {
+    use super::*;
+    #[test]
+    fn package_manager_paths_are_never_self_replaced() {
+        assert!(homebrew_managed(Path::new(
+            "/opt/homebrew/Cellar/osmogrep/0.4.9/bin/osmogrep"
+        )));
+        assert!(homebrew_managed(Path::new(
+            "/home/linuxbrew/.linuxbrew/Cellar/osmogrep/0.4.9/bin/osmogrep"
+        )));
+        assert!(!homebrew_managed(Path::new(
+            "/Users/me/.local/bin/osmogrep"
+        )));
+        assert!(!homebrew_managed(Path::new(
+            "/tmp/Cellar/other/0.4.9/bin/osmogrep"
+        )));
     }
 }

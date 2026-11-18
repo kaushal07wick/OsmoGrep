@@ -36,6 +36,14 @@ npm install -g osmogrep
 pnpm add -g osmogrep
 ```
 
+On Apple Silicon Mac or Linux x64, use Homebrew:
+
+```sh
+brew install kaushal07wick/tap/osmogrep
+```
+
+If Homebrew asks to trust the new formula, run `brew trust --formula kaushal07wick/tap/osmogrep` and retry. Update it with `brew upgrade kaushal07wick/tap/osmogrep`.
+
 Or install the current source with Cargo:
 
 ```sh
@@ -76,7 +84,7 @@ OsmoGrep can search your code, follow symbols, edit files, apply patches, run co
 | Understand a codebase | File search, definitions, references, and repository context |
 | Build and debug | Real edits, shell commands, focused tests, and diagnostics |
 | Review the change | Inline diffs, expandable output, and conflict-aware turn checkpoints |
-| Keep the conversation moving | Multiline drafts, image attachments, and queued follow-ups |
+| Keep the conversation moving | Selected context, editable follow-up queues, retry branches and reusable local pins ([workspace controls](docs/terminal-workspace.md)) |
 | Set your boundaries | Read-only mode, scoped approvals, optional OS sandbox, and explicit cancellation |
 | Workspace Lab | Ask naturally for bug replays, fix comparisons, team contracts, app checks, context provenance and failure tests; inspect saved history in Settings ([guide](docs/workspace-lab.md)) |
 | Bring your workflow | Project instructions, skills, configurable shortcuts, and Neovim integration |

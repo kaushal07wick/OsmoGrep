@@ -351,3 +351,21 @@ test('quick actions retain padding while attaching edge to edge to the composer'
  for(const row of card){const content=stripTerminalSequences(row).slice(frame.input.x,frame.input.x+frame.input.width);assert.ok(stripTerminalSequences(content).startsWith('  '));assert.ok(stripTerminalSequences(content).endsWith('   '));}
  assert.ok(indices[0]!>frame.execution.y);assert.ok(indices.at(-1)===frame.input.y-1);
 });
+
+test('workspace drawer keeps focus and actions inside narrow and wide terminals',()=>{
+ for(const [width,height] of [[1,1],[25,12],[80,30],[160,44]])for(const editing of [false,true]){
+   const frame=render({...fixture(),width:width!,height:height!,experience:{page:'queue',tabs:['Find','Context','Queue','Changes','Retry','Pins','Layout','Timing'],query:'edit 🦀\nsecond line',cursor:8,selected:1,rows:Array.from({length:120},(_,i)=>({id:`row:${i}`,label:`Prompt ${i}`,detail:'Full content remains available',kind:'queued'})),preview:Array.from({length:200},(_,i)=>`full output line ${i}`).join('\n'),preview_offset:9999,notice:'Queue paused while editing',buttons:[{id:'resume',label:'Resume queue'}],busy:true,editing}});
+   assert.equal(frame.rows.length,height);assert.ok(frame.rows.every(r=>visibleWidth(r)<=width!));assert.ok(frame.cursor.x<width!&&frame.cursor.y<height!);
+   assert.ok(frame.controls?.every(c=>c.x>=0&&c.y>=0&&c.x+c.width<=width!&&c.y<height!));assert.ok(frame.workspaceScroll!.offset<=frame.workspaceScroll!.requested);assert.equal(frame.transcript,undefined);
+ }
+});
+test('queue controls steer or queue drafts explicitly and hide during credential entry',()=>{
+ const v={...fixture(),input:'follow this up',running:true};const frame=render(v);
+ assert.ok(frame.controls?.some(c=>c.label==='send-next'));assert.ok(frame.controls?.some(c=>c.label==='steer-draft'));
+ assert.ok(!render({...v,masked:true}).controls?.some(c=>c.id==='workspace'));assert.ok(render({...fixture(),queuedMessages:2}).controls?.some(c=>c.label==='open:queue'));
+});
+test('source errors offer guarded actions and search jumps acknowledge their log target',()=>{
+ const jumped=render({...fixture(),followTail:false,logs:Array.from({length:80},(_,i)=>({text:`USER|request ${i}`,level:'Info'})),jumpLog:10});
+ assert.equal(jumped.jumpedLog,10);assert.ok(jumped.transcript!.start<jumped.transcript!.maxScroll);
+ const error=render({...fixture(),logs:[{text:'src/main.rs:24:3: error: invalid type',level:'Error'}]});assert.ok(error.controls?.some(c=>c.id==='source'&&JSON.parse(c.label!).path==='src/main.rs'));
+});

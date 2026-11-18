@@ -88,10 +88,16 @@ pub fn open(
         .ok_or("Editor bridge has no directory")?
         .join("ghostty.js");
     crate::storage::atomic_write(&script, ghostty::SCRIPT.as_bytes()).map_err(|e| e.to_string())?;
+    let desired = state.preferences.workspace_layout.clone();
+    let percent = state.preferences.editor_percent;
+    let shrink = crossterm::terminal::window_size()
+        .map(|s| (u32::from(s.width) * u32::from(percent.saturating_sub(50)) / 100) as u16)
+        .unwrap_or(0)
+        .min(800);
     let pixels = crossterm::terminal::window_size()
-        .map(|s| s.width / 12)
-        .unwrap_or(96)
-        .clamp(60, 180);
+        .map(|s| (u32::from(s.width) * u32::from(50_u16.saturating_sub(percent)) / 100) as u16)
+        .unwrap_or(0)
+        .min(800);
     let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let result = (|| {
@@ -138,6 +144,15 @@ pub fn open(
                 &format!("/bin/sh -c {}", shell_escape(&command)),
                 pixels,
             )?;
+            if shrink > 0 {
+                ghostty::action(
+                    &root,
+                    &owner,
+                    "action",
+                    &format!("resize_split:left,{shrink}"),
+                    0,
+                )?;
+            }
             crate::storage::atomic_write(&pane_file, pane.as_bytes()).map_err(|e| e.to_string())?;
             let deadline = std::time::Instant::now() + Duration::from_secs(5);
             let process_id = loop {
@@ -159,6 +174,16 @@ pub fn open(
                 }
                 std::thread::sleep(Duration::from_millis(50));
             };
+            ghostty::action(
+                &root,
+                if desired == "code" { &pane } else { &owner },
+                "focus",
+                "",
+                0,
+            )?;
+            if desired == "chat" || desired == "code" {
+                ghostty::action(&root, &owner, "action", "toggle_split_zoom", 0)?;
+            }
             std::thread::spawn(move || {
                 // Ghostty may retain a finished command surface. Close it only after Neovim has exited.
                 #[cfg(unix)]
@@ -166,6 +191,7 @@ pub fn open(
                     std::thread::sleep(Duration::from_millis(250));
                 }
                 let _ = process_id;
+                let _ = std::fs::remove_file(&pane_file);
                 let _ = ghostty::action(&root, &pane, "close", "", 0);
             });
             Ok(
@@ -195,4 +221,47 @@ mod tests {
                 < 104
         );
     }
+}
+
+pub(super) fn focus_layout(
+    state: &mut AgentState,
+    mode: &str,
+    previous: &str,
+) -> Result<(), String> {
+    let owner = ghostty::caller_tty()?;
+    let editor = std::fs::read_to_string(socket(&state.session.id)?.with_extension("pane")).ok();
+    let target = if mode == "code" {
+        editor
+            .as_deref()
+            .ok_or("Open the editor before focusing it")?
+            .trim()
+    } else {
+        &owner
+    };
+    let root = state.repo_root.clone();
+    let target = target.to_string();
+    let zoom = matches!(mode, "chat" | "code") != matches!(previous, "chat" | "code");
+    if state.ui.workspace_task.is_some() {
+        return Err("Wait for the workspace pane to finish opening".into());
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = (|| {
+            if zoom {
+                ghostty::action(&root, &target, "action", "toggle_split_zoom", 0)?;
+            }
+            ghostty::action(&root, &target, "focus", "", 0)?;
+            Ok::<_, String>(())
+        })();
+        let _ = tx.send(match result {
+            Ok(()) => crate::workspace::Event::Done(Ok("Workspace focus updated".into())),
+            Err(e) => crate::workspace::Event::Done(Err(e)),
+        });
+    });
+    state.ui.workspace_task = Some(rx);
+    Ok(())
+}
+
+pub(super) fn exists(state: &AgentState) -> bool {
+    socket(&state.session.id).is_ok_and(|path| path.with_extension("pane").is_file())
 }

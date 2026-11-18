@@ -145,6 +145,10 @@ struct Frame {
     transcript: Option<Transcript>,
     #[serde(default, rename = "panelScroll")]
     panel_scroll: Option<PanelScroll>,
+    #[serde(default, rename = "workspaceScroll")]
+    workspace_scroll: Option<PanelScroll>,
+    #[serde(default, rename = "jumpedLog")]
+    jumped_log: Option<usize>,
     #[serde(default, rename = "selectionText")]
     selection_text: String,
 }
@@ -412,6 +416,26 @@ impl TypeScriptUi {
                 return true;
             }
         }
+        if state.ui.pending_permission.is_none()
+            && state.ui.pending_update.is_none()
+            && state.ui.input_mode != InputMode::ApiKey
+        {
+            if let Event::Mouse(mouse) = event {
+                if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+                    && mouse.modifiers.is_empty()
+                {
+                    if let Some(c) = self.controls.iter().find(|c| {
+                        c.id == "workspace"
+                            && c.area.rect().contains((mouse.column, mouse.row).into())
+                    }) {
+                        return super::experience::choose(state, c.label.as_deref().unwrap_or(""));
+                    }
+                }
+            }
+        }
+        if state.ui.experience.is_some() {
+            return false;
+        }
         if matches!(event,Event::Mouse(m) if m.kind==MouseEventKind::Down(MouseButton::Left)) {
             self.selecting = false;
             self.copy_pending = false;
@@ -481,6 +505,13 @@ impl TypeScriptUi {
                             .contains((mouse.column, mouse.row).into())
                     }) {
                         match control.id.as_str() {
+                            "source" => {
+                                if let Some(source) = control.label.as_deref() {
+                                    if let Err(e) = super::experience::source(state, source) {
+                                        crate::logger::log_status(state, e);
+                                    }
+                                }
+                            }
                             "link" => {
                                 if let Some(url) = control.label.as_deref() {
                                     if let Err(error) = super::links::open(url) {
@@ -640,6 +671,10 @@ impl TypeScriptUi {
         let Some(raw) = poll_frame(&self.frames, self.pending_since.unwrap())? else {
             return Ok(None);
         };
+        state
+            .ui
+            .timing
+            .render(self.pending_since.unwrap().elapsed());
         self.pending_since = None;
         if self.requested_size != (width, height) {
             return Ok(None);
@@ -650,6 +685,10 @@ impl TypeScriptUi {
                 .panel_scroll
                 .as_ref()
                 .is_some_and(|scroll| scroll.offset > scroll.requested)
+            || frame
+                .workspace_scroll
+                .as_ref()
+                .is_some_and(|s| s.offset > s.requested)
             || frame.rows.len() != height as usize
             || !frame.input.inside(width, height)
             || !frame.execution.inside(width, height)
@@ -680,9 +719,15 @@ impl TypeScriptUi {
                         | "expand"
                         | "latest"
                         | "link"
+                        | "workspace"
+                        | "source"
                 ) || c.id == "choice"
                     && (!c.index.is_some_and(|i| i <= 1000)
                         || c.label.as_ref().is_none_or(|s| s.len() > 160))
+                    || matches!(c.id.as_str(), "workspace" | "source")
+                        && c.label.as_ref().is_none_or(|s| {
+                            s.is_empty() || s.len() > 4096 || s.chars().any(char::is_control)
+                        })
                     || c.id == "update" && !c.index.is_some_and(|i| i <= 2)
                     || c.id == "permission" && c.index.is_none_or(|i| i > 2)
                     || c.id == "copy"
@@ -711,6 +756,15 @@ impl TypeScriptUi {
             })
         {
             return Err("TypeScript UI frame outside terminal bounds".into());
+        }
+        if let Some(scroll) = &frame.workspace_scroll {
+            super::experience::scrolled(state, scroll.requested, scroll.offset);
+        }
+        if frame.jumped_log.is_some() && frame.jumped_log == state.ui.jump_log {
+            state.ui.jump_log = None;
+            if let Some(t) = &frame.transcript {
+                state.ui.exec_scroll = t.max_scroll.saturating_sub(t.start);
+            }
         }
         if let Some(scroll) = &frame.panel_scroll {
             super::workbench::account_scrolled(state, scroll.requested, scroll.offset);
@@ -977,6 +1031,14 @@ fn view(state: &AgentState, model: &ModelConfig, id: u64, width: u16, height: u1
     snapshot["expandTools"] = json!(ui.expand_tools);
     snapshot["statusLine"] = json!(super::workbench::statusline(state));
     snapshot["preferences"] = serde_json::to_value(&state.preferences).unwrap_or(Value::Null);
+    snapshot["experience"] = json!(super::experience::view(state));
+    snapshot["jumpLog"] = json!(ui.jump_log);
+    snapshot["references"] = json!(ui
+        .references
+        .iter()
+        .filter(|r| ui.input.contains(&r.label))
+        .map(|r| json!({"label":r.label,"title":r.title}))
+        .collect::<Vec<_>>());
     snapshot["voiceState"] = json!({"enabled":state.voice.enabled,"connected":state.voice.connected,"partial":state.voice.partial.is_some()});
     let project = ui
         .team

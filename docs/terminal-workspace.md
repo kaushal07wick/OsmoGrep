@@ -9,7 +9,7 @@ remain supported but are omitted from the menu.
 | `/settings` · F2 | Appearance, motion and workspace preferences |
 | `/model` · F5 | Provider/model/endpoint draft; choose Apply model to save |
 | `/permissions` · F4 | Existing tool policy; choosing a profile clears auto-approval |
-| `/keymap` · F8 | Search 19 actual shortcuts; Enter captures a new chord |
+| `/keymap` · F8 | Search actual shortcuts; Enter captures a new chord |
 | `/statusline` | Toggle fields with Space; reorder enabled fields with Left/Right |
 | `/skills` · F3 · type `$` | Search, enable/disable and insert explicit skills |
 | `/usage` | Reported provider tokens, cached subset, calls and separate estimates |
@@ -144,3 +144,28 @@ Provider selection now controls the actual API format: Responses, Chat Completio
 The four approved central morphs retain the black background and dim settled logo. The artwork uses a smaller canvas, at least three terminal rows of clearance above the composer, separated native pixel dots, and smoother easing at up to roughly 30 frames per second. Hover remains inactive and Reduce Motion still settles the artwork immediately.
 
 Long transcripts expose a thin draggable rail in the unused right gutter; wheel and PageUp/PageDown scrolling remain available. The footer indicates when the view is scrolled back and End returns to live output. Patch headings and approvals show the target path rather than raw patch JSON. Applied diffs appear beside the edit result, before the assistant's final reply. The prompt requests a one-to-three-sentence change summary without quoting the inserted content unless asked.
+
+## Search, context and workspace drawer
+
+Open **Find** with Ctrl+P (remappable in Settings), or `/find`. Its visible tabs share a local workspace drawer; using them does not call a model. Existing custom Ctrl+P bindings are preserved; Find remains available through `/find`.
+
+| Tab | Behavior |
+| --- | --- |
+| Find | Search commands, file names, supported symbols, current output, pins and saved conversations in this repository. Enter jumps to a current message; saved results show their full text locally. |
+| Context | Type `@` at a word boundary to choose files, Rust/Python symbols, images or recent output. Use `src/main.rs:10-20` for exact lines. Folder attachment supplies a file list, not every file's contents. |
+| Queue | Pause the queue while editing, reorder or remove requests, then Resume. The current draft is preserved. During a run, **Send next** puts the draft first in the pending queue; **Steer now** uses the existing live steering channel and approval policy. |
+| Changes | Inspect individual contiguous hunks. Keep records the choice. Revert lines requires a second confirmation, saves a checkpoint and refuses to overwrite subsequent file changes. Finish the active turn first. Reverting every line of a newly created file leaves an empty file; use the existing checkpoint rewind for full file lifecycle restoration. |
+| Retry | Pick an earlier request to edit in a new saved conversation branch. The original conversation remains saved. Files stay as they are; retry does not roll back the workspace. Attached images/references become removable chips rather than hidden context. |
+| Pins | Save useful output for later reuse. Pins remain local until explicitly attached. |
+| Layout | Choose chat/code focus, review or the existing preview selector. Set the editor percentage for future opens. Narrow tmux workspaces stack the editor. Ghostty sizing is approximate because its automation API does not report pane dimensions; manual zoom changes can require toggling the terminal's zoom back. |
+| Timing | View elapsed time, first visible output, provider attempts/retries, tool execution, approval waits, other elapsed time and overlapping UI round trips. Provider-internal thinking and network-only timing are unavailable. These observations cover the current process's most recent turn. |
+
+Use arrows to select rows, click an action or press Alt+1…9 for its numbered action. Page Up/Down scroll the preview. Escape closes the drawer without cancelling an active task. Escape in chat still interrupts. Large previews and result pages retain their source rather than silently truncating it.
+
+References are immutable snapshots. File references check the source digest again before sending and retain the prompt if the file changed. A reference is limited to 256 KiB and active references/pins to 1 MiB each, with an explicit error if exceeded. Use an editor selection for excerpts from larger files. Saved-session search reports unreadable/oversized snapshots instead of silently skipping them.
+
+In Neovim, select text and press **Space a** to attach the exact selection, including unsaved buffer content, then return to chat. The private bridge accepts only bounded selections from this repository. Removing any part of an image/reference label removes the whole chip.
+
+Source locations such as `src/main.rs:24:3` have a blue tint and open local source actions. Rerun is available when the originating user shell command is known; it prepares a shell draft and requires Enter. Unknown commands are never reconstructed from shortened tool summaries. Ask about an output attaches that output explicitly.
+
+No new daemon, service, dependency, background model call or automatic wakeup of closed agents is introduced. Headless/RPC event output remains unchanged.

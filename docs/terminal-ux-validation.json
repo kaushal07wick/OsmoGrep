@@ -1,0 +1,54 @@
+{
+  "version": "0.4.9",
+  "validated_at": "2026-11-18T18:12:03.628162+00:00",
+  "binary_sha256": "fe1c22f6ba39dc352bf87e2e06ea1f3cb778999d4254524845514b5e4af043ad",
+  "rust": {
+    "passed": 372,
+    "ignored": 6,
+    "clipboard_checks_filtered": 6,
+    "command": "cargo test --locked -- --skip clipboard"
+  },
+  "terminal_renderer": {
+    "passed": 102
+  },
+  "npm_launcher": {
+    "passed": 5
+  },
+  "workspace_pty": {
+    "checks": [
+      "explicit_line_reference_is_sent_only_after_selection",
+      "queue_edit_persists_without_losing_draft_or_starting_turn",
+      "paused_queue_resumes_explicitly",
+      "find_jumps_to_transcript_without_model_call",
+      "pins_are_local_and_attach_explicitly",
+      "timing_drawer_uses_client_observations_without_extra_calls",
+      "selected_hunk_reverts_with_other_hunk_and_checkpoint_preserved",
+      "retry_creates_branch_and_preserves_workspace"
+    ],
+    "fixture_model_requests": 6,
+    "paid_calls": 0
+  },
+  "input_pty": {
+    "checks": [
+      "minified_diff_is_folded",
+      "typing_during_active_model_request",
+      "typing_after_completion",
+      "history_exposes_latest_action",
+      "native_accepts_renderer_frames",
+      "copy_feedback_uses_isolated_osc52_without_host_clipboard_writes",
+      "casual_interlude_preserves_coding_history_and_resumes_editing",
+      "stable_instructions_and_tool_order_across_turns"
+    ],
+    "initial_instruction_bytes": 2270,
+    "initial_tool_schema_bytes": 3642,
+    "fixture_model_requests": 7,
+    "paid_calls": 0
+  },
+  "neovim_selection": "Exact visual selection and line range verified in headless Neovim; private bridge delivery and path rejection covered by Rust tests",
+  "limits": [
+    "No paid model calls, device boot, real account actions or host clipboard writes",
+    "Linux and Windows release binaries are built and tested by the release workflow",
+    "Ghostty sizing is approximate; manual terminal zoom changes are outside remembered focus state",
+    "Homebrew Linux install is not exercised on this Mac"
+  ]
+}

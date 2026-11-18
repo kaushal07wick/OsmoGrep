@@ -10,6 +10,9 @@ pub struct Preferences {
     pub reduce_motion: bool,
     pub ambient_art: bool,
     pub team_messages: bool,
+    pub pins: Vec<crate::ui::references::Pin>,
+    pub editor_percent: u16,
+    pub workspace_layout: String,
 }
 
 impl Default for Preferences {
@@ -24,6 +27,9 @@ impl Default for Preferences {
             reduce_motion: false,
             ambient_art: true,
             team_messages: false,
+            pins: Vec::new(),
+            editor_percent: 42,
+            workspace_layout: "auto".into(),
         }
     }
 }
@@ -67,7 +73,21 @@ pub const STATUS_FIELDS: &[(&str, &str, &str)] = &[
 
 impl Preferences {
     pub fn normalize(&mut self) {
+        self.editor_percent = self.editor_percent.clamp(20, 80);
+        if !matches!(
+            self.workspace_layout.as_str(),
+            "auto" | "chat" | "code" | "review" | "preview"
+        ) {
+            self.workspace_layout = "auto".into();
+        }
         let overrides = std::mem::take(&mut self.key_bindings);
+        if !overrides.contains_key("find")
+            && overrides
+                .iter()
+                .any(|(id, value)| id != "find" && value == "ctrl+p")
+        {
+            self.key_bindings.insert("find".into(), "unbound".into());
+        }
         for (id, value) in overrides {
             let _ = crate::ui::keymap::assign(self, &id, &value);
         }

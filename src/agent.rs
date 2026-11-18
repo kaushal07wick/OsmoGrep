@@ -21,6 +21,11 @@ use crate::tools::{ToolRegistry, ToolSafety, ToolScope};
 
 #[derive(Debug)]
 pub enum AgentEvent {
+    Timing {
+        stage: &'static str,
+        duration_ms: u64,
+        attempt: usize,
+    },
     Usage {
         usage: crate::usage::Usage,
         storage_error: Option<String>,
@@ -1179,7 +1184,14 @@ impl RunAgent {
                                 reply_tx,
                             });
 
-                            let allow = wait_for_permission(&reply_rx, &self.cancel)?;
+                            let started = Instant::now();
+                            let permission = wait_for_permission(&reply_rx, &self.cancel);
+                            let _ = tx.send(AgentEvent::Timing {
+                                stage: "approval",
+                                duration_ms: started.elapsed().as_millis() as u64,
+                                attempt: 1,
+                            });
+                            let allow = permission?;
                             if !allow {
                                 ledger.permission(&name, "denied", iteration);
                                 run_notes.push(format!(
@@ -1243,6 +1255,11 @@ impl RunAgent {
                             }
                         }
                         let duration_ms = started.elapsed().as_millis();
+                        let _ = tx.send(AgentEvent::Timing {
+                            stage: "tools",
+                            duration_ms: duration_ms as u64,
+                            attempt: 1,
+                        });
                         let ok = !crate::tool_guard::tool_failed(&name, &result);
 
                         for change in result
@@ -1419,6 +1436,7 @@ impl RunAgent {
             ledger.tool_started(&invocation.name, &invocation.args_summary, iteration);
         }
 
+        let batch_started = Instant::now();
         let results = thread::scope(|scope| {
             let mut handles = Vec::new();
             for invocation in &batch {
@@ -1445,6 +1463,11 @@ impl RunAgent {
                 .collect::<Vec<_>>()
         });
 
+        let _ = tx.send(AgentEvent::Timing {
+            stage: "tools",
+            duration_ms: batch_started.elapsed().as_millis() as u64,
+            attempt: 1,
+        });
         for (invocation, (mut result, duration_ms)) in batch.into_iter().zip(results) {
             let loop_warning = tool_guard.after_call(&invocation.name, &invocation.args, &result);
             if let (Some(task), Some(warning)) = (&self.task, loop_warning.as_ref()) {
@@ -1642,6 +1665,11 @@ impl RunAgent {
                 };
             let started = std::time::Instant::now();
             let outcome = provider::request(&self.model_cfg, api_key, &payload, &self.cancel, tx);
+            let _ = tx.send(AgentEvent::Timing {
+                stage: "provider",
+                duration_ms: started.elapsed().as_millis() as u64,
+                attempt,
+            });
             let evidence = crate::lab::context::finish(
                 context_ticket,
                 started.elapsed().as_millis() as u64,
