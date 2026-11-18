@@ -169,7 +169,8 @@ try:
     terminal.wait(lambda:any(path.endswith('/token') for path,_ in requests))
     terminal.send(b'\x1b')
     terminal.drain(.3)
-    terminal.send(b'account_cancel_kept_input')
+    # Atomic paste avoids splitting the probe across native incremental redraws.
+    terminal.send(b'\x1b[200~account_cancel_kept_input\x1b[201~')
     terminal.wait(lambda:b'account_cancel_kept_input' in terminal.output)
     terminal.drain(1.2)
     count=len(requests)
@@ -181,7 +182,7 @@ try:
     terminal=Terminal()
     terminal.drain(1.5)
     assert b'Welcome to OsmoGrep' not in terminal.output
-    terminal.send(b'existing_install_opens_chat')
+    terminal.send(b'\x1b[200~existing_install_opens_chat\x1b[201~')
     terminal.wait(lambda:b'existing_install_opens_chat' in terminal.output)
     assert len(requests)==count
     checks.append('existing_install_reopens_chat_without_account_checks')
@@ -190,9 +191,7 @@ try:
     terminal.wait(lambda:any(path.endswith('/device') for path,_ in requests[before:]) and b'ABCD-EFGH' in terminal.output)
     terminal.send(b'\x1b')
     terminal.drain(.2)
-    terminal.send(b'\x1b')
-    terminal.drain(.2)
-    terminal.send(b'slash_login_returned_to_chat')
+    terminal.send(b'\x1b[200~slash_login_returned_to_chat\x1b[201~')
     terminal.wait(lambda:b'slash_login_returned_to_chat' in terminal.output)
     checks.append('slash_login_opens_tui_authorization_without_a_model_turn')
     terminal.close()

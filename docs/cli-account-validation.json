@@ -161,5 +161,24 @@
     "after": "v0.4.7 release fixture confirms the signed-in account token is never sent to the model catalog",
     "model_requests": 0,
     "paid_calls": 0
+  },
+  "native_ui_account": {
+    "binary_sha256": "7417ace96ce72653389727def4874384fd6dde7ca8d9d323ebdc296c52f35261",
+    "checks": [
+      "fresh_tui_offers_login_without_network_or_forced_account",
+      "tui_login_displays_code_and_uses_browser_launcher_without_private_device_code",
+      "escape_cancels_polling_and_restores_composer_without_credential_writes",
+      "existing_install_reopens_chat_without_account_checks",
+      "slash_login_opens_tui_authorization_without_a_model_turn",
+      "private_account_file_survives_process_restart_and_refresh_rotates_tokens",
+      "signed_in_account_token_is_never_sent_to_model_catalogs",
+      "logout_revokes_remote_session_and_removes_private_token_file"
+    ],
+    "account_requests": 9,
+    "real_browser_opens": 0,
+    "synthetic_credential_writes": 2,
+    "model_requests": 0,
+    "paid_calls": 0,
+    "scope": "Actual TUI/process/browser-launcher boundary with a deterministic local account server; synthetic grants and private-file persistence; no live website login."
   }
 }
