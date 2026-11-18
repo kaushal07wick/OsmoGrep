@@ -94,6 +94,8 @@ fn command_cancellable(
         "-c",
         "core.fsmonitor=false",
         "-c",
+        "core.autocrlf=false",
+        "-c",
         "commit.gpgsign=false",
         "-c",
         "core.attributesFile=/dev/null",
@@ -188,7 +190,7 @@ impl Frozen {
         let archive = frozen.path.join("source.tar");
         let canonical_root = root.canonicalize().map_err(error)?;
         let relative_archive = archive.strip_prefix(&canonical_root).map_err(error)?;
-        git::run(
+        command(
             root,
             &[
                 "archive",
@@ -197,6 +199,7 @@ impl Frozen {
                 relative_archive.to_str().ok_or("Non-UTF8 snapshot path")?,
                 &revision,
             ],
+            None,
         )
         .map_err(error)?;
         if fs::metadata(&archive).map_err(error)?.len() > total + 32 * 1024 * 1024 {
@@ -406,6 +409,23 @@ pub(crate) mod replay_tests {
             excluded_changes: vec![],
         };
         (root, capsule)
+    }
+    #[test]
+    fn snapshots_preserve_bytes_when_the_source_repo_enables_crlf_conversion() {
+        let (root, capsule) = fixture();
+        command(&root, &["config", "core.autocrlf", "true"], None).unwrap();
+        {
+            let frozen = Frozen::new(&root, &capsule, &|| false).unwrap();
+            assert_eq!(
+                fs::read(frozen.path.join("app.py")).unwrap(),
+                b"VALUE = 2\n"
+            );
+            assert_eq!(
+                git::text(&frozen.path, &["show", "HEAD:app.py"]).unwrap(),
+                "VALUE = 1"
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn snapshots_retain_tracked_files_even_when_gitignore_matches_them() {
